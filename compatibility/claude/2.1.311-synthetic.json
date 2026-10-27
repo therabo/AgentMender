@@ -1,0 +1,20 @@
+{
+  "provider": "claude",
+  "claimed_fixture_version": "2.1.311",
+  "layout_id": "claude-jsonl-2.1.311-synthetic-v1",
+  "fixture_origin": "synthetic_contract_data",
+  "real_provider_capture": false,
+  "live_profile_enabled": false,
+  "release_gate": "pending isolated real-provider capture and exact-release validation",
+  "runtime": "Rust only; no Python or TypeScript SDK bridge",
+  "official_structured_history_runtime_available": false,
+  "mutation_capabilities": [],
+  "sources_checked": "2026-10-28",
+  "sources": [
+    "https://code.claude.com/docs/en/agent-sdk/python#list_sessions",
+    "https://code.claude.com/docs/en/agent-sdk/typescript#listsessions",
+    "https://code.claude.com/docs/en/sessions#where-transcripts-are-stored",
+    "https://code.claude.com/docs/en/sessions#name-the-project-directory-yourself",
+    "https://github.com/anthropics/claude-agent-sdk-python/blob/main/src/claude_agent_sdk/_internal/sessions.py"
+  ]
+}

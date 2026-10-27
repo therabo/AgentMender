@@ -1,0 +1,88 @@
+{
+  "kind": "agentmender_codex_app_server_fixture",
+  "schemaVersion": "0.164.0-alpha.11.1",
+  "complete": true,
+  "pages": [
+    {
+      "archived": false,
+      "response": {
+        "id": 2,
+        "result": {
+          "data": [
+            {
+              "id": "019a0000-0000-7000-8000-000000000001",
+              "sessionId": "019a0000-0000-7000-8000-000000000001",
+              "preview": "Synthetic fixture only",
+              "ephemeral": false,
+              "modelProvider": "openai",
+              "createdAt": 1700000000,
+              "updatedAt": 1700000010,
+              "cwd": "/synthetic/project",
+              "cliVersion": "0.164.0-alpha.11.1",
+              "projectId": "synthetic-project",
+              "source": "appServer",
+              "status": {
+                "type": "notLoaded"
+              },
+              "turns": []
+            },
+            {
+              "id": "019a0000-0000-7000-8000-000000000002",
+              "sessionId": "019a0000-0000-7000-8000-000000000001",
+              "preview": "Synthetic fixture only",
+              "ephemeral": false,
+              "modelProvider": "openai",
+              "createdAt": 1700000000,
+              "updatedAt": 1700000010,
+              "cwd": "/synthetic/project",
+              "cliVersion": "0.164.0-alpha.11.1",
+              "projectId": "synthetic-project",
+              "source": {
+                "subAgent": {
+                  "thread_spawn": {
+                    "parent_thread_id": "019a0000-0000-7000-8000-000000000001",
+                    "depth": 1
+                  }
+                }
+              },
+              "status": {
+                "type": "notLoaded"
+              },
+              "turns": [],
+              "parentThreadId": "019a0000-0000-7000-8000-000000000001"
+            }
+          ],
+          "nextCursor": null
+        }
+      }
+    },
+    {
+      "archived": true,
+      "response": {
+        "id": 3,
+        "result": {
+          "data": [
+            {
+              "id": "019a0000-0000-7000-8000-000000000003",
+              "sessionId": "019a0000-0000-7000-8000-000000000001",
+              "preview": "Synthetic fixture only",
+              "ephemeral": false,
+              "modelProvider": "openai",
+              "createdAt": 1700000000,
+              "updatedAt": 1700000010,
+              "cwd": "/synthetic/archive",
+              "cliVersion": "0.164.0-alpha.11.1",
+              "projectId": "archive-project",
+              "source": "appServer",
+              "status": {
+                "type": "notLoaded"
+              },
+              "turns": []
+            }
+          ],
+          "nextCursor": null
+        }
+      }
+    }
+  ]
+}

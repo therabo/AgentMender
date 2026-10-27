@@ -32,6 +32,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "agentmender-provider-claude"
+version = "0.1.0"
+dependencies = [
+ "agentmender-domain",
+ "agentmender-provider-api",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
+name = "agentmender-provider-codex"
+version = "0.1.0"
+dependencies = [
+ "agentmender-domain",
+ "agentmender-provider-api",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "bitflags"
 version = "2.13.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"

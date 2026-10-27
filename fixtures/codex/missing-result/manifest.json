@@ -1,0 +1,13 @@
+{
+  "kind": "agentmender_codex_app_server_fixture",
+  "schemaVersion": "0.164.0-alpha.11.1",
+  "complete": true,
+  "pages": [
+    {
+      "archived": false,
+      "response": {
+        "id": 2
+      }
+    }
+  ]
+}
