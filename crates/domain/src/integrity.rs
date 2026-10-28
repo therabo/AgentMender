@@ -1,6 +1,6 @@
 //! Pure integrity evaluation over explicit closed observation contracts.
 use crate::*;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -76,7 +76,7 @@ pub struct IntegrityContext {
     pub required_owners: Vec<RequiredOwner>,
     pub residuals: Vec<ResidualObservation>,
 }
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum VerificationStatus {
     Healthy,
@@ -93,7 +93,7 @@ pub enum ResidualClassification {
     UnknownResidual,
     DangerousResidual,
 }
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum IntegrityIssueKind {
     DanglingReference,
@@ -145,7 +145,7 @@ pub struct IntegrityIssue {
     pub observations: Vec<NodeObservation>,
     pub relationships: Vec<ReferenceEdge>,
 }
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum IntegrityBlockerCode {
     MissingIntegrityContract,

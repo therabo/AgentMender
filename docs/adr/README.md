@@ -10,3 +10,4 @@
 | [0006: Evidence-derived Artifact Graph](0006-evidence-derived-artifact-graph.md) | Accepted |
 | [0007: Evidence rules and conservative ownership](0007-evidence-rules-and-conservative-ownership.md) | Accepted |
 | [0008: Read-only integrity proofs](0008-read-only-integrity-proofs.md) | Accepted |
+| [0009: Immutable evidence-bound planning](0009-immutable-evidence-bound-planning.md) | Accepted |

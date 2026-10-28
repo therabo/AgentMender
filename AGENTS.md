@@ -1,11 +1,15 @@
 # AgentMender engineering constraints
 
-Read all docs/adr before changing boundaries. Current scope is M3: a read-only
-integrity evaluator over the evidence-derived graph and explicit provider contracts.
+Read all docs/adr before changing boundaries. Current scope is M4: immutable,
+read-only lifecycle intentions over the evidence graph and recomputed M3 integrity.
 No lifecycle mutation, arbitrary command/SQL dispatch, provider-state writes,
-approval, recovery, cleanup plans, deletion closure or integrity-repair engine is
+approval, recovery, deletion closure or integrity-repair engine is
 permitted. Provider-native authority is not replaced by graph inference. Integrity
-reports never decide deletability. See ADR-0008 for exact negative-proof rules.
+reports never decide deletability. See ADR-0008 for negative-proof rules and
+ADR-0009 for canonical identity, complete effects contracts and future validation.
+Plans are not authorization. Ready is not approved. Only semantic native session
+intentions may be represented; no file/SQL/command mutation primitive is allowed.
+Current real profiles have no closed effects or integrity contract and cannot Ready.
 
 Unknown versions/layouts remain protected/audit-only. Installation presence,
 compatibility, evidence status and coverage are separate facts. A PATH miss is
@@ -32,10 +36,16 @@ remain protected. Provider-specific rule interpretation belongs in adapters.
 Domain has no adapters/filesystem logic. Application calls read-only ports. CLI
 composes adapters and invokes use cases, with a fixed internal capture-worker
 entry point only. Do not add a general SQL or file-write interface.
+Planning-context hooks and helpers are pure. Never infer exhaustive effects from
+graph reachability, unrelated authoritative evidence or native protocol schemas.
+Bind dedicated effects rules to the exact capability. Preserve conflicting
+descriptors before validation; malformed claims cannot disappear.
+Plan identity binds structured evidence, typed scope and original conflicts, not
+presentation prose. Fresh validation replans; a matching hash is not authority.
 
 Run cargo fmt --check, cargo clippy --locked --workspace --all-targets -- -D warnings,
 cargo test --locked --workspace, cargo build --locked --workspace,
 python3 scripts/check_architecture.py and git diff --check. Real tests are explicit,
-separate from deterministic tests, and never required in CI. M3 work belongs on
-milestone/m3-integrity-forensics after verified M2 base
-b96c31710758942bfb85e3527c17cebe2ef9a40a. Do not begin M4 or later milestones.
+separate from deterministic tests, and never required in CI. M4 work belongs on
+milestone/m4-immutable-planning after verified M3 base
+fa291282bea9257cf2fdb57a3827aac005a678e7. Do not begin M5 or later milestones.

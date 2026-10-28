@@ -1,0 +1,2 @@
+# Stored counterexamples for immutable planning properties. Fixed seed is in the test source.
+cc f3babd4aac14cf556daf313963d3f1a36c57de92d670169ef6e3a2a3a9342fa3 # shrinks to reverse = false

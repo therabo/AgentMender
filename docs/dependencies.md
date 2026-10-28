@@ -46,3 +46,7 @@ evidence combinations, and graph round trips need shrinking and reproducible
 counterexamples; a custom random-test harness would duplicate this functionality.
 Only `std` is enabled; subprocess forking, timeout infrastructure, bit sets and
 derive macros are unnecessary. No production graph/database dependency is added.
+
+M4 reuses the reviewed workspace `sha2 0.11.1` in domain for deterministic plan
+and state identity. No new package/transitive dependency or MSRV change is needed.
+No planning, rule, persistence, recovery or approval framework is introduced.
