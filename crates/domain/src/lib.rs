@@ -12,6 +12,8 @@ mod path_serde;
 
 pub mod graph;
 pub use graph::*;
+pub mod integrity;
+pub use integrity::*;
 
 /// Recognize an observed provider path without resolving it on this host.
 /// Provider metadata and fixtures may describe another OS. This is not a safe

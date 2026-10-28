@@ -9,3 +9,4 @@
 | [0005: Exact Codex capture profiles](0005-exact-codex-capture-profiles.md) | Accepted |
 | [0006: Evidence-derived Artifact Graph](0006-evidence-derived-artifact-graph.md) | Accepted |
 | [0007: Evidence rules and conservative ownership](0007-evidence-rules-and-conservative-ownership.md) | Accepted |
+| [0008: Read-only integrity proofs](0008-read-only-integrity-proofs.md) | Accepted |
