@@ -42,27 +42,76 @@ Omitted or empty source filters include only interactive sources. Active and
 archived lists are separate. Cursors are opaque and repeated cursors terminate
 discovery as incomplete.
 
-Physical macOS experiment: `/usr/bin/sandbox-exec` with
-`(version 1)(allow default)(deny file-write*)(deny network*)` denied a fresh
-fixture file-write canary and a loopback connection with EPERM. App Server under
-the same profile and an empty fixture `CODEX_HOME` exited 1 before initialization:
-`failed to initialize sqlite state runtime`. It emitted no protocol output and
-created no fixture files. The production process helper applies at least these
-write and network denials; the adapter never retries with relaxed permissions.
-A usable live API read is therefore **not verified** for this installed version.
-No live App Server attempt against real state was needed for this evidence.
+## Real disposable-snapshot evidence
 
-M1 outcome: typed synthetic protocol fixture discovery is supported for the exact
-schema above. Live startup failure produces `CapabilityUnavailable` diagnostics;
-regular-file metadata remains visible and every artifact is protected. There is
-no direct SQLite or rollout parser, no metadata repair, no temporary state-copy
-infrastructure, no mutation endpoint, and no successful live session-discovery
-claim. Unknown versions remain metadata audit only.
+The earlier global write-denial experiment correctly rejected App Server startup:
+Codex requires writable runtime state. ADR-0003 supersedes that restriction with
+an isolated, disposable evidence home while keeping real source state write-denied.
 
-The `fixtures/codex/*/manifest.json` responses are handwritten synthetic metadata
-following this generated schema. They are not captures of user threads and do
-not establish a locally installed executable version. Titles and previews are
-ignored by the normalized domain projection. Parent references are metadata
-only; a referenced parent may be outside the discovery scope. Runtime status
-belongs to the temporary App Server process and does not establish activity in
-another running client. Snapshot coverage remains partial across provider stores.
+**OBSERVED LOCALLY, exact build:** SQLite Backup API captures only state_5.sqlite
+from a read-only connection under OS enforcement, including committed WAL state.
+The source is first copied into RAM. Its 65-entry schema must match
+[state-schema-5.json](state-schema-5.json), compact SHA-256
+`5a7a23f469f17c68c9713f62a02a0ec97868e232a08cdff38881d922ea58ab4b`.
+Unknown/corrupt state is rejected. Content-bearing tables are cleared, text is
+redacted with NULL/empty predicates preserved, and secure_delete/VACUUM precede
+first file persistence. Leading-NUL content is included in privacy regressions.
+The scrubbed database is 0600 inside a fresh 0700 owned directory; no credentials,
+config, rollouts, history database or log database are copied.
+
+The fixed internal capture worker verifies kernel source-write denial before
+SQLite access. A filesystem canary supplements that query; ordinary permissions
+alone cannot establish sandboxing. App Server writes only in the owned home,
+reads no real-home file contents, and can stat metadata. Network, forks and Mach
+lookup are denied. Children are reaped before the owned home is dropped. Full
+real-home read denial was tested and silently produced zero native summaries,
+so metadata access is a demonstrated requirement for this build.
+
+Recorded production verification:
+
+| Observation | Count |
+|---|---:|
+| Source snapshot rows | 211 active, 2 archived |
+| Nonempty previews | 162 active, 2 archived |
+| Official native summaries | 164 |
+| Observed cwd groups | 57 |
+| Bounded filesystem artifacts | 8,499 |
+
+The investigative run separately found 51 rollout files and 49 database paths
+pointing to existing files; these were not sampled atomically with the final run.
+Database rows, provider summaries and filesystem artifacts have different scopes.
+Do not call their differences orphan/integrity findings or infer resumability.
+The listing matched the nonempty-preview counts in this observation; this is not
+a complete reverse-engineered filtering contract. Current upstream source has
+path checks whose exact behavior differs from this installed prerelease.
+
+Source DB/WAL/SHM SHA-256 and inode/size/mtime/ctime/mode matched before and after
+one production providers/scan/inspect observation. A later repeat saw 212 active
+rows and changes in all three monitored files; discovery correctly downgraded to
+RealPartial with SnapshotStale/ConcurrentChange instead of claiming unchanged
+source state. Atime was excluded. Independent activity changed row counts between
+experiments; these fingerprints alone cannot attribute a concurrent writer.
+A successful coherent snapshot does not
+prove cross-store atomicity or current liveness; source changes produce explicit
+SnapshotStale/ConcurrentChange diagnostics. Coverage remains Partial, independently
+of SnapshotVerified evidence status. Cwd-derived project grouping is heuristic
+when no provider-native project assignment exists.
+
+## Fixtures and reproduction
+
+`fixtures/codex/observed-snapshot` is a sanitized five-record normalized projection
+from verified native enumeration. IDs, cwd paths and times are replaced; prompts,
+previews and other content are excluded. It is FixtureVerified, never live evidence
+or a complete raw App Server response. Other fixtures remain SyntheticOnly.
+
+Explicit local tools (never normal CI):
+
+- scripts/verify_live_discovery.py compares conservative source fingerprints around
+  providers/scan/inspect and prints aggregates only.
+- scripts/capture_codex_fixture.py creates a **new** sanitized sample directory from
+  SnapshotVerified discovery. It refuses output within known provider roots.
+
+The native metadata projection ignores titles/previews. Parent references are
+literal metadata only, and native temporary-process status cannot establish
+activity in another client. Unknown versions/layouts remain protected audit-only.
+No lifecycle operation, direct source SQL mutation or recovery mechanism exists.

@@ -1,84 +1,96 @@
 # AgentMender
 
-A provider-aware lifecycle, forensic and integrity foundation for AI coding-agent
-state. This implementation exposes **read-only inventory only**.
+Provider-aware, strictly read-only inventory of AI coding-agent state. The local
+M0/M1 closeout is verified with accurately reported **partial coverage**. No M2
+algorithms, lifecycle mutations, plans, approvals, repair or recovery are present.
 
 ```sh
-cargo run -- providers
+cargo run -- providers --json
 cargo run -- scan --provider codex --json
-cargo run -- --provider codex --fixture fixtures/codex/known scan --json
-cargo run -- --provider claude --fixture fixtures/claude/2.1.311-synthetic scan --json
-cargo run -- --provider codex --fixture fixtures/codex/known inspect codex:session:019a0000-0000-7000-8000-000000000001 --json
+cargo run -- scan --provider claude --json
+cargo run -- --provider claude --fixture fixtures/claude/4.29.0-observed --desktop-fixture scan --json
+cargo run -- --provider codex --fixture fixtures/codex/observed-snapshot scan --json
 ```
 
-Use an ID returned by `scan` for `inspect`. Provider roots default to `CODEX_HOME`
-and `CLAUDE_CONFIG_DIR`, otherwise `$HOME/.codex` and `$HOME/.claude`. Override
-with `--codex-root` / `--claude-root` and, when needed, absolute
-`--codex-executable` / `--claude-executable` paths. Live roots and `--project`
-scopes must be absolute. `--max-entries` bounds traversal; `--active-only` works
-only where archive membership is known. Fixture mode is explicit and never
-asserts an installed provider version.
+Use an ID returned by `scan` with `inspect <id>`. JSON reports go to stdout;
+structured errors go to stderr. Exit 0 means a report is complete for its declared
+boundary; exit 2 means partial/unavailable inventory or an input/provider error.
+Partial inventory never proves absence, ownership, liveness or safe deletion.
+Reports include local paths/identifiers but exclude conversation bodies.
 
-JSON reports go to stdout and structured errors to stderr. Exit 0 means the
-requested report is complete for its declared boundary; exit 2 means invalid
-input, missing capability, partial inventory or failure. Inspecting an entity
-from incomplete discovery remains partial. Incomplete scans cannot prove absence.
-Reports include local paths and identifiers; transcript bodies are excluded.
-UTF-8 paths are strings; non-UTF-8 paths use a lossless native encoding object.
+## Verified local evidence
 
-## Current evidence and release gates
+| Provider | Installation | Compatibility / evidence | Discovery |
+|---|---|---|---|
+| Codex | Bundled CLI `0.164.0-alpha.11.1` | Exact protocol + state schema; SnapshotVerified | 164 native summaries in the recorded observation; partial across stores |
+| Claude | Desktop `4.29.0`, bundled Code `2.1.222` | Observed Desktop metadata context; RealPartial | Seven Desktop sessions and explicit CLI mappings; other history remains protected |
 
-| Provider | Verified evidence | Current live behavior |
-|---|---|---|
-| Codex | Exact generated schema for installed `0.164.0-alpha.11.1`; synthetic protocol fixtures | Write-denied App Server attempt; protected file metadata fallback when startup fails |
-| Claude Code | Official SDK/storage documentation; synthetic `2.1.311` parser contract | Metadata audit only; no live transcript parsing |
+These counts are observations, not future test expectations. Claude Desktop owns
+its Code binary outside PATH; not finding `PATH/claude` never establishes provider
+absence. Every installation has its own surface and version provenance. A
+candidate binary is not presumed to be the active runtime. Compatibility,
+evidence provenance and collection completeness are separate fields.
 
-M0/M1 infrastructure is implemented, but **their full release gates are pending**.
-Codex App Server failed to initialize SQLite in an empty write-denied fixture.
-Successful live thread enumeration is not assumed. Claude is not installed in the
-validation environment, and no exact-release capture validates its live parser.
-The smallest next step is to establish these provider evidence gates before M2.
-See [Codex evidence](compatibility/codex/README.md) and
-[Claude evidence](compatibility/claude/README.md). Unknown versions never inherit
-compatibility by semantic-version proximity. Synthetic fixtures are not real
-provider captures.
+See [Codex evidence](compatibility/codex/README.md),
+[Claude evidence](compatibility/claude/README.md), and [ADRs](docs/adr/README.md).
+Observed fixtures are sanitized samples; synthetic fixtures remain labeled
+SyntheticOnly. Neither is presented as fresh live evidence.
+
+## Roots and scope
+
+CLI state roots default to CODEX_HOME / CLAUDE_CONFIG_DIR, otherwise
+`$HOME/.codex` / `$HOME/.claude`. `--codex-root`, `--claude-root`, and executable
+overrides require absolute local paths. On macOS, default Claude discovery also
+checks known app bundles and `$HOME/Library/Application Support/Claude`.
+An explicit Claude state root or CLAUDE_CONFIG_DIR disables implicit Desktop
+reads. Opt in separately with `--claude-desktop-root <AppSupport/Claude>` and
+`--claude-app-bundle <Claude.app>` when using explicit roots.
+
+`--max-entries` bounds enumeration. `--project` matches an absolute observed
+provider path, and `--active-only` filters only known archive presentation state.
+Archive presentation never implies a quiescent writer. UTF-8 paths serialize as
+strings; non-UTF-8 paths use a lossless native encoding object.
 
 ## Safety boundary
 
-No archive, delete, purge, repair, provider SQL, filesystem writes, cleanup
-execution or approval capability exists in production code. All artifacts are
-protected; paths never prove ownership. Version probes and Codex App Server run
-under macOS OS-enforced file-write, network, process-fork and Mach lookup denial.
-Failure never triggers an unsandboxed retry. Linux and Windows process integration
-remains unavailable until equivalent isolation is verified; metadata audit works.
+The application never writes real provider state. Read-only ports expose only
+detect/discover. All artifacts remain protected, and paths do not prove ownership.
+No arbitrary SQL, provider command, archive/delete/purge/repair or approval tool
+exists. Codex uses a consistent SQLite Backup API snapshot, scrubs content in RAM
+before persisting a private disposable copy, and runs official thread/list there.
+Real state remains write-denied. The native process cannot read real-home file
+contents, but may stat metadata required by this exact build. No credentials,
+configuration, history/log database or rollout contents are copied.
 
-Only initialize, initialized and thread/list are sent to Codex; list always sets
-useStateDbOnly:true, because its default behavior can repair metadata. Lifecycle
-success and provider health are never inferred from this inventory.
-The guarantee covers application-requested provider content/metadata writes.
-Filesystem reads can affect access timestamps and OS caches; unrelated provider
-writers can continue changing state. These observations are not atomic snapshots,
-TOCTOU-proof deletion boundaries or future ownership evidence. Cross-platform
-path/reparse and concurrent replacement hardening remain later work.
+The only writable runtime directory is a fresh AgentMender-owned `0700` evidence
+home; its database is `0600`. Child processes are reaped before disposal. The
+capture worker verifies kernel source-write denial before SQLite access. Network,
+process-fork and Mach lookup are denied. Failure never relaxes permissions.
+A narrow macOS C-ABI policy query is isolated and reviewed in ADR-0004; other Rust
+code remains forbidden from unsafe operations. Linux/Windows native-process
+isolation is unsupported and falls back explicitly to protected metadata audit.
 
-## Development
+The guarantee concerns application-requested provider content/metadata changes.
+OS access times/caches and independent writers are outside it. A SQLite snapshot
+is not an atomic capture of all stores, a recovery point or proof of provider
+health. Truncated directory samples can vary with enumeration order.
 
-Six crates enforce ports and adapters: `domain`, `provider-api`, `application`,
-`provider-codex`, `provider-claude`, and `cli`. CLI composes adapters and calls
-application use cases. Application imports only domain and provider ports.
-See [ADR-0001](docs/adr/0001-read-only-foundation.md) and
+## Development and verification
+
+Rust 1.89+; six crates retain ports and adapters. Application depends only on domain
+and provider ports; CLI composes adapters and calls application use cases.
+Dependencies and the scoped unsafe boundary are documented in
 [dependency decisions](docs/dependencies.md).
 
 ```sh
 cargo fmt --check
-cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace
+cargo clippy --locked --workspace --all-targets -- -D warnings
+cargo test --locked --workspace
+cargo build --locked --workspace
 python3 scripts/check_architecture.py
 ```
 
-Normal tests need no installed provider and never target real provider homes.
-Two live smoke tests are ignored by default and require explicit root/executable
-environment variables; see [test instructions](crates/cli/tests/README.md).
-CI checks Linux, macOS and Windows; configuring that matrix is not evidence that
-all remote jobs have passed. Deterministic ordering applies to complete fixed
-observations; a truncated directory sample can vary with filesystem enumeration.
+Normal tests use isolated fixtures and require no installed provider. Explicit
+live fingerprint verification and the older outer-denial probes are documented in
+[test instructions](crates/cli/tests/README.md). CI has a Linux/macOS/Windows matrix;
+local results do not establish that remote jobs have passed. M2 has not begun.
