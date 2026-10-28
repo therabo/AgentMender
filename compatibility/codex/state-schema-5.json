@@ -1,0 +1,392 @@
+[
+  [
+    "index",
+    "idx_projects_position",
+    "projects",
+    "CREATE INDEX idx_projects_position\n    ON projects(position ASC, id ASC)"
+  ],
+  [
+    "index",
+    "idx_thread_attachments_identity_thread",
+    "thread_attachments",
+    "CREATE INDEX idx_thread_attachments_identity_thread\n    ON thread_attachments(attachment_type, identity_key, thread_id)"
+  ],
+  [
+    "index",
+    "idx_thread_attachments_thread_created_id",
+    "thread_attachments",
+    "CREATE INDEX idx_thread_attachments_thread_created_id\n    ON thread_attachments(thread_id, created_at, id)"
+  ],
+  [
+    "index",
+    "idx_thread_dynamic_tools_thread",
+    "thread_dynamic_tools",
+    "CREATE INDEX idx_thread_dynamic_tools_thread ON thread_dynamic_tools(thread_id)"
+  ],
+  [
+    "index",
+    "idx_thread_spawn_edges_parent_status",
+    "thread_spawn_edges",
+    "CREATE INDEX idx_thread_spawn_edges_parent_status\n    ON thread_spawn_edges(parent_thread_id, status)"
+  ],
+  [
+    "index",
+    "idx_threads_archive_created_at_ms",
+    "threads",
+    "CREATE INDEX idx_threads_archive_created_at_ms\n    ON threads(archived, created_at_ms DESC, id DESC)\n    WHERE archived = 1"
+  ],
+  [
+    "index",
+    "idx_threads_archive_recency_at_ms",
+    "threads",
+    "CREATE INDEX idx_threads_archive_recency_at_ms\n    ON threads(archived, recency_at_ms DESC, id DESC)\n    WHERE archived = 1"
+  ],
+  [
+    "index",
+    "idx_threads_archive_updated_at_ms",
+    "threads",
+    "CREATE INDEX idx_threads_archive_updated_at_ms\n    ON threads(archived, updated_at_ms DESC, id DESC)\n    WHERE archived = 1"
+  ],
+  [
+    "index",
+    "idx_threads_archived",
+    "threads",
+    "CREATE INDEX idx_threads_archived ON threads(archived)"
+  ],
+  [
+    "index",
+    "idx_threads_archived_cwd_created_at_ms",
+    "threads",
+    "CREATE INDEX idx_threads_archived_cwd_created_at_ms ON threads(archived, cwd, created_at_ms DESC, id DESC)"
+  ],
+  [
+    "index",
+    "idx_threads_archived_cwd_recency_at_ms",
+    "threads",
+    "CREATE INDEX idx_threads_archived_cwd_recency_at_ms\n    ON threads(archived, cwd, recency_at_ms DESC, id DESC)"
+  ],
+  [
+    "index",
+    "idx_threads_archived_cwd_updated_at_ms",
+    "threads",
+    "CREATE INDEX idx_threads_archived_cwd_updated_at_ms ON threads(archived, cwd, updated_at_ms DESC, id DESC)"
+  ],
+  [
+    "index",
+    "idx_threads_created_at",
+    "threads",
+    "CREATE INDEX idx_threads_created_at ON threads(created_at DESC, id DESC)"
+  ],
+  [
+    "index",
+    "idx_threads_created_at_ms",
+    "threads",
+    "CREATE INDEX idx_threads_created_at_ms ON threads(created_at_ms DESC, id DESC)"
+  ],
+  [
+    "index",
+    "idx_threads_pinned_recency_at_ms",
+    "threads",
+    "CREATE INDEX idx_threads_pinned_recency_at_ms\n    ON threads(archived, recency_at_ms DESC, id DESC)\n    WHERE is_pinned = 1 AND preview <> ''"
+  ],
+  [
+    "index",
+    "idx_threads_project_id",
+    "threads",
+    "CREATE INDEX idx_threads_project_id\n    ON threads(project_id, archived, created_at_ms DESC, id DESC)\n    WHERE project_id IS NOT NULL"
+  ],
+  [
+    "index",
+    "idx_threads_project_recency",
+    "threads",
+    "CREATE INDEX idx_threads_project_recency\n    ON threads(project_id, recency_at_ms DESC)\n    WHERE archived = 0 AND project_id IS NOT NULL"
+  ],
+  [
+    "index",
+    "idx_threads_provider",
+    "threads",
+    "CREATE INDEX idx_threads_provider ON threads(model_provider)"
+  ],
+  [
+    "index",
+    "idx_threads_recency_at_ms",
+    "threads",
+    "CREATE INDEX idx_threads_recency_at_ms\n    ON threads(recency_at_ms DESC, id DESC)"
+  ],
+  [
+    "index",
+    "idx_threads_section_position",
+    "threads",
+    "CREATE INDEX idx_threads_section_position\n    ON threads(archived, thread_section_id, section_position ASC, id ASC)\n    WHERE thread_section_id IS NOT NULL"
+  ],
+  [
+    "index",
+    "idx_threads_section_recency_at_ms",
+    "threads",
+    "CREATE INDEX idx_threads_section_recency_at_ms\n    ON threads(archived, thread_section_id, recency_at_ms DESC, id DESC)\n    WHERE thread_section_id IS NOT NULL"
+  ],
+  [
+    "index",
+    "idx_threads_source",
+    "threads",
+    "CREATE INDEX idx_threads_source ON threads(source)"
+  ],
+  [
+    "index",
+    "idx_threads_updated_at",
+    "threads",
+    "CREATE INDEX idx_threads_updated_at ON threads(updated_at DESC, id DESC)"
+  ],
+  [
+    "index",
+    "idx_threads_updated_at_ms",
+    "threads",
+    "CREATE INDEX idx_threads_updated_at_ms ON threads(updated_at_ms DESC, id DESC)"
+  ],
+  [
+    "index",
+    "idx_threads_visible_created_at_ms",
+    "threads",
+    "CREATE INDEX idx_threads_visible_created_at_ms\n    ON threads(archived, created_at_ms DESC)\n    WHERE preview <> ''"
+  ],
+  [
+    "index",
+    "idx_threads_visible_recency_at_ms",
+    "threads",
+    "CREATE INDEX idx_threads_visible_recency_at_ms\n    ON threads(archived, recency_at_ms DESC, id DESC)\n    WHERE preview <> ''"
+  ],
+  [
+    "index",
+    "idx_threads_visible_updated_at_ms",
+    "threads",
+    "CREATE INDEX idx_threads_visible_updated_at_ms\n    ON threads(archived, updated_at_ms DESC)\n    WHERE preview <> ''"
+  ],
+  [
+    "index",
+    "sqlite_autoindex__sqlx_migrations_1",
+    "_sqlx_migrations",
+    null
+  ],
+  [
+    "index",
+    "sqlite_autoindex_external_agent_config_imports_1",
+    "external_agent_config_imports",
+    null
+  ],
+  [
+    "index",
+    "sqlite_autoindex_guardian_review_feedback_1",
+    "guardian_review_feedback",
+    null
+  ],
+  [
+    "index",
+    "sqlite_autoindex_project_idempotency_keys_1",
+    "project_idempotency_keys",
+    null
+  ],
+  [
+    "index",
+    "sqlite_autoindex_project_roots_1",
+    "project_roots",
+    null
+  ],
+  [
+    "index",
+    "sqlite_autoindex_projects_1",
+    "projects",
+    null
+  ],
+  [
+    "index",
+    "sqlite_autoindex_remote_control_enrollments_1",
+    "remote_control_enrollments",
+    null
+  ],
+  [
+    "index",
+    "sqlite_autoindex_rollout_migration_skipped_rollouts_1",
+    "rollout_migration_skipped_rollouts",
+    null
+  ],
+  [
+    "index",
+    "sqlite_autoindex_rollout_migration_state_1",
+    "rollout_migration_state",
+    null
+  ],
+  [
+    "index",
+    "sqlite_autoindex_thread_attachments_1",
+    "thread_attachments",
+    null
+  ],
+  [
+    "index",
+    "sqlite_autoindex_thread_attachments_2",
+    "thread_attachments",
+    null
+  ],
+  [
+    "index",
+    "sqlite_autoindex_thread_dynamic_tools_1",
+    "thread_dynamic_tools",
+    null
+  ],
+  [
+    "index",
+    "sqlite_autoindex_thread_read_receipts_1",
+    "thread_read_receipts",
+    null
+  ],
+  [
+    "index",
+    "sqlite_autoindex_thread_sections_1",
+    "thread_sections",
+    null
+  ],
+  [
+    "index",
+    "sqlite_autoindex_thread_spawn_edges_1",
+    "thread_spawn_edges",
+    null
+  ],
+  [
+    "index",
+    "sqlite_autoindex_threads_1",
+    "threads",
+    null
+  ],
+  [
+    "table",
+    "_sqlx_migrations",
+    "_sqlx_migrations",
+    "CREATE TABLE _sqlx_migrations (\n    version BIGINT PRIMARY KEY,\n    description TEXT NOT NULL,\n    installed_on TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,\n    success BOOLEAN NOT NULL,\n    checksum BLOB NOT NULL,\n    execution_time BIGINT NOT NULL\n)"
+  ],
+  [
+    "table",
+    "backfill_state",
+    "backfill_state",
+    "CREATE TABLE backfill_state (\n    id INTEGER PRIMARY KEY CHECK (id = 1),\n    status TEXT NOT NULL,\n    last_watermark TEXT,\n    last_success_at INTEGER,\n    updated_at INTEGER NOT NULL\n)"
+  ],
+  [
+    "table",
+    "external_agent_config_imports",
+    "external_agent_config_imports",
+    "CREATE TABLE external_agent_config_imports (\n    import_id TEXT PRIMARY KEY,\n    completed_at_ms INTEGER NOT NULL,\n    successes TEXT NOT NULL,\n    failures TEXT NOT NULL\n, provider_id TEXT)"
+  ],
+  [
+    "table",
+    "guardian_review_feedback",
+    "guardian_review_feedback",
+    "CREATE TABLE guardian_review_feedback (\n    id TEXT PRIMARY KEY NOT NULL,\n    thread_id TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,\n    record BLOB NOT NULL\n)"
+  ],
+  [
+    "table",
+    "project_idempotency_keys",
+    "project_idempotency_keys",
+    "CREATE TABLE project_idempotency_keys (\n    key TEXT PRIMARY KEY,\n    project_id TEXT NOT NULL,\n    created_at_ms INTEGER NOT NULL\n)"
+  ],
+  [
+    "table",
+    "project_roots",
+    "project_roots",
+    "CREATE TABLE project_roots (\n    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,\n    position INTEGER NOT NULL,\n    path TEXT NOT NULL,\n    PRIMARY KEY (project_id, position)\n)"
+  ],
+  [
+    "table",
+    "projects",
+    "projects",
+    "CREATE TABLE projects (\n    id TEXT PRIMARY KEY,\n    name TEXT NOT NULL,\n    metadata TEXT NOT NULL DEFAULT '{}',\n    position INTEGER NOT NULL,\n    created_at_ms INTEGER NOT NULL,\n    updated_at_ms INTEGER NOT NULL\n)"
+  ],
+  [
+    "table",
+    "remote_control_enrollments",
+    "remote_control_enrollments",
+    "CREATE TABLE remote_control_enrollments (\n    websocket_url TEXT NOT NULL,\n    account_id TEXT NOT NULL,\n    app_server_client_name TEXT NOT NULL,\n    server_id TEXT NOT NULL,\n    environment_id TEXT NOT NULL,\n    server_name TEXT NOT NULL,\n    updated_at INTEGER NOT NULL, remote_control_enabled INTEGER,\n    PRIMARY KEY (websocket_url, account_id, app_server_client_name)\n)"
+  ],
+  [
+    "table",
+    "rollout_migration_skipped_rollouts",
+    "rollout_migration_skipped_rollouts",
+    "CREATE TABLE rollout_migration_skipped_rollouts (\n    migration_id TEXT NOT NULL,\n    rollout_path TEXT NOT NULL,\n    rollout_size_bytes INTEGER NOT NULL,\n    rollout_modified_at_ns INTEGER NOT NULL,\n    skip_reason TEXT NOT NULL,\n    skipped_at INTEGER NOT NULL,\n    PRIMARY KEY (migration_id, rollout_path)\n)"
+  ],
+  [
+    "table",
+    "rollout_migration_state",
+    "rollout_migration_state",
+    "CREATE TABLE rollout_migration_state (\n    migration_id TEXT PRIMARY KEY,\n    last_checked_thread_created_at INTEGER,\n    last_checked_thread_id TEXT,\n    updated_at INTEGER NOT NULL\n)"
+  ],
+  [
+    "table",
+    "sqlite_sequence",
+    "sqlite_sequence",
+    "CREATE TABLE sqlite_sequence(name,seq)"
+  ],
+  [
+    "table",
+    "thread_attachments",
+    "thread_attachments",
+    "CREATE TABLE \"thread_attachments\" (\n    id TEXT PRIMARY KEY,\n    thread_id TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,\n    attachment_type TEXT NOT NULL,\n    identity_key TEXT NOT NULL,\n    payload TEXT NOT NULL,\n    created_at INTEGER NOT NULL,\n    UNIQUE (thread_id, attachment_type, identity_key)\n)"
+  ],
+  [
+    "table",
+    "thread_dynamic_tools",
+    "thread_dynamic_tools",
+    "CREATE TABLE thread_dynamic_tools (\n    thread_id TEXT NOT NULL,\n    position INTEGER NOT NULL,\n    name TEXT NOT NULL,\n    description TEXT NOT NULL,\n    input_schema TEXT NOT NULL, defer_loading INTEGER NOT NULL DEFAULT 0, namespace TEXT,\n    PRIMARY KEY(thread_id, position),\n    FOREIGN KEY(thread_id) REFERENCES threads(id) ON DELETE CASCADE\n)"
+  ],
+  [
+    "table",
+    "thread_read_receipts",
+    "thread_read_receipts",
+    "CREATE TABLE thread_read_receipts (\n    thread_id TEXT PRIMARY KEY NOT NULL,\n    first_unread_turn TEXT,\n    revision TEXT NOT NULL,\n    last_published_turn TEXT\n)"
+  ],
+  [
+    "table",
+    "thread_sections",
+    "thread_sections",
+    "CREATE TABLE thread_sections (\n    id TEXT PRIMARY KEY,\n    name TEXT NOT NULL\n, appearance TEXT)"
+  ],
+  [
+    "table",
+    "thread_spawn_edges",
+    "thread_spawn_edges",
+    "CREATE TABLE thread_spawn_edges (\n    parent_thread_id TEXT NOT NULL,\n    child_thread_id TEXT NOT NULL PRIMARY KEY,\n    status TEXT NOT NULL\n)"
+  ],
+  [
+    "table",
+    "threads",
+    "threads",
+    "CREATE TABLE threads (\n    id TEXT PRIMARY KEY,\n    rollout_path TEXT NOT NULL,\n    created_at INTEGER NOT NULL,\n    updated_at INTEGER NOT NULL,\n    source TEXT NOT NULL,\n    model_provider TEXT NOT NULL,\n    cwd TEXT NOT NULL,\n    title TEXT NOT NULL,\n    sandbox_policy TEXT NOT NULL,\n    approval_mode TEXT NOT NULL,\n    tokens_used INTEGER NOT NULL DEFAULT 0,\n    has_user_event INTEGER NOT NULL DEFAULT 0,\n    archived INTEGER NOT NULL DEFAULT 0,\n    archived_at INTEGER,\n    git_sha TEXT,\n    git_branch TEXT,\n    git_origin_url TEXT\n, cli_version TEXT NOT NULL DEFAULT '', first_user_message TEXT NOT NULL DEFAULT '', agent_nickname TEXT, agent_role TEXT, memory_mode TEXT NOT NULL DEFAULT 'enabled', model TEXT, reasoning_effort TEXT, agent_path TEXT, created_at_ms INTEGER, updated_at_ms INTEGER, thread_source TEXT, preview TEXT NOT NULL DEFAULT '', recency_at INTEGER NOT NULL DEFAULT 0, recency_at_ms INTEGER NOT NULL DEFAULT 0, history_mode TEXT NOT NULL DEFAULT 'legacy', name TEXT, is_pinned INTEGER NOT NULL DEFAULT 0, thread_section_id TEXT\n    REFERENCES thread_sections(id) ON DELETE SET NULL, section_position INTEGER, section_entered_at_ms INTEGER, project_id TEXT\n    REFERENCES projects(id) ON DELETE SET NULL, originator TEXT, daybreak_enabled BOOLEAN, creator_user_id TEXT, creator_account_id TEXT)"
+  ],
+  [
+    "trigger",
+    "threads_created_at_ms_after_insert",
+    "threads",
+    "CREATE TRIGGER threads_created_at_ms_after_insert\nAFTER INSERT ON threads\nWHEN NEW.created_at_ms IS NULL\nBEGIN\n    UPDATE threads\n    SET created_at_ms = NEW.created_at * 1000\n    WHERE id = NEW.id;\nEND"
+  ],
+  [
+    "trigger",
+    "threads_created_at_ms_after_update",
+    "threads",
+    "CREATE TRIGGER threads_created_at_ms_after_update\nAFTER UPDATE OF created_at ON threads\nWHEN NEW.created_at != OLD.created_at\n AND NEW.created_at_ms IS OLD.created_at_ms\nBEGIN\n    UPDATE threads\n    SET created_at_ms = NEW.created_at * 1000\n    WHERE id = NEW.id;\nEND"
+  ],
+  [
+    "trigger",
+    "threads_recency_at_after_insert",
+    "threads",
+    "CREATE TRIGGER threads_recency_at_after_insert\nAFTER INSERT ON threads\nWHEN NEW.recency_at_ms = 0\nBEGIN\n    UPDATE threads\n    SET recency_at = NEW.updated_at,\n        recency_at_ms = COALESCE(NEW.updated_at_ms, NEW.updated_at * 1000)\n    WHERE id = NEW.id;\nEND"
+  ],
+  [
+    "trigger",
+    "threads_updated_at_ms_after_insert",
+    "threads",
+    "CREATE TRIGGER threads_updated_at_ms_after_insert\nAFTER INSERT ON threads\nWHEN NEW.updated_at_ms IS NULL\nBEGIN\n    UPDATE threads\n    SET updated_at_ms = NEW.updated_at * 1000\n    WHERE id = NEW.id;\nEND"
+  ],
+  [
+    "trigger",
+    "threads_updated_at_ms_after_update",
+    "threads",
+    "CREATE TRIGGER threads_updated_at_ms_after_update\nAFTER UPDATE OF updated_at ON threads\nWHEN NEW.updated_at != OLD.updated_at\n AND NEW.updated_at_ms IS OLD.updated_at_ms\nBEGIN\n    UPDATE threads\n    SET updated_at_ms = NEW.updated_at * 1000\n    WHERE id = NEW.id;\nEND"
+  ]
+]

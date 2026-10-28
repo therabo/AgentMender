@@ -1,5 +1,8 @@
 //! Read-only ports and shared bounded observation helpers. No mutation port exists.
+pub mod evidence;
 pub mod filesystem;
+#[cfg(target_os = "macos")]
+mod macos_sandbox;
 pub mod process;
 
 use agentmender_domain::{
@@ -50,17 +53,16 @@ pub fn validate_scope(scope: &DiscoveryScope) -> Result<(), ProviderError> {
             "max_entries must be 1..=100000".into(),
         ));
     }
-    if let Some(path) = &scope.project_path {
-        if !observed_path_is_absolute(path)
+    if let Some(path) = &scope.project_path
+        && (!observed_path_is_absolute(path)
             || path.as_os_str().as_encoded_bytes().len() > 4096
             || path
                 .to_str()
-                .is_none_or(|s| s.chars().any(char::is_control))
-        {
-            return Err(ProviderError::InvalidScope(
-                "project path must be absolute UTF-8, without controls, at most 4096 bytes".into(),
-            ));
-        }
+                .is_none_or(|s| s.chars().any(char::is_control)))
+    {
+        return Err(ProviderError::InvalidScope(
+            "project path must be absolute UTF-8, without controls, at most 4096 bytes".into(),
+        ));
     }
     Ok(())
 }

@@ -22,7 +22,7 @@ fn hex(bytes: &[u8]) -> String {
     result
 }
 fn unhex(value: &str) -> Option<Vec<u8>> {
-    if value.len() % 2 != 0 {
+    if !value.len().is_multiple_of(2) {
         return None;
     }
     value
@@ -78,7 +78,7 @@ fn restore<E: Error>(value: Representation) -> Result<PathBuf, E> {
         return Ok(OsString::from_vec(bytes).into());
     }
     #[cfg(windows)]
-    if encoding == "windows_utf16le" && bytes.len() % 2 == 0 {
+    if encoding == "windows_utf16le" && bytes.len().is_multiple_of(2) {
         use std::os::windows::ffi::OsStringExt;
         let words: Vec<_> = bytes
             .chunks_exact(2)

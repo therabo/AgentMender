@@ -1,0 +1,80 @@
+{
+  "kind": "agentmender_codex_app_server_fixture",
+  "schemaVersion": "0.164.0-alpha.11.1",
+  "provenance": "observed_locally_sanitized",
+  "complete": false,
+  "pages": [
+    {
+      "archived": false,
+      "response": {
+        "id": 2,
+        "result": {
+          "data": [
+            {
+              "id": "019a0000-0000-7000-8000-000000000001",
+              "cwd": "/sanitized/workspace-1",
+              "updatedAt": 1700000001,
+              "parentThreadId": null,
+              "projectId": null,
+              "status": {
+                "type": "notLoaded"
+              }
+            },
+            {
+              "id": "019a0000-0000-7000-8000-000000000002",
+              "cwd": "/sanitized/workspace-2",
+              "updatedAt": 1700000002,
+              "parentThreadId": null,
+              "projectId": null,
+              "status": {
+                "type": "notLoaded"
+              }
+            },
+            {
+              "id": "019a0000-0000-7000-8000-000000000003",
+              "cwd": "/sanitized/workspace-2",
+              "updatedAt": 1700000003,
+              "parentThreadId": null,
+              "projectId": null,
+              "status": {
+                "type": "notLoaded"
+              }
+            }
+          ],
+          "nextCursor": null
+        }
+      }
+    },
+    {
+      "archived": true,
+      "response": {
+        "id": 3,
+        "result": {
+          "data": [
+            {
+              "id": "019a0000-0000-7000-8000-000000000004",
+              "cwd": "/sanitized/workspace-3",
+              "updatedAt": 1700000004,
+              "parentThreadId": null,
+              "projectId": null,
+              "status": {
+                "type": "notLoaded"
+              }
+            },
+            {
+              "id": "019a0000-0000-7000-8000-000000000005",
+              "cwd": "/sanitized/workspace-3",
+              "updatedAt": 1700000005,
+              "parentThreadId": null,
+              "projectId": null,
+              "status": {
+                "type": "notLoaded"
+              }
+            }
+          ],
+          "nextCursor": null
+        }
+      }
+    }
+  ]
+}

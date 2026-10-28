@@ -1,7 +1,8 @@
 # ADR-0001: A physically read-only hexagonal foundation
 
 ## Status
-Accepted, 2026-10-28.
+Accepted foundation, 2026-10-28. Process and evidence policy refined by
+ADR-0002/0003; the narrow OS query boundary is documented in ADR-0004.
 
 ## Context
 AgentMender inventories valuable coding-agent state. The complete internal research

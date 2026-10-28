@@ -87,7 +87,9 @@ impl fmt::Display for ProviderKind {
 pub enum Presence {
     Installed,
     StateOnly,
-    Missing,
+    /// No installation was detected within the inspected scope.
+    #[serde(alias = "missing")]
+    NotDetected,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -118,6 +120,46 @@ pub enum CompatibilityStatus {
     AuditOnlyUnknown,
 }
 
+/// Strength and origin of the evidence behind an observation, independent of compatibility.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EvidenceStatus {
+    #[default]
+    Unverified,
+    SyntheticOnly,
+    FixtureVerified,
+    RealPartial,
+    RealVerified,
+    SnapshotVerified,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InstallationSurface {
+    Cli,
+    Desktop,
+    BundledCli,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VersionSource {
+    ExecutableProbe,
+    BundleMetadata,
+    Fixture,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProviderInstallation {
+    pub surface: InstallationSurface,
+    #[serde(with = "path_serde")]
+    pub location: PathBuf,
+    #[serde(with = "path_serde::optional")]
+    pub executable: Option<PathBuf>,
+    pub version: Option<String>,
+    pub version_source: VersionSource,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProviderFingerprint {
     #[serde(with = "path_serde::optional")]
@@ -145,6 +187,12 @@ pub struct Provider {
     pub fingerprint: ProviderFingerprint,
     pub capabilities: ProviderCapabilities,
     pub compatibility: CompatibilityProfile,
+    #[serde(default)]
+    pub installations: Vec<ProviderInstallation>,
+    #[serde(default)]
+    pub evidence_status: EvidenceStatus,
+    #[serde(default)]
+    pub diagnostics: Vec<Diagnostic>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -152,6 +200,7 @@ pub struct Provider {
 pub enum EvidenceSource {
     ProviderApi,
     ProviderMetadata,
+    ProviderSnapshot,
     FilesystemMetadata,
     Fixture,
 }
@@ -254,6 +303,9 @@ pub struct Reference {
 #[serde(rename_all = "snake_case")]
 pub enum DiagnosticCode {
     ProviderNotInstalled,
+    ProviderNotDetected,
+    SnapshotUnavailable,
+    SnapshotStale,
     ProviderVersionUnknown,
     ProviderUnsupported,
     CapabilityUnavailable,
@@ -301,6 +353,8 @@ impl Default for DiscoveryScope {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DiscoverySnapshot {
     pub provider: Provider,
+    #[serde(default)]
+    pub evidence_status: EvidenceStatus,
     pub completeness: Completeness,
     /// Human-readable declaration of the inventory boundary.
     pub coverage: String,
@@ -313,8 +367,10 @@ pub struct DiscoverySnapshot {
 }
 impl DiscoverySnapshot {
     pub fn empty(provider: Provider) -> Self {
+        let evidence_status = provider.evidence_status;
         Self {
             provider,
+            evidence_status,
             completeness: Completeness::Unavailable,
             coverage: "no inventory collected".into(),
             workspaces: Vec::new(),
@@ -340,6 +396,135 @@ impl DiscoverySnapshot {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn provider() -> Provider {
+        Provider {
+            kind: ProviderKind::Codex,
+            presence: Presence::NotDetected,
+            state_root: PathBuf::from("/state"),
+            fingerprint: ProviderFingerprint {
+                executable: None,
+                executable_version: None,
+                adapter_version: "test".into(),
+                interface_id: None,
+                layout_id: None,
+            },
+            capabilities: ProviderCapabilities::new(),
+            compatibility: CompatibilityProfile {
+                status: CompatibilityStatus::AuditOnlyUnknown,
+                interface_stability: InterfaceStability::Unsupported,
+                reason: "unknown".into(),
+            },
+            installations: Vec::new(),
+            evidence_status: EvidenceStatus::Unverified,
+            diagnostics: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn evidence_status_and_provenance_are_independent_of_compatibility_and_coverage() {
+        let mut provider = provider();
+        provider.evidence_status = EvidenceStatus::RealPartial;
+        let mut snapshot = DiscoverySnapshot::empty(provider);
+        assert_eq!(snapshot.evidence_status, EvidenceStatus::RealPartial);
+        snapshot.evidence_status = EvidenceStatus::SnapshotVerified;
+        snapshot.coverage = "bounded snapshot".into();
+        let encoded = serde_json::to_value(&snapshot).unwrap();
+        assert_eq!(encoded["evidence_status"], "snapshot_verified");
+        assert_eq!(encoded["provider"]["evidence_status"], "real_partial");
+        assert_eq!(
+            encoded["provider"]["compatibility"]["status"],
+            "audit_only_unknown"
+        );
+        assert_eq!(encoded["completeness"], "unavailable");
+        assert_eq!(encoded["coverage"], "bounded snapshot");
+        let evidence = Evidence {
+            source: EvidenceSource::ProviderSnapshot,
+            confidence: Confidence::Strong,
+            provider_version: None,
+            rule: "mirror".into(),
+        };
+        assert_eq!(
+            serde_json::to_value(evidence).unwrap()["source"],
+            "provider_snapshot"
+        );
+        assert_eq!(
+            serde_json::from_value::<DiscoverySnapshot>(encoded).unwrap(),
+            snapshot
+        );
+    }
+
+    #[test]
+    fn installation_surfaces_keep_separate_version_provenance() {
+        let mut provider = provider();
+        provider.installations = vec![
+            ProviderInstallation {
+                surface: InstallationSurface::Desktop,
+                location: "/Applications/Example.app".into(),
+                executable: None,
+                version: Some("4.29".into()),
+                version_source: VersionSource::BundleMetadata,
+            },
+            ProviderInstallation {
+                surface: InstallationSurface::BundledCli,
+                location: "/Applications/Example.app/Contents/Resources".into(),
+                executable: Some("/Applications/Example.app/Contents/Resources/cli".into()),
+                version: Some("2.1.222".into()),
+                version_source: VersionSource::ExecutableProbe,
+            },
+        ];
+        let value = serde_json::to_value(&provider).unwrap();
+        assert_eq!(
+            value["installations"][0]["version_source"],
+            "bundle_metadata"
+        );
+        assert_eq!(value["installations"][1]["surface"], "bundled_cli");
+        assert_eq!(value["installations"][1]["version"], "2.1.222");
+        assert_eq!(serde_json::from_value::<Provider>(value).unwrap(), provider);
+    }
+
+    #[test]
+    fn legacy_records_default_to_unverified_and_not_detected_is_bounded() {
+        let mut value = serde_json::to_value(provider()).unwrap();
+        assert_eq!(value["presence"], "not_detected");
+        assert_eq!(
+            serde_json::from_str::<Presence>("\"missing\"").unwrap(),
+            Presence::NotDetected
+        );
+        let object = value.as_object_mut().unwrap();
+        object.remove("installations");
+        object.remove("evidence_status");
+        object.remove("diagnostics");
+        let decoded: Provider = serde_json::from_value(value).unwrap();
+        assert_eq!(decoded.evidence_status, EvidenceStatus::Unverified);
+        assert!(decoded.installations.is_empty());
+        assert!(decoded.diagnostics.is_empty());
+        assert!(decoded.capabilities.is_empty());
+        assert_eq!(
+            decoded.compatibility.status,
+            CompatibilityStatus::AuditOnlyUnknown
+        );
+        let mut snapshot = serde_json::to_value(DiscoverySnapshot::empty(decoded)).unwrap();
+        snapshot.as_object_mut().unwrap().remove("evidence_status");
+        assert_eq!(
+            serde_json::from_value::<DiscoverySnapshot>(snapshot)
+                .unwrap()
+                .evidence_status,
+            EvidenceStatus::Unverified
+        );
+        assert_eq!(
+            serde_json::to_value(DiagnosticCode::ProviderNotDetected).unwrap(),
+            "provider_not_detected"
+        );
+        assert_eq!(
+            serde_json::to_value(DiagnosticCode::SnapshotUnavailable).unwrap(),
+            "snapshot_unavailable"
+        );
+        assert_eq!(
+            serde_json::to_value(DiagnosticCode::SnapshotStale).unwrap(),
+            "snapshot_stale"
+        );
+    }
+
     #[test]
     fn observed_paths_preserve_provider_platform_semantics() {
         for path in [

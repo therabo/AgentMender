@@ -10,6 +10,8 @@ agentmender-domain.workspace = true
 agentmender-provider-api.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+rusqlite.workspace = true
+sha2.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

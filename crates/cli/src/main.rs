@@ -2,13 +2,13 @@ use std::{env, path::PathBuf, process::ExitCode};
 
 use agentmender_application::{ApplicationError, DiscoveryService, InspectedEntity};
 use agentmender_domain::{
-    CompatibilityStatus, Completeness, DiscoveryScope, EntityId, Presence, ProviderKind,
+    CompatibilityStatus, Completeness, DiscoveryScope, EntityId, Presence, Provider, ProviderKind,
     observed_path_is_absolute,
 };
 use agentmender_provider_api::{
     ProviderAdapter, ProviderError, ProviderLocation, process::find_executable,
 };
-use agentmender_provider_claude::ClaudeAdapter;
+use agentmender_provider_claude::{ClaudeAdapter, DesktopContext};
 use agentmender_provider_codex::CodexAdapter;
 use clap::{Parser, Subcommand, ValueEnum};
 use serde::Serialize;
@@ -23,6 +23,13 @@ struct Args {
     /// Use a provider fixture directory instead of a live provider.
     #[arg(long, global = true, requires = "provider")]
     fixture: Option<PathBuf>,
+    /// Interpret the Claude fixture as an observed Desktop fixture.
+    #[arg(long, global = true, requires = "fixture")]
+    desktop_fixture: bool,
+    #[arg(long, global = true, value_parser = absolute_path)]
+    claude_desktop_root: Option<PathBuf>,
+    #[arg(long, global = true, value_parser = absolute_path)]
+    claude_app_bundle: Vec<PathBuf>,
     #[arg(long, global = true)]
     codex_root: Option<PathBuf>,
     #[arg(long, global = true)]
@@ -174,7 +181,50 @@ fn emit<T: Serialize>(mode: &'static str, report: T) -> Result<(), CliError> {
     );
     Ok(())
 }
+fn print_provider(p: &Provider) {
+    println!(
+        "{}: {:?} (state: {})",
+        p.kind,
+        p.presence,
+        p.state_root.display()
+    );
+    println!(
+        "  compatibility: {:?} — {}",
+        p.compatibility.status, p.compatibility.reason
+    );
+    println!("  evidence: {:?}", p.evidence_status);
+    println!(
+        "  selected executable: {} (version: {})",
+        p.fingerprint
+            .executable
+            .as_ref()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|| "none".into()),
+        p.fingerprint
+            .executable_version
+            .as_deref()
+            .unwrap_or("unknown")
+    );
+    for installation in &p.installations {
+        println!(
+            "  {:?}: {} (version: {}, source: {:?})",
+            installation.surface,
+            installation.location.display(),
+            installation.version.as_deref().unwrap_or("unknown"),
+            installation.version_source
+        );
+    }
+    for d in &p.diagnostics {
+        eprintln!("  {:?}: {}", d.code, d.message);
+    }
+}
 fn run(args: Args) -> Result<bool, CliError> {
+    if args.desktop_fixture && !matches!(args.provider, Some(SelectedProvider::Claude)) {
+        return Err(CliError::new(
+            ErrorCode::InvalidArguments,
+            "--desktop-fixture requires --provider claude",
+        ));
+    }
     let mode = if args.fixture.is_some() {
         "fixture"
     } else {
@@ -185,25 +235,70 @@ fn run(args: Args) -> Result<bool, CliError> {
         let adapter = if let Some(path) = &args.fixture {
             CodexAdapter::from_fixture(path.clone())?
         } else {
-            CodexAdapter::new(ProviderLocation {
+            let mut adapter = CodexAdapter::new(ProviderLocation {
                 state_root: root(args.codex_root, "CODEX_HOME", ".codex")?,
                 executable: args
                     .codex_executable
                     .or_else(|| find_executable(ProviderKind::Codex)),
-            })
+            });
+            if let (Ok(executable), Some(home)) = (env::current_exe(), env::var_os("HOME")) {
+                let home = PathBuf::from(home);
+                if home.is_absolute() {
+                    adapter = adapter.with_evidence_helper(executable, home);
+                }
+            }
+            adapter
         };
         adapters.push(Box::new(adapter));
     }
     if !matches!(args.provider, Some(SelectedProvider::Codex)) {
         let adapter = if let Some(path) = &args.fixture {
-            ClaudeAdapter::from_fixture(path.clone())?
+            if args.desktop_fixture {
+                ClaudeAdapter::from_desktop_fixture(path.clone())?
+            } else {
+                ClaudeAdapter::from_fixture(path.clone())?
+            }
         } else {
-            ClaudeAdapter::new(ProviderLocation {
+            let default_desktop = cfg!(target_os = "macos")
+                && args.claude_root.is_none()
+                && env::var_os("CLAUDE_CONFIG_DIR").is_none();
+            let home = env::var_os("HOME").map(PathBuf::from);
+            let default_root = home
+                .as_ref()
+                .filter(|p| p.is_absolute())
+                .map(|p| p.join("Library/Application Support/Claude"));
+            let desktop_root = args.claude_desktop_root.or_else(|| {
+                if default_desktop {
+                    default_root.clone()
+                } else {
+                    None
+                }
+            });
+            let mut adapter = ClaudeAdapter::new(ProviderLocation {
                 state_root: root(args.claude_root, "CLAUDE_CONFIG_DIR", ".claude")?,
                 executable: args
                     .claude_executable
                     .or_else(|| find_executable(ProviderKind::Claude)),
-            })
+            });
+            if let Some(data_root) = desktop_root {
+                let mut app_bundles = args.claude_app_bundle;
+                if default_desktop && default_root.as_ref() == Some(&data_root) {
+                    app_bundles.push(PathBuf::from("/Applications/Claude.app"));
+                    if let Some(home) = home {
+                        app_bundles.push(home.join("Applications/Claude.app"));
+                    }
+                }
+                adapter = adapter.with_desktop_context(DesktopContext {
+                    data_root,
+                    app_bundles,
+                });
+            } else if !args.claude_app_bundle.is_empty() {
+                return Err(CliError::new(
+                    ErrorCode::InvalidArguments,
+                    "--claude-app-bundle requires a desktop root",
+                ));
+            }
+            adapter
         };
         adapters.push(Box::new(adapter));
     }
@@ -218,7 +313,7 @@ fn run(args: Args) -> Result<bool, CliError> {
             let report = service.providers();
             let incomplete = !report.failures.is_empty()
                 || report.providers.iter().any(|p| {
-                    p.presence == Presence::Missing
+                    p.presence == Presence::NotDetected
                         || p.compatibility.status == CompatibilityStatus::AuditOnlyUnknown
                 });
             if args.json {
@@ -226,13 +321,7 @@ fn run(args: Args) -> Result<bool, CliError> {
             } else {
                 println!("Mode: {mode}");
                 for p in &report.providers {
-                    println!(
-                        "{}: {:?}, {:?} ({})",
-                        p.kind,
-                        p.presence,
-                        p.compatibility.status,
-                        p.state_root.display()
-                    );
+                    print_provider(p);
                 }
                 for f in &report.failures {
                     eprintln!("{}: {:?}: {}", f.provider, f.code, f.message);
@@ -252,7 +341,9 @@ fn run(args: Args) -> Result<bool, CliError> {
             } else {
                 println!("Mode: {mode}");
                 for s in &report.snapshots {
-                    println!("{}: {:?} — {}", s.provider.kind, s.completeness, s.coverage);
+                    print_provider(&s.provider);
+                    println!("  discovery: {:?} — {}", s.completeness, s.coverage);
+                    println!("  discovery evidence: {:?}", s.evidence_status);
                     println!(
                         "  {} workspaces, {} projects, {} sessions, {} artifacts",
                         s.workspaces.len(),
@@ -292,6 +383,19 @@ fn run(args: Args) -> Result<bool, CliError> {
                     "Mode: {mode}\n{} {kind} {id} ({:?})",
                     report.provider, report.completeness
                 );
+                let context = service.scan(&scope)?;
+                if let Some(snapshot) = context
+                    .snapshots
+                    .iter()
+                    .find(|s| s.provider.kind == report.provider)
+                {
+                    print_provider(&snapshot.provider);
+                    println!(
+                        "  discovery: {:?} — {}",
+                        snapshot.completeness, snapshot.coverage
+                    );
+                    println!("  discovery evidence: {:?}", snapshot.evidence_status);
+                }
                 println!(
                     "{}",
                     serde_json::to_string_pretty(&report.entity)
@@ -312,6 +416,16 @@ fn run(args: Args) -> Result<bool, CliError> {
     }
 }
 fn main() -> ExitCode {
+    let raw_args: Vec<_> = env::args_os().collect();
+    if raw_args.len() == 2 && raw_args[1] == "--internal-codex-evidence-capture" {
+        return match agentmender_provider_codex::run_evidence_capture_worker() {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(_) => {
+                eprintln!("internal evidence capture failed");
+                ExitCode::from(2)
+            }
+        };
+    }
     let json_requested = env::args_os().any(|arg| arg == "--json");
     let args = match Args::try_parse() {
         Ok(args) => args,

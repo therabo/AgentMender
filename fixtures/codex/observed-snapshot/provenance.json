@@ -1,0 +1,9 @@
+{
+  "classification": "OBSERVED LOCALLY",
+  "mechanism": "SQLite Backup API mirror + official thread/list",
+  "providerVersion": "0.164.0-alpha.11.1",
+  "observedNativeSummaries": 164,
+  "sampledSummaries": 5,
+  "sanitization": "IDs, cwd and times replaced; body fields excluded; normalized metadata projection only",
+  "limitations": "small partial sample; not a raw provider capture; temporary runtime status is not real-client liveness"
+}

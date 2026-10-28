@@ -56,27 +56,40 @@ fn fixture(provider: &str, dir: &str) -> PathBuf {
 #[test]
 fn fixture_scans_are_read_only_and_report_limits() {
     let home = tempfile::tempdir().unwrap();
-    for (provider, dir, expected_diagnostic) in [
-        ("codex", "known", None),
-        ("codex", "unknown", Some("provider_version_unknown")),
-        ("codex", "malformed", Some("malformed_provider_state")),
-        ("codex", "missing-result", Some("malformed_provider_state")),
-        ("codex", "partial", Some("incomplete_discovery")),
-        ("claude", "2.1.311-synthetic", None),
+    for (provider, dir, expected_diagnostic, desktop) in [
+        ("codex", "known", None, false),
+        ("codex", "observed-snapshot", None, false),
+        ("codex", "unknown", Some("provider_version_unknown"), false),
+        (
+            "codex",
+            "malformed",
+            Some("malformed_provider_state"),
+            false,
+        ),
+        (
+            "codex",
+            "missing-result",
+            Some("malformed_provider_state"),
+            false,
+        ),
+        ("codex", "partial", Some("incomplete_discovery"), false),
+        ("claude", "2.1.311-synthetic", None, false),
+        ("claude", "4.29.0-observed", None, true),
     ] {
         let root = fixture(provider, dir);
         let before = manifest(&root);
-        let output = run(
-            home.path(),
-            &[
-                "--json",
-                "--provider",
-                provider,
-                "--fixture",
-                root.to_str().unwrap(),
-                "scan",
-            ],
-        );
+        let mut args = vec![
+            "--json",
+            "--provider",
+            provider,
+            "--fixture",
+            root.to_str().unwrap(),
+        ];
+        if desktop {
+            args.push("--desktop-fixture");
+        }
+        args.push("scan");
+        let output = run(home.path(), &args);
         let value = json(&output);
         assert_eq!(value["mode"], "fixture");
         let snapshot = &value["report"]["snapshots"][0];
@@ -94,18 +107,9 @@ fn fixture_scans_are_read_only_and_report_limits() {
         }
         if let Some(session) = snapshot["sessions"].as_array().unwrap().first() {
             let id = session["id"].as_str().unwrap();
-            let inspect = run(
-                home.path(),
-                &[
-                    "--json",
-                    "--provider",
-                    provider,
-                    "--fixture",
-                    root.to_str().unwrap(),
-                    "inspect",
-                    id,
-                ],
-            );
+            args.pop();
+            args.extend(["inspect", id]);
+            let inspect = run(home.path(), &args);
             assert_eq!(json(&inspect)["report"]["entity"]["entity"]["id"], id);
             no_secret(&inspect);
         }
@@ -186,7 +190,7 @@ fn missing_provider_and_incomplete_inspection_are_not_success() {
     assert_eq!(output.status.code(), Some(2));
     assert_eq!(
         json(&output)["report"]["providers"][0]["presence"],
-        "missing"
+        "not_detected"
     );
     let root = fixture("codex", "partial");
     let before = manifest(&root);

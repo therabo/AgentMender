@@ -1,5 +1,6 @@
 //! Codex metadata observations through the official, version-specific App Server API.
-//! No transcript or SQLite reader and no mutation methods are exposed.
+//! Real SQLite is observed only by the isolated evidence worker; no lifecycle
+//! mutation methods or transcript readers are exposed.
 use agentmender_domain::*;
 use agentmender_provider_api::{
     ProviderAdapter, ProviderError, ProviderLocation, filesystem, process, validate_location,
@@ -16,6 +17,10 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
+
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+mod capture;
+pub use capture::run_evidence_capture_worker;
 
 const KNOWN_VERSION: &str = "0.164.0-alpha.11.1";
 const INTERFACE_ID: &str = "codex-app-server-0.164.0-alpha.11.1";
@@ -38,6 +43,7 @@ const SOURCES: [&str; 10] = [
 pub struct CodexAdapter {
     location: ProviderLocation,
     fixture: Option<Fixture>,
+    evidence_helper: Option<(PathBuf, PathBuf)>,
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -46,6 +52,8 @@ struct Fixture {
     schema_version: String,
     complete: bool,
     pages: Vec<FixturePage>,
+    #[serde(default)]
+    provenance: Option<String>,
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -107,7 +115,14 @@ impl CodexAdapter {
         Self {
             location,
             fixture: None,
+            evidence_helper: None,
         }
+    }
+    /// The CLI supplies its own fixed internal capture entry point. No helper is
+    /// inferred by library callers, fixture tests, or unsupported installations.
+    pub fn with_evidence_helper(mut self, helper: PathBuf, real_home: PathBuf) -> Self {
+        self.evidence_helper = Some((helper, real_home));
+        self
     }
     /// Synthetic, sanitized protocol responses only. The manifest is never a live version probe.
     pub fn from_fixture(root: PathBuf) -> Result<Self, ProviderError> {
@@ -118,12 +133,20 @@ impl CodexAdapter {
         if fixture.kind != "agentmender_codex_app_server_fixture" {
             return Err(malformed(&path, "fixture provenance marker missing"));
         }
+        if fixture
+            .provenance
+            .as_deref()
+            .is_some_and(|value| value != "observed_locally_sanitized")
+        {
+            return Err(malformed(&path, "unsupported fixture provenance"));
+        }
         Ok(Self {
             location: ProviderLocation {
                 state_root: root,
                 executable: None,
             },
             fixture: Some(fixture),
+            evidence_helper: None,
         })
     }
     fn provider(&self) -> Provider {
@@ -148,7 +171,7 @@ impl CodexAdapter {
         } else if self.fixture.is_some() {
             if known { "Synthetic fixture of the exact generated App Server schema; not a live executable assertion" } else { "Unknown synthetic schema; filesystem metadata audit only" }.into()
         } else if known {
-            "Exact generated schema recognized; discovery still requires successful OS write-denied App Server startup".into()
+            "Exact generated protocol recognized; live discovery requires a scrubbed SQLite snapshot and OS-enforced isolation".into()
         } else {
             "No verified exact schema; filesystem metadata audit only".into()
         };
@@ -165,7 +188,7 @@ impl CodexAdapter {
             } else if self.location.state_root.exists() {
                 Presence::StateOnly
             } else {
-                Presence::Missing
+                Presence::NotDetected
             },
             state_root: self.location.state_root.clone(),
             fingerprint: ProviderFingerprint {
@@ -173,7 +196,7 @@ impl CodexAdapter {
                 executable_version: if self.fixture.is_some() {
                     None
                 } else {
-                    version
+                    version.clone()
                 },
                 adapter_version: env!("CARGO_PKG_VERSION").into(),
                 interface_id: known.then(|| INTERFACE_ID.into()),
@@ -193,6 +216,45 @@ impl CodexAdapter {
                 },
                 reason,
             },
+            installations: self
+                .location
+                .executable
+                .as_ref()
+                .filter(|exe| exe.is_file())
+                .map(|exe| ProviderInstallation {
+                    surface: if exe
+                        .components()
+                        .any(|part| part.as_os_str() == "Applications")
+                    {
+                        InstallationSurface::BundledCli
+                    } else {
+                        InstallationSurface::Cli
+                    },
+                    location: exe.clone(),
+                    executable: Some(exe.clone()),
+                    version: version.clone(),
+                    version_source: VersionSource::ExecutableProbe,
+                })
+                .into_iter()
+                .collect(),
+            evidence_status: if let Some(fixture) = &self.fixture {
+                if fixture.provenance.is_some() {
+                    EvidenceStatus::FixtureVerified
+                } else {
+                    EvidenceStatus::SyntheticOnly
+                }
+            } else if self
+                .location
+                .executable
+                .as_ref()
+                .is_some_and(|p| p.is_file())
+                || self.location.state_root.exists()
+            {
+                EvidenceStatus::RealPartial
+            } else {
+                EvidenceStatus::Unverified
+            },
+            diagnostics: Vec::new(),
         }
     }
 }
@@ -214,7 +276,7 @@ impl ProviderAdapter for CodexAdapter {
         let provider = self.provider();
         let mut snapshot = DiscoverySnapshot::empty(provider);
         snapshot.completeness = Completeness::Partial;
-        snapshot.coverage = "Codex state-root regular-file metadata; every artifact protected; no transcript or SQLite parsing. Official App Server thread metadata only when exact schema and OS write denial both succeed; no atomic snapshot or global runtime activity guarantee.".into();
+        snapshot.coverage = "Codex state-root regular-file metadata; every artifact protected. Native metadata, when available, comes from an exact-schema, scrubbed SQLite Backup API mirror through official thread/list; database rows, native summaries and rollout-file counts are distinct; partial across provider stores and not global runtime activity.".into();
         let inventory = filesystem::inventory(&self.location.state_root, scope.max_entries)?;
         snapshot.diagnostics = inventory.diagnostics;
         if scope.project_path.is_some() && !inventory.files.is_empty() {
@@ -248,11 +310,11 @@ impl ProviderAdapter for CodexAdapter {
                 });
             }
         }
-        if snapshot.provider.presence == Presence::Missing {
+        if snapshot.provider.presence == Presence::NotDetected {
             diag(
                 &mut snapshot,
-                DiagnosticCode::ProviderNotInstalled,
-                "Codex executable and state root were not found",
+                DiagnosticCode::ProviderNotDetected,
+                "Codex executable and state root were not detected in the inspected scope",
             );
         }
         if snapshot.provider.compatibility.status == CompatibilityStatus::AuditOnlyUnknown {
@@ -278,13 +340,21 @@ impl ProviderAdapter for CodexAdapter {
             snapshot.normalize();
             return Ok(snapshot);
         }
+        let mut capture_observation = None;
         let result = if let Some(fixture) = &self.fixture {
             fixture_pages(fixture, scope)
-        } else if let Some(exe) = &self.location.executable {
-            live_pages(exe, &self.location.state_root, scope)
+        } else if let (Some(exe), Some((helper, real_home))) =
+            (&self.location.executable, &self.evidence_helper)
+        {
+            evidence_pages(exe, &self.location.state_root, helper, real_home, scope).map(
+                |(pages, complete, observation)| {
+                    capture_observation = Some(observation);
+                    (pages, complete)
+                },
+            )
         } else {
             Err(ProviderError::CapabilityUnavailable(
-                "Codex executable unavailable".into(),
+                "Codex disposable evidence helper unavailable".into(),
             ))
         };
         match result {
@@ -292,13 +362,21 @@ impl ProviderAdapter for CodexAdapter {
                 let source = if self.fixture.is_some() {
                     EvidenceSource::Fixture
                 } else {
-                    EvidenceSource::ProviderApi
+                    EvidenceSource::ProviderSnapshot
                 };
                 let evidence = Evidence {
                     source,
-                    confidence: Confidence::Authoritative,
+                    confidence: if self
+                        .fixture
+                        .as_ref()
+                        .is_some_and(|fixture| fixture.provenance.is_none())
+                    {
+                        Confidence::Heuristic
+                    } else {
+                        Confidence::Strong
+                    },
                     provider_version: if let Some(fixture) = &self.fixture {
-                        Some(format!("synthetic-schema:{}", fixture.schema_version))
+                        Some(fixture.schema_version.clone())
                     } else {
                         snapshot.provider.fingerprint.executable_version.clone()
                     },
@@ -374,26 +452,30 @@ impl ProviderAdapter for CodexAdapter {
                             });
                         }
                         if projects.insert(project_id.clone()) {
+                            let mut project_evidence = evidence.clone();
+                            if record.project_id.is_none() {
+                                project_evidence.confidence = Confidence::Heuristic;
+                                project_evidence.rule =
+                                    "cwd_group_without_native_project_assignment".into();
+                            }
                             snapshot.projects.push(Project {
                                 id: project_id.clone(),
                                 workspace_id: Some(workspace_id),
                                 provider_project_id: record.project_id,
                                 path: Some(record.cwd),
-                                evidence: evidence.clone(),
+                                evidence: project_evidence,
                             });
                         } else if let Some(project) =
                             snapshot.projects.iter_mut().find(|p| p.id == project_id)
-                        {
-                            if project
+                            && project
                                 .path
                                 .as_ref()
                                 .is_some_and(|path| path != &record.cwd)
-                            {
-                                // One native project can span worktrees/current directories.
-                                // Do not promote the first observed cwd to its canonical root.
-                                project.path = None;
-                                project.workspace_id = None;
-                            }
+                        {
+                            // One native project can span worktrees/current directories.
+                            // Do not promote the first observed cwd to its canonical root.
+                            project.path = None;
+                            project.workspace_id = None;
                         }
                         if let Some(parent) = record.parent_thread_id {
                             match scoped_id("session", &parent) {
@@ -443,19 +525,61 @@ impl ProviderAdapter for CodexAdapter {
                         "App Server pages incomplete for requested archive scope",
                     );
                 }
+                if let Some(observation) = capture_observation {
+                    let native_count = snapshot.sessions.len();
+                    snapshot.coverage.push_str(&format!(
+                        " Captured database rows: {} active, {} archived; nonempty previews: {} active, {} archived; native summaries returned for requested scope: {native_count}. Filesystem artifact counts describe separately bounded metadata observations.",
+                        observation.manifest.active_rows, observation.manifest.archived_rows,
+                        observation.manifest.nonempty_active_previews, observation.manifest.nonempty_archived_previews));
+                    snapshot.provider.fingerprint.layout_id =
+                        Some(format!("codex-state-5:{}", capture::SCHEMA_HASH));
+                    snapshot.evidence_status = if complete && !observation.stale {
+                        EvidenceStatus::SnapshotVerified
+                    } else {
+                        EvidenceStatus::RealPartial
+                    };
+                    if observation.stale {
+                        diag(
+                            &mut snapshot,
+                            DiagnosticCode::SnapshotStale,
+                            "Source DB/WAL/SHM changed or could not be fingerprinted across capture and enumeration; the SQLite capture remains coherent but is stale relative to live source activity",
+                        );
+                        diag(
+                            &mut snapshot,
+                            DiagnosticCode::ConcurrentChange,
+                            "Independent source changes are outside the isolated worker write-denial guarantee",
+                        );
+                    }
+                } else if let Some(fixture) = &self.fixture {
+                    snapshot.evidence_status = if fixture.provenance.is_some() {
+                        EvidenceStatus::FixtureVerified
+                    } else {
+                        EvidenceStatus::SyntheticOnly
+                    };
+                }
                 // Metadata audit has intentionally unknown files and App Server omits other stores.
                 snapshot.completeness = Completeness::Partial;
             }
-            Err(error) => diag(
-                &mut snapshot,
-                match error {
+            Err(error) => {
+                let code = match error {
                     ProviderError::MalformedProviderState { .. } => {
                         DiagnosticCode::MalformedProviderState
                     }
                     _ => DiagnosticCode::CapabilityUnavailable,
-                },
-                "Codex App Server metadata unavailable under strict read-only boundary; protected file metadata remains available",
-            ),
+                };
+                diag(
+                    &mut snapshot,
+                    code,
+                    "Codex snapshot or App Server metadata unavailable under strict source read-only isolation; protected file metadata remains available",
+                );
+                if self.fixture.is_none() {
+                    diag(
+                        &mut snapshot,
+                        DiagnosticCode::SnapshotUnavailable,
+                        "Disposable evidence capture was not verified; an empty native list does not establish absence of sessions",
+                    );
+                }
+            }
         }
         snapshot.normalize();
         Ok(snapshot)
@@ -530,6 +654,95 @@ fn fixture_pages(
     ))
 }
 
+struct CaptureObservation {
+    manifest: capture::CaptureManifest,
+    stale: bool,
+}
+
+fn evidence_pages(
+    exe: &Path,
+    root: &Path,
+    helper: &Path,
+    real_home: &Path,
+    scope: &DiscoveryScope,
+) -> Result<(Vec<Page>, bool, CaptureObservation), ProviderError> {
+    use agentmender_provider_api::evidence::EvidenceSandbox;
+    let sandbox = EvidenceSandbox::new(root, real_home)?;
+    let request = capture::CaptureRequest {
+        source_root: sandbox.source_root().into(),
+        mirror_root: sandbox.path().into(),
+        probe_path: sandbox.probe_path().into(),
+    };
+    let manifest =
+        read_capture_manifest(process::spawn_codex_capture(helper, &sandbox)?, &request)?;
+    let transport = Transport::from_child(
+        process::spawn_codex_evidence(exe, &sandbox)?,
+        Duration::from_secs(5),
+    )?;
+    // query_pages owns the transport: the provider is reaped before source
+    // comparison and, on every return path, before the owned mirror is dropped.
+    let (pages, complete) = query_pages(transport, sandbox.path(), scope)?;
+    let stale = manifest.changed()
+        || capture::fingerprints(sandbox.source_root())
+            .map(|after| capture::fingerprints_changed(&manifest.after, &after))
+            .unwrap_or(true);
+    Ok((pages, complete, CaptureObservation { manifest, stale }))
+}
+
+fn read_capture_manifest(
+    child: Child,
+    request: &capture::CaptureRequest,
+) -> Result<capture::CaptureManifest, ProviderError> {
+    let mut child = Guard(child);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let unavailable =
+        || ProviderError::CapabilityUnavailable("bounded disposable capture worker failed".into());
+    let request = serde_json::to_vec(request).map_err(|_| unavailable())?;
+    if request.len() > 8192 {
+        return Err(unavailable());
+    }
+    let mut input = child.0.stdin.take().ok_or_else(unavailable)?;
+    let mut output = child.0.stdout.take().ok_or_else(unavailable)?;
+    let (sent, written) = mpsc::sync_channel(1);
+    thread::spawn(move || {
+        let result = input.write_all(&request);
+        drop(input);
+        let _ = sent.send(result);
+    });
+    let (sent, read) = mpsc::sync_channel(1);
+    thread::spawn(move || {
+        let mut bytes = Vec::new();
+        let result = output
+            .by_ref()
+            .take(capture::MAX_MANIFEST_BYTES + 1)
+            .read_to_end(&mut bytes)
+            .map(|_| bytes);
+        let _ = sent.send(result);
+    });
+    written
+        .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+        .map_err(|_| unavailable())?
+        .map_err(|_| unavailable())?;
+    let bytes = read
+        .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+        .map_err(|_| unavailable())?
+        .map_err(|_| unavailable())?;
+    if bytes.len() as u64 > capture::MAX_MANIFEST_BYTES {
+        return Err(unavailable());
+    }
+    loop {
+        match child.0.try_wait() {
+            Ok(Some(status)) if status.success() => break,
+            Ok(None) if Instant::now() < deadline => thread::sleep(Duration::from_millis(5)),
+            _ => return Err(unavailable()),
+        }
+    }
+    let manifest: capture::CaptureManifest =
+        serde_json::from_slice(&bytes).map_err(|_| unavailable())?;
+    manifest.validate()?;
+    Ok(manifest)
+}
+
 struct Guard(Child);
 impl Drop for Guard {
     fn drop(&mut self) {
@@ -543,12 +756,6 @@ struct Transport {
     deadline: Instant,
 }
 impl Transport {
-    fn start(exe: &Path, root: &Path) -> Result<Self, ProviderError> {
-        Self::from_child(
-            process::spawn_codex_read_only(exe, root)?,
-            Duration::from_secs(5),
-        )
-    }
     fn from_child(child: Child, timeout: Duration) -> Result<Self, ProviderError> {
         let mut child = Guard(child);
         let output = child
@@ -708,12 +915,11 @@ fn lexical_absolute(path: &Path) -> PathBuf {
     }
     normalized
 }
-fn live_pages(
-    exe: &Path,
+fn query_pages(
+    mut transport: Transport,
     root: &Path,
     scope: &DiscoveryScope,
 ) -> Result<(Vec<Page>, bool), ProviderError> {
-    let mut transport = Transport::start(exe, root)?;
     transport.send(json!({"id":1,"method":"initialize","params":{"clientInfo":{"name":"agentmender","title":"AgentMender","version":env!("CARGO_PKG_VERSION")},"capabilities":{"experimentalApi":false}}}))?;
     validate_initialize(&transport.response(1)?, root)?;
     transport.send(json!({"method":"initialized","params":{}}))?;
@@ -788,6 +994,19 @@ mod tests {
                 .join(name),
         )
         .unwrap()
+    }
+    #[test]
+    fn observed_fixture_and_synthetic_fixture_keep_distinct_evidence_status() {
+        let observed = fixture("observed-snapshot")
+            .discover(&DiscoveryScope::default())
+            .unwrap();
+        assert_eq!(observed.sessions.len(), 5);
+        assert_eq!(observed.evidence_status, EvidenceStatus::FixtureVerified);
+        assert_eq!(observed.completeness, Completeness::Partial);
+        let synthetic = fixture("known")
+            .discover(&DiscoveryScope::default())
+            .unwrap();
+        assert_eq!(synthetic.evidence_status, EvidenceStatus::SyntheticOnly);
     }
     #[test]
     fn fixture_discovers_archives_parents_and_projects_without_live_version_claim() {
@@ -881,13 +1100,13 @@ mod tests {
         })
         .discover(&DiscoveryScope::default())
         .unwrap();
-        assert_eq!(snapshot.provider.presence, Presence::Missing);
+        assert_eq!(snapshot.provider.presence, Presence::NotDetected);
         assert!(snapshot.sessions.is_empty());
         assert!(
             snapshot
                 .diagnostics
                 .iter()
-                .any(|d| d.code == DiagnosticCode::ProviderNotInstalled)
+                .any(|d| d.code == DiagnosticCode::ProviderNotDetected)
         );
     }
     #[test]
