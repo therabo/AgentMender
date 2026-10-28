@@ -107,6 +107,9 @@ assert not impure_graph_code('fn build() { let text = "std::fs::read"; }')
 assert not impure_graph_code('#[cfg(test)] mod tests { fn fixture() { std::fs::read("fixture"); } }')
 override = 'impl Adapter { fn integrity_context(&self) { std::fs::read("provider"); } }'
 assert any(impure_graph_code(body) for body in method_bodies(override, 'integrity_context'))
+planning_override = 'impl Adapter { fn planning_context(&self) { std::fs::read("provider"); } }'
+assert any(impure_graph_code(body) for body in method_bodies(planning_override, 'planning_context'))
+assert impure_graph_code('fn planning_helper() { std::fs::read("provider"); }')
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 metadata = json.loads(subprocess.check_output(
@@ -160,14 +163,17 @@ for path in (ROOT / "crates").glob("*/src/**/*.rs"):
     # masking strings and removing complete test modules, not broad prose matches.
     # ADR-0008: integrity consumes normalized graph facts under the same purity
     # boundary. Audit all domain modules, including any future nested modules.
-    if path.name in {"graph.rs", "integrity.rs"} or crate_name == "domain":
+    if path.name in {"graph.rs", "integrity.rs", "planning.rs"} or crate_name == "domain":
         if impure_graph_code(source):
             errors.append(f"impure graph transformation: {path.relative_to(ROOT)}")
-    for name in ["build_graph", "integrity_context"]:
+    # ADR-0009: planning descriptions interpret supplied normalized evidence only.
+    for name in ["build_graph", "integrity_context", "planning_context"]:
         if any(impure_graph_code(body) for body in method_bodies(source, name)):
             errors.append(f"impure {name} port override: {path.relative_to(ROOT)}")
     if re.search(r'\bfn\s+(?:archive|unarchive|purge|repair|delete)\b', code):
         errors.append(f"lifecycle or repair method before its milestone: {path.relative_to(ROOT)}")
+    if re.search(r'\b(?:fn|struct|enum|trait)\s+(?:execute_plan|approve_plan|ApprovalGrant|ApprovalBroker|RecoveryStore|RecoveryCoordinator|CleanupTransaction|TransactionJournal|DeleteFile|RunSql|RemoveDirectory|ExecuteCommand)\b', code):
+        errors.append(f"execution/approval/recovery or low-level planning primitive before its milestone: {path.relative_to(ROOT)}")
     if crate_name == "domain" and any(marker in source for marker in [
         "sqlite_master", "state_5.sqlite", "claude-code-sessions", "cliSessionId",
         "forkedFromSessionId", "thread/list", "attached_thread_parent_id",
@@ -183,7 +189,7 @@ for path in (ROOT / "crates").glob("*/src/**/*.rs"):
                 depth += (code[index] == '{') - (code[index] == '}')
                 index += 1
             methods = set(re.findall(r"\bfn\s+(\w+)\s*\(", code[trait.end():index]))
-            if methods != {"kind", "detect", "discover", "build_graph", "integrity_context"}:
+            if methods != {"kind", "detect", "discover", "build_graph", "integrity_context", "planning_context"}:
                 errors.append(f"unreviewed provider port methods: {sorted(methods)}")
 
 if errors:

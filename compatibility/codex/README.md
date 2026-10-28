@@ -142,3 +142,9 @@ atomicity. Unselected native response fields are discarded; the entire response 
 not claimed content-free. Source status is presentation metadata, not evidence of
 writer liveness. The normalized projection and the existing scope limits remain
 unchanged. Unknown versions and mismatched schemas remain metadata-only.
+
+## Lifecycle protocol evidence for 0.165.0-alpha.1.2
+
+The separately captured [lifecycle schemas and evidence summary](0.165.0-alpha.1.2/lifecycle/) were generated in an OS-isolated temporary home with writes denied outside that owned directory. Their canonical protocol evidence object has SHA-256 `14a6e75b4bae9ec7b4bb41f3ed9840296f4d671295f300532efc7a7ca9b3d686`. This establishes protocol shapes only; no lifecycle operation was invoked. The older discovery profile has no corresponding lifecycle evidence.
+
+The [official App Server documentation](https://learn.chatgpt.com/docs/app-server) describes archive as attempting spawned descendants, including success despite a failed child; delete covers the target and spawned descendants; unarchive restores the target with provider-managed state and is not a complete inverse. This current documentation does not verify exact runtime effect closure for the captured version. Accordingly, descriptors carry conservative semantic scopes and production emits no exhaustive effect boundary. Discovery remains partial and integrity lacks a closed contract, so current plans remain blocked. A future native transition may change provider-managed global database metadata; retained logical state is not a byte-identical database guarantee. Physical reclaim remains unknown.

@@ -1,0 +1,67 @@
+{
+  "protocol_evidence": {
+    "format": "agentmender-codex-lifecycle-protocol-evidence-v1",
+    "provider": "codex",
+    "executable_version": "0.165.0-alpha.1.2",
+    "interface_id": "codex-app-server-0.165.0-alpha.1.2",
+    "source_schema_hash": "1b88a3f88c8edb6f742d219835a821d0515b7b811b4342cd650e6ac8069f4647",
+    "files": [
+      {
+        "path": "ClientRequest.json",
+        "sha256": "9b89e2459362d20cec67a429ef9430fe6b0e9fb8bd87d445d4c9a6acccd87450"
+      },
+      {
+        "path": "ServerNotification.json",
+        "sha256": "7e8324c4c95da9057611ffe40487c21db40eed69c247a1508d0651e89715e23a"
+      },
+      {
+        "path": "v2/ThreadArchiveParams.json",
+        "sha256": "dc2c0b133b814a5d9d543cc37afdb3f4f22feca35b7cea4272834b20a1e47705"
+      },
+      {
+        "path": "v2/ThreadArchiveResponse.json",
+        "sha256": "2e021dabd0930ae3e2beb68cd0ddbafc40fc20cfbf8dbcb5e2f9c0493d06a08c"
+      },
+      {
+        "path": "v2/ThreadArchivedNotification.json",
+        "sha256": "54ca94956719ade8682c766f31419ee9953dee8f4587b5b30efd0927de6ca26e"
+      },
+      {
+        "path": "v2/ThreadDeleteParams.json",
+        "sha256": "0d5425d94af95e3dd20971cee052b2cb8c7d0d23195db1d17fde4e59cfbdec4a"
+      },
+      {
+        "path": "v2/ThreadDeleteResponse.json",
+        "sha256": "333c0c5df96d78d1bcbdb19b57ddfa941de9a02bdae1c29d13c5311c2cdf6527"
+      },
+      {
+        "path": "v2/ThreadDeletedNotification.json",
+        "sha256": "6f8d6fa96700ec6fff4b8c2bddf6768539b7ec7ba5dc05483aba53f5183386f9"
+      },
+      {
+        "path": "v2/ThreadUnarchiveParams.json",
+        "sha256": "a1d5d847b61ea16ab09d5b9d1c1461134a7829292aae02a7e11b0a69b00c76ca"
+      },
+      {
+        "path": "v2/ThreadUnarchiveResponse.json",
+        "sha256": "3003ed778a497b303d85deed6999b1a7aa1ef5e39c2ca5074be1e38a9da8339f"
+      },
+      {
+        "path": "v2/ThreadUnarchivedNotification.json",
+        "sha256": "fc00949cdc588b84800a26403647eda0e22d6f28663dc032a90db9c20dfa822d"
+      }
+    ]
+  },
+  "protocol_evidence_sha256": "14a6e75b4bae9ec7b4bb41f3ed9840296f4d671295f300532efc7a7ca9b3d686",
+  "canonicalization": "JSON object keys sorted, separators comma/colon, ensure_ascii=true, no trailing newline; file list sorted by relative path",
+  "effect_semantics_source": "https://learn.chatgpt.com/docs/app-server",
+  "effect_semantics_observed_on": "2026-10-28",
+  "exact_effect_closure_verified": false,
+  "lifecycle_operations_invoked": false,
+  "limitations": [
+    "schema shape evidence only; official current documentation not exact-version runtime effect verification",
+    "current discovery Partial and M3 IntegrityContext empty; all live plans remain blocked",
+    "historical 0.164.0-alpha.11.1 has no independently captured lifecycle evidence here",
+    "no physical-reclaim, reversibility, descendant closure, writer inactivity or ownership proof"
+  ]
+}
