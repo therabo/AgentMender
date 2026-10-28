@@ -1399,3 +1399,6 @@ mod tests {
         assert!(adapter.discover(&DiscoveryScope::default()).is_err());
     }
 }
+
+#[cfg(test)]
+mod integrity_tests;

@@ -1,9 +1,9 @@
-use std::{env, path::PathBuf, process::ExitCode};
+use std::{collections::BTreeMap, env, path::PathBuf, process::ExitCode};
 
 use agentmender_application::{ApplicationError, DiscoveryService, InspectedEntity};
 use agentmender_domain::{
-    CompatibilityStatus, Completeness, DiscoveryScope, EntityId, Presence, Provider, ProviderKind,
-    observed_path_is_absolute,
+    ArtifactId, CompatibilityStatus, Completeness, DiscoveryScope, EntityId, IntegrityReport,
+    Presence, Provider, ProviderKind, VerificationStatus, observed_path_is_absolute,
 };
 use agentmender_provider_api::{
     ProviderAdapter, ProviderError, ProviderLocation, process::find_executable,
@@ -58,6 +58,7 @@ enum Action {
     Scan,
     Inspect { id: String },
     Graph,
+    Verify,
     Explain { id: String },
 }
 
@@ -221,6 +222,130 @@ fn print_provider(p: &Provider) {
     for d in &p.diagnostics {
         eprintln!("  {:?}: {}", d.code, d.message);
     }
+}
+fn print_id(id: &ArtifactId) -> String {
+    format!("{:?} {}", id.class, id.local_id)
+}
+
+fn print_verification(r: &IntegrityReport) {
+    const LIMIT: usize = 10;
+    let provider = &r.context.provider;
+    println!(
+        "{}: {:?} (state: {})",
+        provider.kind,
+        r.verification_status,
+        provider.state_root.display()
+    );
+    println!("  verification: {:?}", r.verification_status);
+    println!(
+        "  compatibility: {:?} — {}",
+        provider.compatibility.status, provider.compatibility.reason
+    );
+    println!(
+        "  evidence: {:?}; discovery evidence: {:?}",
+        provider.evidence_status, r.context.evidence_status
+    );
+    println!(
+        "  declared discovery boundary: {:?} — {}",
+        r.context.completeness, r.context.coverage
+    );
+    match &r.proof_context.contract {
+        Some(contract) => println!(
+            "  proof contract: {} (provider {}, adapter {}, coherent: {})",
+            contract.id, contract.provider_version, contract.adapter_version, contract.coherent
+        ),
+        None => println!("  proof contract: absent"),
+    }
+    println!(
+        "  declared proof coverage: {} node namespaces, {} relationship namespaces; {} required targets, {} required owners",
+        r.proof_context.node_coverage.len(),
+        r.proof_context.relationship_coverage.len(),
+        r.proof_context.required_targets.len(),
+        r.proof_context.required_owners.len()
+    );
+    println!("  findings: {}", r.findings.len());
+    for finding in r.findings.iter().take(LIMIT) {
+        println!(
+            "    {:?}: {:?}, {:?} — {}",
+            finding.kind, finding.severity, finding.disposition, finding.explanation
+        );
+        for id in finding.affected.iter().take(LIMIT) {
+            println!("      affected: {}", print_id(id));
+        }
+        if finding.affected.len() > LIMIT {
+            println!(
+                "      ... {} more affected entities",
+                finding.affected.len() - LIMIT
+            );
+        }
+        for evidence in finding.evidence.iter().take(LIMIT) {
+            let e = &evidence.evidence;
+            let description = r
+                .rules
+                .iter()
+                .find(|rule| rule.id == e.rule_id)
+                .map(|rule| rule.description.as_str())
+                .unwrap_or("rule description unavailable");
+            println!(
+                "      rule {} ({description}); source {:?}; confidence {:?} raw / {:?} effective",
+                e.rule_id, e.observation.source, e.observation.confidence, evidence.confidence
+            );
+        }
+        if finding.evidence.len() > LIMIT {
+            println!(
+                "      ... {} more evidence records",
+                finding.evidence.len() - LIMIT
+            );
+        }
+    }
+    if r.findings.len() > LIMIT {
+        println!("    ... {} more findings", r.findings.len() - LIMIT);
+    }
+    let mut groups: BTreeMap<String, (usize, Vec<String>)> = BTreeMap::new();
+    for blocker in &r.blockers {
+        let group = groups.entry(format!("{:?}", blocker.code)).or_default();
+        group.0 += 1;
+        for sample in blocker.affected.iter().map(print_id).chain(
+            blocker
+                .evidence
+                .iter()
+                .filter_map(|e| e.evidence.locator.as_ref().map(|p| p.display().to_string())),
+        ) {
+            if group.1.len() < 3 && !group.1.contains(&sample) {
+                group.1.push(sample);
+            }
+        }
+    }
+    println!("  blockers: {}", r.blockers.len());
+    for (code, (count, samples)) in groups {
+        println!(
+            "    {code}: {count}{}",
+            if samples.is_empty() {
+                String::new()
+            } else {
+                format!(" (examples: {})", samples.join(", "))
+            }
+        );
+    }
+    println!("  residuals: {}", r.residuals.len());
+    for residual in r.residuals.iter().take(LIMIT) {
+        println!(
+            "    {:?}: {} — {}",
+            residual.classification,
+            print_id(&residual.artifact),
+            residual.explanation
+        );
+    }
+    if r.residuals.len() > LIMIT {
+        println!("    ... {} more residuals", r.residuals.len() - LIMIT);
+    }
+    println!(
+        "  diagnostics: {} graph, {} discovery, {} provider",
+        r.graph_diagnostics.len(),
+        r.context.diagnostics.len(),
+        provider.diagnostics.len()
+    );
+    println!("  Use --json for the complete report and evidence.");
 }
 fn run(args: Args) -> Result<bool, CliError> {
     if args.desktop_fixture && !matches!(args.provider, Some(SelectedProvider::Claude)) {
@@ -398,6 +523,33 @@ fn run(args: Args) -> Result<bool, CliError> {
                     for diagnostic in &graph.context().diagnostics {
                         eprintln!("  {:?}: {}", diagnostic.code, diagnostic.message);
                     }
+                }
+                for failure in &report.failures {
+                    eprintln!(
+                        "{}: {:?}: {}",
+                        failure.provider, failure.code, failure.message
+                    );
+                }
+            }
+            Ok(incomplete)
+        }
+        Action::Verify => {
+            let report = service.verify(&scope)?;
+            let incomplete = !report.failures.is_empty()
+                || report.reports.is_empty()
+                || report.reports.iter().any(|r| {
+                    !matches!(
+                        r.verification_status,
+                        VerificationStatus::Healthy
+                            | VerificationStatus::HealthyWithExpectedResiduals
+                    )
+                });
+            if args.json {
+                emit(mode, &report)?;
+            } else {
+                println!("Mode: {mode}");
+                for r in &report.reports {
+                    print_verification(r);
                 }
                 for failure in &report.failures {
                     eprintln!(

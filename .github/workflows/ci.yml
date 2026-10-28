@@ -16,4 +16,5 @@ jobs:
       - run: cargo +stable fmt --check
       - run: cargo +stable clippy --locked --workspace --all-targets -- -D warnings
       - run: cargo +stable test --locked --workspace
+      - run: cargo +stable build --locked --workspace
       - run: python3 scripts/check_architecture.py

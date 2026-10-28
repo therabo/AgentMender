@@ -7,8 +7,8 @@ mod macos_sandbox;
 pub mod process;
 
 use agentmender_domain::{
-    ArtifactGraph, DiscoveryScope, DiscoverySnapshot, GraphError, Provider, ProviderKind,
-    observed_path_is_absolute,
+    ArtifactGraph, DiscoveryScope, DiscoverySnapshot, GraphError, IntegrityContext, Provider,
+    ProviderKind, observed_path_is_absolute,
 };
 use std::path::PathBuf;
 use thiserror::Error;
@@ -49,6 +49,11 @@ pub trait ProviderAdapter {
         Err(ProviderError::CapabilityUnavailable(
             "evidence graph interpretation unavailable".into(),
         ))
+    }
+    /// Pure interpretation of the existing graph; no I/O or clock sampling is permitted.
+    /// Current production adapters have no closed integrity proof contracts.
+    fn integrity_context(&self, _: &ArtifactGraph) -> Result<IntegrityContext, ProviderError> {
+        Ok(IntegrityContext::default())
     }
 }
 

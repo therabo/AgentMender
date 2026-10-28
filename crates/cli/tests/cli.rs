@@ -300,3 +300,87 @@ fn unknown_version_artifact_remains_protected() {
             .any(|r| r["kind"] == "unknown_state")
     );
 }
+
+#[test]
+fn verify_reports_unknown_and_partial_proof_boundaries() {
+    let home = tempfile::tempdir().unwrap();
+    for (provider, fixture, desktop) in [
+        ("codex", "../../fixtures/codex/unknown", false),
+        ("codex", "../../fixtures/codex/partial", false),
+        ("claude", "../../fixtures/claude/4.29.0-observed", true),
+    ] {
+        let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join(fixture);
+        let mut args = vec![
+            "--json",
+            "--provider",
+            provider,
+            "--fixture",
+            fixture.to_str().unwrap(),
+        ];
+        if desktop {
+            args.push("--desktop-fixture");
+        }
+        args.push("verify");
+        let output = run(home.path(), &args);
+        assert_eq!(output.status.code(), Some(2));
+        let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        let report = &value["report"]["reports"][0];
+        assert_eq!(report["context"]["completeness"], "partial");
+        assert!(matches!(
+            report["verification_status"].as_str(),
+            Some("unknown" | "degraded")
+        ));
+        assert!(report["proof_context"]["contract"].is_null());
+        assert!(
+            report["blockers"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|b| b["code"] == "missing_integrity_contract")
+        );
+        assert!(report["residuals"].as_array().unwrap().is_empty());
+        assert!(value["report"]["failures"].as_array().unwrap().is_empty());
+    }
+}
+
+#[test]
+fn scoped_verify_is_unknown_and_invalid_scope_is_structured() {
+    let home = tempfile::tempdir().unwrap();
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/codex/known");
+    let prefix = [
+        "--json",
+        "--provider",
+        "codex",
+        "--fixture",
+        fixture.to_str().unwrap(),
+    ];
+    let mut args = prefix.to_vec();
+    args.extend([
+        "--project",
+        "/example/project",
+        "--active-only",
+        "--max-entries",
+        "1",
+        "verify",
+    ]);
+    let output = run(home.path(), &args);
+    assert_eq!(output.status.code(), Some(2));
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let report = &value["report"]["reports"][0];
+    assert!(matches!(
+        report["verification_status"].as_str(),
+        Some("unknown" | "degraded")
+    ));
+    assert!(report["proof_context"]["contract"].is_null());
+    for invalid in [
+        vec!["--max-entries", "0", "verify"],
+        vec!["--project", "relative", "verify"],
+    ] {
+        let mut args = prefix.to_vec();
+        args.extend(invalid);
+        let output = run(home.path(), &args);
+        assert_eq!(output.status.code(), Some(2));
+        let error: serde_json::Value = serde_json::from_slice(&output.stderr).unwrap();
+        assert_eq!(error["code"], "invalid_arguments");
+    }
+}

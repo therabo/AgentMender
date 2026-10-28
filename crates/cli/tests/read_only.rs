@@ -137,6 +137,26 @@ fn fixture_scans_are_read_only_and_report_limits() {
         }
         no_secret(&graph_output);
         no_secret(&output);
+        args.truncate(if desktop { 6 } else { 5 });
+        args.push("verify");
+        let verify = run(home.path(), &args);
+        assert_eq!(verify.status.code(), Some(2));
+        let value = json(&verify);
+        let integrity = &value["report"]["reports"][0];
+        assert_eq!(integrity["context"]["provider"]["kind"], provider);
+        assert!(
+            integrity["blockers"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|b| b["code"] == "missing_integrity_contract")
+        );
+        no_secret(&verify);
+        args.remove(0);
+        let text = run(home.path(), &args);
+        assert_eq!(text.status.code(), Some(2));
+        assert!(String::from_utf8_lossy(&text.stdout).contains("verification:"));
+        no_secret(&text);
         assert_eq!(
             manifest(&root),
             before,
@@ -191,6 +211,29 @@ fn live_unknown_state_is_metadata_only_and_unmodified() {
                 .any(|a| a["locator"].as_str().unwrap().ends_with("arbitrary.json"))
         );
         no_secret(&output);
+        for json_output in [true, false] {
+            let mut args = vec![
+                "--provider",
+                provider,
+                flag,
+                root.path().to_str().unwrap(),
+                "verify",
+            ];
+            if json_output {
+                args.insert(0, "--json");
+            }
+            let verify = run(home.path(), &args);
+            assert_eq!(verify.status.code(), Some(2));
+            if json_output {
+                let report = json(&verify);
+                let integrity = &report["report"]["reports"][0];
+                assert_eq!(integrity["verification_status"], "unknown");
+                assert_eq!(integrity["context"]["completeness"], "partial");
+            } else {
+                assert!(String::from_utf8_lossy(&verify.stdout).contains("verification: Unknown"));
+            }
+            no_secret(&verify);
+        }
     }
     assert_eq!(manifest(root.path()), before);
 }

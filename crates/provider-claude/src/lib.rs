@@ -1888,3 +1888,6 @@ mod desktop_tests {
         );
     }
 }
+
+#[cfg(test)]
+mod integrity_tests;

@@ -100,6 +100,10 @@ def main():
     if snapshot["sessions"]:
         _, inspection = query(["inspect", snapshot["sessions"][0]["id"]])
         inspected = inspection["entity"]["kind"] == "session"
+    verify_exit, verification = query(["verify"])
+    if verification["failures"] or len(verification["reports"]) != 1:
+        raise ValueError("integrity inspection returned a structured provider failure")
+    integrity = verification["reports"][0]
     after = fingerprint(args)
     changed = sum(before.get(key) != after.get(key) for key in before.keys() | after.keys())
     provider = providers["providers"][0]
@@ -117,6 +121,14 @@ def main():
         "workspaces": len(snapshot["workspaces"]), "projects": len(snapshot["projects"]),
         "sessions": len(snapshot["sessions"]), "artifacts": len(snapshot["artifacts"]),
         "references": len(snapshot["references"]), "inspect_succeeded": inspected,
+        "verify_exit": verify_exit,
+        "verification_status": integrity["verification_status"],
+        "verification_evidence": integrity["context"]["evidence_status"],
+        "verification_diagnostics": sorted({item["code"] for item in integrity["context"]["diagnostics"]}),
+        "integrity_findings": len(integrity["findings"]),
+        "integrity_blockers": len(integrity["blockers"]),
+        "integrity_blocker_codes": sorted({item["code"] for item in integrity["blockers"]}),
+        "residuals": len(integrity["residuals"]),
         "diagnostics": sorted({item["code"] for item in snapshot["diagnostics"]}),
         "coverage": snapshot["coverage"],
         "fingerprinted_entries": len(before), "changed_entries": changed,

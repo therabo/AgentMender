@@ -59,6 +59,12 @@ pub struct GraphReport {
     pub failures: Vec<ProviderFailure>,
 }
 
+#[derive(Debug, Default, Serialize)]
+pub struct VerificationReport {
+    pub reports: Vec<IntegrityReport>,
+    pub failures: Vec<ProviderFailure>,
+}
+
 #[derive(Debug, Serialize)]
 pub struct GraphExplainReport {
     pub explanation: NodeExplanation,
@@ -143,6 +149,37 @@ impl<'a> DiscoveryService<'a> {
                 graph.context().provider.kind,
                 graph.context().provider.state_root.clone(),
                 serde_json::to_string(graph).expect("validated graph serializes"),
+            )
+        });
+        report.failures.sort_by(|a, b| {
+            (a.provider, format!("{:?}", a.code), &a.message).cmp(&(
+                b.provider,
+                format!("{:?}", b.code),
+                &b.message,
+            ))
+        });
+        Ok(report)
+    }
+
+    pub fn verify(&self, scope: &DiscoveryScope) -> Result<VerificationReport, ApplicationError> {
+        validate_scope(scope)?;
+        let mut report = VerificationReport::default();
+        for adapter in &self.adapters {
+            let result = adapter.discover(scope).and_then(|snapshot| {
+                let graph = adapter.build_graph(&snapshot)?;
+                let context = adapter.integrity_context(&graph)?;
+                Ok(evaluate_integrity(&graph, &context))
+            });
+            match result {
+                Ok(integrity) => report.reports.push(integrity),
+                Err(error) => report.failures.push(failure(adapter.kind(), error)),
+            }
+        }
+        report.reports.sort_by_cached_key(|r| {
+            (
+                r.context.provider.kind,
+                r.context.provider.state_root.clone(),
+                serde_json::to_string(r).expect("integrity report serializes"),
             )
         });
         report.failures.sort_by(|a, b| {
@@ -350,6 +387,68 @@ mod tests {
         assert_eq!(failing.calls.get(), 1);
         assert_eq!(report.graphs[0].context().coverage, "discovery 1");
         assert_eq!(report.failures[0].code, DiagnosticCode::IncompleteDiscovery);
+    }
+    #[test]
+    fn verify_discovers_once_and_preserves_context_failures() {
+        struct ContextFailure(GraphAdapter);
+        impl ProviderAdapter for ContextFailure {
+            fn kind(&self) -> ProviderKind {
+                self.0.kind()
+            }
+            fn detect(&self) -> Result<Provider, ProviderError> {
+                self.0.detect()
+            }
+            fn discover(&self, scope: &DiscoveryScope) -> Result<DiscoverySnapshot, ProviderError> {
+                self.0.discover(scope)
+            }
+            fn build_graph(
+                &self,
+                snapshot: &DiscoverySnapshot,
+            ) -> Result<ArtifactGraph, ProviderError> {
+                self.0.build_graph(snapshot)
+            }
+            fn integrity_context(
+                &self,
+                _: &ArtifactGraph,
+            ) -> Result<IntegrityContext, ProviderError> {
+                Err(ProviderError::CapabilityUnavailable(
+                    "context failure".into(),
+                ))
+            }
+        }
+        let adapter = GraphAdapter {
+            calls: std::cell::Cell::new(0),
+            completeness: Completeness::Complete,
+            fail_build: false,
+        };
+        let failing = ContextFailure(GraphAdapter {
+            calls: std::cell::Cell::new(0),
+            completeness: Completeness::Complete,
+            fail_build: false,
+        });
+        let report = DiscoveryService::new(vec![&adapter, &failing, &FailingAdapter])
+            .verify(&DiscoveryScope::default())
+            .unwrap();
+        assert_eq!(adapter.calls.get(), 1);
+        assert_eq!(failing.0.calls.get(), 1);
+        assert_eq!(report.reports.len(), 1);
+        assert_eq!(
+            report.reports[0].verification_status,
+            VerificationStatus::Unknown
+        );
+        assert!(
+            report.reports[0]
+                .blockers
+                .iter()
+                .any(|b| b.code == IntegrityBlockerCode::MissingIntegrityContract)
+        );
+        assert_eq!(report.failures.len(), 2);
+        assert!(
+            report
+                .failures
+                .iter()
+                .any(|f| f.message.contains("context failure"))
+        );
     }
     #[test]
     fn explain_rejects_ambiguity_and_partial_absence() {
