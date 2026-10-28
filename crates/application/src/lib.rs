@@ -66,6 +66,13 @@ pub struct VerificationReport {
 }
 
 #[derive(Debug, Serialize)]
+pub struct PlanningReport {
+    pub plan: LifecyclePlan,
+    pub contexts: Vec<GraphContext>,
+    pub failures: Vec<ProviderFailure>,
+}
+
+#[derive(Debug, Serialize)]
 pub struct GraphExplainReport {
     pub explanation: NodeExplanation,
     /// Canonical rule descriptors, including conflicting definitions if present.
@@ -190,6 +197,112 @@ impl<'a> DiscoveryService<'a> {
             ))
         });
         Ok(report)
+    }
+
+    /// Plan from exactly one discovery per adapter, preserving all graph contexts.
+    pub fn plan(
+        &self,
+        id: &EntityId,
+        intent: LifecycleIntent,
+        scope: &DiscoveryScope,
+    ) -> Result<PlanningReport, ApplicationError> {
+        validate_scope(scope)?;
+        let mut graphs = Vec::new();
+        let mut failures = Vec::new();
+        for adapter in &self.adapters {
+            let graph = match adapter
+                .discover(scope)
+                .and_then(|snapshot| adapter.build_graph(&snapshot))
+            {
+                Ok(graph) => graph,
+                Err(error) => {
+                    failures.push(failure(adapter.kind(), error));
+                    continue;
+                }
+            };
+            let inputs = adapter.integrity_context(&graph).and_then(|context| {
+                let integrity = evaluate_integrity(&graph, &context);
+                let planning = adapter.planning_context(&graph, scope)?;
+                if planning.scope != *scope {
+                    return Err(ProviderError::InvalidScope(
+                        "planning context does not match discovery scope".into(),
+                    ));
+                }
+                Ok((integrity, planning))
+            });
+            let inputs = match inputs {
+                Ok(inputs) => Some(inputs),
+                Err(ProviderError::InvalidScope(reason)) => {
+                    return Err(ProviderError::InvalidScope(reason).into());
+                }
+                Err(error) => {
+                    failures.push(failure(adapter.kind(), error));
+                    None
+                }
+            };
+            graphs.push((graph, inputs));
+        }
+        graphs.sort_by_cached_key(|(graph, _)| {
+            (
+                graph.context().provider.kind,
+                graph.context().provider.state_root.clone(),
+                serde_json::to_string(graph).expect("validated graph serializes"),
+            )
+        });
+        failures.sort_by(|a, b| {
+            (a.provider, format!("{:?}", a.code), &a.message).cmp(&(
+                b.provider,
+                format!("{:?}", b.code),
+                &b.message,
+            ))
+        });
+        let unavailable = !failures.is_empty()
+            || graphs
+                .iter()
+                .any(|(g, _)| g.context().completeness != Completeness::Complete);
+        let matches: Vec<_> = graphs
+            .iter()
+            .flat_map(|(g, inputs)| {
+                g.nodes()
+                    .iter()
+                    .filter(move |node| &node.id.local_id == id)
+                    .map(move |node| (g, inputs, &node.id))
+            })
+            .collect();
+        if matches.len() > 1 {
+            return Err(ApplicationError::AmbiguousEntity(id.clone()));
+        }
+        if let Some((graph, inputs, target)) = matches.first() {
+            if !failures.is_empty()
+                || graphs.iter().any(|(other, _)| {
+                    !std::ptr::eq(other, *graph)
+                        && other.context().completeness != Completeness::Complete
+                })
+            {
+                return Err(ApplicationError::InspectionUnavailable(id.clone()));
+            }
+            let Some((integrity, planning)) = inputs else {
+                return Err(ApplicationError::InspectionUnavailable(id.clone()));
+            };
+            let plan = plan_lifecycle(
+                graph,
+                integrity,
+                planning,
+                LifecycleRequest {
+                    target: (*target).clone(),
+                    intent,
+                },
+            );
+            Ok(PlanningReport {
+                plan,
+                contexts: graphs.iter().map(|(g, _)| g.context().clone()).collect(),
+                failures,
+            })
+        } else if unavailable {
+            Err(ApplicationError::InspectionUnavailable(id.clone()))
+        } else {
+            Err(ApplicationError::UnknownEntity(id.clone()))
+        }
     }
 
     pub fn explain(
@@ -478,6 +591,206 @@ mod tests {
             ),
             Err(ApplicationError::AmbiguousEntity(_))
         ));
+    }
+    #[test]
+    fn known_native_capability_stays_blocked_without_integrity_proof() {
+        struct KnownAdapter(GraphAdapter);
+        impl ProviderAdapter for KnownAdapter {
+            fn kind(&self) -> ProviderKind {
+                self.0.kind()
+            }
+            fn detect(&self) -> Result<Provider, ProviderError> {
+                self.0.detect()
+            }
+            fn discover(&self, scope: &DiscoveryScope) -> Result<DiscoverySnapshot, ProviderError> {
+                self.0.discover(scope)
+            }
+            fn build_graph(
+                &self,
+                snapshot: &DiscoverySnapshot,
+            ) -> Result<ArtifactGraph, ProviderError> {
+                self.0.build_graph(snapshot)
+            }
+            fn planning_context(
+                &self,
+                graph: &ArtifactGraph,
+                scope: &DiscoveryScope,
+            ) -> Result<PlanningContext, ProviderError> {
+                Ok(PlanningContext {
+                    scope: scope.clone(),
+                    capabilities: vec![LifecycleCapability {
+                        provider: self.kind(),
+                        fingerprint: graph.context().provider.fingerprint.clone(),
+                        operation: NativeLifecycleOperation::ArchiveSession,
+                        protocol_evidence_digest: format!("sha256:{}", "0".repeat(64)),
+                        effect_scope: NativeEffectScope::TargetOnly,
+                    }],
+                    effects: None,
+                })
+            }
+        }
+        let adapter = KnownAdapter(GraphAdapter {
+            calls: std::cell::Cell::new(0),
+            completeness: Completeness::Complete,
+            fail_build: false,
+        });
+        let report = DiscoveryService::new(vec![&adapter])
+            .plan(
+                &EntityId::new("provider-state").unwrap(),
+                LifecycleIntent::Archive,
+                &DiscoveryScope::default(),
+            )
+            .unwrap();
+        assert_eq!(adapter.0.calls.get(), 1);
+        assert_eq!(report.plan.content().status, PlanStatus::Blocked);
+        assert!(
+            report
+                .plan
+                .content()
+                .blockers
+                .contains(&PlanBlocker::IntegrityUnverified)
+        );
+        assert!(report.plan.content().operations.is_empty());
+    }
+    #[test]
+    fn planning_discovers_once_and_resolves_identity_conservatively() {
+        let adapter = GraphAdapter {
+            calls: std::cell::Cell::new(0),
+            completeness: Completeness::Complete,
+            fail_build: false,
+        };
+        let id = EntityId::new("provider-state").unwrap();
+        assert!(matches!(
+            DiscoveryService::new(vec![&adapter, &FailingAdapter]).plan(
+                &id,
+                LifecycleIntent::Archive,
+                &DiscoveryScope::default()
+            ),
+            Err(ApplicationError::InspectionUnavailable(_))
+        ));
+        assert_eq!(adapter.calls.get(), 1);
+        let report = DiscoveryService::new(vec![&adapter])
+            .plan(&id, LifecycleIntent::Archive, &DiscoveryScope::default())
+            .unwrap();
+        assert_eq!(report.plan.content().request.target.local_id, id);
+        struct EmptyPartial(GraphAdapter);
+        impl ProviderAdapter for EmptyPartial {
+            fn kind(&self) -> ProviderKind {
+                self.0.kind()
+            }
+            fn detect(&self) -> Result<Provider, ProviderError> {
+                self.0.detect()
+            }
+            fn discover(&self, scope: &DiscoveryScope) -> Result<DiscoverySnapshot, ProviderError> {
+                self.0.discover(scope)
+            }
+            fn build_graph(
+                &self,
+                snapshot: &DiscoverySnapshot,
+            ) -> Result<ArtifactGraph, ProviderError> {
+                Ok(ArtifactGraph::builder(snapshot.into()).finish()?)
+            }
+        }
+        let partial = EmptyPartial(GraphAdapter {
+            calls: std::cell::Cell::new(0),
+            completeness: Completeness::Partial,
+            fail_build: false,
+        });
+        assert!(matches!(
+            DiscoveryService::new(vec![&adapter, &partial]).plan(
+                &id,
+                LifecycleIntent::Archive,
+                &DiscoveryScope::default()
+            ),
+            Err(ApplicationError::InspectionUnavailable(_))
+        ));
+        assert_eq!(partial.0.calls.get(), 1);
+        let selected_partial = GraphAdapter {
+            calls: std::cell::Cell::new(0),
+            completeness: Completeness::Partial,
+            fail_build: false,
+        };
+        assert!(
+            DiscoveryService::new(vec![&selected_partial])
+                .plan(&id, LifecycleIntent::Archive, &DiscoveryScope::default())
+                .is_ok()
+        );
+        let missing = EntityId::new("missing").unwrap();
+        assert!(matches!(
+            DiscoveryService::new(vec![&adapter]).plan(
+                &missing,
+                LifecycleIntent::Archive,
+                &DiscoveryScope::default()
+            ),
+            Err(ApplicationError::UnknownEntity(_))
+        ));
+        assert!(matches!(
+            DiscoveryService::new(vec![&adapter, &FailingAdapter]).plan(
+                &missing,
+                LifecycleIntent::Archive,
+                &DiscoveryScope::default()
+            ),
+            Err(ApplicationError::InspectionUnavailable(_))
+        ));
+        let second = GraphAdapter {
+            calls: std::cell::Cell::new(0),
+            completeness: Completeness::Complete,
+            fail_build: false,
+        };
+        assert!(matches!(
+            DiscoveryService::new(vec![&adapter, &second]).plan(
+                &id,
+                LifecycleIntent::Archive,
+                &DiscoveryScope::default()
+            ),
+            Err(ApplicationError::AmbiguousEntity(_))
+        ));
+    }
+    #[test]
+    fn planning_rejects_adapter_context_with_different_scope() {
+        struct WrongScope(GraphAdapter);
+        impl ProviderAdapter for WrongScope {
+            fn kind(&self) -> ProviderKind {
+                self.0.kind()
+            }
+            fn detect(&self) -> Result<Provider, ProviderError> {
+                self.0.detect()
+            }
+            fn discover(&self, scope: &DiscoveryScope) -> Result<DiscoverySnapshot, ProviderError> {
+                self.0.discover(scope)
+            }
+            fn build_graph(
+                &self,
+                snapshot: &DiscoverySnapshot,
+            ) -> Result<ArtifactGraph, ProviderError> {
+                self.0.build_graph(snapshot)
+            }
+            fn planning_context(
+                &self,
+                _: &ArtifactGraph,
+                _: &DiscoveryScope,
+            ) -> Result<PlanningContext, ProviderError> {
+                Ok(PlanningContext::default())
+            }
+        }
+        let adapter = WrongScope(GraphAdapter {
+            calls: std::cell::Cell::new(0),
+            completeness: Completeness::Complete,
+            fail_build: false,
+        });
+        let scope = DiscoveryScope {
+            include_archived: false,
+            ..Default::default()
+        };
+        assert!(matches!(
+            DiscoveryService::new(vec![&adapter]).plan(
+                &EntityId::new("provider-state").unwrap(),
+                LifecycleIntent::Archive,
+                &scope
+            ),
+            Err(ApplicationError::Provider(ProviderError::InvalidScope(_)))
+        ));
+        assert_eq!(adapter.0.calls.get(), 1);
     }
     #[test]
     fn failures_remain_structured_and_visible() {

@@ -58,6 +58,8 @@ fn fixture_scans_are_read_only_and_report_limits() {
     let home = tempfile::tempdir().unwrap();
     for (provider, dir, expected_diagnostic, desktop) in [
         ("codex", "known", None, false),
+        ("codex", "duplicate", None, false),
+        ("codex", "observed-snapshot-0.165.0-alpha.1.2", None, false),
         ("codex", "observed-snapshot", None, false),
         ("codex", "unknown", Some("provider_version_unknown"), false),
         (
@@ -112,6 +114,21 @@ fn fixture_scans_are_read_only_and_report_limits() {
             let inspect = run(home.path(), &args);
             assert_eq!(json(&inspect)["report"]["entity"]["entity"]["id"], id);
             no_secret(&inspect);
+            args.pop();
+            args.pop();
+            args.extend(["plan", "archive", id]);
+            let planned = run(home.path(), &args);
+            assert_eq!(planned.status.code(), Some(2));
+            assert_eq!(json(&planned)["mode"], "planning_only");
+            no_secret(&planned);
+            args.remove(0);
+            let text_plan = run(home.path(), &args);
+            assert_eq!(text_plan.status.code(), Some(2));
+            assert!(
+                String::from_utf8_lossy(&text_plan.stdout).contains("Execution: NOT PERFORMED")
+            );
+            no_secret(&text_plan);
+            args.insert(0, "--json");
         }
         args.truncate(if desktop { 6 } else { 5 });
         args.push("graph");

@@ -3,8 +3,8 @@
 Provider-aware, strictly read-only inventory, evidence graph and integrity reports
 of AI coding-agent state. M0/M1 and the Codex compatibility refresh retain accurately
 reported **partial coverage**. M2 adds graph reconstruction and explanations. M3 adds
-a pure integrity evaluator and `verify`; lifecycle mutation, plans, approvals,
-repair and recovery remain out of scope.
+a pure integrity evaluator and `verify`. M4 adds immutable lifecycle intentions;
+execution, approvals, repair and recovery remain out of scope.
 
 ```sh
 cargo run -- providers --json
@@ -15,6 +15,7 @@ cargo run -- --provider codex --fixture fixtures/codex/observed-snapshot scan --
 cargo run -- --provider codex --fixture fixtures/codex/observed-snapshot-0.165.0-alpha.1.2 graph --json
 cargo run -- --provider codex --fixture fixtures/codex/observed-snapshot-0.165.0-alpha.1.2 verify --json
 cargo run -- --provider claude --fixture fixtures/claude/4.29.0-observed --desktop-fixture verify
+cargo run -- --provider codex --fixture fixtures/codex/observed-snapshot-0.165.0-alpha.1.2 plan archive codex:session:019a0000-0000-7000-8000-000000000001 --json
 cargo run -- --provider codex --fixture fixtures/codex/observed-snapshot-0.165.0-alpha.1.2 explain codex:session:019a0000-0000-7000-8000-000000000001 --json
 ```
 
@@ -94,6 +95,21 @@ owners; Partial relevant coverage removes negative proof. No finding or residual
 classification means removable. See [integrity semantics and support](docs/integrity.md)
 and [ADR-0008](docs/adr/0008-read-only-integrity-proofs.md).
 
+## Immutable lifecycle intentions
+
+`plan <intent> <id>` accepts archive, unarchive, soft-delete, purge or repair and
+resolves an observed identity inside the selected provider inventory. JSON uses
+`mode: planning_only`. Blocked/Unsupported plans return exit 2 with structured
+reasons; only Ready returns 0. A plan is not authorization; Ready is not approved.
+No operation is executed.
+
+Plans bind exact provider/state/evidence, typed scope, recomputed M3 integrity,
+native capability and exhaustive effects assumptions using SHA-256. All current
+real/sanitized provider requests remain blocked or unsupported because effects,
+ownership or integrity are unproven. Claude session purge remains unsupported.
+Current physical reclaim estimates are unknown. See [planning semantics](docs/planning.md)
+and [ADR-0009](docs/adr/0009-immutable-evidence-bound-planning.md).
+
 ## Roots and scope
 
 CLI state roots default to CODEX_HOME / CLAUDE_CONFIG_DIR, otherwise
@@ -112,10 +128,10 @@ strings; non-UTF-8 paths use a lossless native encoding object.
 ## Safety boundary
 
 The application never writes real provider state. Read-only ports expose only
-kind/detect/discover, pure snapshot-to-graph construction and pure integrity-context
+kind/detect/discover, pure snapshot-to-graph construction and pure integrity/planning-context
 interpretation. All artifacts remain
 protected, and paths do not prove ownership.
-No arbitrary SQL, provider command, archive/delete/purge/repair or approval tool
+No arbitrary SQL, provider command, archive/delete/purge/repair execution or approval tool
 exists. Codex uses a consistent SQLite Backup API snapshot, scrubs content in RAM
 before persisting a private disposable copy, and runs official thread/list there.
 Real state remains write-denied. The native process cannot read real-home file

@@ -24,6 +24,13 @@ and network denial. They test safe fallback, not the nominal disposable-mirror
 path: nested/global sandbox restrictions can prevent provider initialization.
 They are not used to claim M1 discovery support.
 
+M4 planning properties use 256 cases each and fixed seed `0x4d345f706c616e73`,
+with a stored capability-conflict regression. Run
+`cargo test --locked -p agentmender-domain --test planning_properties`.
+Ready tests use explicit synthetic native effects/identity/integrity contracts;
+no current provider fixture is promoted to complete or exclusive. Byte manifests
+cover planning text/JSON, including duplicate and exact V165 Codex fixtures.
+
 Production-path live verification is explicit and separate:
 
 ```sh

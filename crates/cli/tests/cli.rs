@@ -384,3 +384,151 @@ fn scoped_verify_is_unknown_and_invalid_scope_is_structured() {
         assert_eq!(error["code"], "invalid_arguments");
     }
 }
+
+#[test]
+fn planning_reports_intention_and_rejects_invalid_targets() {
+    let home = tempfile::tempdir().unwrap();
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/codex/observed-snapshot-0.165.0-alpha.1.2");
+    let prefix = [
+        "--json",
+        "--provider",
+        "codex",
+        "--fixture",
+        fixture.to_str().unwrap(),
+    ];
+    let mut args = prefix.to_vec();
+    args.push("scan");
+    let scan = run(home.path(), &args);
+    let value: serde_json::Value = serde_json::from_slice(&scan.stdout).unwrap();
+    let id = value["report"]["snapshots"][0]["sessions"][0]["id"]
+        .as_str()
+        .unwrap();
+    let mut args = prefix.to_vec();
+    args.extend(["plan", "archive", id]);
+    let output = run(home.path(), &args);
+    assert_eq!(output.status.code(), Some(2));
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["mode"], "planning_only");
+    let plan = &value["report"]["plan"];
+    assert_eq!(plan["content"]["status"], "unsupported");
+    assert!(
+        plan["content"]["blockers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|b| b == "integrity_unverified")
+    );
+    assert!(plan["content"]["operations"].as_array().unwrap().is_empty());
+    assert!(plan["digest"].as_str().unwrap().starts_with("sha256:"));
+    args.remove(0);
+    let output = run(home.path(), &args);
+    let text = String::from_utf8(output.stdout).unwrap();
+    for fact in [
+        "Target:",
+        "Intent:",
+        "Digest:",
+        "State fingerprint:",
+        "Native capability:",
+        "Blockers:",
+        "Preconditions:",
+        "Postconditions:",
+        "Space:",
+        "Execution: NOT PERFORMED",
+    ] {
+        assert!(text.contains(fact), "missing {fact}");
+    }
+    for tail in [
+        vec!["plan", "invalid", id],
+        vec!["plan", "archive", ""],
+        vec!["execute"],
+        vec!["approve"],
+    ] {
+        let mut args = prefix.to_vec();
+        args.extend(tail);
+        let output = run(home.path(), &args);
+        assert_eq!(output.status.code(), Some(2));
+        assert!(output.stdout.is_empty());
+    }
+}
+
+#[test]
+fn claude_purge_is_unsupported_and_unknown_version_remains_protected() {
+    let home = tempfile::tempdir().unwrap();
+    for (provider, fixture, target, expected) in [
+        (
+            "claude",
+            "../../fixtures/claude/2.1.311-synthetic",
+            None,
+            "unsupported",
+        ),
+        (
+            "codex",
+            "../../fixtures/codex/unknown",
+            Some("codex:artifact:manifest.json"),
+            "blocked",
+        ),
+    ] {
+        let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join(fixture);
+        let prefix = [
+            "--json",
+            "--provider",
+            provider,
+            "--fixture",
+            fixture.to_str().unwrap(),
+        ];
+        let id = if let Some(target) = target {
+            target.to_string()
+        } else {
+            let mut args = prefix.to_vec();
+            args.push("scan");
+            let scan = run(home.path(), &args);
+            let value: serde_json::Value = serde_json::from_slice(&scan.stdout).unwrap();
+            value["report"]["snapshots"][0]["sessions"][0]["id"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        };
+        let mut args = prefix.to_vec();
+        args.extend(["plan", "purge", &id]);
+        let output = run(home.path(), &args);
+        assert_eq!(output.status.code(), Some(2));
+        let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(value["report"]["plan"]["content"]["status"], expected);
+        assert!(
+            !value["report"]["plan"]["content"]["blockers"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
+    }
+}
+
+#[test]
+fn plan_rejects_ambiguous_ids_and_incomplete_absence() {
+    let home = tempfile::tempdir().unwrap();
+    let ambiguous = run(
+        home.path(),
+        &["--json", "plan", "archive", "provider-state"],
+    );
+    assert_eq!(ambiguous.status.code(), Some(2));
+    let error: serde_json::Value = serde_json::from_slice(&ambiguous.stderr).unwrap();
+    assert_eq!(error["code"], "ambiguous_entity");
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/codex/partial");
+    let missing = run(
+        home.path(),
+        &[
+            "--json",
+            "--provider",
+            "codex",
+            "--fixture",
+            fixture.to_str().unwrap(),
+            "plan",
+            "archive",
+            "absent",
+        ],
+    );
+    assert_eq!(missing.status.code(), Some(2));
+    let error: serde_json::Value = serde_json::from_slice(&missing.stderr).unwrap();
+    assert_eq!(error["code"], "inspection_unavailable");
+}

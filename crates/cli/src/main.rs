@@ -3,7 +3,8 @@ use std::{collections::BTreeMap, env, path::PathBuf, process::ExitCode};
 use agentmender_application::{ApplicationError, DiscoveryService, InspectedEntity};
 use agentmender_domain::{
     ArtifactId, CompatibilityStatus, Completeness, DiscoveryScope, EntityId, IntegrityReport,
-    Presence, Provider, ProviderKind, VerificationStatus, observed_path_is_absolute,
+    LifecycleIntent, LifecyclePlan, PlanStatus, Presence, Provider, ProviderKind,
+    VerificationStatus, observed_path_is_absolute,
 };
 use agentmender_provider_api::{
     ProviderAdapter, ProviderError, ProviderLocation, process::find_executable,
@@ -52,6 +53,25 @@ enum SelectedProvider {
     Codex,
     Claude,
 }
+#[derive(Clone, Copy, ValueEnum)]
+enum PlanIntent {
+    Archive,
+    Unarchive,
+    SoftDelete,
+    Purge,
+    Repair,
+}
+impl From<PlanIntent> for LifecycleIntent {
+    fn from(value: PlanIntent) -> Self {
+        match value {
+            PlanIntent::Archive => Self::Archive,
+            PlanIntent::Unarchive => Self::Unarchive,
+            PlanIntent::SoftDelete => Self::SoftDelete,
+            PlanIntent::Purge => Self::Purge,
+            PlanIntent::Repair => Self::Repair,
+        }
+    }
+}
 #[derive(Subcommand)]
 enum Action {
     Providers,
@@ -59,6 +79,7 @@ enum Action {
     Inspect { id: String },
     Graph,
     Verify,
+    Plan { intent: PlanIntent, id: String },
     Explain { id: String },
 }
 
@@ -347,6 +368,51 @@ fn print_verification(r: &IntegrityReport) {
     );
     println!("  Use --json for the complete report and evidence.");
 }
+fn print_plan(plan: &LifecyclePlan) {
+    let c = plan.content();
+    println!(
+        "Target: {} ({:?}, {})",
+        print_id(&c.request.target),
+        c.request.target.provider,
+        c.request.target.state_root.display()
+    );
+    println!("Intent: {:?}; status: {:?}", c.request.intent, c.status);
+    println!("Digest: {}", plan.digest().as_str());
+    println!("State fingerprint: {}", c.state_fingerprint.as_str());
+    println!(
+        "Provider version: {}; adapter: {}",
+        c.provider
+            .executable_version
+            .as_deref()
+            .unwrap_or("unknown"),
+        c.provider.adapter_version
+    );
+    println!("Native identity: {:?}", c.native_target_id);
+    println!("Native capability: {:?}", c.capability);
+    println!(
+        "Observation scope: {:?}; compatibility: {:?}; evidence: {:?}",
+        c.observation_scope, c.compatibility_status, c.evidence_status
+    );
+    println!("Integrity: {:?}", c.integrity);
+    println!("Effects contract: {:?}", c.effect_contract);
+    for artifact in &c.artifacts {
+        println!(
+            "  {:?}: {} ownership {:?}",
+            artifact.role,
+            print_id(&artifact.id),
+            artifact.ownership
+        );
+    }
+    println!("Blockers: {:?}", c.blockers);
+    println!("Preconditions: {:?}", c.preconditions);
+    println!("Postconditions: {:?}", c.postconditions);
+    println!("Space: {:?}", c.space);
+    println!(
+        "Human approval required: {}; recovery required: {}",
+        c.requires_human_approval, c.recovery_required
+    );
+    println!("Execution: NOT PERFORMED; plan is not authorization; Ready is not approved");
+}
 fn run(args: Args) -> Result<bool, CliError> {
     if args.desktop_fixture && !matches!(args.provider, Some(SelectedProvider::Claude)) {
         return Err(CliError::new(
@@ -551,6 +617,26 @@ fn run(args: Args) -> Result<bool, CliError> {
                 for r in &report.reports {
                     print_verification(r);
                 }
+                for failure in &report.failures {
+                    eprintln!(
+                        "{}: {:?}: {}",
+                        failure.provider, failure.code, failure.message
+                    );
+                }
+            }
+            Ok(incomplete)
+        }
+        Action::Plan { intent, id } => {
+            let id = EntityId::new(id)
+                .map_err(|e| CliError::new(ErrorCode::InvalidIdentity, e.to_string()))?;
+            let report = service.plan(&id, intent.into(), &scope)?;
+            let incomplete =
+                report.plan.content().status != PlanStatus::Ready || !report.failures.is_empty();
+            if args.json {
+                emit("planning_only", &report)?;
+            } else {
+                println!("Mode: {mode}; planning only");
+                print_plan(&report.plan);
                 for failure in &report.failures {
                     eprintln!(
                         "{}: {:?}: {}",
