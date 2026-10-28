@@ -509,7 +509,16 @@ fn plan_rejects_ambiguous_ids_and_incomplete_absence() {
     let home = tempfile::tempdir().unwrap();
     let ambiguous = run(
         home.path(),
-        &["--json", "plan", "archive", "provider-state"],
+        &[
+            "--json",
+            "--codex-root",
+            home.path().join("codex").to_str().unwrap(),
+            "--claude-root",
+            home.path().join("claude").to_str().unwrap(),
+            "plan",
+            "archive",
+            "provider-state",
+        ],
     );
     assert_eq!(ambiguous.status.code(), Some(2));
     let error: serde_json::Value = serde_json::from_slice(&ambiguous.stderr).unwrap();
