@@ -218,3 +218,85 @@ fn desktop_fixture_requires_claude_provider() {
     let error: serde_json::Value = serde_json::from_slice(&result.stderr).unwrap();
     assert_eq!(error["code"], "invalid_arguments");
 }
+
+#[test]
+fn observed_claude_graph_explains_mapping_without_spawn_claim() {
+    let home = tempfile::tempdir().unwrap();
+    let fixture =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/claude/4.29.0-observed");
+    let prefix = [
+        "--json",
+        "--provider",
+        "claude",
+        "--fixture",
+        fixture.to_str().unwrap(),
+        "--desktop-fixture",
+    ];
+    let mut args = prefix.to_vec();
+    args.push("graph");
+    let output = run(home.path(), &args);
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let graph = &value["report"]["graphs"][0];
+    let edges = graph["edges"].as_array().unwrap();
+    assert!(!edges.iter().any(|edge| edge["kind"] == "spawned_by"));
+    let mapping = edges.iter().find(|edge| edge["kind"] == "maps_to").unwrap();
+    let id = mapping["source"]["local_id"].as_str().unwrap();
+    let mut args = prefix.to_vec();
+    args.extend(["explain", id]);
+    let explained = run(home.path(), &args);
+    let report: serde_json::Value = serde_json::from_slice(&explained.stdout).unwrap();
+    let rule = report["report"]["rules"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|rule| rule["id"] == "explicit_cliSessionId")
+        .unwrap();
+    assert!(!rule["description"].as_str().unwrap().is_empty());
+    assert_eq!(rule["max_confidence"], "heuristic");
+    let evidence = report["report"]["explanation"]["evidence"]
+        .as_array()
+        .unwrap();
+    let mapping = evidence
+        .iter()
+        .find(|item| item["evidence"]["rule_id"] == "explicit_cliSessionId")
+        .unwrap();
+    assert_eq!(mapping["confidence"], "heuristic");
+    assert!(mapping["evidence"]["observed_at"].is_null());
+    assert!(mapping["evidence"]["observation"]["provider_version"].is_null());
+}
+
+#[test]
+fn unknown_version_artifact_remains_protected() {
+    let home = tempfile::tempdir().unwrap();
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/codex/unknown");
+    let output = run(
+        home.path(),
+        &[
+            "--json",
+            "--provider",
+            "codex",
+            "--fixture",
+            fixture.to_str().unwrap(),
+            "explain",
+            "codex:artifact:manifest.json",
+        ],
+    );
+    assert_eq!(output.status.code(), Some(2));
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let explanation = &value["report"]["explanation"];
+    assert_eq!(explanation["ownership"]["classification"], "unknown");
+    assert!(
+        explanation["ownership"]["blockers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|b| b == "unknown_compatibility")
+    );
+    assert!(
+        explanation["roots"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|r| r["kind"] == "unknown_state")
+    );
+}

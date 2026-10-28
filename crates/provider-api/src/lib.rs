@@ -1,18 +1,22 @@
 //! Read-only ports and shared bounded observation helpers. No mutation port exists.
 pub mod evidence;
 pub mod filesystem;
+pub mod graph;
 #[cfg(target_os = "macos")]
 mod macos_sandbox;
 pub mod process;
 
 use agentmender_domain::{
-    DiscoveryScope, DiscoverySnapshot, Provider, ProviderKind, observed_path_is_absolute,
+    ArtifactGraph, DiscoveryScope, DiscoverySnapshot, GraphError, Provider, ProviderKind,
+    observed_path_is_absolute,
 };
 use std::path::PathBuf;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum ProviderError {
+    #[error(transparent)]
+    Graph(#[from] GraphError),
     #[error("provider not installed: {0}")]
     ProviderNotInstalled(ProviderKind),
     #[error("provider version unknown: {0}")]
@@ -39,6 +43,13 @@ pub trait ProviderAdapter {
     fn kind(&self) -> ProviderKind;
     fn detect(&self) -> Result<Provider, ProviderError>;
     fn discover(&self, scope: &DiscoveryScope) -> Result<DiscoverySnapshot, ProviderError>;
+    /// Pure interpretation of this adapter's already collected snapshot.
+    /// Implementations must not perform I/O or sample the current time.
+    fn build_graph(&self, _: &DiscoverySnapshot) -> Result<ArtifactGraph, ProviderError> {
+        Err(ProviderError::CapabilityUnavailable(
+            "evidence graph interpretation unavailable".into(),
+        ))
+    }
 }
 
 #[derive(Debug, Clone)]

@@ -1,8 +1,9 @@
 # AgentMender
 
-Provider-aware, strictly read-only inventory of AI coding-agent state. The local
-M0/M1 closeout is verified with accurately reported **partial coverage**. No M2
-algorithms, lifecycle mutations, plans, approvals, repair or recovery are present.
+Provider-aware, strictly read-only inventory and evidence graph of AI coding-agent
+state. M0/M1 and the Codex compatibility refresh are verified with accurately
+reported **partial coverage**. M2 adds graph reconstruction and explanations;
+lifecycle mutation, plans, approvals, repair and recovery remain out of scope.
 
 ```sh
 cargo run -- providers --json
@@ -10,6 +11,8 @@ cargo run -- scan --provider codex --json
 cargo run -- scan --provider claude --json
 cargo run -- --provider claude --fixture fixtures/claude/4.29.0-observed --desktop-fixture scan --json
 cargo run -- --provider codex --fixture fixtures/codex/observed-snapshot scan --json
+cargo run -- --provider codex --fixture fixtures/codex/observed-snapshot-0.165.0-alpha.1.2 graph --json
+cargo run -- --provider codex --fixture fixtures/codex/observed-snapshot-0.165.0-alpha.1.2 explain codex:session:019a0000-0000-7000-8000-000000000001 --json
 ```
 
 Use an ID returned by `scan` with `inspect <id>`. JSON reports go to stdout;
@@ -42,6 +45,30 @@ See [Codex evidence](compatibility/codex/README.md),
 Observed fixtures are sanitized samples; synthetic fixtures remain labeled
 SyntheticOnly. Neither is presented as fresh live evidence.
 
+## Evidence graph and explanations
+
+`graph` reconstructs typed nodes, relationships, rules and protected roots from one
+discovery snapshot per provider. `explain <id>` shows the original facts, directed
+relationships, rule descriptions, raw and effective confidence, provenance and
+protection reasons. JSON includes the full structured provider/root/class identity;
+an ambiguous local ID is rejected. These commands retain scan's scope flags,
+fixture mode and exit 2 for partial coverage.
+
+Relationships are References, SpawnedBy, MapsTo and AssociatedWith. Cwd grouping
+is an inference capped at Heuristic. Claude's explicit CLI mappings and fork
+references retain their existing Heuristic strength and unknown historical producer.
+Codex snapshot metadata remains Strong. Missing timestamps stay absent. Different
+same-identity observations and contradictory immediate-parent claims remain visible
+as conflicts. Unknown rules have Unknown effective confidence.
+
+Identity separates providers, logical state roots and entity kinds. Physical file
+identity is explicitly unavailable. Paths and one observed reference cannot prove
+ownership. Assessments may describe Global, Shared, Referenced or Unknown;
+Exclusive, Derived and Orphaned have no current proof rule. Every M2 node remains
+protected, including retained active/archived sessions, user-protected projects,
+global state and unresolved references. Active presentation does not establish
+writer activity. No deletion closure is computed. See ADR-0006/0007.
+
 ## Roots and scope
 
 CLI state roots default to CODEX_HOME / CLAUDE_CONFIG_DIR, otherwise
@@ -60,7 +87,8 @@ strings; non-UTF-8 paths use a lossless native encoding object.
 ## Safety boundary
 
 The application never writes real provider state. Read-only ports expose only
-detect/discover. All artifacts remain protected, and paths do not prove ownership.
+kind/detect/discover and pure snapshot-to-graph construction. All artifacts remain
+protected, and paths do not prove ownership.
 No arbitrary SQL, provider command, archive/delete/purge/repair or approval tool
 exists. Codex uses a consistent SQLite Backup API snapshot, scrubs content in RAM
 before persisting a private disposable copy, and runs official thread/list there.
@@ -99,4 +127,6 @@ python3 scripts/check_architecture.py
 Normal tests use isolated fixtures and require no installed provider. Explicit
 live fingerprint verification and the older outer-denial probes are documented in
 [test instructions](crates/cli/tests/README.md). CI has a Linux/macOS/Windows matrix;
-local results do not establish that remote jobs have passed. M2 has not begun.
+local results do not establish that remote jobs have passed. Graph properties use
+proptest with fixed seed `0x4d325f6772617068`; failing cases can also be replayed
+through its standard regression persistence. No test uses real provider homes.

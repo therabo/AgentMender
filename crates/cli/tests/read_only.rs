@@ -113,6 +113,29 @@ fn fixture_scans_are_read_only_and_report_limits() {
             assert_eq!(json(&inspect)["report"]["entity"]["entity"]["id"], id);
             no_secret(&inspect);
         }
+        args.truncate(if desktop { 6 } else { 5 });
+        args.push("graph");
+        let graph_output = run(home.path(), &args);
+        let graph_value = json(&graph_output);
+        let graph = &graph_value["report"]["graphs"][0];
+        assert_eq!(graph["context"]["provider"]["kind"], provider);
+        if let Some(session) = graph["nodes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|n| n["id"]["class"] == "session")
+        {
+            let id = session["id"]["local_id"].as_str().unwrap();
+            args.pop();
+            args.extend(["explain", id]);
+            let explained = run(home.path(), &args);
+            assert_eq!(
+                json(&explained)["report"]["explanation"]["node"]["id"]["local_id"],
+                id
+            );
+            no_secret(&explained);
+        }
+        no_secret(&graph_output);
         no_secret(&output);
         assert_eq!(
             manifest(&root),
@@ -208,6 +231,20 @@ fn missing_provider_and_incomplete_inspection_are_not_success() {
     );
     assert_eq!(output.status.code(), Some(2));
     let error: Value = serde_json::from_slice(&output.stderr).unwrap();
+    assert_eq!(error["code"], "inspection_unavailable");
+    let explain = run(
+        home.path(),
+        &[
+            "--json",
+            "--provider",
+            "codex",
+            "--fixture",
+            root.to_str().unwrap(),
+            "explain",
+            "codex:session:missing",
+        ],
+    );
+    let error: Value = serde_json::from_slice(&explain.stderr).unwrap();
     assert_eq!(error["code"], "inspection_unavailable");
     assert!(output.stdout.is_empty());
     assert_eq!(manifest(&root), before);

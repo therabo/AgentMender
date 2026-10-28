@@ -10,6 +10,9 @@ use thiserror::Error;
 
 mod path_serde;
 
+pub mod graph;
+pub use graph::*;
+
 /// Recognize an observed provider path without resolving it on this host.
 /// Provider metadata and fixtures may describe another OS. This is not a safe
 /// filesystem access boundary; live roots still require native absolute paths.

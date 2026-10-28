@@ -20,6 +20,7 @@ use std::{
 
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 mod capture;
+pub mod graph;
 pub use capture::run_evidence_capture_worker;
 
 const MAX_BYTES: usize = 8 * 1024 * 1024;
@@ -258,6 +259,9 @@ impl CodexAdapter {
     }
 }
 impl ProviderAdapter for CodexAdapter {
+    fn build_graph(&self, snapshot: &DiscoverySnapshot) -> Result<ArtifactGraph, ProviderError> {
+        graph::build_graph(snapshot)
+    }
     fn kind(&self) -> ProviderKind {
         ProviderKind::Codex
     }

@@ -1,6 +1,8 @@
 //! Claude's SDK history helpers require Python/TypeScript. This Rust adapter has
 //! no SDK bridge and never starts a conversation to obtain inventory. Live state
 //! is metadata-audit-only until an exact release is validated with real captures.
+pub mod graph;
+
 use agentmender_domain::*;
 use agentmender_provider_api::{
     ProviderAdapter, ProviderError, ProviderLocation, filesystem, process, validate_location,
@@ -145,6 +147,10 @@ impl ClaudeAdapter {
 }
 
 impl ProviderAdapter for ClaudeAdapter {
+    fn build_graph(&self, snapshot: &DiscoverySnapshot) -> Result<ArtifactGraph, ProviderError> {
+        graph::build_graph(snapshot)
+    }
+
     fn kind(&self) -> ProviderKind {
         ProviderKind::Claude
     }

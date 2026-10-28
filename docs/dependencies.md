@@ -37,3 +37,12 @@ Darwin declaration. Workspace unsafe remains forbid; only provider-api uses deny
 plus this module's explicit allowance. Architecture checks reject other unsafe
 code. This OS-specific SPI fails closed on unavailable/invalid results and is not
 a claim of full M10 platform hardening. See ADR-0004.
+
+M2 adds `proptest 1.12.0` only as a domain development dependency. Registry metadata
+and the maintainer's documentation were checked on 2026-10-28: this stable release
+requires Rust 1.88, below the existing 1.89 MSRV. The mature project describes its
+status as passive maintenance. Generated permutations, duplicate observations,
+evidence combinations, and graph round trips need shrinking and reproducible
+counterexamples; a custom random-test harness would duplicate this functionality.
+Only `std` is enabled; subprocess forking, timeout infrastructure, bit sets and
+derive macros are unnecessary. No production graph/database dependency is added.

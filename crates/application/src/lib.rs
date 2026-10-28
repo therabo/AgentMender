@@ -31,9 +31,9 @@ fn failure(provider: ProviderKind, error: ProviderError) -> ProviderFailure {
         ProviderError::CapabilityUnavailable(_) => DiagnosticCode::CapabilityUnavailable,
         ProviderError::MalformedProviderState { .. } => DiagnosticCode::MalformedProviderState,
         ProviderError::PermissionDenied(_) => DiagnosticCode::PermissionDenied,
-        ProviderError::DiscoveryFailed { .. } | ProviderError::InvalidScope(_) => {
-            DiagnosticCode::IncompleteDiscovery
-        }
+        ProviderError::DiscoveryFailed { .. }
+        | ProviderError::InvalidScope(_)
+        | ProviderError::Graph(_) => DiagnosticCode::IncompleteDiscovery,
     };
     ProviderFailure {
         provider,
@@ -50,6 +50,24 @@ pub struct ProviderReport {
 #[derive(Debug, Default, Serialize)]
 pub struct ScanReport {
     pub snapshots: Vec<DiscoverySnapshot>,
+    pub failures: Vec<ProviderFailure>,
+}
+
+#[derive(Debug, Default, Serialize)]
+pub struct GraphReport {
+    pub graphs: Vec<ArtifactGraph>,
+    pub failures: Vec<ProviderFailure>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct GraphExplainReport {
+    pub explanation: NodeExplanation,
+    /// Canonical rule descriptors, including conflicting definitions if present.
+    pub rules: Vec<EvidenceRule>,
+    pub context: GraphContext,
+    pub graph_diagnostics: Vec<GraphDiagnostic>,
+    /// Context for every discovered graph, including other partial providers.
+    pub contexts: Vec<GraphContext>,
     pub failures: Vec<ProviderFailure>,
 }
 
@@ -107,6 +125,74 @@ impl<'a> DiscoveryService<'a> {
             .sort_by_key(|snapshot| snapshot.provider.kind);
         report.failures.sort_by_key(|failure| failure.provider);
         Ok(report)
+    }
+    pub fn graph(&self, scope: &DiscoveryScope) -> Result<GraphReport, ApplicationError> {
+        validate_scope(scope)?;
+        let mut report = GraphReport::default();
+        for adapter in &self.adapters {
+            match adapter
+                .discover(scope)
+                .and_then(|snapshot| adapter.build_graph(&snapshot))
+            {
+                Ok(graph) => report.graphs.push(graph),
+                Err(error) => report.failures.push(failure(adapter.kind(), error)),
+            }
+        }
+        report.graphs.sort_by_cached_key(|graph| {
+            (
+                graph.context().provider.kind,
+                graph.context().provider.state_root.clone(),
+                serde_json::to_string(graph).expect("validated graph serializes"),
+            )
+        });
+        report.failures.sort_by(|a, b| {
+            (a.provider, format!("{:?}", a.code), &a.message).cmp(&(
+                b.provider,
+                format!("{:?}", b.code),
+                &b.message,
+            ))
+        });
+        Ok(report)
+    }
+
+    pub fn explain(
+        &self,
+        id: &EntityId,
+        scope: &DiscoveryScope,
+    ) -> Result<GraphExplainReport, ApplicationError> {
+        let report = self.graph(scope)?;
+        let unavailable = !report.failures.is_empty()
+            || report
+                .graphs
+                .iter()
+                .any(|g| g.context().completeness != Completeness::Complete);
+        let matches: Vec<_> = report
+            .graphs
+            .iter()
+            .flat_map(|g| {
+                g.nodes()
+                    .iter()
+                    .filter(move |node| &node.id.local_id == id)
+                    .map(move |node| (g, node))
+            })
+            .collect();
+        if matches.len() > 1 {
+            return Err(ApplicationError::AmbiguousEntity(id.clone()));
+        }
+        if let Some((graph, node)) = matches.first() {
+            Ok(GraphExplainReport {
+                explanation: graph.explain(&node.id).map_err(ProviderError::from)?,
+                rules: graph.rules().to_vec(),
+                context: graph.context().clone(),
+                graph_diagnostics: graph.diagnostics().to_vec(),
+                contexts: report.graphs.iter().map(|g| g.context().clone()).collect(),
+                failures: report.failures,
+            })
+        } else if unavailable {
+            Err(ApplicationError::InspectionUnavailable(id.clone()))
+        } else {
+            Err(ApplicationError::UnknownEntity(id.clone()))
+        }
     }
     pub fn inspect(
         &self,
@@ -191,6 +277,108 @@ mod tests {
                 "fixture failure".into(),
             ))
         }
+    }
+    struct GraphAdapter {
+        calls: std::cell::Cell<usize>,
+        completeness: Completeness,
+        fail_build: bool,
+    }
+    impl ProviderAdapter for GraphAdapter {
+        fn kind(&self) -> ProviderKind {
+            ProviderKind::Codex
+        }
+        fn detect(&self) -> Result<Provider, ProviderError> {
+            panic!("graph must not detect")
+        }
+        fn discover(&self, _: &DiscoveryScope) -> Result<DiscoverySnapshot, ProviderError> {
+            self.calls.set(self.calls.get() + 1);
+            let provider = Provider {
+                kind: self.kind(),
+                presence: Presence::StateOnly,
+                state_root: "/fixture".into(),
+                fingerprint: ProviderFingerprint {
+                    executable: None,
+                    executable_version: None,
+                    adapter_version: "test".into(),
+                    interface_id: None,
+                    layout_id: None,
+                },
+                capabilities: ProviderCapabilities::new(),
+                compatibility: CompatibilityProfile {
+                    status: CompatibilityStatus::ReadOnlyKnown,
+                    interface_stability: InterfaceStability::OfficialStable,
+                    reason: "test".into(),
+                },
+                installations: vec![],
+                evidence_status: EvidenceStatus::SyntheticOnly,
+                diagnostics: vec![],
+            };
+            let mut snapshot = DiscoverySnapshot::empty(provider);
+            snapshot.completeness = self.completeness;
+            snapshot.coverage = format!("discovery {}", self.calls.get());
+            Ok(snapshot)
+        }
+        fn build_graph(
+            &self,
+            snapshot: &DiscoverySnapshot,
+        ) -> Result<ArtifactGraph, ProviderError> {
+            assert_eq!(snapshot.coverage, format!("discovery {}", self.calls.get()));
+            if self.fail_build {
+                return Err(GraphError::MissingNode.into());
+            }
+            let mut builder = ArtifactGraph::builder(snapshot.into());
+            builder.observe(NodeObservation::ProviderState);
+            Ok(builder.finish()?)
+        }
+    }
+    #[test]
+    fn graph_discovers_once_and_reports_builder_failure() {
+        let adapter = GraphAdapter {
+            calls: std::cell::Cell::new(0),
+            completeness: Completeness::Complete,
+            fail_build: false,
+        };
+        let failing = GraphAdapter {
+            calls: std::cell::Cell::new(0),
+            completeness: Completeness::Complete,
+            fail_build: true,
+        };
+        let report = DiscoveryService::new(vec![&adapter, &failing])
+            .graph(&DiscoveryScope::default())
+            .unwrap();
+        assert_eq!(adapter.calls.get(), 1);
+        assert_eq!(failing.calls.get(), 1);
+        assert_eq!(report.graphs[0].context().coverage, "discovery 1");
+        assert_eq!(report.failures[0].code, DiagnosticCode::IncompleteDiscovery);
+    }
+    #[test]
+    fn explain_rejects_ambiguity_and_partial_absence() {
+        let adapter = GraphAdapter {
+            calls: std::cell::Cell::new(0),
+            completeness: Completeness::Partial,
+            fail_build: false,
+        };
+        let service = DiscoveryService::new(vec![&adapter]);
+        assert!(matches!(
+            service.explain(
+                &EntityId::new("missing").unwrap(),
+                &DiscoveryScope::default()
+            ),
+            Err(ApplicationError::InspectionUnavailable(_))
+        ));
+        let second = GraphAdapter {
+            calls: std::cell::Cell::new(0),
+            completeness: Completeness::Complete,
+            fail_build: false,
+        };
+        let service = DiscoveryService::new(vec![&adapter, &second]);
+        assert!(matches!(
+            service.explain(
+                &EntityId::new("provider-state").unwrap(),
+                &DiscoveryScope::default()
+            ),
+            Err(ApplicationError::AmbiguousEntity(_))
+        ));
     }
     #[test]
     fn failures_remain_structured_and_visible() {

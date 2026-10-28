@@ -70,10 +70,28 @@ def production_source(source):
     return ''.join(result)
 
 
+def impure_graph_code(source):
+    code = mask_literals(production_source(source))
+    return bool(re.search(
+        r"\b(?:filesystem|process|fs)::|\bCommand\b|\b(?:SystemTime|Instant)\s*::\s*now|\.(?:detect|discover)\s*\(", code
+    ) or re.search(
+        r"\bstd\s*::\s*(?:fs|process|time|net)\b|\buse\s+std\s*::\s*\{[^;]*(?:\bfs\b|\bprocess\b|\btime\b|\bnet\b)", code
+    ))
+
+
 # Regression: production code after a test module must still be audited.
 example = '#[cfg(test)] mod tests { let x = r#"}"#; fs::write("fixture", b"x"); }\nfn later() { fs::write("unsafe", b"x"); }'
 filtered = production_source(example)
 assert 'fixture' not in filtered and 'fn later' in filtered and 'fs::write' in filtered
+for canary in [
+    'fn build() { std::fs::read("provider"); }',
+    'use std::{fs as files}; fn build() { files::read("provider"); }',
+    'fn build() { SystemTime::now(); }',
+    'fn build() { adapter.discover(scope); }',
+]:
+    assert impure_graph_code(canary), 'graph purity fitness canary failed'
+assert not impure_graph_code('fn build() { let text = "std::fs::read"; }')
+assert not impure_graph_code('#[cfg(test)] mod tests { fn fixture() { std::fs::read("fixture"); } }')
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 metadata = json.loads(subprocess.check_output(
@@ -96,6 +114,8 @@ for package in metadata["packages"]:
     internal = {d["name"] for d in package["dependencies"] if d["name"].startswith("agentmender-")}
     if internal - allowed[name]:
         errors.append(f"dependency direction violation: {name}: {sorted(internal - allowed[name])}")
+    if any("mcp" in d["name"].lower() for d in package["dependencies"]):
+        errors.append(f"MCP dependency introduced before M5: {name}")
 
 patterns = [
     r"(?:std::)?fs::(?:write|remove_file|remove_dir|remove_dir_all|rename|copy|create_dir|create_dir_all|set_permissions)\s*\(",
@@ -119,6 +139,29 @@ for path in (ROOT / "crates").glob("*/src/**/*.rs"):
         errors.append(f"process dispatch outside sandbox boundary: {path.relative_to(ROOT)}")
     if path.parent.parent.name == "domain" and re.search(r"std::(?:fs|process)|provider_(?:codex|claude|api)", source):
         errors.append(f"domain infrastructure coupling: {path.relative_to(ROOT)}")
+    # ADR-0006: graph interpretation consumes observations and cannot acquire new
+    # evidence through filesystem/process/time access. Audit executable code after
+    # masking strings and removing complete test modules, not broad prose matches.
+    if path.name == "graph.rs":
+        if impure_graph_code(source):
+            errors.append(f"impure graph transformation: {path.relative_to(ROOT)}")
+    if path.parent.parent.name == "domain" and any(marker in source for marker in [
+        "sqlite_master", "state_5.sqlite", "claude-code-sessions", "cliSessionId",
+        "forkedFromSessionId", "thread/list", "attached_thread_parent_id",
+    ]):
+        errors.append(f"provider storage knowledge in domain: {path.relative_to(ROOT)}")
+    if path == ROOT / "crates/provider-api/src/lib.rs":
+        trait = re.search(r"pub\s+trait\s+ProviderAdapter\s*\{", code)
+        if trait is None:
+            errors.append("read-only provider port missing")
+        else:
+            index, depth = trait.end(), 1
+            while index < len(code) and depth:
+                depth += (code[index] == '{') - (code[index] == '}')
+                index += 1
+            methods = set(re.findall(r"\bfn\s+(\w+)\s*\(", code[trait.end():index]))
+            if methods != {"kind", "detect", "discover", "build_graph"}:
+                errors.append(f"unreviewed provider port methods: {sorted(methods)}")
 
 if errors:
     print("\n".join(errors), file=sys.stderr)

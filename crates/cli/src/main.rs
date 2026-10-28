@@ -57,6 +57,8 @@ enum Action {
     Providers,
     Scan,
     Inspect { id: String },
+    Graph,
+    Explain { id: String },
 }
 
 fn entry_limit(value: &str) -> Result<usize, String> {
@@ -117,6 +119,7 @@ enum ErrorCode {
     PermissionDenied,
     DiscoveryFailed,
     InvalidScope,
+    InvalidGraph,
     UnknownEntity,
     AmbiguousEntity,
     InspectionUnavailable,
@@ -146,6 +149,7 @@ impl From<ProviderError> for CliError {
             ProviderError::PermissionDenied(_) => ErrorCode::PermissionDenied,
             ProviderError::DiscoveryFailed { .. } => ErrorCode::DiscoveryFailed,
             ProviderError::InvalidScope(_) => ErrorCode::InvalidScope,
+            ProviderError::Graph(_) => ErrorCode::InvalidGraph,
         };
         Self::new(code, error.to_string())
     }
@@ -361,6 +365,67 @@ fn run(args: Args) -> Result<bool, CliError> {
                 for f in &report.failures {
                     eprintln!("{}: {:?}: {}", f.provider, f.code, f.message);
                 }
+            }
+            Ok(incomplete)
+        }
+        Action::Graph => {
+            let report = service.graph(&scope)?;
+            let incomplete = !report.failures.is_empty()
+                || report
+                    .graphs
+                    .iter()
+                    .any(|g| g.context().completeness != Completeness::Complete);
+            if args.json {
+                emit(mode, &report)?;
+            } else {
+                println!("Mode: {mode}");
+                for graph in &report.graphs {
+                    print_provider(&graph.context().provider);
+                    println!(
+                        "  discovery: {:?} — {}",
+                        graph.context().completeness,
+                        graph.context().coverage
+                    );
+                    println!(
+                        "  {} nodes, {} relationships, {} roots",
+                        graph.nodes().len(),
+                        graph.edges().len(),
+                        graph.roots().len()
+                    );
+                    for diagnostic in graph.diagnostics() {
+                        eprintln!("  {diagnostic:?}");
+                    }
+                    for diagnostic in &graph.context().diagnostics {
+                        eprintln!("  {:?}: {}", diagnostic.code, diagnostic.message);
+                    }
+                }
+                for failure in &report.failures {
+                    eprintln!(
+                        "{}: {:?}: {}",
+                        failure.provider, failure.code, failure.message
+                    );
+                }
+            }
+            Ok(incomplete)
+        }
+        Action::Explain { id } => {
+            let id = EntityId::new(id)
+                .map_err(|e| CliError::new(ErrorCode::InvalidIdentity, e.to_string()))?;
+            let report = service.explain(&id, &scope)?;
+            let incomplete = !report.failures.is_empty()
+                || report
+                    .contexts
+                    .iter()
+                    .any(|c| c.completeness != Completeness::Complete);
+            if args.json {
+                emit(mode, &report)?;
+            } else {
+                println!("Mode: {mode}\nExplanation for {id}");
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&report)
+                        .map_err(|e| CliError::new(ErrorCode::OutputError, e.to_string()))?
+                );
             }
             Ok(incomplete)
         }
