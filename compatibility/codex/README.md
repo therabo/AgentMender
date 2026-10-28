@@ -115,3 +115,30 @@ The native metadata projection ignores titles/previews. Parent references are
 literal metadata only, and native temporary-process status cannot establish
 activity in another client. Unknown versions/layouts remain protected audit-only.
 No lifecycle operation, direct source SQL mutation or recovery mechanism exists.
+
+## Exact 0.165.0-alpha.1.2 profile
+
+An independent local investigation on 2026-10-28 used the same kernel-attested
+sandbox and bounded read-only SQLite Backup API capture. Its separately retained
+[generated schemas and source schema](0.165.0-alpha.1.2/) belong only to this exact
+prerelease. InitializeParams, InitializeResponse, and ThreadListParams match the
+historical generated files; ThreadListResponse adds only the nested `modelNotFound`
+error variant (SHA-256 `1c346f3a9174a6d68df79ea72279f7079681cf0afdb709afab818edbf355cfab`).
+The 66-entry source schema has compact SHA-256
+`1b88a3f88c8edb6f742d219835a821d0515b7b811b4342cd650e6ac8069f4647`.
+Its only changes are nullable `threads.attached_thread_parent_id` and its index;
+the identifier is retained as opaque metadata without relationship inference.
+Each compiled profile binds its exact version, interface and source schema. The
+source hash is checked before scrubbing and VACUUM; the disposable mirror's
+VACUUM removes `sqlite_sequence`, so the mirror need not have the source hash.
+
+The first isolated observation returned 166 summaries over eleven pages, with
+source DB/WAL/SHM fingerprints stable across capture and enumeration. A second
+observation sampled the five sanitized records in
+[the new fixture](../../fixtures/codex/observed-snapshot-0.165.0-alpha.1.2/),
+whose [provenance](0.165.0-alpha.1.2/provenance.json) records changed WAL/SHM and
+RealPartial/SnapshotStale. The coherent SQLite snapshot does not imply cross-store
+atomicity. Unselected native response fields are discarded; the entire response is
+not claimed content-free. Source status is presentation metadata, not evidence of
+writer liveness. The normalized projection and the existing scope limits remain
+unchanged. Unknown versions and mismatched schemas remain metadata-only.

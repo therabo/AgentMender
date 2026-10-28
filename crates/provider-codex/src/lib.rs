@@ -22,8 +22,6 @@ use std::{
 mod capture;
 pub use capture::run_evidence_capture_worker;
 
-const KNOWN_VERSION: &str = "0.164.0-alpha.11.1";
-const INTERFACE_ID: &str = "codex-app-server-0.164.0-alpha.11.1";
 const MAX_BYTES: usize = 8 * 1024 * 1024;
 const MAX_LINE: usize = 1024 * 1024;
 const MAX_REQUEST_BYTES: usize = 16 * 1024;
@@ -165,7 +163,8 @@ impl CodexAdapter {
         } else {
             (None, None)
         };
-        let known = version.as_deref() == Some(KNOWN_VERSION);
+        let profile = version.as_deref().and_then(capture::ExactProfile::lookup);
+        let known = profile.is_some();
         let reason = if let Some(failure) = probe_failure {
             format!("Version probe unavailable under read-only boundary: {failure}")
         } else if self.fixture.is_some() {
@@ -199,7 +198,7 @@ impl CodexAdapter {
                     version.clone()
                 },
                 adapter_version: env!("CARGO_PKG_VERSION").into(),
-                interface_id: known.then(|| INTERFACE_ID.into()),
+                interface_id: profile.map(|profile| profile.interface_id().into()),
                 layout_id: None,
             },
             capabilities: BTreeSet::from([Capability::MetadataAudit]),
@@ -346,12 +345,24 @@ impl ProviderAdapter for CodexAdapter {
         } else if let (Some(exe), Some((helper, real_home))) =
             (&self.location.executable, &self.evidence_helper)
         {
-            evidence_pages(exe, &self.location.state_root, helper, real_home, scope).map(
-                |(pages, complete, observation)| {
-                    capture_observation = Some(observation);
-                    (pages, complete)
-                },
+            evidence_pages(
+                exe,
+                &self.location.state_root,
+                helper,
+                real_home,
+                scope,
+                snapshot
+                    .provider
+                    .fingerprint
+                    .executable_version
+                    .as_deref()
+                    .and_then(capture::ExactProfile::lookup)
+                    .expect("known profile"),
             )
+            .map(|(pages, complete, observation)| {
+                capture_observation = Some(observation);
+                (pages, complete)
+            })
         } else {
             Err(ProviderError::CapabilityUnavailable(
                 "Codex disposable evidence helper unavailable".into(),
@@ -531,8 +542,10 @@ impl ProviderAdapter for CodexAdapter {
                         " Captured database rows: {} active, {} archived; nonempty previews: {} active, {} archived; native summaries returned for requested scope: {native_count}. Filesystem artifact counts describe separately bounded metadata observations.",
                         observation.manifest.active_rows, observation.manifest.archived_rows,
                         observation.manifest.nonempty_active_previews, observation.manifest.nonempty_archived_previews));
-                    snapshot.provider.fingerprint.layout_id =
-                        Some(format!("codex-state-5:{}", capture::SCHEMA_HASH));
+                    snapshot.provider.fingerprint.layout_id = Some(format!(
+                        "codex-state-5:{}",
+                        observation.manifest.schema_hash
+                    ));
                     snapshot.evidence_status = if complete && !observation.stale {
                         EvidenceStatus::SnapshotVerified
                     } else {
@@ -665,10 +678,12 @@ fn evidence_pages(
     helper: &Path,
     real_home: &Path,
     scope: &DiscoveryScope,
+    profile: capture::ExactProfile,
 ) -> Result<(Vec<Page>, bool, CaptureObservation), ProviderError> {
     use agentmender_provider_api::evidence::EvidenceSandbox;
     let sandbox = EvidenceSandbox::new(root, real_home)?;
     let request = capture::CaptureRequest {
+        profile,
         source_root: sandbox.source_root().into(),
         mirror_root: sandbox.path().into(),
         probe_path: sandbox.probe_path().into(),
@@ -697,6 +712,7 @@ fn read_capture_manifest(
     let deadline = Instant::now() + Duration::from_secs(5);
     let unavailable =
         || ProviderError::CapabilityUnavailable("bounded disposable capture worker failed".into());
+    let profile = request.profile;
     let request = serde_json::to_vec(request).map_err(|_| unavailable())?;
     if request.len() > 8192 {
         return Err(unavailable());
@@ -739,7 +755,7 @@ fn read_capture_manifest(
     }
     let manifest: capture::CaptureManifest =
         serde_json::from_slice(&bytes).map_err(|_| unavailable())?;
-    manifest.validate()?;
+    manifest.validate(profile)?;
     Ok(manifest)
 }
 
@@ -994,6 +1010,37 @@ mod tests {
                 .join(name),
         )
         .unwrap()
+    }
+    #[test]
+    fn new_observed_fixture_preserves_profile_and_provenance() {
+        let adapter = fixture("observed-snapshot-0.165.0-alpha.1.2");
+        let snapshot = adapter
+            .discover(&DiscoveryScope {
+                include_archived: true,
+                ..DiscoveryScope::default()
+            })
+            .unwrap();
+        assert_eq!(
+            snapshot.provider.fingerprint.interface_id.as_deref(),
+            Some("codex-app-server-0.165.0-alpha.1.2")
+        );
+        assert_eq!(
+            snapshot.provider.compatibility.status,
+            CompatibilityStatus::ReadOnlyKnown
+        );
+        assert_eq!(snapshot.evidence_status, EvidenceStatus::FixtureVerified);
+        assert_eq!(snapshot.sessions.len(), 5);
+        let provenance: Value = serde_json::from_str(include_str!(
+            "../../../fixtures/codex/observed-snapshot-0.165.0-alpha.1.2/provenance.json"
+        ))
+        .unwrap();
+        assert_eq!(provenance["sourceStableDuringSample"], false);
+        assert!(
+            provenance["limitations"]
+                .as_str()
+                .unwrap()
+                .contains("RealPartial/SnapshotStale")
+        );
     }
     #[test]
     fn observed_fixture_and_synthetic_fixture_keep_distinct_evidence_status() {

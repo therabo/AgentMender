@@ -1,0 +1,12 @@
+{
+  "classification": "OBSERVED LOCALLY",
+  "mechanism": "SQLite Backup API mirror + official thread/list",
+  "providerVersion": "0.165.0-alpha.1.2",
+  "observedNativeSummaries": 166,
+  "observedPages": 11,
+  "sampledSummaries": 5,
+  "sourceSchemaHash": "1b88a3f88c8edb6f742d219835a821d0515b7b811b4342cd650e6ac8069f4647",
+  "sanitization": "IDs, cwd and times replaced; body fields excluded; normalized metadata projection only; actual native records sampled in current experiment",
+  "limitations": "small partial sample; not a raw provider capture; temporary runtime status is not real-client liveness; source WAL/SHM changed during this sample observation, so live evidence must be RealPartial/SnapshotStale; SQLite capture remains coherent, not cross-store atomic",
+  "sourceStableDuringSample": false
+}

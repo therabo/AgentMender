@@ -22,7 +22,7 @@ Reports include local paths/identifiers but exclude conversation bodies.
 
 | Provider | Installation | Compatibility / evidence | Discovery |
 |---|---|---|---|
-| Codex | Bundled CLI `0.164.0-alpha.11.1` | Exact protocol + state schema; SnapshotVerified | 164 native summaries in the recorded observation; partial across stores |
+| Codex | Bundled CLI `0.165.0-alpha.1.2` | Separately validated exact protocol + state schema; SnapshotVerified when source is stable | 166 native summaries in the recorded refresh observation; partial across stores |
 | Claude | Desktop `4.29.0`, bundled Code `2.1.222` | Observed Desktop metadata context; RealPartial | Seven Desktop sessions and explicit CLI mappings; other history remains protected |
 
 These counts are observations, not future test expectations. Claude Desktop owns
@@ -30,6 +30,12 @@ its Code binary outside PATH; not finding `PATH/claude` never establishes provid
 absence. Every installation has its own surface and version provenance. A
 candidate binary is not presumed to be the active runtime. Compatibility,
 evidence provenance and collection completeness are separate fields.
+
+The historical exact Codex `0.164.0-alpha.11.1` profile is retained. The refresh
+binds each executable version to its independently captured source-schema hash;
+neither version accepts the other's layout. A later sampling run observed source
+WAL/SHM changes and retains RealPartial/SnapshotStale provenance. Compatibility
+never establishes current liveness, complete discovery, or authority to mutate.
 
 See [Codex evidence](compatibility/codex/README.md),
 [Claude evidence](compatibility/claude/README.md), and [ADRs](docs/adr/README.md).

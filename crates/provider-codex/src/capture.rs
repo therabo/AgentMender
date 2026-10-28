@@ -13,8 +13,34 @@ use std::{
 };
 
 pub(super) const DB_NAME: &str = "state_5.sqlite";
-pub(super) const SCHEMA_HASH: &str =
-    "5a7a23f469f17c68c9713f62a02a0ec97868e232a08cdff38881d922ea58ab4b";
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub(super) enum ExactProfile {
+    #[serde(rename = "0.164.0-alpha.11.1")]
+    V164,
+    #[serde(rename = "0.165.0-alpha.1.2")]
+    V165,
+}
+impl ExactProfile {
+    pub fn lookup(version: &str) -> Option<Self> {
+        match version {
+            "0.164.0-alpha.11.1" => Some(Self::V164),
+            "0.165.0-alpha.1.2" => Some(Self::V165),
+            _ => None,
+        }
+    }
+    pub fn interface_id(self) -> &'static str {
+        match self {
+            Self::V164 => "codex-app-server-0.164.0-alpha.11.1",
+            Self::V165 => "codex-app-server-0.165.0-alpha.1.2",
+        }
+    }
+    fn schema_hash(self) -> &'static str {
+        match self {
+            Self::V164 => "5a7a23f469f17c68c9713f62a02a0ec97868e232a08cdff38881d922ea58ab4b",
+            Self::V165 => "1b88a3f88c8edb6f742d219835a821d0515b7b811b4342cd650e6ac8069f4647",
+        }
+    }
+}
 const MAX_FILE_BYTES: usize = 64 * 1024 * 1024;
 const MAX_DATABASE_BYTES: u64 = 32 * 1024 * 1024;
 const MAX_ROWS: u64 = 100_000;
@@ -26,6 +52,7 @@ const SOURCE_NAMES: [&str; 3] = [DB_NAME, "state_5.sqlite-wal", "state_5.sqlite-
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(super) struct CaptureRequest {
+    pub profile: ExactProfile,
     pub source_root: PathBuf,
     pub mirror_root: PathBuf,
     pub probe_path: PathBuf,
@@ -62,7 +89,7 @@ pub(super) struct CaptureManifest {
     pub after: Vec<FileFingerprint>,
 }
 impl CaptureManifest {
-    pub fn validate(&self) -> Result<(), ProviderError> {
+    pub fn validate(&self, profile: ExactProfile) -> Result<(), ProviderError> {
         let valid_fingerprints = |values: &[FileFingerprint]| {
             values.len() == 3
                 && values.iter().zip(SOURCE_NAMES).all(|(value, name)| {
@@ -75,7 +102,7 @@ impl CaptureManifest {
                 })
                 && values[0].record.is_some()
         };
-        if self.schema_hash != SCHEMA_HASH
+        if self.schema_hash != profile.schema_hash()
             || self.active_rows.saturating_add(self.archived_rows) > MAX_ROWS
             || self.nonempty_active_previews > self.active_rows
             || self.nonempty_archived_previews > self.archived_rows
@@ -247,7 +274,7 @@ fn bounded_backup(
 }
 
 type SchemaEntry = (String, String, String, Option<String>);
-fn verify_schema(connection: &Connection) -> Result<(), ProviderError> {
+fn verify_schema(connection: &Connection, profile: ExactProfile) -> Result<(), ProviderError> {
     let mut statement = connection
         .prepare("SELECT type,name,tbl_name,sql FROM sqlite_master ORDER BY type,name LIMIT 129")
         .map_err(sqlite_error)?;
@@ -260,13 +287,17 @@ fn verify_schema(connection: &Connection) -> Result<(), ProviderError> {
         .map_err(sqlite_error)?;
     let encoded =
         serde_json::to_vec(&entries).map_err(|_| unavailable("schema encoding rejected"))?;
-    if encoded.len() > 64 * 1024 || sha256(&encoded) != SCHEMA_HASH {
+    if encoded.len() > 64 * 1024 || sha256(&encoded) != profile.schema_hash() {
         return Err(unavailable("exact Codex state schema is not recognized"));
     }
     Ok(())
 }
 
-fn capture_database(source_root: &Path, mirror: &Path) -> Result<CaptureManifest, ProviderError> {
+fn capture_database(
+    source_root: &Path,
+    mirror: &Path,
+    profile: ExactProfile,
+) -> Result<CaptureManifest, ProviderError> {
     let deadline = Instant::now() + CAPTURE_TIME;
     let before = fingerprints(source_root)?;
     let source = Connection::open_with_flags(
@@ -284,7 +315,7 @@ fn capture_database(source_root: &Path, mirror: &Path) -> Result<CaptureManifest
     configure(&memory)?;
     bounded_backup(&source, &mut memory, deadline)?;
     drop(source);
-    verify_schema(&memory)?;
+    verify_schema(&memory, profile)?;
     check_deadline(deadline)?;
     let counts: (i64, i64, i64, i64) =
         memory.query_row("SELECT count(*) FILTER (WHERE archived=0),count(*) FILTER (WHERE archived=1),count(*) FILTER (WHERE archived=0 AND preview<>''),count(*) FILTER (WHERE archived=1 AND preview<>'') FROM threads", [], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?))).map_err(sqlite_error)?;
@@ -347,7 +378,7 @@ fn capture_database(source_root: &Path, mirror: &Path) -> Result<CaptureManifest
     drop(memory);
     let after = fingerprints(source_root)?;
     let manifest = CaptureManifest {
-        schema_hash: SCHEMA_HASH.into(),
+        schema_hash: profile.schema_hash().into(),
         active_rows,
         archived_rows,
         nonempty_active_previews,
@@ -355,7 +386,7 @@ fn capture_database(source_root: &Path, mirror: &Path) -> Result<CaptureManifest
         before,
         after,
     };
-    manifest.validate()?;
+    manifest.validate(profile)?;
     Ok(manifest)
 }
 
@@ -436,7 +467,8 @@ pub fn run_evidence_capture_worker() -> Result<(), ProviderError> {
         let request: CaptureRequest = serde_json::from_slice(&bytes)
             .map_err(|_| unavailable("fixed capture request rejected"))?;
         validate_worker_request(&request)?;
-        let manifest = capture_database(&request.source_root, &request.mirror_root)?;
+        let manifest =
+            capture_database(&request.source_root, &request.mirror_root, request.profile)?;
         let bytes = serde_json::to_vec(&manifest)
             .map_err(|_| unavailable("capture manifest encoding rejected"))?;
         if bytes.len() as u64 > MAX_MANIFEST_BYTES {
@@ -459,14 +491,21 @@ pub fn run_evidence_capture_worker() -> Result<(), ProviderError> {
 mod tests {
     use super::*;
 
-    fn database(root: &Path) -> Connection {
+    fn database(root: &Path, profile: ExactProfile) -> Connection {
         let connection = Connection::open(root.join(DB_NAME)).unwrap();
         // The captured schema retains sqlite_sequence from a historical migration.
         connection.execute_batch("CREATE TABLE fixture_sequence_seed(value INTEGER PRIMARY KEY AUTOINCREMENT); DROP TABLE fixture_sequence_seed;").unwrap();
-        let entries: Vec<SchemaEntry> = serde_json::from_str(include_str!(
-            "../../../compatibility/codex/state-schema-5.json"
-        ))
-        .unwrap();
+        let schema = match profile {
+            ExactProfile::V164 => include_str!("../../../compatibility/codex/state-schema-5.json"),
+            ExactProfile::V165 => {
+                include_str!("../../../compatibility/codex/0.165.0-alpha.1.2/state-schema-5.json")
+            }
+        };
+        let entries: Vec<SchemaEntry> = serde_json::from_str(schema).unwrap();
+        assert_eq!(
+            sha256(&serde_json::to_vec(&entries).unwrap()),
+            profile.schema_hash()
+        );
         for kind in ["table", "index", "trigger", "view"] {
             for (entry_kind, name, _, sql) in &entries {
                 if entry_kind == kind
@@ -477,83 +516,108 @@ mod tests {
                 }
             }
         }
-        verify_schema(&connection).unwrap();
+        verify_schema(&connection, profile).unwrap();
         connection
     }
     fn insert(connection: &Connection, id: &str, preview: &str) {
         connection.execute("INSERT INTO threads(id,rollout_path,created_at,updated_at,source,model_provider,cwd,title,sandbox_policy,approval_mode,first_user_message,preview,name) VALUES (?1,'/fixture/rollout',1700000000,1700000001,'cli','openai','/fixture/project',?2,'read-only','never',?2,?2,?2)",rusqlite::params![id,preview]).unwrap();
     }
     #[test]
+    fn exact_profiles_bind_schema_and_reject_unknown_worker_tokens() {
+        for (profile, other) in [
+            (ExactProfile::V164, ExactProfile::V165),
+            (ExactProfile::V165, ExactProfile::V164),
+        ] {
+            let source = tempfile::tempdir().unwrap();
+            let mirror = tempfile::tempdir().unwrap();
+            let connection = database(source.path(), profile);
+            assert!(verify_schema(&connection, other).is_err());
+            drop(connection);
+            let source_path = source.path().canonicalize().unwrap();
+            let mirror_path = mirror.path().canonicalize().unwrap();
+            assert!(capture_database(&source_path, &mirror_path, other).is_err());
+            assert!(!mirror.path().join(DB_NAME).exists());
+            let manifest = capture_database(&source_path, &mirror_path, profile).unwrap();
+            assert!(manifest.validate(profile).is_ok());
+            assert!(manifest.validate(other).is_err());
+        }
+        assert!(ExactProfile::lookup("0.165.0-alpha.1.3").is_none());
+        assert!(serde_json::from_str::<CaptureRequest>(r#"{"profile":"unknown","sourceRoot":"/none","mirrorRoot":"/none","probePath":"/none"}"#).is_err());
+    }
+    #[test]
     fn coherent_wal_snapshot_is_scrubbed_before_persistence() {
-        let source = tempfile::tempdir().unwrap();
-        let mirror = tempfile::tempdir().unwrap();
-        let writer = database(source.path());
-        writer
-            .execute_batch("PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0;")
-            .unwrap();
-        insert(&writer, "fixture-one", "PRIVATE_BODY_MUST_NOT_PERSIST");
-        insert(&writer, "fixture-empty", "");
-        insert(
-            &writer,
-            "fixture-nul",
-            "\0PRIVATE_NUL_BODY_MUST_NOT_PERSIST",
-        );
-        let manifest = capture_database(
-            &source.path().canonicalize().unwrap(),
-            &mirror.path().canonicalize().unwrap(),
-        )
-        .unwrap();
-        assert_eq!(manifest.active_rows, 3);
-        assert_eq!(manifest.nonempty_active_previews, 2);
-        // This unit test owns its source and runs without the production sandbox.
-        // SQLite may update read marks in SHM; source DB/WAL must still be unchanged.
-        assert_eq!(&manifest.before[..2], &manifest.after[..2]);
-        let bytes = fs::read(mirror.path().join(DB_NAME)).unwrap();
-        assert!(
-            !bytes
-                .windows(b"PRIVATE_BODY_MUST_NOT_PERSIST".len())
-                .any(|part| part == b"PRIVATE_BODY_MUST_NOT_PERSIST")
-        );
-        assert!(
-            !bytes
-                .windows(b"PRIVATE_NUL_BODY_MUST_NOT_PERSIST".len())
-                .any(|part| part == b"PRIVATE_NUL_BODY_MUST_NOT_PERSIST")
-        );
-        let captured = Connection::open_with_flags(
-            mirror.path().join(DB_NAME),
-            OpenFlags::SQLITE_OPEN_READ_ONLY,
-        )
-        .unwrap();
-        assert_eq!(
-            captured
-                .query_row(
-                    "SELECT preview FROM threads WHERE id='fixture-one'",
-                    [],
-                    |row| row.get::<_, String>(0)
-                )
-                .unwrap(),
-            "[redacted]"
-        );
-        assert_eq!(
-            captured
-                .query_row(
-                    "SELECT preview FROM threads WHERE id='fixture-empty'",
-                    [],
-                    |row| row.get::<_, String>(0)
-                )
-                .unwrap(),
-            ""
-        );
-        assert_eq!(
+        for profile in [ExactProfile::V164, ExactProfile::V165] {
+            let source = tempfile::tempdir().unwrap();
+            let mirror = tempfile::tempdir().unwrap();
+            let writer = database(source.path(), profile);
             writer
-                .query_row(
-                    "SELECT preview FROM threads WHERE id='fixture-one'",
-                    [],
-                    |row| row.get::<_, String>(0)
-                )
-                .unwrap(),
-            "PRIVATE_BODY_MUST_NOT_PERSIST"
-        );
+                .execute_batch("PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0;")
+                .unwrap();
+            insert(&writer, "fixture-one", "PRIVATE_BODY_MUST_NOT_PERSIST");
+            insert(&writer, "fixture-empty", "");
+            insert(
+                &writer,
+                "fixture-nul",
+                "\0PRIVATE_NUL_BODY_MUST_NOT_PERSIST",
+            );
+            let manifest = capture_database(
+                &source.path().canonicalize().unwrap(),
+                &mirror.path().canonicalize().unwrap(),
+                profile,
+            )
+            .unwrap();
+            assert_eq!(manifest.active_rows, 3);
+            assert_eq!(manifest.nonempty_active_previews, 2);
+            // This unit test owns its source and runs without the production sandbox.
+            // SQLite may update read marks in SHM; source DB/WAL must still be unchanged.
+            assert_eq!(&manifest.before[..2], &manifest.after[..2]);
+            let bytes = fs::read(mirror.path().join(DB_NAME)).unwrap();
+            assert!(
+                !bytes
+                    .windows(b"PRIVATE_BODY_MUST_NOT_PERSIST".len())
+                    .any(|part| part == b"PRIVATE_BODY_MUST_NOT_PERSIST")
+            );
+            assert!(
+                !bytes
+                    .windows(b"PRIVATE_NUL_BODY_MUST_NOT_PERSIST".len())
+                    .any(|part| part == b"PRIVATE_NUL_BODY_MUST_NOT_PERSIST")
+            );
+            let captured = Connection::open_with_flags(
+                mirror.path().join(DB_NAME),
+                OpenFlags::SQLITE_OPEN_READ_ONLY,
+            )
+            .unwrap();
+            assert_eq!(
+                captured
+                    .query_row(
+                        "SELECT preview FROM threads WHERE id='fixture-one'",
+                        [],
+                        |row| row.get::<_, String>(0)
+                    )
+                    .unwrap(),
+                "[redacted]"
+            );
+            assert_eq!(
+                captured
+                    .query_row(
+                        "SELECT preview FROM threads WHERE id='fixture-empty'",
+                        [],
+                        |row| row.get::<_, String>(0)
+                    )
+                    .unwrap(),
+                ""
+            );
+            assert_eq!(
+                writer
+                    .query_row(
+                        "SELECT preview FROM threads WHERE id='fixture-one'",
+                        [],
+                        |row| row.get::<_, String>(0)
+                    )
+                    .unwrap(),
+                "PRIVATE_BODY_MUST_NOT_PERSIST"
+            );
+        }
     }
     #[test]
     fn unknown_and_corrupt_sqlite_never_produce_a_snapshot() {
@@ -571,7 +635,8 @@ mod tests {
             assert!(
                 capture_database(
                     &source.path().canonicalize().unwrap(),
-                    &mirror.path().canonicalize().unwrap()
+                    &mirror.path().canonicalize().unwrap(),
+                    ExactProfile::V164
                 )
                 .is_err()
             );
@@ -581,7 +646,7 @@ mod tests {
     #[test]
     fn source_changes_are_visible_in_fingerprints() {
         let root = tempfile::tempdir().unwrap();
-        let writer = database(root.path());
+        let writer = database(root.path(), ExactProfile::V164);
         let before = fingerprints(root.path()).unwrap();
         insert(&writer, "changed", "fixture");
         let after = fingerprints(root.path()).unwrap();

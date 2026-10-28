@@ -1,0 +1,80 @@
+{
+  "kind": "agentmender_codex_app_server_fixture",
+  "schemaVersion": "0.165.0-alpha.1.2",
+  "provenance": "observed_locally_sanitized",
+  "complete": false,
+  "pages": [
+    {
+      "archived": false,
+      "response": {
+        "id": 2,
+        "result": {
+          "data": [
+            {
+              "cwd": "/sanitized/workspace-1",
+              "id": "019a0000-0000-7000-8000-000000000001",
+              "parentThreadId": null,
+              "projectId": null,
+              "status": {
+                "type": "notLoaded"
+              },
+              "updatedAt": 1700000001
+            },
+            {
+              "cwd": "/sanitized/workspace-1",
+              "id": "019a0000-0000-7000-8000-000000000002",
+              "parentThreadId": null,
+              "projectId": null,
+              "status": {
+                "type": "notLoaded"
+              },
+              "updatedAt": 1700000002
+            },
+            {
+              "cwd": "/sanitized/workspace-1",
+              "id": "019a0000-0000-7000-8000-000000000003",
+              "parentThreadId": null,
+              "projectId": null,
+              "status": {
+                "type": "notLoaded"
+              },
+              "updatedAt": 1700000003
+            }
+          ],
+          "nextCursor": null
+        }
+      }
+    },
+    {
+      "archived": true,
+      "response": {
+        "id": 3,
+        "result": {
+          "data": [
+            {
+              "cwd": "/sanitized/workspace-2",
+              "id": "019a0000-0000-7000-8000-000000000004",
+              "parentThreadId": null,
+              "projectId": null,
+              "status": {
+                "type": "notLoaded"
+              },
+              "updatedAt": 1700000004
+            },
+            {
+              "cwd": "/sanitized/workspace-2",
+              "id": "019a0000-0000-7000-8000-000000000005",
+              "parentThreadId": null,
+              "projectId": null,
+              "status": {
+                "type": "notLoaded"
+              },
+              "updatedAt": 1700000005
+            }
+          ],
+          "nextCursor": null
+        }
+      }
+    }
+  ]
+}
