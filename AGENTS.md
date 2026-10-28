@@ -1,10 +1,11 @@
 # AgentMender engineering constraints
 
-Read all docs/adr before changing boundaries. Current scope is M2: a read-only,
-evidence-derived graph reconstructed from discovery observations.
+Read all docs/adr before changing boundaries. Current scope is M3: a read-only
+integrity evaluator over the evidence-derived graph and explicit provider contracts.
 No lifecycle mutation, arbitrary command/SQL dispatch, provider-state writes,
 approval, recovery, cleanup plans, deletion closure or integrity-repair engine is
-permitted. Provider-native authority is not replaced by graph inference.
+permitted. Provider-native authority is not replaced by graph inference. Integrity
+reports never decide deletability. See ADR-0008 for exact negative-proof rules.
 
 Unknown versions/layouts remain protected/audit-only. Installation presence,
 compatibility, evidence status and coverage are separate facts. A PATH miss is
@@ -35,5 +36,6 @@ entry point only. Do not add a general SQL or file-write interface.
 Run cargo fmt --check, cargo clippy --locked --workspace --all-targets -- -D warnings,
 cargo test --locked --workspace, cargo build --locked --workspace,
 python3 scripts/check_architecture.py and git diff --check. Real tests are explicit,
-separate from deterministic tests, and never required in CI. M2 work belongs on
-milestone/m2-artifact-graph; do not begin M3 or integrate later milestones.
+separate from deterministic tests, and never required in CI. M3 work belongs on
+milestone/m3-integrity-forensics after verified M2 base
+b96c31710758942bfb85e3527c17cebe2ef9a40a. Do not begin M4 or later milestones.

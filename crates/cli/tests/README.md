@@ -4,7 +4,7 @@ Normal cargo test runs use sanitized/synthetic fixtures or fresh test-owned
 locations. Before/after manifests compare paths and bytes. They require no local
 provider and do not scan real homes or app bundles implicitly.
 
-The same byte manifests cover graph/explain as well as scan/inspect. Graph tests
+The same byte manifests cover verify (JSON and text), graph/explain and scan/inspect. Graph tests
 exercise sanitized observed Codex and Claude fixtures, unknown versions, partial
 coverage and raw/effective rule provenance. Domain properties use 256 generated
 cases per property and fixed seed `0x4d325f6772617068`; run them independently with
@@ -12,6 +12,12 @@ cases per property and fixed seed `0x4d325f6772617068`; run them independently w
 positive Shared/Referenced/Global assessments, uncertainty, conflicts, roots,
 canonical ordering and lossless provenance/path serialization. They never access
 real provider homes.
+
+M3 integrity properties have fixed seed `0x4d335f696e746567` and 256 cases per
+generated property. Run `cargo test --locked -p agentmender-domain --test integrity_properties`.
+Synthetic closed contracts include positive absence/orphan witnesses and weaken
+each proof prerequisite; existing provider fixtures are never promoted to complete
+ownership/absence contracts. See docs/integrity.md for supported conclusions.
 
 Two older ignored Rust probes wrap the entire CLI in independent global write
 and network denial. They test safe fallback, not the nominal disposable-mirror
@@ -29,7 +35,7 @@ python3 scripts/verify_live_discovery.py --allow-real --provider claude \
   --desktop-root /absolute/AppSupport/Claude --app-bundle /absolute/Claude.app
 ```
 
-The script runs providers/scan/inspect, emits only aggregate report information,
+The script runs providers/scan/inspect/verify, emits only aggregate report information,
 and compares DB/WAL/SHM fingerprints for Codex, or bounded Desktop/project-tree
 metadata plus parsed-file hashes for Claude. Access time is excluded. Matching
 fingerprints cover those observed files and intervals, not all OS/provider state.

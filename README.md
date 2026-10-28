@@ -1,9 +1,10 @@
 # AgentMender
 
-Provider-aware, strictly read-only inventory and evidence graph of AI coding-agent
-state. M0/M1 and the Codex compatibility refresh are verified with accurately
-reported **partial coverage**. M2 adds graph reconstruction and explanations;
-lifecycle mutation, plans, approvals, repair and recovery remain out of scope.
+Provider-aware, strictly read-only inventory, evidence graph and integrity reports
+of AI coding-agent state. M0/M1 and the Codex compatibility refresh retain accurately
+reported **partial coverage**. M2 adds graph reconstruction and explanations. M3 adds
+a pure integrity evaluator and `verify`; lifecycle mutation, plans, approvals,
+repair and recovery remain out of scope.
 
 ```sh
 cargo run -- providers --json
@@ -12,12 +13,16 @@ cargo run -- scan --provider claude --json
 cargo run -- --provider claude --fixture fixtures/claude/4.29.0-observed --desktop-fixture scan --json
 cargo run -- --provider codex --fixture fixtures/codex/observed-snapshot scan --json
 cargo run -- --provider codex --fixture fixtures/codex/observed-snapshot-0.165.0-alpha.1.2 graph --json
+cargo run -- --provider codex --fixture fixtures/codex/observed-snapshot-0.165.0-alpha.1.2 verify --json
+cargo run -- --provider claude --fixture fixtures/claude/4.29.0-observed --desktop-fixture verify
 cargo run -- --provider codex --fixture fixtures/codex/observed-snapshot-0.165.0-alpha.1.2 explain codex:session:019a0000-0000-7000-8000-000000000001 --json
 ```
 
 Use an ID returned by `scan` with `inspect <id>`. JSON reports go to stdout;
 structured errors go to stderr. Exit 0 means a report is complete for its declared
 boundary; exit 2 means partial/unavailable inventory or an input/provider error.
+For `verify`, exit 0 requires Healthy or HealthyWithExpectedResiduals for every
+returned provider, with no failures; Unknown, Degraded and Failed return 2.
 Partial inventory never proves absence, ownership, liveness or safe deletion.
 Reports include local paths/identifiers but exclude conversation bodies.
 
@@ -69,6 +74,26 @@ protected, including retained active/archived sessions, user-protected projects,
 global state and unresolved references. Active presentation does not establish
 writer activity. No deletion closure is computed. See ADR-0006/0007.
 
+## Integrity verification
+
+`verify` discovers once per provider, builds the same graph, and evaluates normalized
+facts without further provider I/O. Reports distinguish established violations,
+suspicious inconsistencies, verification blockers and explicit residual candidates.
+JSON retains affected identities, raw/effective evidence, rule descriptors,
+supporting observations/relationships, graph diagnostics and proof context. Text
+summarizes blocker counts and samples; use `--json` for every fact.
+
+Current live profiles have no closed absence/owner/residual contract. Their normal
+status is **Unknown** with visible partial coverage, never a global health claim.
+Unattributed transcripts are protected uncertainty. Database/list/file count
+differences are not orphan findings. Concurrent activity is an observation blocker,
+not corruption. Significant conflicting provider facts may instead be Degraded.
+
+The generic engine verifies scoped synthetic contracts for required targets and
+owners; Partial relevant coverage removes negative proof. No finding or residual
+classification means removable. See [integrity semantics and support](docs/integrity.md)
+and [ADR-0008](docs/adr/0008-read-only-integrity-proofs.md).
+
 ## Roots and scope
 
 CLI state roots default to CODEX_HOME / CLAUDE_CONFIG_DIR, otherwise
@@ -87,7 +112,8 @@ strings; non-UTF-8 paths use a lossless native encoding object.
 ## Safety boundary
 
 The application never writes real provider state. Read-only ports expose only
-kind/detect/discover and pure snapshot-to-graph construction. All artifacts remain
+kind/detect/discover, pure snapshot-to-graph construction and pure integrity-context
+interpretation. All artifacts remain
 protected, and paths do not prove ownership.
 No arbitrary SQL, provider command, archive/delete/purge/repair or approval tool
 exists. Codex uses a consistent SQLite Backup API snapshot, scrubs content in RAM
