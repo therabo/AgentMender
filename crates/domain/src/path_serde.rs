@@ -27,7 +27,9 @@ fn unhex(value: &str) -> Option<Vec<u8>> {
     }
     value
         .as_bytes()
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|part| {
             let high = (part[0] as char).to_digit(16)?;
             let low = (part[1] as char).to_digit(16)?;
@@ -81,7 +83,9 @@ fn restore<E: Error>(value: Representation) -> Result<PathBuf, E> {
     if encoding == "windows_utf16le" && bytes.len().is_multiple_of(2) {
         use std::os::windows::ffi::OsStringExt;
         let words: Vec<_> = bytes
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .map(|b| u16::from_le_bytes([b[0], b[1]]))
             .collect();
         return Ok(OsString::from_wide(&words).into());
