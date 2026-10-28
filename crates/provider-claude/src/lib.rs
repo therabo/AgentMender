@@ -1247,20 +1247,22 @@ fn strict_version(v: &str) -> bool {
         })
 }
 fn safe_path(path: &Path) -> bool {
-    let mut current = PathBuf::new();
-    for component in path.components() {
-        if matches!(
-            component,
-            std::path::Component::ParentDir | std::path::Component::CurDir
-        ) {
-            return false;
-        }
-        current.push(component.as_os_str());
-        if std::fs::symlink_metadata(&current).map_or(true, |m| m.file_type().is_symlink()) {
-            return false;
-        }
+    if !path.is_absolute()
+        || path.components().any(|component| {
+            matches!(
+                component,
+                std::path::Component::ParentDir | std::path::Component::CurDir
+            )
+        })
+    {
+        return false;
     }
-    true
+    let mut ancestors: Vec<_> = path.ancestors().collect();
+    ancestors.reverse();
+    ancestors.into_iter().all(|ancestor| {
+        ancestor.is_absolute()
+            && std::fs::symlink_metadata(ancestor).is_ok_and(|m| !m.file_type().is_symlink())
+    })
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1596,6 +1598,19 @@ impl ClaudeAdapter {
 #[cfg(test)]
 mod desktop_tests {
     use super::*;
+    #[test]
+    fn safe_path_accepts_existing_absolute_paths_and_rejects_invalid_paths() {
+        let root = tempfile::tempdir().unwrap();
+        let nested = root.path().join("nested");
+        std::fs::create_dir(&nested).unwrap();
+        let file = nested.join("file");
+        std::fs::write(&file, "fixture").unwrap();
+        let file = file.canonicalize().unwrap();
+        assert!(safe_path(&file));
+        assert!(!safe_path(&nested.join("missing")));
+        assert!(!safe_path(Path::new("relative/file")));
+        assert!(!safe_path(&file.join("../file")));
+    }
     #[test]
     fn conflicting_desktop_versions_do_not_establish_a_known_context() {
         let installation = |version: &str| ProviderInstallation {
