@@ -1609,7 +1609,11 @@ mod desktop_tests {
         assert!(safe_path(&file));
         assert!(!safe_path(&nested.join("missing")));
         assert!(!safe_path(Path::new("relative/file")));
-        assert!(!safe_path(&file.join("../file")));
+        // PathBuf::join normalizes parent segments for Windows verbatim paths.
+        // Preserve the literal traversal in the input presented to the validator.
+        let mut traversal = file.into_os_string();
+        traversal.push(format!("{0}..{0}file", std::path::MAIN_SEPARATOR));
+        assert!(!safe_path(Path::new(&traversal)));
     }
     #[test]
     fn conflicting_desktop_versions_do_not_establish_a_known_context() {
