@@ -330,12 +330,15 @@ impl FixedFile {
 impl OwnedStateRoot {
     pub fn create(path: &Path, protected: &[PathBuf]) -> io::Result<Self> {
         Self::check_overlap(path, protected)?;
-        let mut b = fs::DirBuilder::new();
         #[cfg(unix)]
-        {
+        let b = {
             use std::os::unix::fs::DirBuilderExt;
+            let mut b = fs::DirBuilder::new();
             b.mode(0o700);
-        }
+            b
+        };
+        #[cfg(not(unix))]
+        let b = fs::DirBuilder::new();
         b.create(path)?;
         #[cfg(windows)]
         crate::windows_permissions::secure_new_root(path)?;

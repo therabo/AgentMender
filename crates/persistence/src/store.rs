@@ -753,6 +753,9 @@ mod tests {
             ("AGENTMENDER_TEST_FAULT", "commit", false, 1),
             ("AGENTMENDER_TEST_ERROR", "external", true, 1),
             ("AGENTMENDER_TEST_ERROR", "commit", false, 1),
+            ("AGENTMENDER_TEST_ERROR", "before_write", false, 0),
+            ("AGENTMENDER_TEST_ERROR", "written", true, 1),
+            ("AGENTMENDER_TEST_ERROR", "insert", true, 1),
         ] {
             let dir = tempfile::tempdir().unwrap();
             let path = dir.path().join("owned");
