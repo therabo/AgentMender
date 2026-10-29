@@ -92,6 +92,22 @@ def method_bodies(source, name):
         yield source[match.start():index]
 
 
+def declaration_has_raw_payload(source, name):
+    """Audit an entire named Rust declaration, including nested variant fields."""
+    code = mask_literals(source)
+    matches = list(re.finditer(r'\b(?:enum|struct)\s+' + re.escape(name) + r'\b[^;{]*\{', code))
+    if len(matches) != 1:
+        raise ValueError(f'expected exactly one declaration of {name}')
+    match = matches[0]
+    index, depth = match.end(), 1
+    while index < len(code) and depth:
+        depth += (code[index] == '{') - (code[index] == '}')
+        index += 1
+    if depth:
+        raise ValueError(f'unbalanced declaration of {name}')
+    return bool(re.search(r'\b(?:PathBuf|Value|String|Vec\s*<\s*u8\b)', code[match.start():index]))
+
+
 # Regression: production code after a test module must still be audited.
 example = '#[cfg(test)] mod tests { let x = r#"}"#; fs::write("fixture", b"x"); }\nfn later() { fs::write("unsafe", b"x"); }'
 filtered = production_source(example)
@@ -110,6 +126,23 @@ assert any(impure_graph_code(body) for body in method_bodies(override, 'integrit
 planning_override = 'impl Adapter { fn planning_context(&self) { std::fs::read("provider"); } }'
 assert any(impure_graph_code(body) for body in method_bodies(planning_override, 'planning_context'))
 assert impure_graph_code('fn planning_helper() { std::fs::read("provider"); }')
+
+# Regression: inspect every nested variant, while ignoring literals and comments.
+for raw_type in ['String', 'Value', 'Vec<u8>', 'PathBuf']:
+    assert declaration_has_raw_payload(
+        f'enum TransactionEvent {{ Safe {{ x: u64 }}, Nested {{ payload: {raw_type} }} }}',
+        'TransactionEvent',
+    ), f'nested raw payload fitness canary failed: {raw_type}'
+assert not declaration_has_raw_payload(
+    'enum TransactionEvent { Safe { x: u64 }, Nested { digest: Digest } } // String }',
+    'TransactionEvent',
+)
+try:
+    declaration_has_raw_payload('struct Other { value: u64 }', 'TransactionEvent')
+except ValueError:
+    pass
+else:
+    raise AssertionError('missing declaration fitness canary failed')
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 metadata = json.loads(subprocess.check_output(
@@ -247,8 +280,11 @@ for marker in ["try_lock", "synchronous=EXTRA", "BEGIN IMMEDIATE", "events_no_up
     if marker not in store:
         raise SystemExit(f"ADR-0011 journal safety contract missing: {marker}")
 transactions = production_source((ROOT / "crates/domain/src/transaction.rs").read_text())
-for enum in ["TransactionEvent", "TransactionBinding", "RecoveryManifest"]:
-    declaration = re.search(r"(?:enum|struct)\s+" + enum + r"\s*\{([^}]*?(?:\n\}))", transactions, re.S)
-    if declaration and re.search(r"\b(?:PathBuf|Value|String|Vec\s*<\s*u8)\b", declaration.group(1)):
-        raise SystemExit(f"raw content or operation payload in {enum}")
+for name in ["TransactionEvent", "TransactionBinding", "RecoveryManifest"]:
+    try:
+        raw_payload = declaration_has_raw_payload(transactions, name)
+    except ValueError as error:
+        raise SystemExit(str(error)) from error
+    if raw_payload:
+        raise SystemExit(f"raw content or operation payload in {name}")
 print("Architecture and provider read-only/owned-persistence source checks passed (8 crates).")
