@@ -436,7 +436,7 @@ fn authenticate(db: &Connection, root: &OwnedStateRoot, records: &[JournalRecord
             }
             let tag = authentication.tag.as_str().as_bytes();
             let mut decoded = [0u8; 32];
-            for (i, pair) in tag.chunks_exact(2).enumerate() {
+            for (i, pair) in tag.as_chunks::<2>().0.iter().enumerate() {
                 if i >= 32 {
                     return Err(StoreError::Invalid);
                 }
