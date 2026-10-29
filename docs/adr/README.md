@@ -12,3 +12,4 @@
 | [0008: Read-only integrity proofs](0008-read-only-integrity-proofs.md) | Accepted |
 | [0009: Immutable evidence-bound planning](0009-immutable-evidence-bound-planning.md) | Accepted |
 | [0010: Read-only MCP boundary and private bounded views](0010-readonly-mcp-boundary.md) | Accepted |
+| [0011: Durable transaction knowledge before provider execution](0011-durable-transaction-knowledge.md) | Accepted |

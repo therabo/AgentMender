@@ -1,11 +1,14 @@
 # AgentMender engineering constraints
 
-Read all docs/adr before changing boundaries. Current scope is M5: a thin read-only
-stdio MCP adapter over existing application use cases, the evidence graph,
-recomputed M3 integrity and immutable M4 lifecycle intentions.
+Read all docs/adr before changing boundaries. Current scope is M6: durable
+AgentMender-owned transaction/recovery knowledge (ADR-0011). M5 remains a thin
+read-only stdio adapter over queries, integrity and immutable lifecycle intentions.
 No lifecycle mutation, arbitrary command/SQL dispatch, provider-state writes,
-approval, recovery, deletion closure or integrity-repair engine is
-permitted. Provider-native authority is not replaced by graph inference. Integrity
+approval, deletion closure or integrity-repair engine is
+permitted. Persistence writes are allowed only through the explicit private owned
+root capability in persistence, disjoint from protected provider state. No effect
+executor or generic command/SQL/file-write payload exists. Provider-native authority
+is not replaced by graph inference. Integrity
 reports never decide deletability. See ADR-0008 for negative-proof rules and
 ADR-0009 for canonical identity, complete effects contracts and future validation.
 Plans are not authorization. Ready is not approved. Only semantic native session
@@ -44,11 +47,17 @@ descriptors before validation; malformed claims cannot disappear.
 Plan identity binds structured evidence, typed scope and original conflicts, not
 presentation prose. Fresh validation replans; a matching hash is not authority.
 
+Journal intent and flush before any future effect; observe before recording results.
+A missing outcome is neither failure nor success. RecoveryRequired/OutcomeUnknown
+never trigger automatic retries or compensation. Required recovery precedes intent.
+Transactions, digests and durable receipts are not authorization. M7 owns approval;
+M8/M9 own provider mutation. Preserve M5's eight read-only MCP tools unchanged.
+
 Run cargo fmt --check, cargo clippy --locked --workspace --all-targets -- -D warnings,
 cargo test --locked --workspace, cargo build --locked --workspace,
 python3 scripts/check_architecture.py and git diff --check. Real tests are explicit,
-separate from deterministic tests, and never required in CI. M5 work belongs on
-milestone/m5-readonly-mcp after verified M4 integration base
-139291761975c1dca50492adcb5972cbfe7233f5. MCP is an inbound interface, never an
+separate from deterministic tests, and never required in CI. M6 work belongs on
+milestone/m6-durable-transactions after verified M5 integration base
+c426a7fe4e12c24afc2f383087912e7f54111b39. MCP is an inbound interface, never an
 authorization authority. No execution, approval, repair execution, persistent MCP
 state, HTTP/OAuth transport or later milestone implementation is permitted.
