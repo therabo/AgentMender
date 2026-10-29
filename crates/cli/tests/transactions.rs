@@ -104,7 +104,7 @@ fn missing_empty_and_provider_roots_are_never_initialized() {
     assert_eq!(contents(&provider), before);
 }
 #[test]
-fn no_effect_or_approval_subcommands_are_available_and_bad_id_is_rejected() {
+fn unsupported_or_incomplete_commands_and_bad_ids_are_rejected() {
     let home = tempfile::tempdir().unwrap();
     let (root, _) = fixture(home.path());
     let before = contents(&root);
@@ -127,6 +127,48 @@ fn no_effect_or_approval_subcommands_are_available_and_bad_id_is_rejected() {
             .success()
     );
     assert_eq!(contents(&root), before);
+}
+
+#[test]
+fn lifecycle_cannot_execute_or_retry_an_existing_unsupported_attempt() {
+    let home = tempfile::tempdir().unwrap();
+    let (root, id) = fixture(home.path());
+    let before = contents(&root);
+    for action in ["execute", "reconcile"] {
+        let result = run(home.path(), &root, &[action, &id]);
+        assert_eq!(result.status.code(), Some(2));
+        let error: serde_json::Value = serde_json::from_slice(&result.stderr).unwrap();
+        assert_eq!(error["code"], "transaction_unavailable");
+        assert_eq!(contents(&root), before);
+    }
+    assert_eq!(
+        report(run(home.path(), &root, &["inspect", &id]))["state"],
+        "outcome_unknown"
+    );
+}
+
+#[test]
+fn lifecycle_rejects_fixture_and_claude_configuration_before_state_access() {
+    let home = tempfile::tempdir().unwrap();
+    let missing = home.path().join("must-not-be-created");
+    let id = "a".repeat(64);
+    for options in [
+        vec!["--provider", "claude"],
+        vec!["--provider", "codex", "--fixture", "unused"],
+    ] {
+        let output = Command::new(env!("CARGO_BIN_EXE_agentmender"))
+            .env_clear()
+            .env("HOME", home.path())
+            .env("PATH", "")
+            .args(options)
+            .args(["--json", "transactions", "--state-root"])
+            .arg(&missing)
+            .args(["execute", &id])
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(2));
+        assert!(!missing.exists());
+    }
 }
 #[test]
 fn corrupt_recovery_is_reported_without_changing_unknown_state() {

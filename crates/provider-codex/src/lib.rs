@@ -1,6 +1,6 @@
 //! Codex metadata observations through the official, version-specific App Server API.
 //! Real SQLite is observed only by the isolated evidence worker; no lifecycle
-//! mutation methods or transcript readers are exposed.
+//! mutation methods are receipt-gated in a separate private lifecycle module; no transcript readers are exposed.
 use agentmender_domain::*;
 use agentmender_provider_api::{
     ProviderAdapter, ProviderError, ProviderLocation, filesystem, process, validate_location,
@@ -21,8 +21,10 @@ use std::{
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 mod capture;
 pub mod graph;
+mod lifecycle;
 mod planning;
 pub use capture::run_evidence_capture_worker;
+pub use lifecycle::CodexLifecycleAdapter;
 
 const MAX_BYTES: usize = 8 * 1024 * 1024;
 const MAX_LINE: usize = 1024 * 1024;

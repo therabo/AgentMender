@@ -25,9 +25,12 @@ name = "agentmender-application"
 version = "0.1.0"
 dependencies = [
  "agentmender-domain",
+ "agentmender-persistence",
  "agentmender-provider-api",
+ "proptest",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror",
 ]
 
@@ -102,6 +105,7 @@ name = "agentmender-provider-codex"
 version = "0.1.0"
 dependencies = [
  "agentmender-domain",
+ "agentmender-persistence",
  "agentmender-provider-api",
  "rusqlite",
  "serde",

@@ -14,8 +14,20 @@ use std::{
 #[derive(Clone, Subcommand)]
 pub enum TransactionAction {
     List,
-    Inspect { id: String },
-    Journal { id: String },
+    Inspect {
+        id: String,
+    },
+    Journal {
+        id: String,
+    },
+    /// Execute the exact independently approved transaction through its native adapter.
+    Execute {
+        id: String,
+    },
+    /// Observe an incomplete attempt without retrying its provider operation.
+    Reconcile {
+        id: String,
+    },
 }
 
 struct Reader(TransactionReader);
@@ -139,6 +151,9 @@ pub fn run(args: &Args, root: &Path, action: &TransactionAction) -> Result<bool,
     let reader = Reader(TransactionReader::open(root).map_err(|_| unavailable())?);
     let service = TransactionInspectionService::new(&reader);
     let id = match action {
+        TransactionAction::Execute { .. } | TransactionAction::Reconcile { .. } => {
+            return Err(unavailable());
+        }
         TransactionAction::List => None,
         TransactionAction::Inspect { id } | TransactionAction::Journal { id } => Some(
             id.parse::<TransactionId>()
@@ -146,6 +161,9 @@ pub fn run(args: &Args, root: &Path, action: &TransactionAction) -> Result<bool,
         ),
     };
     let value = match action {
+        TransactionAction::Execute { .. } | TransactionAction::Reconcile { .. } => {
+            return Err(unavailable());
+        }
         TransactionAction::List => serde_json::to_value(service.list().map_err(|_| unavailable())?),
         TransactionAction::Inspect { .. } => serde_json::to_value(
             service

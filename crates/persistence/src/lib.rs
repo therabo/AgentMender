@@ -1,9 +1,11 @@
 //! Durable AgentMender-owned transaction knowledge; never provider execution.
+mod handoff;
 mod owned;
 mod recovery;
 mod store;
 #[cfg(windows)]
 mod windows_permissions;
+pub use handoff::*;
 pub use owned::*;
 pub use recovery::*;
 pub use store::*;

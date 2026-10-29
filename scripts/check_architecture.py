@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Provider read-only and independent approval fitness (ADRs 0001-0012)."""
+"""Provider observation, independent approval and gated lifecycle fitness (ADRs 0001-0013)."""
 import json
 import pathlib
 import re
@@ -108,16 +108,37 @@ def declaration_has_raw_payload(source, name):
     return bool(re.search(r'\b(?:PathBuf|Value|String|Vec\s*<\s*u8\b)', code[match.start():index]))
 
 
+def impl_methods(source, name):
+    """Audit inherent gate methods, including constructors spelled with Self."""
+    code = mask_literals(production_source(source))
+    result = []
+    for match in re.finditer(r'\bimpl\s+' + re.escape(name) + r'\s*\{', code):
+        index, depth = match.end(), 1
+        while index < len(code) and depth:
+            depth += (code[index] == '{') - (code[index] == '}')
+            index += 1
+        if depth:
+            raise ValueError('unbalanced gate implementation')
+        result.extend(re.findall(r'\bfn\s+(\w+)\s*\(', code[match.end():index]))
+    return set(result)
+
+
 def approval_boundary_violation(source, crate_name, module_name):
     """ADR-0012: authority cannot enter MCP/providers or an execution CLI."""
     code = mask_literals(production_source(source))
     authority = r'\b(?:ApprovalGrant|ApprovalAction|ApprovalScope|ApprovalId|AuthorizationAuthentication|TransactionStore|RecoveryStore|DurableIntent|grant_approval|revoke_approval|record_intent|authorization_signing_bytes)\b'
+    if crate_name == 'provider-codex' and module_name == 'lifecycle.rs':
+        # This adapter may consume handoff gates; it cannot mint authority or write history.
+        forbidden = r'\b(?:ApprovalGrant|ApprovalAction|ApprovalScope|ApprovalId|AuthorizationAuthentication|TransactionStore|RecoveryStore|grant_approval|revoke_approval|record_intent|authorization_signing_bytes|AuthorityMac)\b'
+        return bool(re.search(forbidden, code))
     if crate_name == 'mcp-server' or crate_name.startswith('provider-'):
         return bool(re.search(authority, code))
     if crate_name == 'cli':
         if re.search(r'\b(?:record_intent|DurableIntent|AuthorizationAuthentication|authorization_signing_bytes|AuthorityMac)\b', code):
             return True
-        if module_name != 'approvals.rs' and re.search(r'\b(?:TransactionStore|grant_approval|revoke_approval|create_transaction)\b', code):
+        if module_name != 'approvals.rs' and re.search(r'\b(?:grant_approval|revoke_approval|create_transaction)\b', code):
+            return True
+        if module_name not in {'approvals.rs', 'lifecycle.rs'} and re.search(r'\bTransactionStore\b', code):
             return True
         if module_name == 'approvals.rs' and re.search(r'\b(?:yes|force|confirm|authorized|auto_approve|yes_really_delete)\s*:\s*bool\b', code):
             return True
@@ -166,6 +187,11 @@ assert approval_boundary_violation('fn consume() { store.record_intent(); }', 'c
 assert approval_boundary_violation('struct Flags { yes: bool }', 'cli', 'approvals.rs')
 assert approval_boundary_violation('fn bypass() { store.grant_approval(); }', 'cli', 'main.rs')
 assert not approval_boundary_violation('fn local() { store.grant_approval(); }', 'cli', 'approvals.rs')
+assert not approval_boundary_violation('fn gated(intent: DurableIntent) {}', 'provider-codex', 'lifecycle.rs')
+for canary in ['use agentmender_persistence::TransactionStore;', 'fn bypass() { store.grant_approval(); }']:
+    assert approval_boundary_violation(canary, 'provider-codex', 'lifecycle.rs')
+assert approval_boundary_violation('fn bypass() { store.record_intent(); }', 'cli', 'lifecycle.rs')
+assert impl_methods('impl DurableIntent { pub fn bypass() -> Self { Self {} } }', 'DurableIntent') == {'bypass'}
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 metadata = json.loads(subprocess.check_output(
@@ -174,8 +200,8 @@ metadata = json.loads(subprocess.check_output(
 allowed = {
     "agentmender-domain": set(),
     "agentmender-provider-api": {"agentmender-domain"},
-    "agentmender-application": {"agentmender-domain", "agentmender-provider-api"},
-    "agentmender-provider-codex": {"agentmender-domain", "agentmender-provider-api"},
+    "agentmender-application": {"agentmender-domain", "agentmender-provider-api", "agentmender-persistence"},
+    "agentmender-provider-codex": {"agentmender-domain", "agentmender-provider-api", "agentmender-persistence"},
     "agentmender-provider-claude": {"agentmender-domain", "agentmender-provider-api"},
     "agentmender-mcp-server": {"agentmender-domain", "agentmender-application"},
     "agentmender-persistence": {"agentmender-domain"},
@@ -210,13 +236,22 @@ for path in (ROOT / "crates").glob("*/src/**/*.rs"):
     source = production_source(path.read_text())
     code = mask_literals(source)
     reviewed_capture = path == ROOT / "crates/provider-codex/src/capture.rs"
+    reviewed_lifecycle = path == ROOT / "crates/provider-codex/src/lifecycle.rs"
     crate_name = path.relative_to(ROOT / "crates").parts[0]
     if approval_boundary_violation(source, crate_name, path.name):
         errors.append(f"independent approval boundary violation: {path.relative_to(ROOT)}")
     owned_files = {ROOT / f"crates/persistence/src/{name}.rs" for name in ["owned", "recovery"]}
     reviewed_owned = path in owned_files
     for pattern in patterns:
-        if (re.search(pattern, source)
+        inspected = source
+        if reviewed_lifecycle:
+            # Only fixed create-new pin copies under the opaque owned sandbox may write.
+            # All other code in this module retains the ordinary mutation prohibition.
+            for body in method_bodies(source, 'pin_image'):
+                inspected = inspected.replace(body, '')
+            if pattern == patterns[3]:
+                inspected = inspected.replace('"thread/unarchive"', '')
+        if (re.search(pattern, inspected)
             and not (reviewed_capture and pattern in patterns[1:])
             and not (reviewed_owned and pattern in patterns[:3])
             and not (crate_name == "persistence" and path.name == "store.rs" and pattern == patterns[-1])):
@@ -225,8 +260,32 @@ for path in (ROOT / "crates").glob("*/src/**/*.rs"):
         errors.append(f"unsafe code outside reviewed OS boundary: {path.relative_to(ROOT)}")
     if reviewed_capture and not all(marker in source for marker in ["SQLITE_OPEN_READ_ONLY", "PRAGMA query_only=ON", "verify_source_write_denial", "create_new(true)"]):
         errors.append("disposable capture safety markers missing; review required")
-    if "Command::new" in source and path != ROOT / "crates/provider-api/src/process.rs":
+    if "Command::new" in source and path != ROOT / "crates/provider-api/src/process.rs" and not reviewed_lifecycle:
         errors.append(f"process dispatch outside sandbox boundary: {path.relative_to(ROOT)}")
+    if reviewed_lifecycle:
+        launch = list(method_bodies(source, 'launch'))
+        pins = list(method_bodies(source, 'pin_image'))
+        if not launch or not all('DurableObservation' in body.split('{', 1)[0] for body in launch):
+            errors.append('Codex native launcher lacks the nonconstructible handoff gate')
+        if len(pins) != 1 or 'EvidenceSandbox' not in pins[0].split('{', 1)[0]:
+            errors.append('executable pin writer lacks its opaque owned sandbox')
+        elif re.search(r'\b(?:remove_file|remove_dir|remove_dir_all|rename|copy|set_len|truncate|set_permissions)\s*\(', mask_literals(pins[0])):
+            errors.append('unreviewed mutation inside executable pin helper')
+        remaining = source
+        for body in launch:
+            remaining = remaining.replace(body, '')
+        if 'Command::new' in remaining or len(re.findall(r'Command::new', source)) != 1:
+            errors.append('Codex process dispatch escaped its private gated launcher')
+        no_pin = source
+        for body in pins:
+            no_pin = no_pin.replace(body, '')
+        if re.search(r'\b(?:DirBuilder|OpenOptions)\b|\.write_all\s*\(', mask_literals(no_pin)):
+            errors.append('Codex owned writes escaped the fixed executable pin helper')
+        if re.search(r'\bpub(?:\([^)]*\))?\s+fn\s+(?:launch|pin_image|lifecycle_response)\b', code):
+            errors.append('private Codex transport or owned write capability exposed publicly')
+        for marker in ['into_observation', 'validate_executable', 'grant_valid', 'NativeOutcome::Unknown', 'env_clear', 'EvidenceSandbox']:
+            if marker not in source:
+                errors.append(f'Codex durable handoff contract missing: {marker}')
     if crate_name == "persistence":
         if re.search(r"\b(?:agentmender_provider_\w+|agentmender_application|agentmender_mcp_server|std::process|Command)\b", code):
             errors.append(f"persistence crosses provider/inbound boundary: {path.relative_to(ROOT)}")
@@ -242,18 +301,20 @@ for path in (ROOT / "crates").glob("*/src/**/*.rs"):
             errors.append(f"persistent history or recovery rewrite/removal: {path.relative_to(ROOT)}")
         if path.name == "recovery.rs" and not all(marker in source for marker in ["RecoveryManifest", "create_recovery_stage", "publish_recovery", "sync_all", "verify"]):
             errors.append("typed durable recovery storage contract missing")
-        if path.name not in {"owned.rs", "recovery.rs", "store.rs", "windows_permissions.rs", "lib.rs"}:
+        if path.name not in {"owned.rs", "recovery.rs", "store.rs", "windows_permissions.rs", "lib.rs", "handoff.rs"}:
             errors.append(f"unreviewed persistence module: {path.relative_to(ROOT)}")
         if "Connection::" in code and path.name != "store.rs":
             errors.append(f"SQLite outside owned journal module: {path.relative_to(ROOT)}")
-    if crate_name in {"cli", "mcp-server", "application"} and path != ROOT / "crates/cli/src/approvals.rs" and re.search(
+    lifecycle_composition = {ROOT / 'crates/cli/src/lifecycle.rs', ROOT / 'crates/application/src/lifecycle.rs'}
+    if crate_name in {"cli", "mcp-server", "application"} and path != ROOT / "crates/cli/src/approvals.rs" and path not in lifecycle_composition and re.search(
         r"\b(?:TransactionStore|RecoveryStore|DurableIntent|create_transaction|record_intent|record_compensation_intent)\b", code
     ):
         errors.append(f"inbound interface can advance durable transactions: {path.relative_to(ROOT)}")
-    if crate_name.startswith("provider-") and re.search(r"\b(?:TransactionStore|RecoveryStore|DurableIntent|CleanupTransaction|TransactionEvent|JournalRecord)\b", code):
+    provider_authority = r"\b(?:TransactionStore|RecoveryStore|CleanupTransaction|TransactionEvent|JournalRecord)\b" if reviewed_lifecycle else r"\b(?:TransactionStore|RecoveryStore|DurableIntent|CleanupTransaction|TransactionEvent|JournalRecord)\b"
+    if crate_name.startswith("provider-") and re.search(provider_authority, code):
         errors.append(f"provider adapter contains transaction authority: {path.relative_to(ROOT)}")
     if crate_name == "mcp-server":
-        if (re.search(r"\b(?:agentmender_provider_(?:api|codex|claude)|std::(?:fs|process|net)|tokio::(?:fs|process|net)|rusqlite|sqlite|Command|File|OpenOptions)\b", code)
+        if (re.search(r"\b(?:agentmender_provider_(?:api|codex|claude)|agentmender_persistence|lifecycle|DurableEffectPort|EffectObservation|std::(?:fs|process|net)|tokio::(?:fs|process|net)|rusqlite|sqlite|Command|File|OpenOptions)\b", code)
             or re.search(r"\buse\s+(?:std|tokio)\s*::\s*\{[^;]*(?:\bfs\b|\bprocess\b|\bnet\b)", code)
             or re.search(r"\b(?:fn|struct|enum|trait)\s+(?:execute|approve|execute_\w+|approve_\w+|\w+_execute|\w+_approval)\b", code)):
             errors.append(f"MCP infrastructure or execution access: {path.relative_to(ROOT)}")
@@ -324,4 +385,37 @@ for marker in ['approval_eligible', 'approval_valid', 'authorization_signing_byt
 for marker in ['verify_slice', 'grant_approval', 'revoke_approval', 'ApprovalAction::Consumed', 'authority_metadata', 'migrate_v1']:
     if marker not in store:
         raise SystemExit(f'ADR-0012 authenticated persistence contract missing: {marker}')
-print("Architecture and provider read-only/independent-approval source checks passed (8 crates).")
+handoff = production_source((ROOT / 'crates/persistence/src/handoff.rs').read_text())
+for name in ['EffectError', 'NativeOutcome', 'EffectAttempt', 'NativeObservation', 'EffectObservation']:
+    if declaration_has_raw_payload(handoff, name):
+        raise SystemExit(f'raw provider payload in lifecycle handoff: {name}')
+for name in ['DurableIntent', 'DurableObservation']:
+    declaration = re.search(r'pub\s+struct\s+' + name + r'\s*\{([^}]+)\}', mask_literals(store))
+    if declaration is None or re.search(r'\bpub\b', declaration.group(1)):
+        raise SystemExit(f'nonconstructible lifecycle gate exposed: {name}')
+    if re.search(r'#\[derive\([^]]*(?:Clone|Copy|Default|Serialize|Deserialize)[^]]*\)\]\s*pub\s+struct\s+' + name, store):
+        raise SystemExit(f'cloneable/serializable lifecycle gate: {name}')
+    constructors = list(method_bodies(store, 'into_observation')) if name == 'DurableObservation' else []
+    if name == 'DurableObservation' and (len(constructors) != 1 or '(self)' not in constructors[0].split('{', 1)[0]):
+        raise SystemExit('dispatch gate must be consumed into observation-only authority')
+    if re.search(r'\bimpl\b[^\{;]*\b(?:Clone|Copy|Default|Deserialize)\b[^\{;]*\bfor\s+' + name + r'\b', mask_literals(store)):
+        raise SystemExit(f'gate reconstruction trait implementation: {name}')
+gate_methods = {'into_observation', 'expires_at', 'approval_id', 'plan_digest', 'state_fingerprint', 'operation_index', 'transaction_id', 'sequence'}
+if impl_methods(store, 'DurableIntent') != gate_methods or impl_methods(store, 'DurableObservation'):
+    raise SystemExit('unreviewed lifecycle gate constructor or conversion method')
+intents = list(method_bodies(store, 'record_intent'))
+if len(intents) != 1 or not (0 <= intents[0].find('self.append(r)?') < intents[0].find('Ok(DurableIntent {')):
+    raise SystemExit('durable receipt construction no longer follows committed intent')
+workflow = production_source((ROOT / 'crates/application/src/lifecycle.rs').read_text())
+reconciliation = list(method_bodies(workflow, 'reconcile'))
+if len(reconciliation) != 1 or re.search(r'\.(?:dispatch|record_intent)\s*\(', mask_literals(reconciliation[0])):
+    raise SystemExit('reconciliation can dispatch or recreate execution authority')
+for marker in ['record_intent', '.dispatch(', 'record_observation', 'evaluate_integrity', 'record_verification']:
+    if marker not in workflow:
+        raise SystemExit(f'lifecycle orchestration contract missing: {marker}')
+execution = list(method_bodies(workflow, 'execute'))
+if len(execution) != 1 or not (0 <= execution[0].find('.record_intent(') < execution[0].find('.dispatch(')):
+    raise SystemExit('native dispatch does not follow durable intent in the execution workflow')
+if not re.search(r'fn\s+dispatch\s*\([^;{]*\bDurableIntent\b', mask_literals(handoff)):
+    raise SystemExit('lifecycle effect port lost its owned durable gate')
+print("Architecture, independent approval and gated Codex lifecycle checks passed (8 crates).")

@@ -45,7 +45,7 @@ fn durable_reopen_sequence_and_read_only_inspection() {
     drop(reader);
     let mut store = TransactionStore::open(root).unwrap();
     store
-        .record_observation(&id, 4, &receipt, Observation::NoEffect)
+        .record_observation(&id, 4, &receipt.into_observation(), Observation::NoEffect)
         .unwrap();
     assert_eq!(
         store.inspect(&id).unwrap().state(),
@@ -244,7 +244,7 @@ fn stale_plan_and_wrong_receipt_are_rejected() {
         .unwrap();
     assert!(
         store
-            .record_observation(&b, 4, &receipt, Observation::Applied)
+            .record_observation(&b, 4, &receipt.into_observation(), Observation::Applied)
             .is_err()
     );
     assert_eq!(
@@ -334,4 +334,60 @@ fn lost_or_replaced_key_fails_closed_without_regeneration() {
     fs::remove_file(&path).unwrap();
     assert!(TransactionStore::open(root).is_err());
     assert!(!path.exists());
+}
+
+#[test]
+fn reconciliation_requires_consumed_exact_history_and_never_reissues_intent() {
+    let t = tempfile::tempdir().unwrap();
+    let root = root(&t);
+    let c = common::case(0);
+    let plan = c.plan(LifecycleIntent::Archive);
+    let report = evaluate_integrity(&c.graph, &c.proof);
+    let mut store = TransactionStore::open(root).unwrap();
+    let id = store.create_transaction(&plan).unwrap();
+    store.prepare_recovery(&id, 0).unwrap();
+    store.prepare(&id, 1).unwrap();
+    store
+        .grant_approval(&id, 2, &plan, &c.graph, &report, &c.planning)
+        .unwrap();
+    assert!(
+        store
+            .record_reconciliation(&id, 3, Observation::Applied)
+            .is_err()
+    );
+    let gate = store
+        .record_intent(&id, 3, &plan, &c.graph, &report, &c.planning)
+        .unwrap();
+    drop(gate);
+    assert!(
+        store
+            .record_reconciliation(&id, 3, Observation::Applied)
+            .is_err()
+    );
+    assert!(
+        store
+            .record_reconciliation(&id, 4, Observation::Unknown)
+            .is_err()
+    );
+    assert_eq!(
+        store.inspect(&id).unwrap().state(),
+        TransactionState::OutcomeUnknown
+    );
+    store
+        .record_reconciliation(&id, 4, Observation::Applied)
+        .unwrap();
+    assert_eq!(
+        store.inspect(&id).unwrap().state(),
+        TransactionState::EffectObserved
+    );
+    assert!(
+        store
+            .record_reconciliation(&id, 5, Observation::Applied)
+            .is_err()
+    );
+    assert!(
+        store
+            .record_intent(&id, 5, &plan, &c.graph, &report, &c.planning)
+            .is_err()
+    );
 }

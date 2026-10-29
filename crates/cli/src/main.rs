@@ -18,10 +18,14 @@ use clap::{Parser, Subcommand, ValueEnum};
 use serde::Serialize;
 
 mod approvals;
+mod lifecycle;
 mod transactions;
 
 #[derive(Clone, Parser)]
-#[command(version, about = "Read-only inventory of AI agent state")]
+#[command(
+    version,
+    about = "Provider-aware inventory and approved lifecycle management"
+)]
 struct Args {
     #[arg(long, global = true)]
     json: bool,
@@ -551,6 +555,13 @@ fn adapters(
 }
 fn run(args: Args) -> Result<bool, CliError> {
     if let Action::Transactions { state_root, action } = &args.command {
+        if matches!(
+            action,
+            transactions::TransactionAction::Execute { .. }
+                | transactions::TransactionAction::Reconcile { .. }
+        ) {
+            return lifecycle::run(&args, state_root, action);
+        }
         return transactions::run(&args, state_root, action);
     }
     if let Action::Approvals { action } = &args.command {

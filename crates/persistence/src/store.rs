@@ -49,6 +49,20 @@ pub enum StoreError {
 type Result<T> = std::result::Result<T, StoreError>;
 
 /// A durable intent is evidence of ordering, never permission to execute.
+/// It cannot be forged, cloned, or reused after conversion to an observation.
+///
+/// ```compile_fail
+/// use agentmender_persistence::DurableIntent;
+/// let _gate = DurableIntent {};
+/// ```
+/// ```compile_fail
+/// use agentmender_persistence::DurableIntent;
+/// fn duplicate(gate: DurableIntent) { let _copy = gate.clone(); }
+/// ```
+/// ```compile_fail
+/// use agentmender_persistence::DurableIntent;
+/// fn reuse(gate: DurableIntent) { let _receipt = gate.into_observation(); let _again = gate.into_observation(); }
+/// ```
 #[derive(Debug)]
 pub struct DurableIntent {
     id: TransactionId,
@@ -58,8 +72,36 @@ pub struct DurableIntent {
     plan: agentmender_domain::PlanDigest,
     state: agentmender_domain::StateFingerprint,
     operation_index: u32,
+    expires_at: u64,
+}
+/// Observation authority cannot be converted back into an execution gate.
+///
+/// ```compile_fail
+/// use agentmender_persistence::DurableObservation;
+/// let _receipt = DurableObservation {};
+/// ```
+/// ```compile_fail
+/// use agentmender_persistence::DurableObservation;
+/// fn duplicate(receipt: DurableObservation) { let _copy = receipt.clone(); }
+/// ```
+#[derive(Debug)]
+pub struct DurableObservation {
+    id: TransactionId,
+    sequence: u64,
+    digest: agentmender_domain::JournalDigest,
 }
 impl DurableIntent {
+    pub fn into_observation(self) -> DurableObservation {
+        DurableObservation {
+            id: self.id,
+            sequence: self.sequence,
+            digest: self.digest,
+        }
+    }
+
+    pub fn expires_at(&self) -> u64 {
+        self.expires_at
+    }
     pub fn approval_id(&self) -> &agentmender_domain::ApprovalId {
         &self.approval_id
     }
@@ -840,6 +882,7 @@ impl TransactionStore {
             },
         )?;
         let approval_id = grant.id.clone();
+        let expires_at = grant.expires_at;
         let sequence = r.sequence();
         let digest = r.digest().clone();
         self.append(r)?;
@@ -851,13 +894,14 @@ impl TransactionStore {
             plan: plan.digest().clone(),
             state: plan.state_fingerprint().clone(),
             operation_index: 0,
+            expires_at,
         })
     }
     pub fn record_observation(
         &mut self,
         id: &TransactionId,
         expected: u64,
-        receipt: &DurableIntent,
+        receipt: &DurableObservation,
         observation: Observation,
     ) -> Result<()> {
         let snapshot = self.inspect(id)?;
@@ -867,6 +911,65 @@ impl TransactionStore {
         {
             return Err(StoreError::Preconditions);
         }
+        let r = self.next(id, expected, TransactionEvent::Observed { observation })?;
+        self.append(r)
+    }
+    /// Authenticate consumed v2 history and recovery before observation-only work.
+    pub fn inspect_consumed(&self, id: &TransactionId) -> Result<TransactionSnapshot> {
+        let snapshot = self.inspect(id)?;
+        if snapshot.schema_version() != 2
+            || !matches!(
+                snapshot.state(),
+                agentmender_domain::TransactionState::OutcomeUnknown
+                    | agentmender_domain::TransactionState::EffectObserved
+                    | agentmender_domain::TransactionState::Verifying
+            )
+            || snapshot.approval().state != agentmender_domain::ApprovalState::Consumed
+            || snapshot.approval().grant.is_none()
+        {
+            return Err(StoreError::Preconditions);
+        }
+        let plan = snapshot.review_plan().ok_or(StoreError::Preconditions)?;
+        if TransactionBinding::from_plan(plan).map_err(|_| StoreError::Preconditions)?
+            != *snapshot.binding()
+        {
+            return Err(StoreError::Preconditions);
+        }
+        let manifest = snapshot.recovery().ok_or(StoreError::Preconditions)?;
+        RecoveryStore::new(self.root.clone())
+            .verify_manifest(manifest)
+            .map_err(|_| StoreError::Preconditions)?;
+        Ok(snapshot)
+    }
+    /// Record fresh, decisive read-only evidence without reissuing an effect gate.
+    pub fn record_reconciliation(
+        &mut self,
+        id: &TransactionId,
+        expected: u64,
+        observation: Observation,
+    ) -> Result<()> {
+        let snapshot = self.inspect_consumed(id)?;
+        if snapshot.sequence() != expected {
+            return Err(StoreError::Stale);
+        }
+        if snapshot.state() != agentmender_domain::TransactionState::OutcomeUnknown
+            || snapshot.approval().state != agentmender_domain::ApprovalState::Consumed
+            || snapshot.approval().grant.is_none()
+            || snapshot.review_plan().is_none()
+            || observation != Observation::Applied
+        {
+            return Err(StoreError::Preconditions);
+        }
+        let plan = snapshot.review_plan().ok_or(StoreError::Preconditions)?;
+        if TransactionBinding::from_plan(plan).map_err(|_| StoreError::Preconditions)?
+            != *snapshot.binding()
+        {
+            return Err(StoreError::Preconditions);
+        }
+        let manifest = snapshot.recovery().ok_or(StoreError::Preconditions)?;
+        RecoveryStore::new(self.root.clone())
+            .verify_manifest(manifest)
+            .map_err(|_| StoreError::Preconditions)?;
         let r = self.next(id, expected, TransactionEvent::Observed { observation })?;
         self.append(r)
     }
@@ -1087,7 +1190,7 @@ mod tests {
             let marker = path.parent().unwrap().join("fake-effect-marker");
             let receipt = synthetic_effect(&store, receipt, &marker);
             store
-                .record_observation(&id, 4, &receipt, Observation::Applied)
+                .record_observation(&id, 4, &receipt.into_observation(), Observation::Applied)
                 .unwrap();
             return;
         }
@@ -1122,7 +1225,12 @@ mod tests {
                             .record_intent(&id, seq, &plan, &c.graph, &report, &c.planning)
                             .unwrap()
                     });
-                    let _ = store.record_observation(&id, seq + 1, &receipt, Observation::Applied);
+                    let _ = store.record_observation(
+                        &id,
+                        seq + 1,
+                        &receipt.into_observation(),
+                        Observation::Applied,
+                    );
                 }
                 "verification_started" => {
                     let _ = store.start_verification(&id, seq);
@@ -1469,7 +1577,12 @@ mod tests {
                         .unwrap();
                     if ["verification_started", "verified"].contains(&stage) {
                         store
-                            .record_observation(&id, 4, &receipt, Observation::Applied)
+                            .record_observation(
+                                &id,
+                                4,
+                                &receipt.into_observation(),
+                                Observation::Applied,
+                            )
                             .unwrap();
                     }
                     if stage == "verified" {
@@ -1559,7 +1672,7 @@ mod tests {
             .record_intent(&id, 3, &plan, &c.graph, &report, &c.planning)
             .unwrap();
         store
-            .record_observation(&id, 4, &receipt, Observation::Applied)
+            .record_observation(&id, 4, &receipt.into_observation(), Observation::Applied)
             .unwrap();
         let snapshot = store.inspect(&id).unwrap();
         assert!(
