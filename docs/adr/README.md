@@ -13,3 +13,4 @@
 | [0009: Immutable evidence-bound planning](0009-immutable-evidence-bound-planning.md) | Accepted |
 | [0010: Read-only MCP boundary and private bounded views](0010-readonly-mcp-boundary.md) | Accepted |
 | [0011: Durable transaction knowledge before provider execution](0011-durable-transaction-knowledge.md) | Accepted |
+| [0012: Independent local approval and atomic authorization handoff](0012-independent-local-approval.md) | Accepted |

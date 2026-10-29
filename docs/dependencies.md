@@ -119,3 +119,20 @@ Primary references: [SQLite sync modes](https://www.sqlite.org/pragma.html#pragm
 [Windows permission wrappers](https://github.com/danieldulaney/windows-permissions-rs),
 [winapi-util](https://github.com/BurntSushi/winapi-util),
 [Windows security descriptors](https://learn.microsoft.com/en-us/windows/win32/secauthz/security-descriptor-string-format).
+
+## M7 approval authentication
+
+Reuse already locked hmac 0.13.0 and sha2 0.11.1 in persistence, with getrandom
+0.4.3 for a dedicated approval key and independent grant identities/nonces. No new
+package, crypto implementation, runtime or MSRV increase is required. Rechecked
+the exact cached package metadata and official RustCrypto documentation on
+2026-10-29: hmac MSRV 1.85 and sha2 MSRV 1.88 fit workspace Rust 1.89. Both are
+stable RustCrypto releases already used by this workspace. This is a scoped
+dependency selection review, not a complete vulnerability audit. The dedicated
+approval key never reuses MCP's ephemeral privacy key.
+
+Use full-length HMAC-SHA256 tags and Mac::verify_slice for verification, following
+the [maintainer's API](https://docs.rs/hmac/0.13.0/hmac/). Plain SHA-256 remains
+content identity. Existing SQLite BEGIN IMMEDIATE and the store lock serialize
+approval writes; [SQLite transaction semantics](https://www.sqlite.org/lang_transaction.html)
+do not make external files/provider operations part of a database transaction.

@@ -1,10 +1,11 @@
 # AgentMender engineering constraints
 
-Read all docs/adr before changing boundaries. Current scope is M6: durable
-AgentMender-owned transaction/recovery knowledge (ADR-0011). M5 remains a thin
+Read all docs/adr before changing boundaries. Current scope is M7: independent
+local approval (ADR-0012), following formally integrated M6 at
+f2268d2cdcff961a91e079af79314571fb3752d7. M5 remains a thin
 read-only stdio adapter over queries, integrity and immutable lifecycle intentions.
 No lifecycle mutation, arbitrary command/SQL dispatch, provider-state writes,
-approval, deletion closure or integrity-repair engine is
+deletion closure or integrity-repair engine is
 permitted. Persistence writes are allowed only through the explicit private owned
 root capability in persistence, disjoint from protected provider state. No effect
 executor or generic command/SQL/file-write payload exists. Provider-native authority
@@ -37,7 +38,9 @@ be deterministic for a fixed snapshot and must not read state or sample the cloc
 No current provider rule proves exclusive lifecycle ownership; all graph nodes
 remain protected. Provider-specific rule interpretation belongs in adapters.
 
-Domain has no adapters/filesystem logic. Application calls read-only ports. CLI
+Domain has no adapters/filesystem logic. Application obtains fresh planning inputs
+through read-only provider ports and routes independent approval through explicit
+approval ports. CLI
 composes adapters and invokes use cases, with a fixed internal capture-worker
 entry point only. Do not add a general SQL or file-write interface.
 Planning-context hooks and helpers are pure. Never infer exhaustive effects from
@@ -50,14 +53,23 @@ presentation prose. Fresh validation replans; a matching hash is not authority.
 Journal intent and flush before any future effect; observe before recording results.
 A missing outcome is neither failure nor success. RecoveryRequired/OutcomeUnknown
 never trigger automatic retries or compensation. Required recovery precedes intent.
-Transactions, digests and durable receipts are not authorization. M7 owns approval;
-M8/M9 own provider mutation. Preserve M5's eight read-only MCP tools unchanged.
+Transactions and digests are not authorization. M7 binds authenticated, short-lived,
+one-shot approval to an exact plan, v2 transaction and recovery digest. Legacy v1
+attempts remain inspection-only. V2 consumption and durable intent form one signed
+event; receipts never prove provider effects. M8/M9 own provider mutation.
+Preserve M5's eight read-only MCP tools unchanged. MCP cannot request grant,
+revocation, consumption, persistent preparation or key access. Only the independent
+local interactive approval composition may issue grants; no boolean, --yes/force,
+JSON or noninteractive bypass. Terminal possession is not proof of personal identity
+against a same-user shell/PTY adversary. Approval never overrides blockers or fresh
+execution-time validation. Exact review plans may persist as bounded typed metadata
+inside v2 Created records; no graph/snapshot/provider bodies or arbitrary imports.
 
 Run cargo fmt --check, cargo clippy --locked --workspace --all-targets -- -D warnings,
 cargo test --locked --workspace, cargo build --locked --workspace,
 python3 scripts/check_architecture.py and git diff --check. Real tests are explicit,
-separate from deterministic tests, and never required in CI. M6 work belongs on
-milestone/m6-durable-transactions after verified M5 integration base
-c426a7fe4e12c24afc2f383087912e7f54111b39. MCP is an inbound interface, never an
-authorization authority. No execution, approval, repair execution, persistent MCP
+separate from deterministic tests, and never required in CI. M7 work belongs on
+milestone/m7-independent-approval after verified M6 integration base
+f2268d2cdcff961a91e079af79314571fb3752d7. MCP is an inbound interface, never an
+authorization authority. No provider execution, repair execution, persistent MCP
 state, HTTP/OAuth transport or later milestone implementation is permitted.
