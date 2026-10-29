@@ -1,6 +1,9 @@
-use std::{collections::BTreeMap, env, path::PathBuf, process::ExitCode};
+use std::{collections::BTreeMap, env, path::PathBuf, process::ExitCode, sync::Arc};
 
-use agentmender_application::{ApplicationError, DiscoveryService, InspectedEntity};
+use agentmender_application::{
+    ApplicationError, DiscoveryService, InspectedEntity, QueryControl, ReadOnlyRequest,
+    ReadOnlyResponse,
+};
 use agentmender_domain::{
     ArtifactId, CompatibilityStatus, Completeness, DiscoveryScope, EntityId, IntegrityReport,
     LifecycleIntent, LifecyclePlan, PlanStatus, Presence, Provider, ProviderKind,
@@ -14,7 +17,7 @@ use agentmender_provider_codex::CodexAdapter;
 use clap::{Parser, Subcommand, ValueEnum};
 use serde::Serialize;
 
-#[derive(Parser)]
+#[derive(Clone, Parser)]
 #[command(version, about = "Read-only inventory of AI agent state")]
 struct Args {
     #[arg(long, global = true)]
@@ -72,9 +75,10 @@ impl From<PlanIntent> for LifecycleIntent {
         }
     }
 }
-#[derive(Subcommand)]
+#[derive(Clone, Subcommand)]
 enum Action {
     Providers,
+    Mcp,
     Scan,
     Inspect { id: String },
     Graph,
@@ -180,6 +184,7 @@ impl From<ApplicationError> for CliError {
     fn from(error: ApplicationError) -> Self {
         match error {
             ApplicationError::Provider(error) => error.into(),
+            ApplicationError::Cancelled => Self::new(ErrorCode::DiscoveryFailed, "query cancelled"),
             ApplicationError::InspectionUnavailable(id) => Self::new(
                 ErrorCode::InspectionUnavailable,
                 format!("inspection unavailable: {id}"),
@@ -413,34 +418,39 @@ fn print_plan(plan: &LifecyclePlan) {
     );
     println!("Execution: NOT PERFORMED; plan is not authorization; Ready is not approved");
 }
-fn run(args: Args) -> Result<bool, CliError> {
-    if args.desktop_fixture && !matches!(args.provider, Some(SelectedProvider::Claude)) {
-        return Err(CliError::new(
-            ErrorCode::InvalidArguments,
-            "--desktop-fixture requires --provider claude",
-        ));
-    }
-    let mode = if args.fixture.is_some() {
-        "fixture"
-    } else {
-        "live"
-    };
+struct FactoryEnvironment {
+    home: Option<PathBuf>,
+    helper: Option<PathBuf>,
+}
+
+fn adapters(
+    args: &Args,
+    frozen: Option<&FactoryEnvironment>,
+) -> Result<Vec<Box<dyn ProviderAdapter>>, CliError> {
     let mut adapters: Vec<Box<dyn ProviderAdapter>> = Vec::new();
     if !matches!(args.provider, Some(SelectedProvider::Claude)) {
         let adapter = if let Some(path) = &args.fixture {
             CodexAdapter::from_fixture(path.clone())?
         } else {
             let mut adapter = CodexAdapter::new(ProviderLocation {
-                state_root: root(args.codex_root, "CODEX_HOME", ".codex")?,
-                executable: args
-                    .codex_executable
-                    .or_else(|| find_executable(ProviderKind::Codex)),
+                state_root: root(args.codex_root.clone(), "CODEX_HOME", ".codex")?,
+                executable: args.codex_executable.clone().or_else(|| {
+                    if frozen.is_none() {
+                        find_executable(ProviderKind::Codex)
+                    } else {
+                        None
+                    }
+                }),
             });
-            if let (Ok(executable), Some(home)) = (env::current_exe(), env::var_os("HOME")) {
-                let home = PathBuf::from(home);
-                if home.is_absolute() {
-                    adapter = adapter.with_evidence_helper(executable, home);
-                }
+            if let (Some(executable), Some(home)) = (
+                frozen.map_or_else(|| env::current_exe().ok(), |f| f.helper.clone()),
+                frozen.map_or_else(
+                    || env::var_os("HOME").map(PathBuf::from),
+                    |f| f.home.clone(),
+                ),
+            ) && home.is_absolute()
+            {
+                adapter = adapter.with_evidence_helper(executable, home);
             }
             adapter
         };
@@ -457,12 +467,15 @@ fn run(args: Args) -> Result<bool, CliError> {
             let default_desktop = cfg!(target_os = "macos")
                 && args.claude_root.is_none()
                 && env::var_os("CLAUDE_CONFIG_DIR").is_none();
-            let home = env::var_os("HOME").map(PathBuf::from);
+            let home = frozen.map_or_else(
+                || env::var_os("HOME").map(PathBuf::from),
+                |f| f.home.clone(),
+            );
             let default_root = home
                 .as_ref()
                 .filter(|p| p.is_absolute())
                 .map(|p| p.join("Library/Application Support/Claude"));
-            let desktop_root = args.claude_desktop_root.or_else(|| {
+            let desktop_root = args.claude_desktop_root.clone().or_else(|| {
                 if default_desktop {
                     default_root.clone()
                 } else {
@@ -470,13 +483,17 @@ fn run(args: Args) -> Result<bool, CliError> {
                 }
             });
             let mut adapter = ClaudeAdapter::new(ProviderLocation {
-                state_root: root(args.claude_root, "CLAUDE_CONFIG_DIR", ".claude")?,
-                executable: args
-                    .claude_executable
-                    .or_else(|| find_executable(ProviderKind::Claude)),
+                state_root: root(args.claude_root.clone(), "CLAUDE_CONFIG_DIR", ".claude")?,
+                executable: args.claude_executable.clone().or_else(|| {
+                    if frozen.is_none() {
+                        find_executable(ProviderKind::Claude)
+                    } else {
+                        None
+                    }
+                }),
             });
             if let Some(data_root) = desktop_root {
-                let mut app_bundles = args.claude_app_bundle;
+                let mut app_bundles = args.claude_app_bundle.clone();
                 if default_desktop && default_root.as_ref() == Some(&data_root) {
                     app_bundles.push(PathBuf::from("/Applications/Claude.app"));
                     if let Some(home) = home {
@@ -497,6 +514,102 @@ fn run(args: Args) -> Result<bool, CliError> {
         };
         adapters.push(Box::new(adapter));
     }
+    Ok(adapters)
+}
+fn run(args: Args) -> Result<bool, CliError> {
+    if args.desktop_fixture && !matches!(args.provider, Some(SelectedProvider::Claude)) {
+        return Err(CliError::new(
+            ErrorCode::InvalidArguments,
+            "--desktop-fixture requires --provider claude",
+        ));
+    }
+    if matches!(args.command, Action::Mcp) {
+        let mut config = args.clone();
+        if config.fixture.is_none() {
+            if !matches!(config.provider, Some(SelectedProvider::Claude)) {
+                config.codex_root = Some(root(config.codex_root.clone(), "CODEX_HOME", ".codex")?);
+                config.codex_executable = config
+                    .codex_executable
+                    .or_else(|| find_executable(ProviderKind::Codex));
+            }
+            if !matches!(config.provider, Some(SelectedProvider::Codex)) {
+                let default_desktop = cfg!(target_os = "macos")
+                    && config.claude_root.is_none()
+                    && env::var_os("CLAUDE_CONFIG_DIR").is_none();
+                if default_desktop
+                    && let Some(home) = env::var_os("HOME")
+                        .map(PathBuf::from)
+                        .filter(|p| p.is_absolute())
+                {
+                    let default_root = home.join("Library/Application Support/Claude");
+                    let desktop_root = config
+                        .claude_desktop_root
+                        .get_or_insert_with(|| default_root.clone());
+                    if *desktop_root == default_root {
+                        config
+                            .claude_app_bundle
+                            .push(PathBuf::from("/Applications/Claude.app"));
+                        config
+                            .claude_app_bundle
+                            .push(home.join("Applications/Claude.app"));
+                    }
+                }
+                config.claude_root = Some(root(
+                    config.claude_root.clone(),
+                    "CLAUDE_CONFIG_DIR",
+                    ".claude",
+                )?);
+                config.claude_executable = config
+                    .claude_executable
+                    .or_else(|| find_executable(ProviderKind::Claude));
+            }
+        }
+        let factory_environment = FactoryEnvironment {
+            home: env::var_os("HOME").map(PathBuf::from),
+            helper: env::current_exe().ok(),
+        };
+        let executor = Arc::new(
+            move |request: ReadOnlyRequest,
+                  control: QueryControl|
+                  -> Result<ReadOnlyResponse, ApplicationError> {
+                control.check()?;
+                let mut selected = config.clone();
+                if let Some(provider) = request.provider {
+                    let requested = match provider {
+                        ProviderKind::Codex => SelectedProvider::Codex,
+                        ProviderKind::Claude => SelectedProvider::Claude,
+                    };
+                    if config.provider.is_some_and(|configured| {
+                        !matches!(
+                            (configured, requested),
+                            (SelectedProvider::Codex, SelectedProvider::Codex)
+                                | (SelectedProvider::Claude, SelectedProvider::Claude)
+                        )
+                    }) {
+                        return Err(ProviderError::ProviderUnsupported(provider).into());
+                    }
+                    selected.provider = Some(requested);
+                }
+                let adapters = adapters(&selected, Some(&factory_environment)).map_err(|_| {
+                    ProviderError::CapabilityUnavailable(
+                        "provider configuration unavailable".into(),
+                    )
+                })?;
+                control.check()?;
+                DiscoveryService::new(adapters.iter().map(|a| a.as_ref()).collect())
+                    .dispatch(request, control)
+            },
+        );
+        agentmender_mcp_server::run_stdio(executor)
+            .map_err(|_| CliError::new(ErrorCode::OutputError, "MCP transport failed"))?;
+        return Ok(false);
+    }
+    let mode = if args.fixture.is_some() {
+        "fixture"
+    } else {
+        "live"
+    };
+    let adapters = adapters(&args, None)?;
     let service = DiscoveryService::new(adapters.iter().map(|a| a.as_ref()).collect());
     let scope = DiscoveryScope {
         project_path: args.project,
@@ -504,6 +617,7 @@ fn run(args: Args) -> Result<bool, CliError> {
         max_entries: args.max_entries,
     };
     match args.command {
+        Action::Mcp => unreachable!("handled above"),
         Action::Providers => {
             let report = service.providers();
             let incomplete = !report.failures.is_empty()

@@ -1,0 +1,250 @@
+use agentmender_application::{ApplicationError, ProviderReport, ReadOnlyResponse};
+use agentmender_mcp_server::{Executor, serve_io};
+use serde_json::{Value, json};
+use std::sync::{
+    Arc,
+    atomic::{AtomicUsize, Ordering},
+};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+async fn exchange(
+    reader: &mut BufReader<tokio::io::ReadHalf<tokio::io::DuplexStream>>,
+    writer: &mut tokio::io::WriteHalf<tokio::io::DuplexStream>,
+    request: Value,
+) -> Value {
+    writer
+        .write_all(format!("{request}\n").as_bytes())
+        .await
+        .unwrap();
+    let mut line = String::new();
+    reader.read_line(&mut line).await.unwrap();
+    assert!(line.len() <= 256 * 1024, "response exceeds wire limit");
+    let response: Value = serde_json::from_str(&line).unwrap();
+    if let Some(structured) = response
+        .get("result")
+        .and_then(|r| r.get("structuredContent"))
+    {
+        let text: Value =
+            serde_json::from_str(response["result"]["content"][0]["text"].as_str().unwrap())
+                .unwrap();
+        assert_eq!(
+            &text, structured,
+            "text fallback must preserve the typed result"
+        );
+    }
+    response
+}
+fn executor(calls: Arc<AtomicUsize>) -> Executor {
+    Arc::new(move |_, _| {
+        calls.fetch_add(1, Ordering::SeqCst);
+        Ok(ReadOnlyResponse::Providers(ProviderReport::default()))
+    })
+}
+#[tokio::test]
+async fn modern_registry_and_strict_validation() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let (client, server) = tokio::io::duplex(128 * 1024);
+    let (sr, sw) = tokio::io::split(server);
+    let task = tokio::spawn(serve_io(sr, sw, executor(calls.clone()), [1; 32]));
+    let (cr, mut cw) = tokio::io::split(client);
+    let mut cr = BufReader::new(cr);
+    let meta = json!({"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientInfo":{"name":"test","version":"1"},"io.modelcontextprotocol/clientCapabilities":{}});
+    let discover = exchange(
+        &mut cr,
+        &mut cw,
+        json!({"jsonrpc":"2.0","id":1,"method":"server/discover","params":{"_meta":meta}}),
+    )
+    .await;
+    assert_eq!(
+        discover["result"]["_meta"]["io.modelcontextprotocol/serverInfo"]["name"], "agentmender",
+        "{discover}"
+    );
+    let list = exchange(
+        &mut cr,
+        &mut cw,
+        json!({"jsonrpc":"2.0","id":2,"method":"tools/list","params":{"_meta":meta}}),
+    )
+    .await;
+    let tools = list["result"]["tools"].as_array().unwrap();
+    assert_eq!(tools.len(), 8);
+    assert_eq!(
+        tools
+            .iter()
+            .map(|t| t["name"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        [
+            "providers",
+            "workspace_scan",
+            "inspect",
+            "graph",
+            "explain",
+            "verify_integrity",
+            "plan_lifecycle",
+            "repair_plan"
+        ]
+    );
+    assert!(
+        serde_json::to_vec(&list).unwrap().len() + 64 * 1024 + 128 <= 256 * 1024,
+        "tool schemas must fit even with the largest admitted request ID"
+    );
+    for tool in tools {
+        assert!(tool["inputSchema"].is_object());
+        assert!(tool["outputSchema"].is_object());
+        assert_eq!(tool["annotations"]["readOnlyHint"], true);
+        assert_eq!(tool["annotations"]["destructiveHint"], false);
+    }
+    let bad = exchange(&mut cr, &mut cw, json!({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"_meta":meta,"name":"workspace_scan","arguments":{"scope":{"max_entries":10001},"private_canary":"secret"}}})).await;
+    assert_eq!(bad["error"]["code"], -32602);
+    assert!(!bad.to_string().contains("private_canary"));
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    let bad_cursor = exchange(&mut cr, &mut cw, json!({"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"_meta":meta,"name":"graph","arguments":{"page":{"cursor":"invalid"}}}})).await;
+    assert_eq!(bad_cursor["error"]["code"], -32602);
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    for (name, arguments) in [
+        ("unknown_tool", json!({})),
+        ("graph", json!({"provider":"other"})),
+        ("graph", json!({"scope":{"max_entries":"10"}})),
+        ("graph", json!({"scope":{"project_path":"/secret"}})),
+        (
+            "inspect",
+            json!({"target":{"provider":"codex","class":"session","token":"a".repeat(65)}}),
+        ),
+        (
+            "inspect",
+            json!({"provider":"claude","target":{"provider":"codex","class":"session","token":"a".repeat(64)}}),
+        ),
+        (
+            "plan_lifecycle",
+            json!({"target":{"provider":"codex","class":"session","token":"a".repeat(64)},"intent":"repair"}),
+        ),
+    ] {
+        let bad = exchange(&mut cr, &mut cw, json!({"jsonrpc":"2.0","id":99,"method":"tools/call","params":{"_meta":meta,"name":name,"arguments":arguments}})).await;
+        assert!(bad.get("error").is_some(), "{bad}");
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+    }
+    let good = exchange(&mut cr, &mut cw, json!({"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"_meta":meta,"name":"providers","arguments":{}}})).await;
+    assert!(good["result"]["structuredContent"].is_object(), "{good}");
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    drop(cw);
+    drop(cr);
+    task.await.unwrap().unwrap();
+}
+#[tokio::test]
+async fn legacy_initialize_and_sanitized_errors() {
+    let (client, server) = tokio::io::duplex(128 * 1024);
+    let (sr, sw) = tokio::io::split(server);
+    let exec: Executor = Arc::new(|_, _| Err(ApplicationError::Cancelled));
+    let task = tokio::spawn(serve_io(sr, sw, exec, [2; 32]));
+    let (cr, mut cw) = tokio::io::split(client);
+    let mut cr = BufReader::new(cr);
+    let init = exchange(&mut cr, &mut cw, json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"test","version":"1"}}})).await;
+    assert_eq!(init["result"]["serverInfo"]["name"], "agentmender");
+    cw.write_all(b"{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}\n")
+        .await
+        .unwrap();
+    let list = exchange(
+        &mut cr,
+        &mut cw,
+        json!({"jsonrpc":"2.0","id":2,"method":"tools/list"}),
+    )
+    .await;
+    assert_eq!(list["result"]["tools"].as_array().unwrap().len(), 8);
+    let result = exchange(&mut cr, &mut cw, json!({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"providers","arguments":{}}})).await;
+    assert_eq!(result["result"]["structuredContent"]["error"], "cancelled");
+    drop(cw);
+    drop(cr);
+    task.await.unwrap().unwrap();
+}
+
+#[tokio::test]
+async fn busy_cancellation_and_shutdown_wait_for_worker() {
+    use std::sync::atomic::AtomicBool;
+    let started = Arc::new(AtomicBool::new(false));
+    let release = Arc::new(AtomicBool::new(false));
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let (s, r, c) = (started.clone(), release.clone(), cancelled.clone());
+    let exec: Executor = Arc::new(move |_, control| {
+        s.store(true, Ordering::SeqCst);
+        while !r.load(Ordering::SeqCst) {
+            if control.check().is_err() {
+                c.store(true, Ordering::SeqCst);
+            }
+            std::thread::yield_now();
+        }
+        Ok(ReadOnlyResponse::Providers(ProviderReport::default()))
+    });
+    let (client, server) = tokio::io::duplex(128 * 1024);
+    let (sr, sw) = tokio::io::split(server);
+    let task = tokio::spawn(serve_io(sr, sw, exec, [3; 32]));
+    let (cr, mut cw) = tokio::io::split(client);
+    let mut cr = BufReader::new(cr);
+    let meta = json!({"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientInfo":{"name":"test","version":"1"},"io.modelcontextprotocol/clientCapabilities":{}});
+    let first = json!({"jsonrpc":"2.0","id":10,"method":"tools/call","params":{"_meta":meta,"name":"providers","arguments":{}}});
+    cw.write_all(format!("{first}\n").as_bytes()).await.unwrap();
+    while !started.load(Ordering::SeqCst) {
+        tokio::task::yield_now().await;
+    }
+    let busy = exchange(&mut cr, &mut cw, json!({"jsonrpc":"2.0","id":11,"method":"tools/call","params":{"_meta":meta,"name":"providers","arguments":{}}})).await;
+    assert_eq!(busy["result"]["structuredContent"]["error"], "busy");
+    cw.write_all(b"{\"jsonrpc\":\"2.0\",\"method\":\"notifications/cancelled\",\"params\":{\"requestId\":10}}\n").await.unwrap();
+    while !cancelled.load(Ordering::SeqCst) {
+        tokio::task::yield_now().await;
+    }
+    let busy_after_cancel = exchange(&mut cr, &mut cw, json!({"jsonrpc":"2.0","id":12,"method":"tools/call","params":{"_meta":meta,"name":"providers","arguments":{}}})).await;
+    assert_eq!(busy_after_cancel["id"], 12);
+    assert_eq!(
+        busy_after_cancel["result"]["structuredContent"]["error"],
+        "busy"
+    );
+    release.store(true, Ordering::SeqCst);
+    let mut late = String::new();
+    assert!(
+        tokio::time::timeout(
+            std::time::Duration::from_millis(100),
+            cr.read_line(&mut late)
+        )
+        .await
+        .is_err(),
+        "late result: {late}"
+    );
+    drop(cw);
+    drop(cr);
+    task.await.unwrap().unwrap();
+}
+
+#[tokio::test]
+async fn oversized_frame_never_reaches_executor() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let (client, server) = tokio::io::duplex(256 * 1024);
+    let (sr, sw) = tokio::io::split(server);
+    let task = tokio::spawn(serve_io(sr, sw, executor(calls.clone()), [4; 32]));
+    let (cr, mut cw) = tokio::io::split(client);
+    let message = format!(
+        "{{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"server/discover\",\"padding\":\"{}\"}}\n",
+        "x".repeat(70_000)
+    );
+    let _ = cw.write_all(message.as_bytes()).await;
+    drop(cw);
+    drop(cr);
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(2), task)
+        .await
+        .expect("oversized frame must terminate transport");
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn duplicate_keys_do_not_reach_executor() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let (client, server) = tokio::io::duplex(128 * 1024);
+    let (sr, sw) = tokio::io::split(server);
+    let task = tokio::spawn(serve_io(sr, sw, executor(calls.clone()), [8; 32]));
+    let (cr, mut cw) = tokio::io::split(client);
+    let raw = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientInfo":{"name":"test","version":"1"},"io.modelcontextprotocol/clientCapabilities":{}},"name":"graph","arguments":{"scope":{"max_entries":10001,"max_entries":1}}}}"#;
+    cw.write_all(format!("{raw}\n").as_bytes()).await.unwrap();
+    drop(cw);
+    drop(cr);
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(2), task)
+        .await
+        .expect("duplicate frame must terminate transport");
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+}

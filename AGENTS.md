@@ -1,7 +1,8 @@
 # AgentMender engineering constraints
 
-Read all docs/adr before changing boundaries. Current scope is M4: immutable,
-read-only lifecycle intentions over the evidence graph and recomputed M3 integrity.
+Read all docs/adr before changing boundaries. Current scope is M5: a thin read-only
+stdio MCP adapter over existing application use cases, the evidence graph,
+recomputed M3 integrity and immutable M4 lifecycle intentions.
 No lifecycle mutation, arbitrary command/SQL dispatch, provider-state writes,
 approval, recovery, deletion closure or integrity-repair engine is
 permitted. Provider-native authority is not replaced by graph inference. Integrity
@@ -46,6 +47,8 @@ presentation prose. Fresh validation replans; a matching hash is not authority.
 Run cargo fmt --check, cargo clippy --locked --workspace --all-targets -- -D warnings,
 cargo test --locked --workspace, cargo build --locked --workspace,
 python3 scripts/check_architecture.py and git diff --check. Real tests are explicit,
-separate from deterministic tests, and never required in CI. M4 work belongs on
-milestone/m4-immutable-planning after verified M3 base
-fa291282bea9257cf2fdb57a3827aac005a678e7. Do not begin M5 or later milestones.
+separate from deterministic tests, and never required in CI. M5 work belongs on
+milestone/m5-readonly-mcp after verified M4 integration base
+139291761975c1dca50492adcb5972cbfe7233f5. MCP is an inbound interface, never an
+authorization authority. No execution, approval, repair execution, persistent MCP
+state, HTTP/OAuth transport or later milestone implementation is permitted.

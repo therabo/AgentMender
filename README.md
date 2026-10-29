@@ -4,7 +4,8 @@ Provider-aware, strictly read-only inventory, evidence graph and integrity repor
 of AI coding-agent state. M0/M1 and the Codex compatibility refresh retain accurately
 reported **partial coverage**. M2 adds graph reconstruction and explanations. M3 adds
 a pure integrity evaluator and `verify`. M4 adds immutable lifecycle intentions;
-execution, approvals, repair and recovery remain out of scope.
+M5 exposes read-only queries and planning over local stdio MCP. Execution, approvals,
+repair and recovery remain out of scope.
 
 ```sh
 cargo run -- providers --json
@@ -110,6 +111,22 @@ ownership or integrity are unproven. Claude session purge remains unsupported.
 Current physical reclaim estimates are unknown. See [planning semantics](docs/planning.md)
 and [ADR-0009](docs/adr/0009-immutable-evidence-bound-planning.md).
 
+## Read-only MCP
+
+Launch `agentmender mcp` as a local stdio server. Configure provider roots and
+executables with the existing launch flags. Eight tools expose providers,
+workspace_scan, inspect, graph, explain, verify_integrity, plan_lifecycle and
+repair_plan. Repair intentions remain Unsupported; no repair executes.
+
+MCP uses the same application layer as CLI. Its typed privacy views replace local
+paths/IDs and untrusted prose with opaque process-scoped references while preserving
+coverage, compatibility, evidence, integrity and plan blockers. Results are paginated
+and bounded. A plan is not authorization; Ready is not approved. No MCP execution,
+approval or arbitrary command/filesystem/SQL capability exists.
+
+See [launch instructions, schemas, privacy, pagination and limits](docs/mcp.md)
+and [ADR-0010](docs/adr/0010-readonly-mcp-boundary.md).
+
 ## Roots and scope
 
 CLI state roots default to CODEX_HOME / CLAUDE_CONFIG_DIR, otherwise
@@ -153,8 +170,9 @@ health. Truncated directory samples can vary with enumeration order.
 
 ## Development and verification
 
-Rust 1.89+; six crates retain ports and adapters. Application depends only on domain
-and provider ports; CLI composes adapters and calls application use cases.
+Rust 1.89+; seven crates retain ports and adapters. Application depends only on domain
+and provider ports; CLI composes adapters and calls application use cases. MCP depends
+internally only on application/domain and contains no provider storage logic.
 Dependencies and the scoped unsafe boundary are documented in
 [dependency decisions](docs/dependencies.md).
 

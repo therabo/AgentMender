@@ -121,9 +121,13 @@ allowed = {
     "agentmender-application": {"agentmender-domain", "agentmender-provider-api"},
     "agentmender-provider-codex": {"agentmender-domain", "agentmender-provider-api"},
     "agentmender-provider-claude": {"agentmender-domain", "agentmender-provider-api"},
-    "agentmender": {"agentmender-domain", "agentmender-provider-api", "agentmender-application", "agentmender-provider-codex", "agentmender-provider-claude"},
+    "agentmender-mcp-server": {"agentmender-domain", "agentmender-application"},
+    "agentmender": {"agentmender-domain", "agentmender-provider-api", "agentmender-application", "agentmender-provider-codex", "agentmender-provider-claude", "agentmender-mcp-server"},
 }
 errors = []
+actual_packages = {p["name"] for p in metadata["packages"]}
+if actual_packages != set(allowed):
+    errors.append(f"workspace crate set changed: {sorted(actual_packages ^ set(allowed))}")
 for package in metadata["packages"]:
     name = package["name"]
     if name not in allowed:
@@ -132,8 +136,11 @@ for package in metadata["packages"]:
     internal = {d["name"] for d in package["dependencies"] if d["name"].startswith("agentmender-")}
     if internal - allowed[name]:
         errors.append(f"dependency direction violation: {name}: {sorted(internal - allowed[name])}")
-    if any("mcp" in d["name"].lower() for d in package["dependencies"]):
-        errors.append(f"MCP dependency introduced before M5: {name}")
+    for dep in package["dependencies"]:
+        if dep["name"] in {"rmcp", "schemars"} and name != "agentmender-mcp-server":
+            errors.append(f"MCP SDK outside adapter: {name}: {dep['name']}")
+        if dep["name"] in {"tokio", "tokio-util"} and name not in {"agentmender", "agentmender-mcp-server"}:
+            errors.append(f"async runtime outside inbound boundary: {name}: {dep['name']}")
 
 patterns = [
     r"(?:std::)?fs::(?:write|remove_file|remove_dir|remove_dir_all|rename|copy|create_dir|create_dir_all|set_permissions)\s*\(",
@@ -156,6 +163,11 @@ for path in (ROOT / "crates").glob("*/src/**/*.rs"):
     if "Command::new" in source and path != ROOT / "crates/provider-api/src/process.rs":
         errors.append(f"process dispatch outside sandbox boundary: {path.relative_to(ROOT)}")
     crate_name = path.relative_to(ROOT / "crates").parts[0]
+    if crate_name == "mcp-server":
+        if (re.search(r"\b(?:agentmender_provider_(?:api|codex|claude)|std::(?:fs|process|net)|tokio::(?:fs|process|net)|rusqlite|sqlite|Command|File|OpenOptions)\b", code)
+            or re.search(r"\buse\s+(?:std|tokio)\s*::\s*\{[^;]*(?:\bfs\b|\bprocess\b|\bnet\b)", code)
+            or re.search(r"\b(?:fn|struct|enum|trait)\s+(?:execute|approve|execute_\w+|approve_\w+|\w+_execute|\w+_approval)\b", code)):
+            errors.append(f"MCP infrastructure or execution access: {path.relative_to(ROOT)}")
     if crate_name == "domain" and re.search(r"std::(?:fs|process)|provider_(?:codex|claude|api)", source):
         errors.append(f"domain infrastructure coupling: {path.relative_to(ROOT)}")
     # ADR-0006: graph interpretation consumes observations and cannot acquire new
@@ -188,6 +200,8 @@ for path in (ROOT / "crates").glob("*/src/**/*.rs"):
             while index < len(code) and depth:
                 depth += (code[index] == '{') - (code[index] == '}')
                 index += 1
+            if re.search(r"ProviderAdapter\s*:\s*[^\{]*(?:Send|Sync)", code[trait.start():trait.end()]):
+                errors.append("provider port must not require Send or Sync")
             methods = set(re.findall(r"\bfn\s+(\w+)\s*\(", code[trait.end():index]))
             if methods != {"kind", "detect", "discover", "build_graph", "integrity_context", "planning_context"}:
                 errors.append(f"unreviewed provider port methods: {sorted(methods)}")
@@ -197,4 +211,4 @@ if errors:
     sys.exit(1)
 if 'unsafe_code = "forbid"' not in (ROOT / "Cargo.toml").read_text():
     raise SystemExit("workspace unsafe-code prohibition changed")
-print("Architecture and real-state read-only source checks passed (6 crates).")
+print("Architecture and real-state read-only source checks passed (7 crates).")

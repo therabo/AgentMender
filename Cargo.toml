@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/domain", "crates/provider-api", "crates/application", "crates/provider-codex", "crates/provider-claude", "crates/cli"]
+members = ["crates/domain", "crates/provider-api", "crates/application", "crates/provider-codex", "crates/provider-claude", "crates/cli", "crates/mcp-server"]
 resolver = "3"
 
 [workspace.package]
@@ -14,6 +14,7 @@ agentmender-provider-api = { path = "crates/provider-api" }
 agentmender-application = { path = "crates/application" }
 agentmender-provider-codex = { path = "crates/provider-codex" }
 agentmender-provider-claude = { path = "crates/provider-claude" }
+agentmender-mcp-server = { path = "crates/mcp-server" }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 thiserror = "2.0.21"
@@ -23,6 +24,11 @@ libc = "0.2.191"
 rusqlite = { version = "0.41.0", default-features = false, features = ["libsqlite3-sys", "bundled", "backup", "limits"] }
 sha2 = { version = "0.11.1", default-features = false }
 proptest = { version = "1.12.0", default-features = false, features = ["std"] }
+rmcp = { version = "=3.8.0", default-features = false, features = ["server", "transport-io"] }
+tokio = { version = "1.54.1", default-features = false, features = ["rt", "macros", "sync", "time"] }
+schemars = "1.2.3"
+hmac = "0.13.0"
+getrandom = "0.4.3"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

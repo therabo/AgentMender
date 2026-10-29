@@ -4,6 +4,16 @@ Normal cargo test runs use sanitized/synthetic fixtures or fresh test-owned
 locations. Before/after manifests compare paths and bytes. They require no local
 provider and do not scan real homes or app bundles implicitly.
 
+M5 protocol tests run with `cargo test --locked -p agentmender-mcp-server`.
+CLI stdio fixture sessions run with `cargo test --locked -p agentmender --test mcp`.
+They cover known/unknown/partial Codex, synthetic/observed Claude, scan/graph,
+opaque-target inspect/explain/planning, Unknown integrity, unsupported intentions,
+malformed arguments, provider mismatch, private-path exclusion, protocol-only
+stdout and complete recursive fixture byte manifests. No installed provider is
+needed. In-memory protocol tests cover modern and legacy negotiation, duplicate
+and oversized input, strict schemas, busy/cancel/deadline/EOF cleanup and safe
+JSON text fallback. See docs/mcp.md for the public contract and limits.
+
 The same byte manifests cover verify (JSON and text), graph/explain and scan/inspect. Graph tests
 exercise sanitized observed Codex and Claude fixtures, unknown versions, partial
 coverage and raw/effective rule provenance. Domain properties use 256 generated

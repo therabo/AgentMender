@@ -1,11 +1,18 @@
-//! Query use cases shared by CLI and a future read-only MCP interface.
+//! Query use cases shared by CLI and the read-only MCP interface.
 use agentmender_domain::*;
 use agentmender_provider_api::{ProviderAdapter, ProviderError, validate_scope};
 use serde::Serialize;
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
+use std::time::Instant;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum ApplicationError {
+    #[error("query cancelled or deadline exceeded")]
+    Cancelled,
     #[error(transparent)]
     Provider(#[from] ProviderError),
     #[error("unknown entity: {0}")]
@@ -14,6 +21,29 @@ pub enum ApplicationError {
     AmbiguousEntity(EntityId),
     #[error("inventory incomplete; absence of {0} cannot be established")]
     InspectionUnavailable(EntityId),
+}
+
+impl ApplicationError {
+    /// Stable, sanitized error catalog for inbound interfaces.
+    pub fn public_code(&self) -> &'static str {
+        match self {
+            Self::Cancelled => "cancelled",
+            Self::UnknownEntity(_) => "target_not_observed",
+            Self::AmbiguousEntity(_) => "ambiguous_target",
+            Self::InspectionUnavailable(_) => "target_unavailable",
+            Self::Provider(error) => match error {
+                ProviderError::ProviderNotInstalled(_) => "provider_not_detected",
+                ProviderError::ProviderVersionUnknown(_) => "compatibility_blocked",
+                ProviderError::ProviderUnsupported(_) => "provider_unsupported",
+                ProviderError::CapabilityUnavailable(_) => "capability_unavailable",
+                ProviderError::InvalidScope(_) => "invalid_scope",
+                ProviderError::MalformedProviderState { .. }
+                | ProviderError::PermissionDenied(_)
+                | ProviderError::DiscoveryFailed { .. }
+                | ProviderError::Graph(_) => "query_failed",
+            },
+        }
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -101,6 +131,67 @@ pub struct InspectReport {
     pub failures: Vec<ProviderFailure>,
 }
 
+/// A pure matcher over full graph identities. It must not acquire provider state.
+pub type TargetSelector = Arc<dyn Fn(&ArtifactId) -> bool + Send + Sync>;
+
+pub struct ReadOnlyRequest {
+    pub provider: Option<ProviderKind>,
+    pub scope: DiscoveryScope,
+    pub operation: ReadOnlyOperation,
+}
+pub enum ReadOnlyOperation {
+    Providers,
+    Scan,
+    Graph,
+    Inspect(TargetSelector),
+    Explain(TargetSelector),
+    Verify,
+    Plan {
+        target: TargetSelector,
+        intent: LifecycleIntent,
+    },
+}
+pub enum ReadOnlyResponse {
+    Providers(ProviderReport),
+    Scan(ScanReport),
+    Graph(GraphReport),
+    Inspect(GraphExplainReport),
+    Explain(GraphExplainReport),
+    Verification(VerificationReport),
+    Planning(PlanningReport),
+}
+
+/// Cooperative cancellation at synchronous provider operation boundaries.
+#[derive(Clone, Default)]
+pub struct QueryControl {
+    cancelled: Arc<AtomicBool>,
+    deadline: Option<Instant>,
+}
+impl QueryControl {
+    pub fn new(deadline: Option<Instant>) -> Self {
+        Self {
+            cancelled: Arc::new(AtomicBool::new(false)),
+            deadline,
+        }
+    }
+    pub fn cancel(&self) {
+        self.cancelled.store(true, Ordering::Release);
+    }
+    pub fn check(&self) -> Result<(), ApplicationError> {
+        if self.cancelled.load(Ordering::Acquire)
+            || self.deadline.is_some_and(|d| Instant::now() >= d)
+        {
+            Err(ApplicationError::Cancelled)
+        } else {
+            Ok(())
+        }
+    }
+}
+
+fn selector_error_id() -> EntityId {
+    EntityId::new("opaque-target").expect("static valid ID")
+}
+
 /// Composition supplies adapters; application never imports their concrete crates.
 pub struct DiscoveryService<'a> {
     adapters: Vec<&'a dyn ProviderAdapter>,
@@ -109,9 +200,80 @@ impl<'a> DiscoveryService<'a> {
     pub fn new(adapters: Vec<&'a dyn ProviderAdapter>) -> Self {
         Self { adapters }
     }
+    pub fn dispatch(
+        &self,
+        request: ReadOnlyRequest,
+        control: QueryControl,
+    ) -> Result<ReadOnlyResponse, ApplicationError> {
+        control.check()?;
+        if let Some(provider) = request.provider
+            && !self
+                .adapters
+                .iter()
+                .any(|adapter| adapter.kind() == provider)
+        {
+            return Err(ProviderError::ProviderUnsupported(provider).into());
+        }
+        let service = Self::new(
+            self.adapters
+                .iter()
+                .copied()
+                .filter(|a| request.provider.is_none_or(|p| a.kind() == p))
+                .collect(),
+        );
+        let result = match request.operation {
+            ReadOnlyOperation::Providers => {
+                ReadOnlyResponse::Providers(service.providers_controlled(&control)?)
+            }
+            ReadOnlyOperation::Scan => {
+                ReadOnlyResponse::Scan(service.scan_controlled(&request.scope, &control)?)
+            }
+            ReadOnlyOperation::Graph => {
+                ReadOnlyResponse::Graph(service.graph_controlled(&request.scope, &control)?)
+            }
+            ReadOnlyOperation::Verify => {
+                ReadOnlyResponse::Verification(service.verify_controlled(&request.scope, &control)?)
+            }
+            ReadOnlyOperation::Inspect(target) => {
+                ReadOnlyResponse::Inspect(service.explain_matching(
+                    target.as_ref(),
+                    &request.scope,
+                    &control,
+                    &selector_error_id(),
+                )?)
+            }
+            ReadOnlyOperation::Explain(target) => {
+                ReadOnlyResponse::Explain(service.explain_matching(
+                    target.as_ref(),
+                    &request.scope,
+                    &control,
+                    &selector_error_id(),
+                )?)
+            }
+            ReadOnlyOperation::Plan { target, intent } => {
+                ReadOnlyResponse::Planning(service.plan_matching(
+                    target.as_ref(),
+                    intent,
+                    &request.scope,
+                    &control,
+                    &selector_error_id(),
+                )?)
+            }
+        };
+        control.check()?;
+        Ok(result)
+    }
     pub fn providers(&self) -> ProviderReport {
+        self.providers_controlled(&QueryControl::default())
+            .expect("uncancelled query")
+    }
+    fn providers_controlled(
+        &self,
+        control: &QueryControl,
+    ) -> Result<ProviderReport, ApplicationError> {
         let mut report = ProviderReport::default();
         for adapter in &self.adapters {
+            control.check()?;
             match adapter.detect() {
                 Ok(provider) => report.providers.push(provider),
                 Err(error) => report.failures.push(failure(adapter.kind(), error)),
@@ -119,12 +281,21 @@ impl<'a> DiscoveryService<'a> {
         }
         report.providers.sort_by_key(|provider| provider.kind);
         report.failures.sort_by_key(|failure| failure.provider);
-        report
+        control.check()?;
+        Ok(report)
     }
     pub fn scan(&self, scope: &DiscoveryScope) -> Result<ScanReport, ApplicationError> {
+        self.scan_controlled(scope, &QueryControl::default())
+    }
+    fn scan_controlled(
+        &self,
+        scope: &DiscoveryScope,
+        control: &QueryControl,
+    ) -> Result<ScanReport, ApplicationError> {
         validate_scope(scope)?;
         let mut report = ScanReport::default();
         for adapter in &self.adapters {
+            control.check()?;
             match adapter.discover(scope) {
                 Ok(mut snapshot) => {
                     snapshot.normalize();
@@ -137,16 +308,26 @@ impl<'a> DiscoveryService<'a> {
             .snapshots
             .sort_by_key(|snapshot| snapshot.provider.kind);
         report.failures.sort_by_key(|failure| failure.provider);
+        control.check()?;
         Ok(report)
     }
     pub fn graph(&self, scope: &DiscoveryScope) -> Result<GraphReport, ApplicationError> {
+        self.graph_controlled(scope, &QueryControl::default())
+    }
+    fn graph_controlled(
+        &self,
+        scope: &DiscoveryScope,
+        control: &QueryControl,
+    ) -> Result<GraphReport, ApplicationError> {
         validate_scope(scope)?;
         let mut report = GraphReport::default();
         for adapter in &self.adapters {
-            match adapter
-                .discover(scope)
-                .and_then(|snapshot| adapter.build_graph(&snapshot))
-            {
+            control.check()?;
+            let snapshot = adapter.discover(scope);
+            control.check()?;
+            let result = snapshot.and_then(|snapshot| adapter.build_graph(&snapshot));
+            control.check()?;
+            match result {
                 Ok(graph) => report.graphs.push(graph),
                 Err(error) => report.failures.push(failure(adapter.kind(), error)),
             }
@@ -165,18 +346,31 @@ impl<'a> DiscoveryService<'a> {
                 &b.message,
             ))
         });
+        control.check()?;
         Ok(report)
     }
 
     pub fn verify(&self, scope: &DiscoveryScope) -> Result<VerificationReport, ApplicationError> {
+        self.verify_controlled(scope, &QueryControl::default())
+    }
+    fn verify_controlled(
+        &self,
+        scope: &DiscoveryScope,
+        control: &QueryControl,
+    ) -> Result<VerificationReport, ApplicationError> {
         validate_scope(scope)?;
         let mut report = VerificationReport::default();
         for adapter in &self.adapters {
-            let result = adapter.discover(scope).and_then(|snapshot| {
-                let graph = adapter.build_graph(&snapshot)?;
+            control.check()?;
+            let snapshot = adapter.discover(scope);
+            control.check()?;
+            let graph = snapshot.and_then(|snapshot| adapter.build_graph(&snapshot));
+            control.check()?;
+            let result = graph.and_then(|graph| {
                 let context = adapter.integrity_context(&graph)?;
                 Ok(evaluate_integrity(&graph, &context))
             });
+            control.check()?;
             match result {
                 Ok(integrity) => report.reports.push(integrity),
                 Err(error) => report.failures.push(failure(adapter.kind(), error)),
@@ -196,6 +390,7 @@ impl<'a> DiscoveryService<'a> {
                 &b.message,
             ))
         });
+        control.check()?;
         Ok(report)
     }
 
@@ -206,23 +401,44 @@ impl<'a> DiscoveryService<'a> {
         intent: LifecycleIntent,
         scope: &DiscoveryScope,
     ) -> Result<PlanningReport, ApplicationError> {
+        let selector = |target: &ArtifactId| &target.local_id == id;
+        self.plan_matching(&selector, intent, scope, &QueryControl::default(), id)
+    }
+    fn plan_matching(
+        &self,
+        selector: &dyn Fn(&ArtifactId) -> bool,
+        intent: LifecycleIntent,
+        scope: &DiscoveryScope,
+        control: &QueryControl,
+        id: &EntityId,
+    ) -> Result<PlanningReport, ApplicationError> {
         validate_scope(scope)?;
         let mut graphs = Vec::new();
         let mut failures = Vec::new();
         for adapter in &self.adapters {
-            let graph = match adapter
-                .discover(scope)
-                .and_then(|snapshot| adapter.build_graph(&snapshot))
-            {
+            control.check()?;
+            let snapshot = adapter.discover(scope);
+            control.check()?;
+            let result = snapshot.and_then(|snapshot| adapter.build_graph(&snapshot));
+            control.check()?;
+            let graph = match result {
                 Ok(graph) => graph,
                 Err(error) => {
                     failures.push(failure(adapter.kind(), error));
                     continue;
                 }
             };
-            let inputs = adapter.integrity_context(&graph).and_then(|context| {
+            let integrity_context = adapter.integrity_context(&graph);
+            control.check()?;
+            let planning_context = if integrity_context.is_ok() {
+                Some(adapter.planning_context(&graph, scope))
+            } else {
+                None
+            };
+            control.check()?;
+            let inputs = integrity_context.and_then(|context| {
                 let integrity = evaluate_integrity(&graph, &context);
-                let planning = adapter.planning_context(&graph, scope)?;
+                let planning = planning_context.expect("integrity succeeded")?;
                 if planning.scope != *scope {
                     return Err(ProviderError::InvalidScope(
                         "planning context does not match discovery scope".into(),
@@ -265,7 +481,7 @@ impl<'a> DiscoveryService<'a> {
             .flat_map(|(g, inputs)| {
                 g.nodes()
                     .iter()
-                    .filter(move |node| &node.id.local_id == id)
+                    .filter(move |node| selector(&node.id))
                     .map(move |node| (g, inputs, &node.id))
             })
             .collect();
@@ -310,7 +526,17 @@ impl<'a> DiscoveryService<'a> {
         id: &EntityId,
         scope: &DiscoveryScope,
     ) -> Result<GraphExplainReport, ApplicationError> {
-        let report = self.graph(scope)?;
+        let selector = |target: &ArtifactId| &target.local_id == id;
+        self.explain_matching(&selector, scope, &QueryControl::default(), id)
+    }
+    fn explain_matching(
+        &self,
+        selector: &dyn Fn(&ArtifactId) -> bool,
+        scope: &DiscoveryScope,
+        control: &QueryControl,
+        id: &EntityId,
+    ) -> Result<GraphExplainReport, ApplicationError> {
+        let report = self.graph_controlled(scope, control)?;
         let unavailable = !report.failures.is_empty()
             || report
                 .graphs
@@ -322,7 +548,7 @@ impl<'a> DiscoveryService<'a> {
             .flat_map(|g| {
                 g.nodes()
                     .iter()
-                    .filter(move |node| &node.id.local_id == id)
+                    .filter(move |node| selector(&node.id))
                     .map(move |node| (g, node))
             })
             .collect();
@@ -480,6 +706,173 @@ mod tests {
             builder.observe(NodeObservation::ProviderState);
             Ok(builder.finish()?)
         }
+    }
+    #[test]
+    fn unconfigured_provider_is_rejected_before_adapter_calls() {
+        let adapter = GraphAdapter {
+            calls: std::cell::Cell::new(0),
+            completeness: Completeness::Complete,
+            fail_build: false,
+        };
+        let request = ReadOnlyRequest {
+            provider: Some(ProviderKind::Claude),
+            scope: DiscoveryScope::default(),
+            operation: ReadOnlyOperation::Scan,
+        };
+        assert!(matches!(
+            DiscoveryService::new(vec![&adapter]).dispatch(request, QueryControl::default()),
+            Err(ApplicationError::Provider(
+                ProviderError::ProviderUnsupported(ProviderKind::Claude)
+            ))
+        ));
+        assert_eq!(adapter.calls.get(), 0);
+    }
+
+    #[test]
+    fn selector_uses_fresh_graph_and_partial_absence_remains_unavailable() {
+        let adapter = GraphAdapter {
+            calls: std::cell::Cell::new(0),
+            completeness: Completeness::Partial,
+            fail_build: false,
+        };
+        let service = DiscoveryService::new(vec![&adapter]);
+        let request = |target| ReadOnlyRequest {
+            provider: Some(ProviderKind::Codex),
+            scope: DiscoveryScope::default(),
+            operation: ReadOnlyOperation::Explain(target),
+        };
+        let result = service
+            .dispatch(
+                request(Arc::new(|id| {
+                    id.local_id == EntityId::new("provider-state").unwrap()
+                })),
+                QueryControl::default(),
+            )
+            .unwrap();
+        assert!(matches!(result, ReadOnlyResponse::Explain(_)));
+        assert_eq!(adapter.calls.get(), 1);
+        assert!(matches!(
+            service.dispatch(request(Arc::new(|_| false)), QueryControl::default()),
+            Err(ApplicationError::InspectionUnavailable(_))
+        ));
+    }
+
+    #[test]
+    fn plan_selector_matches_full_identity_on_the_same_observation() {
+        let adapter = GraphAdapter {
+            calls: std::cell::Cell::new(0),
+            completeness: Completeness::Complete,
+            fail_build: false,
+        };
+        let service = DiscoveryService::new(vec![&adapter]);
+        let selector: TargetSelector = Arc::new(|id| {
+            id.state_root == std::path::Path::new("/fixture")
+                && id.local_id == EntityId::new("provider-state").unwrap()
+        });
+        let result = service
+            .dispatch(
+                ReadOnlyRequest {
+                    provider: Some(ProviderKind::Codex),
+                    scope: DiscoveryScope::default(),
+                    operation: ReadOnlyOperation::Plan {
+                        target: selector,
+                        intent: LifecycleIntent::Archive,
+                    },
+                },
+                QueryControl::default(),
+            )
+            .unwrap();
+        let ReadOnlyResponse::Planning(report) = result else {
+            panic!("expected plan")
+        };
+        assert_eq!(
+            report.plan.content().request.target.state_root,
+            std::path::Path::new("/fixture")
+        );
+        assert_eq!(adapter.calls.get(), 1);
+    }
+
+    #[test]
+    fn selector_ambiguity_and_pre_cancel_are_conservative() {
+        let first = GraphAdapter {
+            calls: std::cell::Cell::new(0),
+            completeness: Completeness::Complete,
+            fail_build: false,
+        };
+        let second = GraphAdapter {
+            calls: std::cell::Cell::new(0),
+            completeness: Completeness::Complete,
+            fail_build: false,
+        };
+        let service = DiscoveryService::new(vec![&first, &second]);
+        let request = || ReadOnlyRequest {
+            provider: None,
+            scope: DiscoveryScope::default(),
+            operation: ReadOnlyOperation::Explain(Arc::new(|id| {
+                id.local_id == EntityId::new("provider-state").unwrap()
+            })),
+        };
+        let control = QueryControl::default();
+        control.cancel();
+        assert!(matches!(
+            service.dispatch(request(), control),
+            Err(ApplicationError::Cancelled)
+        ));
+        assert_eq!(first.calls.get(), 0);
+        assert_eq!(second.calls.get(), 0);
+        assert!(matches!(
+            service.dispatch(request(), QueryControl::default()),
+            Err(ApplicationError::AmbiguousEntity(_))
+        ));
+    }
+
+    #[test]
+    fn cancellation_after_discovery_stops_graph_building() {
+        struct Cancelling {
+            control: QueryControl,
+            builds: std::cell::Cell<usize>,
+            inner: GraphAdapter,
+        }
+        impl ProviderAdapter for Cancelling {
+            fn kind(&self) -> ProviderKind {
+                self.inner.kind()
+            }
+            fn detect(&self) -> Result<Provider, ProviderError> {
+                self.inner.detect()
+            }
+            fn discover(&self, scope: &DiscoveryScope) -> Result<DiscoverySnapshot, ProviderError> {
+                let result = self.inner.discover(scope);
+                self.control.cancel();
+                result
+            }
+            fn build_graph(
+                &self,
+                snapshot: &DiscoverySnapshot,
+            ) -> Result<ArtifactGraph, ProviderError> {
+                self.builds.set(self.builds.get() + 1);
+                self.inner.build_graph(snapshot)
+            }
+        }
+        let control = QueryControl::default();
+        let adapter = Cancelling {
+            control: control.clone(),
+            builds: std::cell::Cell::new(0),
+            inner: GraphAdapter {
+                calls: std::cell::Cell::new(0),
+                completeness: Completeness::Complete,
+                fail_build: false,
+            },
+        };
+        let request = ReadOnlyRequest {
+            provider: None,
+            scope: DiscoveryScope::default(),
+            operation: ReadOnlyOperation::Graph,
+        };
+        assert!(matches!(
+            DiscoveryService::new(vec![&adapter]).dispatch(request, control),
+            Err(ApplicationError::Cancelled)
+        ));
+        assert_eq!(adapter.builds.get(), 0);
     }
     #[test]
     fn graph_discovers_once_and_reports_builder_failure() {
