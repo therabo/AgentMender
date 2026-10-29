@@ -3,7 +3,8 @@
 M4 describes future provider-native intentions without invoking them. A plan is
 not authorization. Ready is not approved. `plan <intent> <id>` represents archive,
 unarchive, soft-delete, purge and repair requests. No execute, approval, recovery
-or repair system exists. All current real/sanitized plans are Blocked/Unsupported.
+or repair system belongs to M4. M6 adds [durable transaction/recovery knowledge](transactions.md)
+without provider execution. All current real/sanitized plans are Blocked/Unsupported.
 
 ## Types and flow
 

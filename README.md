@@ -4,8 +4,9 @@ Provider-aware, strictly read-only inventory, evidence graph and integrity repor
 of AI coding-agent state. M0/M1 and the Codex compatibility refresh retain accurately
 reported **partial coverage**. M2 adds graph reconstruction and explanations. M3 adds
 a pure integrity evaluator and `verify`. M4 adds immutable lifecycle intentions;
-M5 exposes read-only queries and planning over local stdio MCP. Execution, approvals,
-repair and recovery remain out of scope.
+M5 exposes read-only queries and planning over local stdio MCP. M6 adds a durable
+AgentMender-owned transaction journal, reconciliation manifests and restart knowledge.
+Provider execution, approvals and repair remain out of scope.
 
 ```sh
 cargo run -- providers --json
@@ -127,6 +128,23 @@ approval or arbitrary command/filesystem/SQL capability exists.
 See [launch instructions, schemas, privacy, pagination and limits](docs/mcp.md)
 and [ADR-0010](docs/adr/0010-readonly-mcp-boundary.md).
 
+## Durable transaction knowledge
+
+M6 stores immutable plan commitments, ordered hash-chained records in SQLite and
+an independent journal, and typed recovery manifests inside an explicit private
+AgentMender root. An ambiguous crash remains OutcomeUnknown; no provider state is
+guessed, retried or changed. A transaction is not authorization. Current real plans
+remain blocked. The CLI can inspect an existing root read-only:
+
+```sh
+agentmender --json transactions --state-root /absolute/agentmender-state list
+agentmender --json transactions --state-root /absolute/agentmender-state inspect <transaction-id>
+```
+
+Normal discovery/planning/MCP commands create no persistent state. There is no
+transaction-creation or execution CLI/MCP command. See [durability, recovery and
+limitations](docs/transactions.md) and [ADR-0011](docs/adr/0011-durable-transaction-knowledge.md).
+
 ## Roots and scope
 
 CLI state roots default to CODEX_HOME / CLAUDE_CONFIG_DIR, otherwise
@@ -155,8 +173,9 @@ Real state remains write-denied. The native process cannot read real-home file
 contents, but may stat metadata required by this exact build. No credentials,
 configuration, history/log database or rollout contents are copied.
 
-The only writable runtime directory is a fresh AgentMender-owned `0700` evidence
-home; its database is `0600`. Child processes are reaped before disposal. The
+Provider subprocess writes are confined to a fresh AgentMender-owned `0700` evidence
+home; its database is `0600`. M6 library persistence writes only to a separately
+validated private owned root disjoint from provider state. Child processes are reaped before disposal. The
 capture worker verifies kernel source-write denial before SQLite access. Network,
 process-fork and Mach lookup are denied. Failure never relaxes permissions.
 A narrow macOS C-ABI policy query is isolated and reviewed in ADR-0004; other Rust
@@ -170,9 +189,11 @@ health. Truncated directory samples can vary with enumeration order.
 
 ## Development and verification
 
-Rust 1.89+; seven crates retain ports and adapters. Application depends only on domain
+Rust 1.89+; eight crates retain ports and adapters. Application depends only on domain
 and provider ports; CLI composes adapters and calls application use cases. MCP depends
 internally only on application/domain and contains no provider storage logic.
+Persistence depends internally only on domain; CLI transaction inspection uses a
+read-only application port. Domain transaction/replay logic remains pure.
 Dependencies and the scoped unsafe boundary are documented in
 [dependency decisions](docs/dependencies.md).
 

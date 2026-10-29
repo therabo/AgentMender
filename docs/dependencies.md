@@ -87,3 +87,35 @@ Primary sources: [official SDK](https://github.com/modelcontextprotocol/rust-sdk
 [schemars](https://docs.rs/schemars/1.2.3),
 [RustCrypto HMAC](https://docs.rs/hmac/0.13.0),
 [OS entropy](https://docs.rs/getrandom/0.4.3).
+
+## M6 owned persistence
+
+Reviewed on 2026-10-29 through registry metadata, downloaded source and official
+SQLite/Rust/Windows documentation. Reuse existing rusqlite 0.41.0 (bundled SQLite
+3.54.1), serde_json, thiserror and getrandom; domain reuses SHA-256. No second
+database, hash, UUID or migration framework is added. Safe std file locks are
+available within the existing Rust 1.89 MSRV. Unused direct serde/sha2/proptest
+dependencies were removed from persistence; properties remain domain dev tests.
+
+Unix promotes the already locked `rustix 1.1.6` (MSRV 1.65) with std/process only
+to obtain the current effective UID safely. No new unsafe allowance is needed.
+Existing libc supplies no-follow/nonblocking open constants.
+
+Windows adds target-only `windows-permissions 0.2.4` for safe ACL/SID wrappers and
+`winapi-util 0.1.11` for handle-based file identity/link counts unavailable through
+stable std metadata. Their stable published releases and source were inspected;
+they do not declare MSRV. Source uses older stable language features; current
+Windows CI is required. The small transitive additions are winapi 0.3.9, its two
+GNU import libraries, and bitflags 1.3.2; winapi-util reuses windows-sys. These are
+low-level wrappers with limited release activity, not a claim of an active security
+audit or guaranteed future maintenance. Direct reviewed wrapper calls avoid an
+observed unrelated set_multiple flag bug. No generic command helper or unsafe
+Rust was added. Windows runtime ACL behavior is verified by platform CI, and
+ReFS/directory power-loss limits remain explicit M10 work.
+
+Primary references: [SQLite sync modes](https://www.sqlite.org/pragma.html#pragma_synchronous),
+[Rust file locks](https://doc.rust-lang.org/std/fs/struct.File.html#method.try_lock),
+[rustix](https://github.com/bytecodealliance/rustix),
+[Windows permission wrappers](https://github.com/danieldulaney/windows-permissions-rs),
+[winapi-util](https://github.com/BurntSushi/winapi-util),
+[Windows security descriptors](https://learn.microsoft.com/en-us/windows/win32/secauthz/security-descriptor-string-format).

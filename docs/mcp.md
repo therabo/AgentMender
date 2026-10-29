@@ -24,7 +24,7 @@ agentmender --provider codex --fixture /absolute/fixtures/codex/known mcp
 agentmender --provider claude --fixture /absolute/fixtures/claude/4.29.0-observed --desktop-fixture mcp
 ```
 
-The workspace has seven crates. CLI composes concrete adapters locally inside each
+The workspace has eight crates after M6. CLI composes concrete adapters locally inside each
 admitted worker; `mcp-server` depends internally only on application and domain.
 Application dispatch reuses DiscoveryService, provider ports and the existing
 graph/integrity/planning evaluators. No provider parsing or filesystem inspection
@@ -138,8 +138,9 @@ Blocked/Unsupported; synthetic Ready fixtures test mapping without granting auth
 A digest identifies content. It is not a signature, capability token, approval or
 permission to execute. Ready is not approved. MCP is an interface and is not the
 authorization authority. Tool annotations describe behavior and enforce no permission.
-No execute/approve/archive/delete/purge/restore/repair execution tool, arbitrary
-command/filesystem/SQL primitive or durable lifecycle state exists.
+No execute/approve/archive/delete/purge/restore/repair execution tool or arbitrary
+command/filesystem/SQL primitive exists. M6 durable transaction storage is separate
+from this MCP interface and is neither exposed nor initialized by it.
 
 ## Cancellation and limitations
 

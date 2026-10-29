@@ -1,5 +1,15 @@
 # Discovery test boundaries
 
+M6 transaction tests use only private temporary roots and synthetic Ready plans.
+`cargo test --locked -p agentmender-domain --test transaction_properties` runs nine
+properties with 256 cases each and seed `0x4d365f74786e7331`, plus four regressions.
+`cargo test --locked -p agentmender-persistence` includes schema/reopen/recovery,
+cross-process writer exclusion, deterministic fault injection and child-process
+abort at journal/SQLite/recovery/effect boundaries. Aborted children are expected
+test fixtures; the parent assertions must pass. CLI `--test transactions` checks
+byte-identical read-only inspection and protected unavailable recovery. No test
+dispatches real provider lifecycle operations. See docs/transactions.md.
+
 Normal cargo test runs use sanitized/synthetic fixtures or fresh test-owned
 locations. Before/after manifests compare paths and bytes. They require no local
 provider and do not scan real homes or app bundles implicitly.

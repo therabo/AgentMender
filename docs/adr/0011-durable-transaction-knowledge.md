@@ -95,6 +95,13 @@ It contains reconciliation commitments, not a provider backup or a promise of
 restoration. No arbitrary byte/blob API is provided. Metadata is written privately,
 flushed, published without replacing another artifact and verified before the
 RecoveryPrepared event. Artifacts are retained conservatively; no cleanup policy.
+Publication writes a random private staging file, syncs its bytes, then atomically
+hard-links it to the digest name without replacement. The held file and both names
+must have the same identity and exactly two links before removing only the staging
+name and syncing the directory. Interrupted staging and failed publications remain
+as evidence. A crash while both links remain blocks verification rather than
+silently repairing link counts. Reusing an existing final artifact syncs it and its
+directory again before verification; concurrent visible bytes alone are not durable.
 
 The sole durable intent method requires the original plan and fresh graph,
 integrity report and planning context. It compares the whole binding and calls
@@ -123,6 +130,13 @@ or validated content digests may address durable files. Unix directories/files u
 0700/0600; existing broad modes fail rather than chmod arbitrary data. Windows needs
 a protected owner-only DACL, not std readonly flags. Do not use provider filesystem
 observation helpers as persistent write capabilities.
+Physical ancestor identity checks cover case and Unicode aliases, including two
+missing endpoints under differently spelled existing ancestors. Missing non-ASCII
+tails on macOS/Windows fail closed rather than guessing filesystem normalization.
+Dangling protected links fail before any creation. Existing SQLite rollback
+sidecars receive the same private regular-file checks; unexpected WAL/SHM is
+rejected before SQLite opens the database. Unknown schema/mode is inspected before
+writable PRAGMAs. Read-only inspection uses SQLite read-only plus query_only.
 
 OS synchronization is a durability contract subject to filesystem/device behavior.
 Network filesystems are unsupported. Full adversarial same-user path replacement,
