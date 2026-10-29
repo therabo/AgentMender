@@ -14,3 +14,4 @@
 | [0010: Read-only MCP boundary and private bounded views](0010-readonly-mcp-boundary.md) | Accepted |
 | [0011: Durable transaction knowledge before provider execution](0011-durable-transaction-knowledge.md) | Accepted |
 | [0012: Independent local approval and atomic authorization handoff](0012-independent-local-approval.md) | Accepted |
+| [0013: Exact Codex unarchive through a consumed durable handoff](0013-codex-durable-native-handoff.md) | Accepted |

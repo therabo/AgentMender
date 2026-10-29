@@ -1,0 +1,428 @@
+[
+  {
+    "case": "multigeneration",
+    "after_archive": {
+      "00000001-1111-4111-8111-000000000001": {
+        "id": 4,
+        "thread": {
+          "id": "00000001-1111-4111-8111-000000000001",
+          "path": "<owned-evidence-root>/multigeneration/archived_sessions/rollout-2026-10-29T10-00-00-00000001-1111-4111-8111-000000000001.jsonl",
+          "source": "cli",
+          "status": {
+            "type": "notLoaded"
+          },
+          "forkedFromId": null,
+          "parentThreadId": null,
+          "sessionId": "00000001-1111-4111-8111-000000000001"
+        }
+      },
+      "00000002-1111-4111-8111-000000000002": {
+        "id": 5,
+        "thread": {
+          "id": "00000002-1111-4111-8111-000000000002",
+          "path": "<owned-evidence-root>/multigeneration/archived_sessions/rollout-2026-10-29T10-00-00-00000002-1111-4111-8111-000000000002.jsonl",
+          "source": {
+            "subAgent": {
+              "thread_spawn": {
+                "parent_thread_id": "00000001-1111-4111-8111-000000000001",
+                "depth": 1,
+                "agent_path": null,
+                "agent_nickname": null,
+                "agent_role": null
+              }
+            }
+          },
+          "status": {
+            "type": "notLoaded"
+          },
+          "forkedFromId": null,
+          "parentThreadId": null,
+          "sessionId": "00000002-1111-4111-8111-000000000002"
+        }
+      },
+      "00000003-1111-4111-8111-000000000003": {
+        "id": 6,
+        "thread": {
+          "id": "00000003-1111-4111-8111-000000000003",
+          "path": "<owned-evidence-root>/multigeneration/archived_sessions/rollout-2026-10-29T10-00-00-00000003-1111-4111-8111-000000000003.jsonl",
+          "source": {
+            "subAgent": {
+              "thread_spawn": {
+                "parent_thread_id": "00000002-1111-4111-8111-000000000002",
+                "depth": 2,
+                "agent_path": null,
+                "agent_nickname": null,
+                "agent_role": null
+              }
+            }
+          },
+          "status": {
+            "type": "notLoaded"
+          },
+          "forkedFromId": null,
+          "parentThreadId": null,
+          "sessionId": "00000003-1111-4111-8111-000000000003"
+        }
+      },
+      "00000004-1111-4111-8111-000000000004": {
+        "id": 7,
+        "thread": {
+          "id": "00000004-1111-4111-8111-000000000004",
+          "path": "<owned-evidence-root>/multigeneration/sessions/2026/10/29/rollout-2026-10-29T10-00-00-00000004-1111-4111-8111-000000000004.jsonl",
+          "source": "cli",
+          "status": {
+            "type": "notLoaded"
+          },
+          "forkedFromId": "00000001-1111-4111-8111-000000000001",
+          "parentThreadId": null,
+          "sessionId": "00000004-1111-4111-8111-000000000004"
+        }
+      },
+      "00000005-1111-4111-8111-000000000005": {
+        "id": 8,
+        "thread": {
+          "id": "00000005-1111-4111-8111-000000000005",
+          "path": "<owned-evidence-root>/multigeneration/sessions/2026/10/29/rollout-2026-10-29T10-00-00-00000005-1111-4111-8111-000000000005.jsonl",
+          "source": "cli",
+          "status": {
+            "type": "notLoaded"
+          },
+          "forkedFromId": null,
+          "parentThreadId": null,
+          "sessionId": "00000005-1111-4111-8111-000000000005"
+        }
+      }
+    },
+    "after_unarchive": {
+      "00000001-1111-4111-8111-000000000001": {
+        "id": 11,
+        "thread": {
+          "id": "00000001-1111-4111-8111-000000000001",
+          "path": "<owned-evidence-root>/multigeneration/sessions/2026/10/29/rollout-2026-10-29T10-00-00-00000001-1111-4111-8111-000000000001.jsonl",
+          "source": "cli",
+          "status": {
+            "type": "notLoaded"
+          },
+          "forkedFromId": null,
+          "parentThreadId": null,
+          "sessionId": "00000001-1111-4111-8111-000000000001"
+        }
+      },
+      "00000002-1111-4111-8111-000000000002": {
+        "id": 12,
+        "thread": {
+          "id": "00000002-1111-4111-8111-000000000002",
+          "path": "<owned-evidence-root>/multigeneration/archived_sessions/rollout-2026-10-29T10-00-00-00000002-1111-4111-8111-000000000002.jsonl",
+          "source": {
+            "subAgent": {
+              "thread_spawn": {
+                "parent_thread_id": "00000001-1111-4111-8111-000000000001",
+                "depth": 1,
+                "agent_path": null,
+                "agent_nickname": null,
+                "agent_role": null
+              }
+            }
+          },
+          "status": {
+            "type": "notLoaded"
+          },
+          "forkedFromId": null,
+          "parentThreadId": null,
+          "sessionId": "00000002-1111-4111-8111-000000000002"
+        }
+      },
+      "00000003-1111-4111-8111-000000000003": {
+        "id": 13,
+        "thread": {
+          "id": "00000003-1111-4111-8111-000000000003",
+          "path": "<owned-evidence-root>/multigeneration/archived_sessions/rollout-2026-10-29T10-00-00-00000003-1111-4111-8111-000000000003.jsonl",
+          "source": {
+            "subAgent": {
+              "thread_spawn": {
+                "parent_thread_id": "00000002-1111-4111-8111-000000000002",
+                "depth": 2,
+                "agent_path": null,
+                "agent_nickname": null,
+                "agent_role": null
+              }
+            }
+          },
+          "status": {
+            "type": "notLoaded"
+          },
+          "forkedFromId": null,
+          "parentThreadId": null,
+          "sessionId": "00000003-1111-4111-8111-000000000003"
+        }
+      },
+      "00000004-1111-4111-8111-000000000004": {
+        "id": 14,
+        "thread": {
+          "id": "00000004-1111-4111-8111-000000000004",
+          "path": "<owned-evidence-root>/multigeneration/sessions/2026/10/29/rollout-2026-10-29T10-00-00-00000004-1111-4111-8111-000000000004.jsonl",
+          "source": "cli",
+          "status": {
+            "type": "notLoaded"
+          },
+          "forkedFromId": "00000001-1111-4111-8111-000000000001",
+          "parentThreadId": null,
+          "sessionId": "00000004-1111-4111-8111-000000000004"
+        }
+      },
+      "00000005-1111-4111-8111-000000000005": {
+        "id": 15,
+        "thread": {
+          "id": "00000005-1111-4111-8111-000000000005",
+          "path": "<owned-evidence-root>/multigeneration/sessions/2026/10/29/rollout-2026-10-29T10-00-00-00000005-1111-4111-8111-000000000005.jsonl",
+          "source": "cli",
+          "status": {
+            "type": "notLoaded"
+          },
+          "forkedFromId": null,
+          "parentThreadId": null,
+          "sessionId": "00000005-1111-4111-8111-000000000005"
+        }
+      }
+    },
+    "after_delete": {
+      "00000001-1111-4111-8111-000000000001": {
+        "error": {
+          "code": -32600,
+          "message": "thread not loaded: 00000001-1111-4111-8111-000000000001"
+        },
+        "id": 18
+      },
+      "00000002-1111-4111-8111-000000000002": {
+        "error": {
+          "code": -32600,
+          "message": "thread not loaded: 00000002-1111-4111-8111-000000000002"
+        },
+        "id": 19
+      },
+      "00000003-1111-4111-8111-000000000003": {
+        "error": {
+          "code": -32600,
+          "message": "thread not loaded: 00000003-1111-4111-8111-000000000003"
+        },
+        "id": 20
+      },
+      "00000004-1111-4111-8111-000000000004": {
+        "id": 21,
+        "thread": {
+          "id": "00000004-1111-4111-8111-000000000004",
+          "path": "<owned-evidence-root>/multigeneration/sessions/2026/10/29/rollout-2026-10-29T10-00-00-00000004-1111-4111-8111-000000000004.jsonl",
+          "source": "cli",
+          "status": {
+            "type": "notLoaded"
+          },
+          "forkedFromId": "00000001-1111-4111-8111-000000000001",
+          "parentThreadId": null,
+          "sessionId": "00000004-1111-4111-8111-000000000004"
+        }
+      },
+      "00000005-1111-4111-8111-000000000005": {
+        "id": 22,
+        "thread": {
+          "id": "00000005-1111-4111-8111-000000000005",
+          "path": "<owned-evidence-root>/multigeneration/sessions/2026/10/29/rollout-2026-10-29T10-00-00-00000005-1111-4111-8111-000000000005.jsonl",
+          "source": "cli",
+          "status": {
+            "type": "notLoaded"
+          },
+          "forkedFromId": null,
+          "parentThreadId": null,
+          "sessionId": "00000005-1111-4111-8111-000000000005"
+        }
+      }
+    }
+  },
+  {
+    "case": "child-denied",
+    "after_archive": {
+      "00000001-1111-4111-8111-000000000001": {
+        "id": 4,
+        "thread": {
+          "id": "00000001-1111-4111-8111-000000000001",
+          "path": "<owned-evidence-root>/child-denied/archived_sessions/rollout-2026-10-29T10-00-00-00000001-1111-4111-8111-000000000001.jsonl",
+          "source": "cli",
+          "status": {
+            "type": "notLoaded"
+          },
+          "forkedFromId": null,
+          "parentThreadId": null,
+          "sessionId": "00000001-1111-4111-8111-000000000001"
+        }
+      },
+      "00000002-1111-4111-8111-000000000002": {
+        "id": 5,
+        "thread": {
+          "id": "00000002-1111-4111-8111-000000000002",
+          "path": "<owned-evidence-root>/child-denied/sessions/2026/10/29/rollout-2026-10-29T10-00-00-00000002-1111-4111-8111-000000000002.jsonl",
+          "source": {
+            "subAgent": {
+              "thread_spawn": {
+                "parent_thread_id": "00000001-1111-4111-8111-000000000001",
+                "depth": 1,
+                "agent_path": null,
+                "agent_nickname": null,
+                "agent_role": null
+              }
+            }
+          },
+          "status": {
+            "type": "notLoaded"
+          },
+          "forkedFromId": null,
+          "parentThreadId": null,
+          "sessionId": "00000002-1111-4111-8111-000000000002"
+        }
+      },
+      "00000003-1111-4111-8111-000000000003": {
+        "id": 6,
+        "thread": {
+          "id": "00000003-1111-4111-8111-000000000003",
+          "path": "<owned-evidence-root>/child-denied/archived_sessions/rollout-2026-10-29T10-00-00-00000003-1111-4111-8111-000000000003.jsonl",
+          "source": {
+            "subAgent": {
+              "thread_spawn": {
+                "parent_thread_id": "00000002-1111-4111-8111-000000000002",
+                "depth": 2,
+                "agent_path": null,
+                "agent_nickname": null,
+                "agent_role": null
+              }
+            }
+          },
+          "status": {
+            "type": "notLoaded"
+          },
+          "forkedFromId": null,
+          "parentThreadId": null,
+          "sessionId": "00000003-1111-4111-8111-000000000003"
+        }
+      },
+      "00000004-1111-4111-8111-000000000004": {
+        "id": 7,
+        "thread": {
+          "id": "00000004-1111-4111-8111-000000000004",
+          "path": "<owned-evidence-root>/child-denied/sessions/2026/10/29/rollout-2026-10-29T10-00-00-00000004-1111-4111-8111-000000000004.jsonl",
+          "source": "cli",
+          "status": {
+            "type": "notLoaded"
+          },
+          "forkedFromId": "00000001-1111-4111-8111-000000000001",
+          "parentThreadId": null,
+          "sessionId": "00000004-1111-4111-8111-000000000004"
+        }
+      },
+      "00000005-1111-4111-8111-000000000005": {
+        "id": 8,
+        "thread": {
+          "id": "00000005-1111-4111-8111-000000000005",
+          "path": "<owned-evidence-root>/child-denied/sessions/2026/10/29/rollout-2026-10-29T10-00-00-00000005-1111-4111-8111-000000000005.jsonl",
+          "source": "cli",
+          "status": {
+            "type": "notLoaded"
+          },
+          "forkedFromId": null,
+          "parentThreadId": null,
+          "sessionId": "00000005-1111-4111-8111-000000000005"
+        }
+      }
+    },
+    "after_unarchive": {
+      "00000001-1111-4111-8111-000000000001": {
+        "id": 11,
+        "thread": {
+          "id": "00000001-1111-4111-8111-000000000001",
+          "path": "<owned-evidence-root>/child-denied/sessions/2026/10/29/rollout-2026-10-29T10-00-00-00000001-1111-4111-8111-000000000001.jsonl",
+          "source": "cli",
+          "status": {
+            "type": "notLoaded"
+          },
+          "forkedFromId": null,
+          "parentThreadId": null,
+          "sessionId": "00000001-1111-4111-8111-000000000001"
+        }
+      },
+      "00000002-1111-4111-8111-000000000002": {
+        "id": 12,
+        "thread": {
+          "id": "00000002-1111-4111-8111-000000000002",
+          "path": "<owned-evidence-root>/child-denied/sessions/2026/10/29/rollout-2026-10-29T10-00-00-00000002-1111-4111-8111-000000000002.jsonl",
+          "source": {
+            "subAgent": {
+              "thread_spawn": {
+                "parent_thread_id": "00000001-1111-4111-8111-000000000001",
+                "depth": 1,
+                "agent_path": null,
+                "agent_nickname": null,
+                "agent_role": null
+              }
+            }
+          },
+          "status": {
+            "type": "notLoaded"
+          },
+          "forkedFromId": null,
+          "parentThreadId": null,
+          "sessionId": "00000002-1111-4111-8111-000000000002"
+        }
+      },
+      "00000003-1111-4111-8111-000000000003": {
+        "id": 13,
+        "thread": {
+          "id": "00000003-1111-4111-8111-000000000003",
+          "path": "<owned-evidence-root>/child-denied/archived_sessions/rollout-2026-10-29T10-00-00-00000003-1111-4111-8111-000000000003.jsonl",
+          "source": {
+            "subAgent": {
+              "thread_spawn": {
+                "parent_thread_id": "00000002-1111-4111-8111-000000000002",
+                "depth": 2,
+                "agent_path": null,
+                "agent_nickname": null,
+                "agent_role": null
+              }
+            }
+          },
+          "status": {
+            "type": "notLoaded"
+          },
+          "forkedFromId": null,
+          "parentThreadId": null,
+          "sessionId": "00000003-1111-4111-8111-000000000003"
+        }
+      },
+      "00000004-1111-4111-8111-000000000004": {
+        "id": 14,
+        "thread": {
+          "id": "00000004-1111-4111-8111-000000000004",
+          "path": "<owned-evidence-root>/child-denied/sessions/2026/10/29/rollout-2026-10-29T10-00-00-00000004-1111-4111-8111-000000000004.jsonl",
+          "source": "cli",
+          "status": {
+            "type": "notLoaded"
+          },
+          "forkedFromId": "00000001-1111-4111-8111-000000000001",
+          "parentThreadId": null,
+          "sessionId": "00000004-1111-4111-8111-000000000004"
+        }
+      },
+      "00000005-1111-4111-8111-000000000005": {
+        "id": 15,
+        "thread": {
+          "id": "00000005-1111-4111-8111-000000000005",
+          "path": "<owned-evidence-root>/child-denied/sessions/2026/10/29/rollout-2026-10-29T10-00-00-00000005-1111-4111-8111-000000000005.jsonl",
+          "source": "cli",
+          "status": {
+            "type": "notLoaded"
+          },
+          "forkedFromId": null,
+          "parentThreadId": null,
+          "sessionId": "00000005-1111-4111-8111-000000000005"
+        }
+      }
+    },
+    "after_delete": null
+  }
+]

@@ -1,0 +1,84 @@
+[
+  {
+    "method": "thread/read",
+    "params": {
+      "threadId": "20000000-1111-4111-8111-000000000002",
+      "includeTurns": false
+    },
+    "response": {
+      "id": 2,
+      "thread": {
+        "id": "20000000-1111-4111-8111-000000000002",
+        "path": "<owned-evidence-root>/delete-root-denied/sessions/2026/10/29/rollout-2026-10-29T10-00-00-20000000-1111-4111-8111-000000000002.jsonl",
+        "source": {
+          "subAgent": {
+            "thread_spawn": {
+              "parent_thread_id": "10000000-1111-4111-8111-000000000001",
+              "depth": 1,
+              "agent_path": null,
+              "agent_nickname": null,
+              "agent_role": null
+            }
+          }
+        },
+        "status": {
+          "type": "notLoaded"
+        },
+        "forkedFromId": null,
+        "parentThreadId": null,
+        "sessionId": "20000000-1111-4111-8111-000000000002"
+      }
+    }
+  },
+  {
+    "method": "thread/read",
+    "params": {
+      "threadId": "20000000-1111-4111-8111-000000000002",
+      "includeTurns": true
+    },
+    "response": {
+      "error": {
+        "code": -32600,
+        "message": "thread not loaded: 20000000-1111-4111-8111-000000000002"
+      },
+      "id": 3
+    }
+  },
+  {
+    "method": "thread/delete",
+    "params": {
+      "threadId": "20000000-1111-4111-8111-000000000002"
+    },
+    "response": {
+      "id": 4,
+      "result": {}
+    }
+  },
+  {
+    "method": "thread/read",
+    "params": {
+      "threadId": "20000000-1111-4111-8111-000000000002",
+      "includeTurns": false
+    },
+    "response": {
+      "error": {
+        "code": -32600,
+        "message": "thread not loaded: 20000000-1111-4111-8111-000000000002"
+      },
+      "id": 5
+    }
+  },
+  {
+    "method": "thread/delete",
+    "params": {
+      "threadId": "20000000-1111-4111-8111-000000000002"
+    },
+    "response": {
+      "error": {
+        "code": -32600,
+        "message": "no rollout found for thread id 20000000-1111-4111-8111-000000000002"
+      },
+      "id": 6
+    }
+  }
+]

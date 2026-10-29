@@ -1,5 +1,11 @@
 # Codex compatibility evidence
 
+M8 separately validates a conditional unarchive dispatch profile; read-only
+compatibility below is never mutation authority. See [exact native evidence and
+counterexamples](0.165.0-alpha.1.2/lifecycle-m8/README.md) and
+[the execution boundary](../../docs/codex-lifecycle.md). Archive/delete remain
+execution-unsupported and current real planning effects remain unclosed.
+
 Exact executable observed on 2026-10-28: `codex-cli 0.164.0-alpha.11.1`.
 No stable release or version range is inferred from this prerelease.
 

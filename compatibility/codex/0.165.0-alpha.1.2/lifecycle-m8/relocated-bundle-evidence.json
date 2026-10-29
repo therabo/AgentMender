@@ -1,0 +1,195 @@
+{
+  "binary_sha256": "d84a54b031085f01e3ad915ea7c72ebea4dcf69e90f0d1e0e4a637e8280991d2",
+  "version_banner": "codex-cli 0.165.0-alpha.1.2",
+  "relocated_image": "/private/tmp/agentmender-m8-relocated-18qctmm5/PinnedCodex.app/Contents/MacOS/codex",
+  "image_mode": "0500",
+  "image_nlink": 1,
+  "image_resources_copied": [
+    {
+      "path": "Contents/Info.plist",
+      "sha256": "c40b0e6b87b94ef5a232ab8312678c5db2156428f57c3f3d6c32525373be7f59",
+      "bytes": 525
+    },
+    {
+      "path": "Contents/_CodeSignature/CodeResources",
+      "sha256": "a768efff8337bb3aa892c1ae2527cca49ef878abdba59ad6674e685ab3c4a288",
+      "bytes": 2355
+    },
+    {
+      "path": "Contents/embedded.provisionprofile",
+      "sha256": "3e61e790c2b949afab19c726a6b6291adfe6518df678fd2eb28e88269a19ecac",
+      "bytes": 12329
+    }
+  ],
+  "original_app_resource_reads_denied": true,
+  "runtime": "<owned-evidence-root>/agentmender-m8-relocated-18qctmm5-native",
+  "effect_scope": "synthetic target restored; synthetic child remained archived",
+  "steps": [
+    {
+      "method": "thread/list",
+      "params": {
+        "limit": 100,
+        "archived": true,
+        "useStateDbOnly": false,
+        "sourceKinds": [
+          "cli",
+          "subAgentThreadSpawn"
+        ]
+      },
+      "response": {
+        "id": 2,
+        "data": [
+          {
+            "id": "80000000-1111-4111-8111-000000000002",
+            "path": "<owned-evidence-root>/agentmender-m8-relocated-18qctmm5-native/archived_sessions/rollout-2026-10-29T10-00-00-80000000-1111-4111-8111-000000000002.jsonl",
+            "source": {
+              "subAgent": {
+                "thread_spawn": {
+                  "parent_thread_id": "70000000-1111-4111-8111-000000000001",
+                  "depth": 1,
+                  "agent_path": null,
+                  "agent_nickname": null,
+                  "agent_role": null
+                }
+              }
+            },
+            "status": {
+              "type": "notLoaded"
+            },
+            "forkedFromId": null,
+            "parentThreadId": null
+          },
+          {
+            "id": "70000000-1111-4111-8111-000000000001",
+            "path": "<owned-evidence-root>/agentmender-m8-relocated-18qctmm5-native/archived_sessions/rollout-2026-10-29T10-00-00-70000000-1111-4111-8111-000000000001.jsonl",
+            "source": "cli",
+            "status": {
+              "type": "notLoaded"
+            },
+            "forkedFromId": null,
+            "parentThreadId": null
+          }
+        ],
+        "nextCursor": null
+      }
+    },
+    {
+      "method": "thread/unarchive",
+      "params": {
+        "threadId": "70000000-1111-4111-8111-000000000001"
+      },
+      "response": {
+        "id": 3,
+        "thread": {
+          "id": "70000000-1111-4111-8111-000000000001",
+          "path": "<owned-evidence-root>/agentmender-m8-relocated-18qctmm5-native/sessions/2026/10/29/rollout-2026-10-29T10-00-00-70000000-1111-4111-8111-000000000001.jsonl",
+          "source": "cli",
+          "status": {
+            "type": "notLoaded"
+          },
+          "forkedFromId": null,
+          "parentThreadId": null,
+          "sessionId": "70000000-1111-4111-8111-000000000001"
+        }
+      }
+    },
+    {
+      "method": "thread/read",
+      "params": {
+        "threadId": "70000000-1111-4111-8111-000000000001",
+        "includeTurns": false
+      },
+      "response": {
+        "id": 4,
+        "thread": {
+          "id": "70000000-1111-4111-8111-000000000001",
+          "path": "<owned-evidence-root>/agentmender-m8-relocated-18qctmm5-native/sessions/2026/10/29/rollout-2026-10-29T10-00-00-70000000-1111-4111-8111-000000000001.jsonl",
+          "source": "cli",
+          "status": {
+            "type": "notLoaded"
+          },
+          "forkedFromId": null,
+          "parentThreadId": null,
+          "sessionId": "70000000-1111-4111-8111-000000000001"
+        }
+      }
+    },
+    {
+      "method": "thread/read",
+      "params": {
+        "threadId": "80000000-1111-4111-8111-000000000002",
+        "includeTurns": false
+      },
+      "response": {
+        "id": 5,
+        "thread": {
+          "id": "80000000-1111-4111-8111-000000000002",
+          "path": "<owned-evidence-root>/agentmender-m8-relocated-18qctmm5-native/archived_sessions/rollout-2026-10-29T10-00-00-80000000-1111-4111-8111-000000000002.jsonl",
+          "source": {
+            "subAgent": {
+              "thread_spawn": {
+                "parent_thread_id": "70000000-1111-4111-8111-000000000001",
+                "depth": 1,
+                "agent_path": null,
+                "agent_nickname": null,
+                "agent_role": null
+              }
+            }
+          },
+          "status": {
+            "type": "notLoaded"
+          },
+          "forkedFromId": null,
+          "parentThreadId": null,
+          "sessionId": "80000000-1111-4111-8111-000000000002"
+        }
+      }
+    },
+    {
+      "method": "thread/list",
+      "params": {
+        "limit": 100,
+        "archived": false,
+        "useStateDbOnly": true,
+        "sourceKinds": [
+          "cli",
+          "subAgentThreadSpawn"
+        ]
+      },
+      "response": {
+        "id": 6,
+        "data": [
+          {
+            "id": "70000000-1111-4111-8111-000000000001",
+            "path": "<owned-evidence-root>/agentmender-m8-relocated-18qctmm5-native/sessions/2026/10/29/rollout-2026-10-29T10-00-00-70000000-1111-4111-8111-000000000001.jsonl",
+            "source": "cli",
+            "status": {
+              "type": "notLoaded"
+            },
+            "forkedFromId": null,
+            "parentThreadId": null
+          }
+        ],
+        "nextCursor": null
+      }
+    }
+  ],
+  "version_probe_profile": "(version 1)(allow default)(deny file-write* (require-not (subpath \"/private/tmp/agentmender-m8-relocated-18qctmm5/version-home\")))(deny file-read-data (subpath \"<real-home-denied>\"))(deny file-read-data (subpath \"/Applications/ChatGPT.app\"))(deny network*)(deny process-fork)(deny mach-lookup)",
+  "native_profile": "(version 1)(allow default)(deny file-write* (require-not (subpath \"<owned-evidence-root>/agentmender-m8-relocated-18qctmm5-native\")))(deny network*)(deny process-fork)(deny mach-lookup)(deny file-read-data (subpath \"<real-home-denied>\"))(deny file-read-data (subpath \"/Applications/ChatGPT.app\"))(deny file-write* (subpath \"/private/tmp/agentmender-m8-relocated-18qctmm5/PinnedCodex.app/Contents\"))",
+  "authority_limit": "Exact copied bytes + private name/owner/write-denied image strengthen relocation pin; no claim against malicious same-user replacement outside stated threat model, inode-open/exec race or dynamic system-library replacement.",
+  "codesign_verify_returncode": 0,
+  "codesign_verify_diagnostic": "/private/tmp/agentmender-m8-relocated-18qctmm5/PinnedCodex.app/Contents/MacOS/codex: valid on disk\n/private/tmp/agentmender-m8-relocated-18qctmm5/PinnedCodex.app/Contents/MacOS/codex: satisfies its Designated Requirement\n",
+  "standalone_macho_sufficient": false,
+  "minimum_tested_copy_set": [
+    "Contents/MacOS/codex",
+    "Contents/Info.plist",
+    "Contents/_CodeSignature/CodeResources",
+    "Contents/embedded.provisionprofile"
+  ],
+  "negative_relocation_tests": [
+    "Mach-O alone: SIGKILL -9; invalid Info.plist",
+    "Mach-O + Info.plist: SIGKILL -9; invalid resource directory",
+    "Mach-O + Info.plist + signature CodeResources without embedded.provisionprofile: SIGKILL -9"
+  ],
+  "generated_utc": "2026-10-29T21:57:23.704591+00:00"
+}

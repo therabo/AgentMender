@@ -1,0 +1,62 @@
+[
+  {
+    "path": "v1/InitializeParams.json",
+    "fresh": "b55124e7c0f36a1789396daa5578217a92be67f053903696236686e59f6f212e",
+    "prior": "b55124e7c0f36a1789396daa5578217a92be67f053903696236686e59f6f212e",
+    "same": true
+  },
+  {
+    "path": "v1/InitializeResponse.json",
+    "fresh": "62ad689c2cb6379913c1d72749cfd8de5089d35760214123518eb92eef11acc9",
+    "prior": "62ad689c2cb6379913c1d72749cfd8de5089d35760214123518eb92eef11acc9",
+    "same": true
+  },
+  {
+    "path": "v2/ThreadListParams.json",
+    "fresh": "e9da2e0bf099d21ab7982210073f927a50370c4e28be7140c314f82c524070bd",
+    "prior": "e9da2e0bf099d21ab7982210073f927a50370c4e28be7140c314f82c524070bd",
+    "same": true
+  },
+  {
+    "path": "v2/ThreadListResponse.json",
+    "fresh": "1c346f3a9174a6d68df79ea72279f7079681cf0afdb709afab818edbf355cfab",
+    "prior": "1c346f3a9174a6d68df79ea72279f7079681cf0afdb709afab818edbf355cfab",
+    "same": true
+  },
+  {
+    "path": "v2/ThreadArchiveParams.json",
+    "fresh": "dc2c0b133b814a5d9d543cc37afdb3f4f22feca35b7cea4272834b20a1e47705",
+    "prior": "dc2c0b133b814a5d9d543cc37afdb3f4f22feca35b7cea4272834b20a1e47705",
+    "same": true
+  },
+  {
+    "path": "v2/ThreadArchiveResponse.json",
+    "fresh": "2e021dabd0930ae3e2beb68cd0ddbafc40fc20cfbf8dbcb5e2f9c0493d06a08c",
+    "prior": "2e021dabd0930ae3e2beb68cd0ddbafc40fc20cfbf8dbcb5e2f9c0493d06a08c",
+    "same": true
+  },
+  {
+    "path": "v2/ThreadUnarchiveParams.json",
+    "fresh": "a1d5d847b61ea16ab09d5b9d1c1461134a7829292aae02a7e11b0a69b00c76ca",
+    "prior": "a1d5d847b61ea16ab09d5b9d1c1461134a7829292aae02a7e11b0a69b00c76ca",
+    "same": true
+  },
+  {
+    "path": "v2/ThreadUnarchiveResponse.json",
+    "fresh": "3003ed778a497b303d85deed6999b1a7aa1ef5e39c2ca5074be1e38a9da8339f",
+    "prior": "3003ed778a497b303d85deed6999b1a7aa1ef5e39c2ca5074be1e38a9da8339f",
+    "same": true
+  },
+  {
+    "path": "v2/ThreadDeleteParams.json",
+    "fresh": "0d5425d94af95e3dd20971cee052b2cb8c7d0d23195db1d17fde4e59cfbdec4a",
+    "prior": "0d5425d94af95e3dd20971cee052b2cb8c7d0d23195db1d17fde4e59cfbdec4a",
+    "same": true
+  },
+  {
+    "path": "v2/ThreadDeleteResponse.json",
+    "fresh": "333c0c5df96d78d1bcbdb19b57ddfa941de9a02bdae1c29d13c5311c2cdf6527",
+    "prior": "333c0c5df96d78d1bcbdb19b57ddfa941de9a02bdae1c29d13c5311c2cdf6527",
+    "same": true
+  }
+]

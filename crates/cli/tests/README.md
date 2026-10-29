@@ -1,5 +1,15 @@
 # Discovery test boundaries
 
+M8 adds sixteen generated verification properties at 256 cases each, seed
+`0x4d385f6c69666531` (4,096 cases), focused execution/reconciliation/retained-state
+regressions and compile-fail one-shot gate checks. Reopen tests cover intent,
+response-before-observation, observed-before-verification and Verifying cuts;
+existing persistence child-abort tests cover durable write boundaries. Generated
+properties and fake transport tests are separate from isolated real-binary evidence.
+No normal test requires Codex or may use a real provider home. The ignored macOS
+native lifecycle test accepts only an executable and an explicit opt-in; provider
+and transaction roots are always newly generated disposable directories.
+
 M7 adds 21 generated approval properties at 256 cases each (5,376 cases), seed
 `0x4d375f6170707276`, plus strict serialization regression. Run
 `cargo test --locked -p agentmender-domain --test approval_properties`.

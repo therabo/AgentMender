@@ -1,0 +1,905 @@
+[
+  {
+    "case": "unarchive-positive",
+    "before": {
+      "archived_sessions/rollout-2026-10-29T10-00-00-50000000-1111-4111-8111-000000000001.jsonl": "95a64d692708eca3e8542868a6781d9f536a8229b2e499871617b94b1b725027",
+      "archived_sessions/rollout-2026-10-29T10-00-00-60000000-1111-4111-8111-000000000002.jsonl": "93ee9168c14fea9019f891ee3dd7b6d566de9899b2892de1bc7e296c61b356b0"
+    },
+    "after": {
+      "archived_sessions/rollout-2026-10-29T10-00-00-60000000-1111-4111-8111-000000000002.jsonl": "93ee9168c14fea9019f891ee3dd7b6d566de9899b2892de1bc7e296c61b356b0",
+      "sessions/2026/10/29/rollout-2026-10-29T10-00-00-50000000-1111-4111-8111-000000000001.jsonl": "95a64d692708eca3e8542868a6781d9f536a8229b2e499871617b94b1b725027"
+    },
+    "steps": [
+      {
+        "method": "thread/list",
+        "params": {
+          "limit": 100,
+          "archived": true,
+          "useStateDbOnly": false,
+          "sourceKinds": [
+            "cli",
+            "subAgentThreadSpawn"
+          ]
+        },
+        "response": {
+          "id": 2,
+          "data": [
+            {
+              "id": "60000000-1111-4111-8111-000000000002",
+              "path": "<owned-evidence-root>/unarchive-positive/archived_sessions/rollout-2026-10-29T10-00-00-60000000-1111-4111-8111-000000000002.jsonl",
+              "source": {
+                "subAgent": {
+                  "thread_spawn": {
+                    "parent_thread_id": "50000000-1111-4111-8111-000000000001",
+                    "depth": 1,
+                    "agent_path": null,
+                    "agent_nickname": null,
+                    "agent_role": null
+                  }
+                }
+              },
+              "status": {
+                "type": "notLoaded"
+              },
+              "forkedFromId": null,
+              "parentThreadId": null
+            },
+            {
+              "id": "50000000-1111-4111-8111-000000000001",
+              "path": "<owned-evidence-root>/unarchive-positive/archived_sessions/rollout-2026-10-29T10-00-00-50000000-1111-4111-8111-000000000001.jsonl",
+              "source": "cli",
+              "status": {
+                "type": "notLoaded"
+              },
+              "forkedFromId": null,
+              "parentThreadId": null
+            }
+          ],
+          "nextCursor": null
+        }
+      },
+      {
+        "method": "thread/list",
+        "params": {
+          "limit": 100,
+          "archived": false,
+          "useStateDbOnly": false,
+          "sourceKinds": [
+            "cli",
+            "subAgentThreadSpawn"
+          ]
+        },
+        "response": {
+          "id": 3,
+          "data": [],
+          "nextCursor": null
+        }
+      },
+      {
+        "method": "thread/unarchive",
+        "params": {
+          "threadId": "50000000-1111-4111-8111-000000000001"
+        },
+        "response": {
+          "id": 4,
+          "thread": {
+            "id": "50000000-1111-4111-8111-000000000001",
+            "path": "<owned-evidence-root>/unarchive-positive/sessions/2026/10/29/rollout-2026-10-29T10-00-00-50000000-1111-4111-8111-000000000001.jsonl",
+            "source": "cli",
+            "status": {
+              "type": "notLoaded"
+            },
+            "forkedFromId": null,
+            "parentThreadId": null,
+            "sessionId": "50000000-1111-4111-8111-000000000001"
+          }
+        }
+      },
+      {
+        "method": "thread/read",
+        "params": {
+          "threadId": "50000000-1111-4111-8111-000000000001",
+          "includeTurns": false
+        },
+        "response": {
+          "id": 5,
+          "thread": {
+            "id": "50000000-1111-4111-8111-000000000001",
+            "path": "<owned-evidence-root>/unarchive-positive/sessions/2026/10/29/rollout-2026-10-29T10-00-00-50000000-1111-4111-8111-000000000001.jsonl",
+            "source": "cli",
+            "status": {
+              "type": "notLoaded"
+            },
+            "forkedFromId": null,
+            "parentThreadId": null,
+            "sessionId": "50000000-1111-4111-8111-000000000001"
+          }
+        }
+      },
+      {
+        "method": "thread/read",
+        "params": {
+          "threadId": "60000000-1111-4111-8111-000000000002",
+          "includeTurns": false
+        },
+        "response": {
+          "id": 6,
+          "thread": {
+            "id": "60000000-1111-4111-8111-000000000002",
+            "path": "<owned-evidence-root>/unarchive-positive/archived_sessions/rollout-2026-10-29T10-00-00-60000000-1111-4111-8111-000000000002.jsonl",
+            "source": {
+              "subAgent": {
+                "thread_spawn": {
+                  "parent_thread_id": "50000000-1111-4111-8111-000000000001",
+                  "depth": 1,
+                  "agent_path": null,
+                  "agent_nickname": null,
+                  "agent_role": null
+                }
+              }
+            },
+            "status": {
+              "type": "notLoaded"
+            },
+            "forkedFromId": null,
+            "parentThreadId": null,
+            "sessionId": "60000000-1111-4111-8111-000000000002"
+          }
+        }
+      },
+      {
+        "method": "thread/list",
+        "params": {
+          "limit": 100,
+          "archived": false,
+          "useStateDbOnly": true,
+          "sourceKinds": [
+            "cli",
+            "subAgentThreadSpawn"
+          ]
+        },
+        "response": {
+          "id": 7,
+          "data": [
+            {
+              "id": "50000000-1111-4111-8111-000000000001",
+              "path": "<owned-evidence-root>/unarchive-positive/sessions/2026/10/29/rollout-2026-10-29T10-00-00-50000000-1111-4111-8111-000000000001.jsonl",
+              "source": "cli",
+              "status": {
+                "type": "notLoaded"
+              },
+              "forkedFromId": null,
+              "parentThreadId": null
+            }
+          ],
+          "nextCursor": null
+        }
+      },
+      {
+        "method": "thread/list",
+        "params": {
+          "limit": 100,
+          "archived": true,
+          "useStateDbOnly": true,
+          "sourceKinds": [
+            "cli",
+            "subAgentThreadSpawn"
+          ]
+        },
+        "response": {
+          "id": 8,
+          "data": [
+            {
+              "id": "60000000-1111-4111-8111-000000000002",
+              "path": "<owned-evidence-root>/unarchive-positive/archived_sessions/rollout-2026-10-29T10-00-00-60000000-1111-4111-8111-000000000002.jsonl",
+              "source": {
+                "subAgent": {
+                  "thread_spawn": {
+                    "parent_thread_id": "50000000-1111-4111-8111-000000000001",
+                    "depth": 1,
+                    "agent_path": null,
+                    "agent_nickname": null,
+                    "agent_role": null
+                  }
+                }
+              },
+              "status": {
+                "type": "notLoaded"
+              },
+              "forkedFromId": null,
+              "parentThreadId": null
+            }
+          ],
+          "nextCursor": null
+        }
+      },
+      {
+        "method": "thread/unarchive",
+        "params": {
+          "threadId": "50000000-1111-4111-8111-000000000001"
+        },
+        "response": {
+          "error": {
+            "code": -32600,
+            "message": "no archived rollout found for thread id 50000000-1111-4111-8111-000000000001"
+          },
+          "id": 9
+        }
+      }
+    ]
+  },
+  {
+    "case": "unarchive-no-preview",
+    "before": {
+      "archived_sessions/rollout-2026-10-29T10-00-00-50000000-1111-4111-8111-000000000001.jsonl": "b8903e169fbd9cd1f7d3ec882bf1b2c7ac6c985014817c89d96bc9a2ad2f046f",
+      "archived_sessions/rollout-2026-10-29T10-00-00-60000000-1111-4111-8111-000000000002.jsonl": "c5236701c6e003ed9259451f142104ba788a6a86094ef1a6ed37b48c5ee8827a"
+    },
+    "after": {
+      "archived_sessions/rollout-2026-10-29T10-00-00-60000000-1111-4111-8111-000000000002.jsonl": "c5236701c6e003ed9259451f142104ba788a6a86094ef1a6ed37b48c5ee8827a",
+      "sessions/2026/10/29/rollout-2026-10-29T10-00-00-50000000-1111-4111-8111-000000000001.jsonl": "b8903e169fbd9cd1f7d3ec882bf1b2c7ac6c985014817c89d96bc9a2ad2f046f"
+    },
+    "steps": [
+      {
+        "method": "thread/list",
+        "params": {
+          "limit": 100,
+          "archived": true,
+          "useStateDbOnly": false,
+          "sourceKinds": [
+            "cli",
+            "subAgentThreadSpawn"
+          ]
+        },
+        "response": {
+          "id": 2,
+          "data": [
+            {
+              "id": "60000000-1111-4111-8111-000000000002",
+              "path": "<owned-evidence-root>/unarchive-no-preview/archived_sessions/rollout-2026-10-29T10-00-00-60000000-1111-4111-8111-000000000002.jsonl",
+              "source": {
+                "subAgent": {
+                  "thread_spawn": {
+                    "parent_thread_id": "50000000-1111-4111-8111-000000000001",
+                    "depth": 1,
+                    "agent_path": null,
+                    "agent_nickname": null,
+                    "agent_role": null
+                  }
+                }
+              },
+              "status": {
+                "type": "notLoaded"
+              },
+              "forkedFromId": null,
+              "parentThreadId": null
+            },
+            {
+              "id": "50000000-1111-4111-8111-000000000001",
+              "path": "<owned-evidence-root>/unarchive-no-preview/archived_sessions/rollout-2026-10-29T10-00-00-50000000-1111-4111-8111-000000000001.jsonl",
+              "source": "cli",
+              "status": {
+                "type": "notLoaded"
+              },
+              "forkedFromId": null,
+              "parentThreadId": null
+            }
+          ],
+          "nextCursor": null
+        }
+      },
+      {
+        "method": "thread/list",
+        "params": {
+          "limit": 100,
+          "archived": false,
+          "useStateDbOnly": false,
+          "sourceKinds": [
+            "cli",
+            "subAgentThreadSpawn"
+          ]
+        },
+        "response": {
+          "id": 3,
+          "data": [],
+          "nextCursor": null
+        }
+      },
+      {
+        "method": "thread/unarchive",
+        "params": {
+          "threadId": "50000000-1111-4111-8111-000000000001"
+        },
+        "response": {
+          "id": 4,
+          "thread": {
+            "id": "50000000-1111-4111-8111-000000000001",
+            "path": "<owned-evidence-root>/unarchive-no-preview/sessions/2026/10/29/rollout-2026-10-29T10-00-00-50000000-1111-4111-8111-000000000001.jsonl",
+            "source": "cli",
+            "status": {
+              "type": "notLoaded"
+            },
+            "forkedFromId": null,
+            "parentThreadId": null,
+            "sessionId": "50000000-1111-4111-8111-000000000001"
+          }
+        }
+      },
+      {
+        "method": "thread/read",
+        "params": {
+          "threadId": "50000000-1111-4111-8111-000000000001",
+          "includeTurns": false
+        },
+        "response": {
+          "id": 5,
+          "thread": {
+            "id": "50000000-1111-4111-8111-000000000001",
+            "path": "<owned-evidence-root>/unarchive-no-preview/sessions/2026/10/29/rollout-2026-10-29T10-00-00-50000000-1111-4111-8111-000000000001.jsonl",
+            "source": "cli",
+            "status": {
+              "type": "notLoaded"
+            },
+            "forkedFromId": null,
+            "parentThreadId": null,
+            "sessionId": "50000000-1111-4111-8111-000000000001"
+          }
+        }
+      },
+      {
+        "method": "thread/read",
+        "params": {
+          "threadId": "60000000-1111-4111-8111-000000000002",
+          "includeTurns": false
+        },
+        "response": {
+          "id": 6,
+          "thread": {
+            "id": "60000000-1111-4111-8111-000000000002",
+            "path": "<owned-evidence-root>/unarchive-no-preview/archived_sessions/rollout-2026-10-29T10-00-00-60000000-1111-4111-8111-000000000002.jsonl",
+            "source": {
+              "subAgent": {
+                "thread_spawn": {
+                  "parent_thread_id": "50000000-1111-4111-8111-000000000001",
+                  "depth": 1,
+                  "agent_path": null,
+                  "agent_nickname": null,
+                  "agent_role": null
+                }
+              }
+            },
+            "status": {
+              "type": "notLoaded"
+            },
+            "forkedFromId": null,
+            "parentThreadId": null,
+            "sessionId": "60000000-1111-4111-8111-000000000002"
+          }
+        }
+      },
+      {
+        "method": "thread/list",
+        "params": {
+          "limit": 100,
+          "archived": false,
+          "useStateDbOnly": true,
+          "sourceKinds": [
+            "cli",
+            "subAgentThreadSpawn"
+          ]
+        },
+        "response": {
+          "id": 7,
+          "data": [],
+          "nextCursor": null
+        }
+      },
+      {
+        "method": "thread/list",
+        "params": {
+          "limit": 100,
+          "archived": true,
+          "useStateDbOnly": true,
+          "sourceKinds": [
+            "cli",
+            "subAgentThreadSpawn"
+          ]
+        },
+        "response": {
+          "id": 8,
+          "data": [
+            {
+              "id": "60000000-1111-4111-8111-000000000002",
+              "path": "<owned-evidence-root>/unarchive-no-preview/archived_sessions/rollout-2026-10-29T10-00-00-60000000-1111-4111-8111-000000000002.jsonl",
+              "source": {
+                "subAgent": {
+                  "thread_spawn": {
+                    "parent_thread_id": "50000000-1111-4111-8111-000000000001",
+                    "depth": 1,
+                    "agent_path": null,
+                    "agent_nickname": null,
+                    "agent_role": null
+                  }
+                }
+              },
+              "status": {
+                "type": "notLoaded"
+              },
+              "forkedFromId": null,
+              "parentThreadId": null
+            }
+          ],
+          "nextCursor": null
+        }
+      },
+      {
+        "method": "thread/unarchive",
+        "params": {
+          "threadId": "50000000-1111-4111-8111-000000000001"
+        },
+        "response": {
+          "error": {
+            "code": -32600,
+            "message": "no archived rollout found for thread id 50000000-1111-4111-8111-000000000001"
+          },
+          "id": 9
+        }
+      }
+    ]
+  },
+  {
+    "case": "unarchive-duplicate-state",
+    "before": {
+      "archived_sessions/rollout-2026-10-29T10-00-00-50000000-1111-4111-8111-000000000001.jsonl": "98e8bd36074b96a20720c85f010d2cc855002c91627b49c051a00b234626725b",
+      "archived_sessions/rollout-2026-10-29T10-00-00-60000000-1111-4111-8111-000000000002.jsonl": "71512e37efaa9aadf72b5e6deb89b771191e1ef123a822e35fb174d8b8bff7ba",
+      "sessions/2026/10/29/rollout-2026-10-29T10-00-00-50000000-1111-4111-8111-000000000001.jsonl": "29f99c65832dc81bacecbd2def787f0cb5c4f43ebe810c5602057ec897e0440e"
+    },
+    "after": {
+      "archived_sessions/rollout-2026-10-29T10-00-00-50000000-1111-4111-8111-000000000001.jsonl": "98e8bd36074b96a20720c85f010d2cc855002c91627b49c051a00b234626725b",
+      "archived_sessions/rollout-2026-10-29T10-00-00-60000000-1111-4111-8111-000000000002.jsonl": "71512e37efaa9aadf72b5e6deb89b771191e1ef123a822e35fb174d8b8bff7ba",
+      "sessions/2026/10/29/rollout-2026-10-29T10-00-00-50000000-1111-4111-8111-000000000001.jsonl": "29f99c65832dc81bacecbd2def787f0cb5c4f43ebe810c5602057ec897e0440e"
+    },
+    "steps": [
+      {
+        "method": "thread/list",
+        "params": {
+          "limit": 100,
+          "archived": true,
+          "useStateDbOnly": false,
+          "sourceKinds": [
+            "cli",
+            "subAgentThreadSpawn"
+          ]
+        },
+        "response": {
+          "id": 2,
+          "data": [
+            {
+              "id": "60000000-1111-4111-8111-000000000002",
+              "path": "<owned-evidence-root>/unarchive-duplicate-state/archived_sessions/rollout-2026-10-29T10-00-00-60000000-1111-4111-8111-000000000002.jsonl",
+              "source": {
+                "subAgent": {
+                  "thread_spawn": {
+                    "parent_thread_id": "50000000-1111-4111-8111-000000000001",
+                    "depth": 1,
+                    "agent_path": null,
+                    "agent_nickname": null,
+                    "agent_role": null
+                  }
+                }
+              },
+              "status": {
+                "type": "notLoaded"
+              },
+              "forkedFromId": null,
+              "parentThreadId": null
+            },
+            {
+              "id": "50000000-1111-4111-8111-000000000001",
+              "path": "<owned-evidence-root>/unarchive-duplicate-state/archived_sessions/rollout-2026-10-29T10-00-00-50000000-1111-4111-8111-000000000001.jsonl",
+              "source": "cli",
+              "status": {
+                "type": "notLoaded"
+              },
+              "forkedFromId": null,
+              "parentThreadId": null
+            }
+          ],
+          "nextCursor": null
+        }
+      },
+      {
+        "method": "thread/list",
+        "params": {
+          "limit": 100,
+          "archived": false,
+          "useStateDbOnly": false,
+          "sourceKinds": [
+            "cli",
+            "subAgentThreadSpawn"
+          ]
+        },
+        "response": {
+          "id": 3,
+          "data": [
+            {
+              "id": "50000000-1111-4111-8111-000000000001",
+              "path": "<owned-evidence-root>/unarchive-duplicate-state/sessions/2026/10/29/rollout-2026-10-29T10-00-00-50000000-1111-4111-8111-000000000001.jsonl",
+              "source": "cli",
+              "status": {
+                "type": "notLoaded"
+              },
+              "forkedFromId": null,
+              "parentThreadId": null
+            }
+          ],
+          "nextCursor": null
+        }
+      },
+      {
+        "method": "thread/unarchive",
+        "params": {
+          "threadId": "50000000-1111-4111-8111-000000000001"
+        },
+        "response": {
+          "error": {
+            "code": -32600,
+            "message": "no archived rollout found for thread id 50000000-1111-4111-8111-000000000001"
+          },
+          "id": 4
+        }
+      },
+      {
+        "method": "thread/read",
+        "params": {
+          "threadId": "50000000-1111-4111-8111-000000000001",
+          "includeTurns": false
+        },
+        "response": {
+          "id": 5,
+          "thread": {
+            "id": "50000000-1111-4111-8111-000000000001",
+            "path": "<owned-evidence-root>/unarchive-duplicate-state/sessions/2026/10/29/rollout-2026-10-29T10-00-00-50000000-1111-4111-8111-000000000001.jsonl",
+            "source": "cli",
+            "status": {
+              "type": "notLoaded"
+            },
+            "forkedFromId": null,
+            "parentThreadId": null,
+            "sessionId": "50000000-1111-4111-8111-000000000001"
+          }
+        }
+      },
+      {
+        "method": "thread/read",
+        "params": {
+          "threadId": "60000000-1111-4111-8111-000000000002",
+          "includeTurns": false
+        },
+        "response": {
+          "id": 6,
+          "thread": {
+            "id": "60000000-1111-4111-8111-000000000002",
+            "path": "<owned-evidence-root>/unarchive-duplicate-state/archived_sessions/rollout-2026-10-29T10-00-00-60000000-1111-4111-8111-000000000002.jsonl",
+            "source": {
+              "subAgent": {
+                "thread_spawn": {
+                  "parent_thread_id": "50000000-1111-4111-8111-000000000001",
+                  "depth": 1,
+                  "agent_path": null,
+                  "agent_nickname": null,
+                  "agent_role": null
+                }
+              }
+            },
+            "status": {
+              "type": "notLoaded"
+            },
+            "forkedFromId": null,
+            "parentThreadId": null,
+            "sessionId": "60000000-1111-4111-8111-000000000002"
+          }
+        }
+      },
+      {
+        "method": "thread/list",
+        "params": {
+          "limit": 100,
+          "archived": false,
+          "useStateDbOnly": true,
+          "sourceKinds": [
+            "cli",
+            "subAgentThreadSpawn"
+          ]
+        },
+        "response": {
+          "id": 7,
+          "data": [
+            {
+              "id": "50000000-1111-4111-8111-000000000001",
+              "path": "<owned-evidence-root>/unarchive-duplicate-state/sessions/2026/10/29/rollout-2026-10-29T10-00-00-50000000-1111-4111-8111-000000000001.jsonl",
+              "source": "cli",
+              "status": {
+                "type": "notLoaded"
+              },
+              "forkedFromId": null,
+              "parentThreadId": null
+            }
+          ],
+          "nextCursor": null
+        }
+      },
+      {
+        "method": "thread/list",
+        "params": {
+          "limit": 100,
+          "archived": true,
+          "useStateDbOnly": true,
+          "sourceKinds": [
+            "cli",
+            "subAgentThreadSpawn"
+          ]
+        },
+        "response": {
+          "id": 8,
+          "data": [
+            {
+              "id": "60000000-1111-4111-8111-000000000002",
+              "path": "<owned-evidence-root>/unarchive-duplicate-state/archived_sessions/rollout-2026-10-29T10-00-00-60000000-1111-4111-8111-000000000002.jsonl",
+              "source": {
+                "subAgent": {
+                  "thread_spawn": {
+                    "parent_thread_id": "50000000-1111-4111-8111-000000000001",
+                    "depth": 1,
+                    "agent_path": null,
+                    "agent_nickname": null,
+                    "agent_role": null
+                  }
+                }
+              },
+              "status": {
+                "type": "notLoaded"
+              },
+              "forkedFromId": null,
+              "parentThreadId": null
+            }
+          ],
+          "nextCursor": null
+        }
+      },
+      {
+        "method": "thread/unarchive",
+        "params": {
+          "threadId": "50000000-1111-4111-8111-000000000001"
+        },
+        "response": {
+          "error": {
+            "code": -32600,
+            "message": "no archived rollout found for thread id 50000000-1111-4111-8111-000000000001"
+          },
+          "id": 9
+        }
+      }
+    ]
+  },
+  {
+    "case": "unarchive-denied",
+    "before": {
+      "archived_sessions/rollout-2026-10-29T10-00-00-50000000-1111-4111-8111-000000000001.jsonl": "245c9038b321a91104551a7e2f0ac7431763d228a3430c125b16e698fda71736",
+      "archived_sessions/rollout-2026-10-29T10-00-00-60000000-1111-4111-8111-000000000002.jsonl": "c52b63fb2a58fe05e30f9a482ce92b56eb8d024befd50e646516af704d12b46b"
+    },
+    "after": {
+      "archived_sessions/rollout-2026-10-29T10-00-00-50000000-1111-4111-8111-000000000001.jsonl": "245c9038b321a91104551a7e2f0ac7431763d228a3430c125b16e698fda71736",
+      "archived_sessions/rollout-2026-10-29T10-00-00-60000000-1111-4111-8111-000000000002.jsonl": "c52b63fb2a58fe05e30f9a482ce92b56eb8d024befd50e646516af704d12b46b"
+    },
+    "steps": [
+      {
+        "method": "thread/list",
+        "params": {
+          "limit": 100,
+          "archived": true,
+          "useStateDbOnly": false,
+          "sourceKinds": [
+            "cli",
+            "subAgentThreadSpawn"
+          ]
+        },
+        "response": {
+          "id": 2,
+          "data": [
+            {
+              "id": "60000000-1111-4111-8111-000000000002",
+              "path": "<owned-evidence-root>/unarchive-denied/archived_sessions/rollout-2026-10-29T10-00-00-60000000-1111-4111-8111-000000000002.jsonl",
+              "source": {
+                "subAgent": {
+                  "thread_spawn": {
+                    "parent_thread_id": "50000000-1111-4111-8111-000000000001",
+                    "depth": 1,
+                    "agent_path": null,
+                    "agent_nickname": null,
+                    "agent_role": null
+                  }
+                }
+              },
+              "status": {
+                "type": "notLoaded"
+              },
+              "forkedFromId": null,
+              "parentThreadId": null
+            },
+            {
+              "id": "50000000-1111-4111-8111-000000000001",
+              "path": "<owned-evidence-root>/unarchive-denied/archived_sessions/rollout-2026-10-29T10-00-00-50000000-1111-4111-8111-000000000001.jsonl",
+              "source": "cli",
+              "status": {
+                "type": "notLoaded"
+              },
+              "forkedFromId": null,
+              "parentThreadId": null
+            }
+          ],
+          "nextCursor": null
+        }
+      },
+      {
+        "method": "thread/list",
+        "params": {
+          "limit": 100,
+          "archived": false,
+          "useStateDbOnly": false,
+          "sourceKinds": [
+            "cli",
+            "subAgentThreadSpawn"
+          ]
+        },
+        "response": {
+          "id": 3,
+          "data": [],
+          "nextCursor": null
+        }
+      },
+      {
+        "method": "thread/unarchive",
+        "params": {
+          "threadId": "50000000-1111-4111-8111-000000000001"
+        },
+        "response": {
+          "error": {
+            "code": -32603,
+            "message": "failed to unarchive session: thread-store internal error: failed to unarchive thread: Operation not permitted (os error 1)"
+          },
+          "id": 4
+        }
+      },
+      {
+        "method": "thread/read",
+        "params": {
+          "threadId": "50000000-1111-4111-8111-000000000001",
+          "includeTurns": false
+        },
+        "response": {
+          "id": 5,
+          "thread": {
+            "id": "50000000-1111-4111-8111-000000000001",
+            "path": "<owned-evidence-root>/unarchive-denied/archived_sessions/rollout-2026-10-29T10-00-00-50000000-1111-4111-8111-000000000001.jsonl",
+            "source": "cli",
+            "status": {
+              "type": "notLoaded"
+            },
+            "forkedFromId": null,
+            "parentThreadId": null,
+            "sessionId": "50000000-1111-4111-8111-000000000001"
+          }
+        }
+      },
+      {
+        "method": "thread/read",
+        "params": {
+          "threadId": "60000000-1111-4111-8111-000000000002",
+          "includeTurns": false
+        },
+        "response": {
+          "id": 6,
+          "thread": {
+            "id": "60000000-1111-4111-8111-000000000002",
+            "path": "<owned-evidence-root>/unarchive-denied/archived_sessions/rollout-2026-10-29T10-00-00-60000000-1111-4111-8111-000000000002.jsonl",
+            "source": {
+              "subAgent": {
+                "thread_spawn": {
+                  "parent_thread_id": "50000000-1111-4111-8111-000000000001",
+                  "depth": 1,
+                  "agent_path": null,
+                  "agent_nickname": null,
+                  "agent_role": null
+                }
+              }
+            },
+            "status": {
+              "type": "notLoaded"
+            },
+            "forkedFromId": null,
+            "parentThreadId": null,
+            "sessionId": "60000000-1111-4111-8111-000000000002"
+          }
+        }
+      },
+      {
+        "method": "thread/list",
+        "params": {
+          "limit": 100,
+          "archived": false,
+          "useStateDbOnly": true,
+          "sourceKinds": [
+            "cli",
+            "subAgentThreadSpawn"
+          ]
+        },
+        "response": {
+          "id": 7,
+          "data": [],
+          "nextCursor": null
+        }
+      },
+      {
+        "method": "thread/list",
+        "params": {
+          "limit": 100,
+          "archived": true,
+          "useStateDbOnly": true,
+          "sourceKinds": [
+            "cli",
+            "subAgentThreadSpawn"
+          ]
+        },
+        "response": {
+          "id": 8,
+          "data": [
+            {
+              "id": "60000000-1111-4111-8111-000000000002",
+              "path": "<owned-evidence-root>/unarchive-denied/archived_sessions/rollout-2026-10-29T10-00-00-60000000-1111-4111-8111-000000000002.jsonl",
+              "source": {
+                "subAgent": {
+                  "thread_spawn": {
+                    "parent_thread_id": "50000000-1111-4111-8111-000000000001",
+                    "depth": 1,
+                    "agent_path": null,
+                    "agent_nickname": null,
+                    "agent_role": null
+                  }
+                }
+              },
+              "status": {
+                "type": "notLoaded"
+              },
+              "forkedFromId": null,
+              "parentThreadId": null
+            },
+            {
+              "id": "50000000-1111-4111-8111-000000000001",
+              "path": "<owned-evidence-root>/unarchive-denied/archived_sessions/rollout-2026-10-29T10-00-00-50000000-1111-4111-8111-000000000001.jsonl",
+              "source": "cli",
+              "status": {
+                "type": "notLoaded"
+              },
+              "forkedFromId": null,
+              "parentThreadId": null
+            }
+          ],
+          "nextCursor": null
+        }
+      },
+      {
+        "method": "thread/unarchive",
+        "params": {
+          "threadId": "50000000-1111-4111-8111-000000000001"
+        },
+        "response": {
+          "error": {
+            "code": -32603,
+            "message": "failed to unarchive session: thread-store internal error: failed to unarchive thread: Operation not permitted (os error 1)"
+          },
+          "id": 9
+        }
+      }
+    ]
+  }
+]

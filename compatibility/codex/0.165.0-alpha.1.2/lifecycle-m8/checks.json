@@ -1,0 +1,21 @@
+{
+  "passed": 15,
+  "failed": 0,
+  "checks": [
+    "fresh protocol schemas match historical exact profile",
+    "archive includes two generations",
+    "unarchive restores target and leaves descendants archived",
+    "fork is retained across archive and delete",
+    "archive child failure permits root and grandchild success",
+    "delete error can follow removed descendant",
+    "stale exact read can succeed after missing rollout",
+    "fully paginated active list misses affected child",
+    "unarchive positive active membership",
+    "unarchive no preview still succeeds despite list absence",
+    "duplicate state errors without changing fixture bytes",
+    "denied unarchive observed no fixture byte change",
+    "metadata-only read and body read differ on missing rollout",
+    "native delete handles missing rollout when metadata exists",
+    "content denied mirror lists positive state but direct read fails"
+  ]
+}

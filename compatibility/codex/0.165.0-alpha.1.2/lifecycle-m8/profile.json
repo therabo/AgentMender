@@ -1,0 +1,32 @@
+{
+  "classification": "isolated_real_binary_on_explicit_synthetic_state",
+  "observed_date": "2026-10-29",
+  "version": "0.165.0-alpha.1.2",
+  "binary_sha256": "d84a54b031085f01e3ad915ea7c72ebea4dcf69e90f0d1e0e4a637e8280991d2",
+  "interface": "codex-app-server-0.165.0-alpha.1.2",
+  "source_layout": "codex-state-5:1b88a3f88c8edb6f742d219835a821d0515b7b811b4342cd650e6ac8069f4647",
+  "protocol_evidence": "sha256:14a6e75b4bae9ec7b4bb41f3ed9840296f4d671295f300532efc7a7ca9b3d686",
+  "adapter": "0.1.0",
+  "platform": "macos",
+  "contract": "codex-unarchive-target-only-v165-sha256-d84a54b0-v1",
+  "execution": {
+    "archive": "unsupported_hidden_descendant_scope",
+    "unarchive": "conditional_exact_profile_and_all_prior_gates",
+    "delete": "unsupported_scope_ownership_and_authoritative_negative_proof"
+  },
+  "compensation": "not_compensatable",
+  "real_user_state_mutated": false,
+  "source_version_match_established": false,
+  "readiness": "Current production effects and integrity remain unclosed; Partial observations cannot become Ready.",
+  "provenance": {
+    "schema": "fresh actual-binary generation, compared exact hashes",
+    "behavior": "actual native calls on explicitly synthetic owned disposable state",
+    "documentation": "https://learn.chatgpt.com/docs/app-server",
+    "fixture": "sanitized empirical summaries, not proof import",
+    "inference_limit": "samples do not establish provider-global effect closure"
+  },
+  "recorded_assertions": {
+    "passed": 15,
+    "failed": 0
+  }
+}

@@ -1,13 +1,16 @@
 # AgentMender
 
-Provider-aware, strictly read-only inventory, evidence graph and integrity reports
+Provider-aware inventory, evidence graph, integrity reports and independently
+approved native lifecycle orchestration
 of AI coding-agent state. M0/M1 and the Codex compatibility refresh retain accurately
 reported **partial coverage**. M2 adds graph reconstruction and explanations. M3 adds
 a pure integrity evaluator and `verify`. M4 adds immutable lifecycle intentions;
 M5 exposes read-only queries and planning over local stdio MCP. M6 adds a durable
 AgentMender-owned transaction journal, reconciliation manifests and restart knowledge.
-M7 adds independent local approval evidence. Provider execution and repair remain
-out of scope; current real plans remain Blocked/Unsupported.
+M7 adds independent local approval evidence. M8 adds a consumed-receipt Codex native
+unarchive adapter with independent verification and read-only reconciliation.
+Archive/delete execution and repair remain unsupported; current real plans remain
+Blocked/Unsupported. See [the exact lifecycle boundary](docs/codex-lifecycle.md).
 
 ```sh
 cargo run -- providers --json
@@ -143,7 +146,8 @@ agentmender --json transactions --state-root /absolute/agentmender-state inspect
 ```
 
 Normal discovery/planning/MCP commands create no persistent state. M7's explicit
-local preparation workflow creates new attempts; there is no execution command.
+local preparation workflow creates new attempts; M8 separately executes or
+reconciles an independently approved exact transaction.
 See [durability, recovery and
 limitations](docs/transactions.md) and [ADR-0011](docs/adr/0011-durable-transaction-knowledge.md).
 
@@ -153,7 +157,8 @@ M7 keeps approval outside MCP. A separate local terminal workflow prepares an ex
 durable review and issues a short-lived one-shot grant bound to the immutable plan,
 transaction, state and recovery manifest. Grant/revoke history is authenticated and
 append-only. Consumption and durable intent form one event, with no provider effect.
-Read-only commands inspect approval status/history; no execute command exists.
+Read-only commands inspect approval status/history. M8's separate local execution
+command requires an already independently approved exact transaction.
 
 Current provider contracts cannot produce Ready plans, so real approval attempts
 remain blocked. The terminal boundary proves local process access, not personal
@@ -177,7 +182,9 @@ strings; non-UTF-8 paths use a lossless native encoding object.
 
 ## Safety boundary
 
-The application never writes real provider state. Read-only ports expose only
+Discovery, planning, verification and MCP never write real provider state. M8's
+separate Codex adapter can invoke only exact-profile unarchive after independent
+approval, fresh validation, verified recovery and durable intent. Read-only ports expose only
 kind/detect/discover, pure snapshot-to-graph construction and pure integrity/planning-context
 interpretation. All artifacts remain
 protected, and paths do not prove ownership.
@@ -204,11 +211,13 @@ health. Truncated directory samples can vary with enumeration order.
 
 ## Development and verification
 
-Rust 1.89+; eight crates retain ports and adapters. Application depends only on domain
-and provider ports; CLI composes adapters and calls application use cases. MCP depends
+Rust 1.89+; eight crates retain ports and adapters. Application depends on domain,
+provider ports and the narrow persistence handoff; CLI composes adapters and calls application use cases. MCP depends
 internally only on application/domain and contains no provider storage logic.
 Persistence depends internally only on domain; CLI transaction inspection uses a
 read-only application port. Domain transaction/replay logic remains pure.
+Only the Codex lifecycle module consumes persistence handoff types; it cannot
+access transaction writers or approval keys. See ADR-0013 for the explicit boundary.
 Dependencies and the scoped unsafe boundary are documented in
 [dependency decisions](docs/dependencies.md).
 

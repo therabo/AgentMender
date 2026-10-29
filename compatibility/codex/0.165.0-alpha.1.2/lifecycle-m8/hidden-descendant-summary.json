@@ -1,0 +1,203 @@
+[
+  {
+    "method": "thread/list",
+    "params": {
+      "limit": 100,
+      "useStateDbOnly": false,
+      "sourceKinds": [
+        "cli",
+        "subAgentThreadSpawn",
+        "unknown"
+      ]
+    },
+    "response": {
+      "id": 2,
+      "data": [
+        {
+          "id": "30000000-1111-4111-8111-000000000001",
+          "path": "<owned-evidence-root>/hidden-descendant/sessions/2026/10/29/rollout-2026-10-29T10-00-00-30000000-1111-4111-8111-000000000001.jsonl",
+          "source": "cli",
+          "status": {
+            "type": "notLoaded"
+          },
+          "forkedFromId": null,
+          "parentThreadId": null
+        }
+      ],
+      "nextCursor": null
+    }
+  },
+  {
+    "method": "thread/list",
+    "params": {
+      "limit": 100,
+      "useStateDbOnly": true,
+      "sourceKinds": [
+        "cli",
+        "subAgentThreadSpawn",
+        "unknown"
+      ]
+    },
+    "response": {
+      "id": 3,
+      "data": [
+        {
+          "id": "30000000-1111-4111-8111-000000000001",
+          "path": "<owned-evidence-root>/hidden-descendant/sessions/2026/10/29/rollout-2026-10-29T10-00-00-30000000-1111-4111-8111-000000000001.jsonl",
+          "source": "cli",
+          "status": {
+            "type": "notLoaded"
+          },
+          "forkedFromId": null,
+          "parentThreadId": null
+        }
+      ],
+      "nextCursor": null
+    }
+  },
+  {
+    "method": "thread/read",
+    "params": {
+      "threadId": "40000000-1111-4111-8111-000000000002",
+      "includeTurns": false
+    },
+    "response": {
+      "id": 4,
+      "thread": {
+        "id": "40000000-1111-4111-8111-000000000002",
+        "path": "<owned-evidence-root>/hidden-descendant/sessions/2026/10/29/rollout-2026-10-29T10-00-00-40000000-1111-4111-8111-000000000002.jsonl",
+        "source": {
+          "subAgent": {
+            "thread_spawn": {
+              "parent_thread_id": "30000000-1111-4111-8111-000000000001",
+              "depth": 1,
+              "agent_path": null,
+              "agent_nickname": null,
+              "agent_role": null
+            }
+          }
+        },
+        "status": {
+          "type": "notLoaded"
+        },
+        "forkedFromId": null,
+        "parentThreadId": null,
+        "sessionId": "40000000-1111-4111-8111-000000000002"
+      }
+    }
+  },
+  {
+    "method": "thread/archive",
+    "params": {
+      "threadId": "30000000-1111-4111-8111-000000000001"
+    },
+    "response": {
+      "id": 5,
+      "result": {}
+    }
+  },
+  {
+    "method": "thread/read",
+    "params": {
+      "threadId": "40000000-1111-4111-8111-000000000002",
+      "includeTurns": false
+    },
+    "response": {
+      "id": 6,
+      "thread": {
+        "id": "40000000-1111-4111-8111-000000000002",
+        "path": "<owned-evidence-root>/hidden-descendant/archived_sessions/rollout-2026-10-29T10-00-00-40000000-1111-4111-8111-000000000002.jsonl",
+        "source": {
+          "subAgent": {
+            "thread_spawn": {
+              "parent_thread_id": "30000000-1111-4111-8111-000000000001",
+              "depth": 1,
+              "agent_path": null,
+              "agent_nickname": null,
+              "agent_role": null
+            }
+          }
+        },
+        "status": {
+          "type": "notLoaded"
+        },
+        "forkedFromId": null,
+        "parentThreadId": null,
+        "sessionId": "40000000-1111-4111-8111-000000000002"
+      }
+    }
+  },
+  {
+    "method": "thread/list",
+    "params": {
+      "limit": 100,
+      "archived": true,
+      "useStateDbOnly": true,
+      "sourceKinds": [
+        "cli",
+        "subAgentThreadSpawn",
+        "unknown"
+      ]
+    },
+    "response": {
+      "id": 7,
+      "data": [
+        {
+          "id": "40000000-1111-4111-8111-000000000002",
+          "path": "<owned-evidence-root>/hidden-descendant/archived_sessions/rollout-2026-10-29T10-00-00-40000000-1111-4111-8111-000000000002.jsonl",
+          "source": {
+            "subAgent": {
+              "thread_spawn": {
+                "parent_thread_id": "30000000-1111-4111-8111-000000000001",
+                "depth": 1,
+                "agent_path": null,
+                "agent_nickname": null,
+                "agent_role": null
+              }
+            }
+          },
+          "status": {
+            "type": "notLoaded"
+          },
+          "forkedFromId": null,
+          "parentThreadId": null
+        },
+        {
+          "id": "30000000-1111-4111-8111-000000000001",
+          "path": "<owned-evidence-root>/hidden-descendant/archived_sessions/rollout-2026-10-29T10-00-00-30000000-1111-4111-8111-000000000001.jsonl",
+          "source": "cli",
+          "status": {
+            "type": "notLoaded"
+          },
+          "forkedFromId": null,
+          "parentThreadId": null
+        }
+      ],
+      "nextCursor": null
+    }
+  },
+  {
+    "method": "thread/delete",
+    "params": {
+      "threadId": "30000000-1111-4111-8111-000000000001"
+    },
+    "response": {
+      "id": 8,
+      "result": {}
+    }
+  },
+  {
+    "method": "thread/read",
+    "params": {
+      "threadId": "40000000-1111-4111-8111-000000000002",
+      "includeTurns": false
+    },
+    "response": {
+      "error": {
+        "code": -32600,
+        "message": "thread not loaded: 40000000-1111-4111-8111-000000000002"
+      },
+      "id": 9
+    }
+  }
+]

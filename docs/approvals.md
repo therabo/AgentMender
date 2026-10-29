@@ -6,6 +6,11 @@ Blocked/Unsupported and cannot obtain grants. Positive tests use synthetic close
 contracts. MCP retains its eight read-only tools and cannot prepare, grant, revoke,
 consume, execute or access the key.
 
+M8 adds the separate [approved Codex execution workflow](codex-lifecycle.md).
+Grant issuance and this human-channel boundary are unchanged. Dispatch consumes
+the gate by value; only an observation handle returns. No current real partial plan
+is promoted to eligibility.
+
 ## Human channel and commands
 
 A separately invoked local CLI requires terminal input/output, a complete review
@@ -112,6 +117,7 @@ External append/sync and SQLite commit precede the noncloneable DurableIntent,
 which identifies approval, transaction, sequence, plan/state and operation. M7
 dispatches nothing. Future M8/M9 must use it only for the matching native operation,
 then explicitly observe and independently verify; a receipt is not provider success.
+M8 implements that handoff for conditional exact-profile Codex unarchive only.
 
 Ambiguous writes poison the instance. Torn/divergent histories stop authority on
 reopen without truncation, repair, regrant or retry. Committed consumption persists

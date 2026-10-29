@@ -1,0 +1,167 @@
+[
+  {
+    "case": "delete-child-denied",
+    "effect_response": {
+      "error": {
+        "code": -32603,
+        "message": "failed to delete thread: thread-store internal error: failed to delete rollout file `<owned-evidence-root>/delete-child-denied/sessions/2026/10/29/rollout-2026-10-29T10-00-00-20000000-1111-4111-8111-000000000002.jsonl`: Operation not permitted (os error 1)"
+      },
+      "id": 3
+    },
+    "after_reads": {
+      "10000000-1111-4111-8111-000000000001": {
+        "id": 4,
+        "thread": {
+          "id": "10000000-1111-4111-8111-000000000001",
+          "path": "<owned-evidence-root>/delete-child-denied/sessions/2026/10/29/rollout-2026-10-29T10-00-00-10000000-1111-4111-8111-000000000001.jsonl",
+          "source": "cli",
+          "status": {
+            "type": "notLoaded"
+          },
+          "forkedFromId": null,
+          "parentThreadId": null,
+          "sessionId": "10000000-1111-4111-8111-000000000001"
+        }
+      },
+      "20000000-1111-4111-8111-000000000002": {
+        "id": 5,
+        "thread": {
+          "id": "20000000-1111-4111-8111-000000000002",
+          "path": "<owned-evidence-root>/delete-child-denied/sessions/2026/10/29/rollout-2026-10-29T10-00-00-20000000-1111-4111-8111-000000000002.jsonl",
+          "source": {
+            "subAgent": {
+              "thread_spawn": {
+                "parent_thread_id": "10000000-1111-4111-8111-000000000001",
+                "depth": 1,
+                "agent_path": null,
+                "agent_nickname": null,
+                "agent_role": null
+              }
+            }
+          },
+          "status": {
+            "type": "notLoaded"
+          },
+          "forkedFromId": null,
+          "parentThreadId": null,
+          "sessionId": "20000000-1111-4111-8111-000000000002"
+        }
+      }
+    },
+    "remaining_rollouts": [
+      "sessions/2026/10/29/rollout-2026-10-29T10-00-00-10000000-1111-4111-8111-000000000001.jsonl",
+      "sessions/2026/10/29/rollout-2026-10-29T10-00-00-20000000-1111-4111-8111-000000000002.jsonl"
+    ]
+  },
+  {
+    "case": "archive-root-denied",
+    "effect_response": {
+      "error": {
+        "code": -32603,
+        "message": "failed to archive session: thread-store internal error: failed to archive thread: Operation not permitted (os error 1)"
+      },
+      "id": 3
+    },
+    "after_reads": {
+      "10000000-1111-4111-8111-000000000001": {
+        "id": 4,
+        "thread": {
+          "id": "10000000-1111-4111-8111-000000000001",
+          "path": "<owned-evidence-root>/archive-root-denied/sessions/2026/10/29/rollout-2026-10-29T10-00-00-10000000-1111-4111-8111-000000000001.jsonl",
+          "source": "cli",
+          "status": {
+            "type": "notLoaded"
+          },
+          "forkedFromId": null,
+          "parentThreadId": null,
+          "sessionId": "10000000-1111-4111-8111-000000000001"
+        }
+      },
+      "20000000-1111-4111-8111-000000000002": {
+        "id": 5,
+        "thread": {
+          "id": "20000000-1111-4111-8111-000000000002",
+          "path": "<owned-evidence-root>/archive-root-denied/sessions/2026/10/29/rollout-2026-10-29T10-00-00-20000000-1111-4111-8111-000000000002.jsonl",
+          "source": {
+            "subAgent": {
+              "thread_spawn": {
+                "parent_thread_id": "10000000-1111-4111-8111-000000000001",
+                "depth": 1,
+                "agent_path": null,
+                "agent_nickname": null,
+                "agent_role": null
+              }
+            }
+          },
+          "status": {
+            "type": "notLoaded"
+          },
+          "forkedFromId": null,
+          "parentThreadId": null,
+          "sessionId": "20000000-1111-4111-8111-000000000002"
+        }
+      }
+    },
+    "remaining_rollouts": [
+      "sessions/2026/10/29/rollout-2026-10-29T10-00-00-10000000-1111-4111-8111-000000000001.jsonl",
+      "sessions/2026/10/29/rollout-2026-10-29T10-00-00-20000000-1111-4111-8111-000000000002.jsonl"
+    ]
+  },
+  {
+    "case": "delete-root-denied",
+    "effect_response": {
+      "error": {
+        "code": -32603,
+        "message": "failed to delete thread: thread-store internal error: failed to delete rollout file `<owned-evidence-root>/delete-root-denied/sessions/2026/10/29/rollout-2026-10-29T10-00-00-10000000-1111-4111-8111-000000000001.jsonl`: Operation not permitted (os error 1)"
+      },
+      "id": 3
+    },
+    "after_reads": {
+      "10000000-1111-4111-8111-000000000001": {
+        "id": 4,
+        "thread": {
+          "id": "10000000-1111-4111-8111-000000000001",
+          "path": "<owned-evidence-root>/delete-root-denied/sessions/2026/10/29/rollout-2026-10-29T10-00-00-10000000-1111-4111-8111-000000000001.jsonl",
+          "source": "cli",
+          "status": {
+            "type": "notLoaded"
+          },
+          "forkedFromId": null,
+          "parentThreadId": null,
+          "sessionId": "10000000-1111-4111-8111-000000000001"
+        }
+      },
+      "20000000-1111-4111-8111-000000000002": {
+        "id": 5,
+        "thread": {
+          "id": "20000000-1111-4111-8111-000000000002",
+          "path": "<owned-evidence-root>/delete-root-denied/sessions/2026/10/29/rollout-2026-10-29T10-00-00-20000000-1111-4111-8111-000000000002.jsonl",
+          "source": {
+            "subAgent": {
+              "thread_spawn": {
+                "parent_thread_id": "10000000-1111-4111-8111-000000000001",
+                "depth": 1,
+                "agent_path": null,
+                "agent_nickname": null,
+                "agent_role": null
+              }
+            }
+          },
+          "status": {
+            "type": "notLoaded"
+          },
+          "forkedFromId": null,
+          "parentThreadId": null,
+          "sessionId": "20000000-1111-4111-8111-000000000002"
+        }
+      }
+    },
+    "remaining_rollouts": [
+      "sessions/2026/10/29/rollout-2026-10-29T10-00-00-10000000-1111-4111-8111-000000000001.jsonl"
+    ]
+  },
+  {
+    "os_outside_write_canary_denied": true,
+    "returncode": 1
+  }
+]

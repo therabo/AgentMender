@@ -1,5 +1,19 @@
 # AgentMender engineering constraints
 
+Current development scope is M8 on `milestone/m8-codex-lifecycle`, after M7 was
+formally integrated at `5cf94c01d1d14acf6034d7bb7f5521547ee470dd`.
+ADR-0013 supersedes the historical M7-only execution prohibitions below only for
+its narrow Codex unarchive handoff. Preserve the older milestone boundaries as
+context. Archive/delete execution remains Unsupported due hidden descendant scope;
+Claude and MCP remain read-only. Current real plans retain all readiness blockers.
+Only application lifecycle orchestration may advance consumed transactions toward
+the private, receipt-gated Codex adapter. No effect before durable intent, verified
+recovery, independent approval and immediate fresh validation. No raw commands,
+provider SQL writes or filesystem lifecycle emulation. Reconciliation is read-only
+and never reconstructs dispatch authority. Unknown outcomes never trigger retries.
+Only the exact reviewed private executable pin may write fixed files under a fresh
+owned evidence sandbox. Native process startup counts as a possible effect.
+
 Read all docs/adr before changing boundaries. Current scope is M7: independent
 local approval (ADR-0012), following formally integrated M6 at
 f2268d2cdcff961a91e079af79314571fb3752d7. M5 remains a thin

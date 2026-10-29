@@ -8,6 +8,13 @@ and consumes it atomically with intent. A transaction or digest alone never
 authorizes an effect. MCP remains read-only and real provider plans stay blocked;
 positive tests use synthetic contracts.
 
+M8's [Codex lifecycle workflow](codex-lifecycle.md) now consumes the noncloneable
+DurableIntent and returns a noncloneable DurableObservation for result recording.
+Its observation-only reconciliation can advance authenticated consumed v2 attempts
+without rebuilding an execution receipt. The sections below describing M6's absent
+execution CLI record the historical foundation; the current local CLI also has
+`transactions execute` and `transactions reconcile`. MCP remains read-only.
+
 ## Bound attempts and deterministic knowledge
 
 `TransactionId` is 256 bits from OS randomness, identifying one attempt rather than

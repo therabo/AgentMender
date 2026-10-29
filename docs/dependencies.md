@@ -1,5 +1,11 @@
 # Dependency decisions
 
+M8 reuses the locked workspace packages. Application and provider-codex add only
+the existing persistence crate for ADR-0013's narrow durable handoff. Application
+tests reuse existing tempfile/proptest. No new registry package, RPC/HTTP stack,
+MSRV change or provider-api/MCP dependency is introduced. Native writable dispatch
+is confined to the exact reviewed private Codex lifecycle launcher.
+
 Registry metadata and maintainer documentation checked on 2026-10-28. Cargo.lock
 records the resolved versions; reviewed stable release lines are constrained in
 Cargo.toml. No dependencies from the research were copied without checking need.
