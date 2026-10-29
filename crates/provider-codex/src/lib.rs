@@ -1,6 +1,7 @@
 //! Codex metadata observations through the official, version-specific App Server API.
 //! Real SQLite is observed only by the isolated evidence worker; no lifecycle
-//! mutation methods are receipt-gated in a separate private lifecycle module; no transcript readers are exposed.
+//! mutation is exposed through the read-only adapter. Lifecycle methods are
+//! receipt-gated in a separate private module; no transcript readers are exposed.
 use agentmender_domain::*;
 use agentmender_provider_api::{
     ProviderAdapter, ProviderError, ProviderLocation, filesystem, process, validate_location,

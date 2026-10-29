@@ -420,134 +420,6 @@ fn validate_unarchive_response(response: &Value, id: &str) -> Result<(), EffectE
     Ok(())
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[allow(dead_code)]
-    mod fixtures {
-        include!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../domain/tests/common/mod.rs"
-        ));
-    }
-
-    #[test]
-    fn only_unarchive_is_eligible_and_synthetic_plans_are_rejected() {
-        let reader = CodexAdapter::new(ProviderLocation {
-            state_root: "/synthetic-planning".into(),
-            executable: None,
-        });
-        let adapter = CodexLifecycleAdapter::new(reader);
-        let case = fixtures::case(0);
-        for operation in [
-            LifecycleIntent::Archive,
-            LifecycleIntent::SoftDelete,
-            LifecycleIntent::Purge,
-        ] {
-            assert_eq!(
-                adapter.preflight(&case.plan(operation)),
-                Err(EffectError::UnsupportedOperation)
-            );
-        }
-        assert!(
-            adapter
-                .preflight(&case.plan(LifecycleIntent::Unarchive))
-                .is_err()
-        );
-    }
-
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn pin_source_checks_digest_size_and_symlinks() {
-        use std::os::unix::fs::symlink;
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("source");
-        std::fs::write(&path, b"known").unwrap();
-        let hash = Sha256::digest(b"known")
-            .iter()
-            .map(|b| format!("{b:02x}"))
-            .collect::<String>();
-        assert_eq!(
-            read_pinned_source(&path, 5, &hash, Some(5)).unwrap(),
-            b"known"
-        );
-        assert!(read_pinned_source(&path, 4, &hash, Some(5)).is_err());
-        assert!(read_pinned_source(&path, 5, HASH, Some(5)).is_err());
-        let link = dir.path().join("link");
-        symlink(&path, &link).unwrap();
-        assert!(read_pinned_source(&link, 5, &hash, Some(5)).is_err());
-        assert!(bundle_root(Path::new("/tmp/Fake.app/Contents/MacOS/codex")).is_some());
-        assert!(bundle_root(Path::new("/tmp/Fake.app/Contents/Other/codex")).is_none());
-    }
-
-    #[test]
-    fn expired_grant_never_starts() {
-        assert!(!grant_valid(0));
-    }
-    #[cfg(unix)]
-    #[test]
-    fn bounded_transport_classifies_fake_server_failures() {
-        use std::process::{Command, Stdio};
-        fn fake(script: &str, timeout: Duration) -> Transport {
-            let child = Command::new("/bin/sh")
-                .args(["-c", script])
-                .stdin(Stdio::piped())
-                .stdout(Stdio::piped())
-                .stderr(Stdio::null())
-                .spawn()
-                .unwrap();
-            Transport::from_child(child, timeout).unwrap()
-        }
-        let mut rejected = fake(
-            "printf '%s\\n' '{\"id\":2,\"error\":{}}'",
-            Duration::from_secs(1),
-        );
-        assert_eq!(
-            lifecycle_response(&mut rejected, 2),
-            Err(EffectError::ProviderRejected)
-        );
-        let mut malformed = fake("printf '%s\\n' 'not-json'", Duration::from_secs(1));
-        assert_eq!(
-            lifecycle_response(&mut malformed, 2),
-            Err(EffectError::ProtocolMismatch)
-        );
-        let mut exited = fake("exit 0", Duration::from_secs(1));
-        assert_eq!(
-            lifecycle_response(&mut exited, 2),
-            Err(EffectError::ProcessTerminated)
-        );
-        let mut stalled = fake("exec /bin/sleep 3", Duration::from_millis(20));
-        assert_eq!(
-            lifecycle_response(&mut stalled, 2),
-            Err(EffectError::Timeout)
-        );
-        let mut wrong_id = fake(
-            "printf '%s\\n' '{\"id\":3,\"result\":{}}'",
-            Duration::from_secs(1),
-        );
-        assert_eq!(
-            lifecycle_response(&mut wrong_id, 2),
-            Err(EffectError::ProtocolMismatch)
-        );
-    }
-
-    #[test]
-    fn response_requires_correlated_thread_and_schema() {
-        let thread = json!({"cliVersion":"x","createdAt":0,"cwd":"/x","ephemeral":false,"id":"target","modelProvider":"x","preview":"","projectId":null,"sessionId":"target","source":"cli","status":{"type":"idle"},"turns":[],"updatedAt":0});
-        assert!(
-            validate_unarchive_response(&json!({"result":{"thread":thread}}), "target").is_ok()
-        );
-        assert_eq!(
-            validate_unarchive_response(&json!({"result":{"thread":thread}}), "other"),
-            Err(EffectError::ProtocolMismatch)
-        );
-        assert_eq!(
-            validate_unarchive_response(&json!({"result":{"thread":{"id":"target"}}}), "target"),
-            Err(EffectError::ProtocolMismatch)
-        );
-    }
-}
-
 fn grant_valid(expires_at: u64) -> bool {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -682,3 +554,136 @@ fn pin_image(
 #[cfg(all(test, target_os = "macos"))]
 #[path = "lifecycle_live_tests.rs"]
 mod lifecycle_live_tests;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[allow(dead_code)]
+    mod fixtures {
+        include!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../domain/tests/common/mod.rs"
+        ));
+    }
+
+    #[test]
+    fn only_unarchive_is_eligible_and_synthetic_plans_are_rejected() {
+        let reader = CodexAdapter::new(ProviderLocation {
+            state_root: "/synthetic-planning".into(),
+            executable: None,
+        });
+        let adapter = CodexLifecycleAdapter::new(reader);
+        let case = fixtures::case(0);
+        for operation in [
+            LifecycleIntent::Archive,
+            LifecycleIntent::SoftDelete,
+            LifecycleIntent::Purge,
+        ] {
+            assert_eq!(
+                adapter.preflight(&case.plan(operation)),
+                Err(EffectError::UnsupportedOperation)
+            );
+        }
+        assert!(
+            adapter
+                .preflight(&case.plan(LifecycleIntent::Unarchive))
+                .is_err()
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn pin_source_checks_digest_size_and_symlinks() {
+        use std::os::unix::fs::symlink;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("source");
+        std::fs::write(&path, b"known").unwrap();
+        let hash = Sha256::digest(b"known")
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect::<String>();
+        assert_eq!(
+            read_pinned_source(&path, 5, &hash, Some(5)).unwrap(),
+            b"known"
+        );
+        assert!(read_pinned_source(&path, 4, &hash, Some(5)).is_err());
+        assert!(read_pinned_source(&path, 5, HASH, Some(5)).is_err());
+        let link = dir.path().join("link");
+        symlink(&path, &link).unwrap();
+        assert!(read_pinned_source(&link, 5, &hash, Some(5)).is_err());
+        assert!(bundle_root(Path::new("/tmp/Fake.app/Contents/MacOS/codex")).is_some());
+        assert!(bundle_root(Path::new("/tmp/Fake.app/Contents/Other/codex")).is_none());
+    }
+
+    #[test]
+    fn expired_grant_never_starts() {
+        assert!(!grant_valid(0));
+    }
+    #[cfg(unix)]
+    #[test]
+    fn bounded_transport_classifies_fake_server_failures() {
+        use std::process::{Command, Stdio};
+        fn fake(script: &str, timeout: Duration) -> Transport {
+            let child = Command::new("/bin/sh")
+                .args(["-c", script])
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::null())
+                .spawn()
+                .unwrap();
+            Transport::from_child(child, timeout).unwrap()
+        }
+        let mut rejected = fake(
+            "printf '%s\\n' '{\"id\":2,\"error\":{}}'",
+            Duration::from_secs(1),
+        );
+        assert_eq!(
+            lifecycle_response(&mut rejected, 2),
+            Err(EffectError::ProviderRejected)
+        );
+        let mut malformed = fake("printf '%s\\n' 'not-json'", Duration::from_secs(1));
+        assert_eq!(
+            lifecycle_response(&mut malformed, 2),
+            Err(EffectError::ProtocolMismatch)
+        );
+        let mut exited = fake("exit 0", Duration::from_secs(1));
+        assert_eq!(
+            lifecycle_response(&mut exited, 2),
+            Err(EffectError::ProcessTerminated)
+        );
+        let mut stalled = fake("exec /bin/sleep 3", Duration::from_millis(20));
+        assert_eq!(
+            lifecycle_response(&mut stalled, 2),
+            Err(EffectError::Timeout)
+        );
+        let mut wrong_id = fake(
+            "printf '%s\\n' '{\"id\":3,\"result\":{}}'",
+            Duration::from_secs(1),
+        );
+        assert_eq!(
+            lifecycle_response(&mut wrong_id, 2),
+            Err(EffectError::ProtocolMismatch)
+        );
+    }
+
+    #[test]
+    fn response_requires_correlated_thread_and_schema() {
+        let cwd = if cfg!(windows) {
+            r"C:\synthetic-response"
+        } else {
+            "/synthetic-response"
+        };
+        let thread = json!({"cliVersion":"x","createdAt":0,"cwd":cwd,"ephemeral":false,"id":"target","modelProvider":"x","preview":"","projectId":null,"sessionId":"target","source":"cli","status":{"type":"idle"},"turns":[],"updatedAt":0});
+        assert!(
+            validate_unarchive_response(&json!({"result":{"thread":thread}}), "target").is_ok()
+        );
+        assert_eq!(
+            validate_unarchive_response(&json!({"result":{"thread":thread}}), "other"),
+            Err(EffectError::ProtocolMismatch)
+        );
+        assert_eq!(
+            validate_unarchive_response(&json!({"result":{"thread":{"id":"target"}}}), "target"),
+            Err(EffectError::ProtocolMismatch)
+        );
+    }
+}
