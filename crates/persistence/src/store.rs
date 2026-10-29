@@ -1173,6 +1173,172 @@ mod tests {
             }
         }
     }
+    // A crash can leave a rollback journal whose owner fails the owned-root
+    // capability checks. Assert the protected state without opening SQLite.
+    #[cfg(windows)]
+    fn assert_protected_sidecar(
+        root: &OwnedStateRoot,
+        prefix_count: usize,
+        expected: Option<&[JournalRecord]>,
+        key_expected: bool,
+        context: &str,
+    ) -> bool {
+        use std::{collections::BTreeMap, os::windows::fs::OpenOptionsExt};
+        use windows_permissions::{
+            constants::{SeObjectType, SecurityInformation},
+            utilities::current_process_sid,
+            wrappers::{
+                ConvertSecurityDescriptorToStringSecurityDescriptor, EqualSid, GetNamedSecurityInfo,
+            },
+        };
+        let sidecar = root.fixed_path(FixedFile::SqliteRollbackJournal);
+        let metadata = match std::fs::symlink_metadata(&sidecar) {
+            Ok(m) => m,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return false,
+            Err(e) => panic!("{context}: sidecar metadata: {e}"),
+        };
+        assert!(
+            metadata.is_file(),
+            "{context}: sidecar is not a regular file"
+        );
+        let identity = || {
+            let file = std::fs::OpenOptions::new()
+                .read(true)
+                .custom_flags(0x00200000)
+                .open(&sidecar)
+                .unwrap_or_else(|e| panic!("{context}: sidecar open: {e}"));
+            let info = winapi_util::file::information(&file)
+                .unwrap_or_else(|e| panic!("{context}: sidecar identity: {e}"));
+            assert_eq!(
+                info.file_attributes() & 0x400,
+                0,
+                "{context}: reparse sidecar"
+            );
+            assert_eq!(info.number_of_links(), 1, "{context}: linked sidecar");
+            (
+                info.volume_serial_number(),
+                info.file_index(),
+                info.number_of_links(),
+                info.file_attributes(),
+            )
+        };
+        let _ = identity();
+        let security = || {
+            let sd = GetNamedSecurityInfo(
+                &sidecar,
+                SeObjectType::SE_FILE_OBJECT,
+                SecurityInformation::Owner | SecurityInformation::Dacl,
+            )
+            .unwrap_or_else(|e| panic!("{context}: sidecar security: {e}"));
+            let owner = sd
+                .owner()
+                .unwrap_or_else(|| panic!("{context}: missing owner"));
+            let current =
+                current_process_sid().unwrap_or_else(|e| panic!("{context}: current SID: {e}"));
+            let is_current = EqualSid(owner, &current);
+            let descriptor = ConvertSecurityDescriptorToStringSecurityDescriptor(
+                &sd,
+                SecurityInformation::Owner | SecurityInformation::Dacl,
+            )
+            .unwrap_or_else(|e| panic!("{context}: sidecar descriptor: {e}"));
+            (is_current, descriptor)
+        };
+        if security().0 {
+            return false;
+        }
+        root.revalidate()
+            .unwrap_or_else(|e| panic!("{context}: root: {e}"));
+        for fixed in [FixedFile::Database, FixedFile::Journal, FixedFile::Lock] {
+            root.open_existing_fixed(fixed, false)
+                .unwrap_or_else(|e| panic!("{context}: required fixed file: {e}"));
+        }
+        match root.open_existing_fixed(FixedFile::AuthorityKey, false) {
+            Ok(_) if key_expected => {}
+            Err(e) if !key_expected && e.kind() == std::io::ErrorKind::NotFound => {}
+            Ok(_) => panic!("{context}: unexpected authority key"),
+            Err(e) => panic!("{context}: authority key: {e}"),
+        }
+        for fixed in [FixedFile::SqliteWal, FixedFile::SqliteShm] {
+            match std::fs::symlink_metadata(root.fixed_path(fixed)) {
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => panic!("{context}: sidecar metadata: {e}"),
+                Ok(_) => panic!("{context}: unexpected WAL or SHM"),
+            }
+        }
+        let owned_error = root
+            .open_existing_fixed(FixedFile::SqliteRollbackJournal, false)
+            .unwrap_err();
+        assert_eq!(
+            owned_error.kind(),
+            std::io::ErrorKind::PermissionDenied,
+            "{context}"
+        );
+        assert_eq!(
+            owned_error.to_string(),
+            "Windows object owner differs from current user",
+            "{context}"
+        );
+        let snapshot = || {
+            let mut entries = BTreeMap::new();
+            for entry in std::fs::read_dir(sidecar.parent().unwrap()).unwrap() {
+                let entry = entry.unwrap();
+                let path = entry.path();
+                let metadata = std::fs::symlink_metadata(&path).unwrap();
+                assert!(metadata.is_file(), "{context}: unexpected entry class");
+                entries.insert(entry.file_name(), std::fs::read(path).unwrap());
+            }
+            (entries, identity(), security().1)
+        };
+        let before = snapshot();
+        let journal_before = std::fs::read(root.fixed_path(FixedFile::Journal)).unwrap();
+        let denied = |result: Result<()>| match result {
+            Err(StoreError::Io(e))
+                if e.kind() == owned_error.kind() && e.to_string() == owned_error.to_string() => {}
+            Err(e) => panic!("{context}: expected PermissionDenied, got {e}"),
+            Ok(()) => panic!("{context}: expected PermissionDenied"),
+        };
+        denied(after_child_exit(|| {
+            TransactionStore::open(root.clone()).map(|_| ())
+        }));
+        assert_eq!(snapshot(), before, "{context}: store open changed evidence");
+        denied(after_child_exit(|| {
+            TransactionReader::open(root.clone()).map(|_| ())
+        }));
+        assert_eq!(
+            snapshot(),
+            before,
+            "{context}: reader open changed evidence"
+        );
+        denied(after_child_exit(|| {
+            TransactionStore::migrate_v1(root.clone())
+        }));
+        assert_eq!(snapshot(), before, "{context}: migration changed evidence");
+        let sidecar_error = root.validate_sqlite_sidecars().unwrap_err();
+        assert_eq!(sidecar_error.kind(), owned_error.kind(), "{context}");
+        assert_eq!(
+            sidecar_error.to_string(),
+            owned_error.to_string(),
+            "{context}"
+        );
+        assert_eq!(
+            snapshot(),
+            before,
+            "{context}: sidecar validation changed evidence"
+        );
+        let prefix = after_child_exit(|| TransactionReader::external_prefix(root))
+            .unwrap_or_else(|e| panic!("{context}: prefix: {e}"));
+        assert_eq!(prefix.records.len(), prefix_count, "{context}");
+        if let Some(expected) = expected {
+            assert_eq!(prefix.records, expected, "{context}");
+        }
+        assert_eq!(
+            std::fs::read(root.fixed_path(FixedFile::Journal)).unwrap(),
+            journal_before,
+            "{context}"
+        );
+        assert_eq!(snapshot(), before, "{context}: prefix changed evidence");
+        true
+    }
     #[test]
     fn crash_and_error_boundaries() {
         for (var, boundary, diverged, count) in [
@@ -1204,6 +1370,10 @@ mod tests {
                 assert!(!status.success());
             } else {
                 assert!(status.success());
+            }
+            #[cfg(windows)]
+            if assert_protected_sidecar(&root, count, None, true, &format!("{var} {boundary}")) {
+                continue;
             }
             let opened = after_child_exit(|| TransactionStore::open(root.clone()));
             if diverged {
@@ -1598,10 +1768,26 @@ mod tests {
                 .status()
                 .unwrap();
             assert!(!status.success(), "{boundary}");
+            assert_ne!(
+                status.code(),
+                Some(101),
+                "fault was not reached: {boundary}"
+            );
             #[cfg(unix)]
             assert!(status.code().is_none(), "fault was not reached: {boundary}");
             assert_eq!(std::fs::read(&path).unwrap(), before, "{boundary}");
-            let db = Connection::open(database_path(&root).unwrap()).unwrap();
+            #[cfg(windows)]
+            if assert_protected_sidecar(
+                &root,
+                1,
+                Some(std::slice::from_ref(&record)),
+                boundary != "key_before_create",
+                boundary,
+            ) {
+                continue;
+            }
+            let db = Connection::open(database_path(&root).unwrap())
+                .unwrap_or_else(|e| panic!("{boundary}: raw database open: {e}"));
             let version: i64 = db
                 .query_row("PRAGMA user_version", [], |r| r.get(0))
                 .unwrap();
@@ -1622,14 +1808,16 @@ mod tests {
                 assert_eq!(std::fs::read(&key_path).unwrap(), key.unwrap());
             } else {
                 if version == 1 {
-                    TransactionStore::migrate_v1(root.clone()).unwrap();
+                    TransactionStore::migrate_v1(root.clone())
+                        .unwrap_or_else(|e| panic!("{boundary}: migration: {e}"));
                 }
                 let adopted = std::fs::read(&key_path).unwrap();
                 assert_eq!(adopted.len(), 32);
                 if let Some(key) = key {
                     assert_eq!(adopted, key);
                 }
-                let store = TransactionStore::open(root.clone()).unwrap();
+                let store = TransactionStore::open(root.clone())
+                    .unwrap_or_else(|e| panic!("{boundary}: reopen: {e}"));
                 assert_eq!(store.inspect(&id).unwrap().sequence(), 0);
                 let raw: String = store
                     .db

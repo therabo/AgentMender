@@ -94,6 +94,13 @@ Original v1 row text, sequences, digests and external bytes remain unchanged.
 Readers never migrate. V1 attempts remain inspection-only; prepare a new v2 attempt
 from trusted fresh inputs. Unknown/partial schemas and malformed keys fail closed.
 
+Existing unsafe SQLite sidecars also fail closed under ADR-0011. In particular,
+a Windows crash may leave a rollback journal owned by a different SID. Opening
+or migrating that store preserves the evidence and returns PermissionDenied;
+it does not repair ownership or claim migration succeeded. Crash tests verify
+this protected outcome separately from successful atomic migration and preserve
+the external journal, file bytes, sidecar identity and security descriptor.
+
 ## One-shot handoff
 
 `TransactionStore::record_intent` now requires an authenticated exact active grant,
