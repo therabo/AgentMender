@@ -137,6 +137,11 @@ Dangling protected links fail before any creation. Existing SQLite rollback
 sidecars receive the same private regular-file checks; unexpected WAL/SHM is
 rejected before SQLite opens the database. Unknown schema/mode is inspected before
 writable PRAGMAs. Read-only inspection uses SQLite read-only plus query_only.
+On Windows, token default-owner semantics can select Administrators even when
+TokenUser is the caller. Assign the current-user owner explicitly on the new empty
+root and newly CREATE_NEW-created owned files/stages before content writes. Keep
+existing-owner/DACL validation strict and never normalize existing evidence.
+Unexpected ownership of a retained SQLite-created rollback journal fails closed.
 
 OS synchronization is a durability contract subject to filesystem/device behavior.
 Network filesystems are unsupported. Full adversarial same-user path replacement,

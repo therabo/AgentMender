@@ -128,6 +128,11 @@ Windows applies a protected current-owner-only inheritable DACL before creating
 any content; existing directories and inherited file ACLs are checked, together
 with handle-based volume/file identity and link counts. No new unsafe Rust or
 unsandboxed process dispatch is introduced.
+Windows can default new objects to an Administrators-group owner under an elevated
+token. Fresh empty roots and CREATE_NEW-owned files explicitly receive the current
+user SID before content writes. Existing objects are never normalized. A retained
+SQLite-created rollback journal with an unexpected default owner remains protected
+on reopen; M6 does not change that existing evidence's owner automatically.
 
 Read-only CLI commands inspect an existing root, without provider discovery:
 

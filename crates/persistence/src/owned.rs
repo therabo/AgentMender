@@ -555,10 +555,8 @@ impl OwnedStateRoot {
         };
         let mut opts = OpenOptions::new();
         opts.read(true).write(write);
-        if create_new {
+        if create_new || (write && before.is_none()) {
             opts.create_new(true);
-        } else if write {
-            opts.create(true);
         }
         #[cfg(unix)]
         {
@@ -581,6 +579,12 @@ impl OwnedStateRoot {
         }
         #[cfg(windows)]
         {
+            // Only normalize ownership of the new empty inode created here.
+            // Existing state must already satisfy the strict owner/DACL checks.
+            windows_match(&f, &path, true)?;
+            if before.is_none() {
+                crate::windows_permissions::own_new_file(&path)?;
+            }
             crate::windows_permissions::validate(&path)?;
             windows_match(&f, &path, true)?;
         }
