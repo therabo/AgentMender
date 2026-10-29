@@ -27,8 +27,9 @@ encryption is introduced.
 ## Decision
 
 Keep eight crates. Domain owns pure scope, eligibility, lifecycle and replay.
-Application obtains fresh trusted planning inputs and owns approval use cases/ports.
-Persistence authenticates and serializes durable authority. CLI composes the
+Application obtains fresh trusted planning inputs through its existing use cases.
+Persistence enforces domain eligibility, authenticates and serializes durable
+authority. CLI composes the
 independent human workflow. MCP retains exactly its eight tools, DTOs and query
 dispatch, with no approval, revocation, consumption, writer or key access.
 

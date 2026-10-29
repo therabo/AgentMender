@@ -16,6 +16,8 @@ pub mod integrity;
 pub use integrity::*;
 pub mod planning;
 pub use planning::*;
+pub mod approval;
+pub use approval::*;
 pub mod transaction;
 pub use transaction::*;
 

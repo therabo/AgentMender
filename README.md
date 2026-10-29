@@ -6,7 +6,8 @@ reported **partial coverage**. M2 adds graph reconstruction and explanations. M3
 a pure integrity evaluator and `verify`. M4 adds immutable lifecycle intentions;
 M5 exposes read-only queries and planning over local stdio MCP. M6 adds a durable
 AgentMender-owned transaction journal, reconciliation manifests and restart knowledge.
-Provider execution, approvals and repair remain out of scope.
+M7 adds independent local approval evidence. Provider execution and repair remain
+out of scope; current real plans remain Blocked/Unsupported.
 
 ```sh
 cargo run -- providers --json
@@ -141,9 +142,23 @@ agentmender --json transactions --state-root /absolute/agentmender-state list
 agentmender --json transactions --state-root /absolute/agentmender-state inspect <transaction-id>
 ```
 
-Normal discovery/planning/MCP commands create no persistent state. There is no
-transaction-creation or execution CLI/MCP command. See [durability, recovery and
+Normal discovery/planning/MCP commands create no persistent state. M7's explicit
+local preparation workflow creates new attempts; there is no execution command.
+See [durability, recovery and
 limitations](docs/transactions.md) and [ADR-0011](docs/adr/0011-durable-transaction-knowledge.md).
+
+## Independent local approval
+
+M7 keeps approval outside MCP. A separate local terminal workflow prepares an exact
+durable review and issues a short-lived one-shot grant bound to the immutable plan,
+transaction, state and recovery manifest. Grant/revoke history is authenticated and
+append-only. Consumption and durable intent form one event, with no provider effect.
+Read-only commands inspect approval status/history; no execute command exists.
+
+Current provider contracts cannot produce Ready plans, so real approval attempts
+remain blocked. The terminal boundary proves local process access, not personal
+identity against a same-user shell/PTY adversary. See [commands, trust assumptions,
+expiry, migration and handoff](docs/approvals.md) and [ADR-0012](docs/adr/0012-independent-local-approval.md).
 
 ## Roots and scope
 
@@ -166,8 +181,8 @@ The application never writes real provider state. Read-only ports expose only
 kind/detect/discover, pure snapshot-to-graph construction and pure integrity/planning-context
 interpretation. All artifacts remain
 protected, and paths do not prove ownership.
-No arbitrary SQL, provider command, archive/delete/purge/repair execution or approval tool
-exists. Codex uses a consistent SQLite Backup API snapshot, scrubs content in RAM
+No arbitrary SQL, provider command, archive/delete/purge/repair execution or MCP
+approval tool exists. Codex uses a consistent SQLite Backup API snapshot, scrubs content in RAM
 before persisting a private disposable copy, and runs official thread/list there.
 Real state remains write-denied. The native process cannot read real-home file
 contents, but may stat metadata required by this exact build. No credentials,

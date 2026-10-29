@@ -11,6 +11,8 @@ serde_json.workspace = true
 thiserror.workspace = true
 rusqlite.workspace = true
 getrandom.workspace = true
+hmac.workspace = true
+sha2.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

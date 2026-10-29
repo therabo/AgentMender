@@ -62,7 +62,7 @@ impl TransactionReadPort for Reader {
     }
 }
 
-fn protected_roots(args: &Args) -> Result<Vec<PathBuf>, CliError> {
+pub(super) fn protected_roots(args: &Args) -> Result<Vec<PathBuf>, CliError> {
     let home = env::var_os("HOME")
         .or_else(|| env::var_os("USERPROFILE"))
         .map(PathBuf::from)
@@ -98,6 +98,7 @@ fn protected_roots(args: &Args) -> Result<Vec<PathBuf>, CliError> {
     }
     roots.extend(
         [
+            &args.fixture,
             &args.codex_root,
             &args.claude_root,
             &args.claude_desktop_root,

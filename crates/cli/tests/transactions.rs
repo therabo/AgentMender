@@ -48,8 +48,11 @@ fn fixture(home: &Path) -> (PathBuf, String) {
     let id = store.create_transaction(&plan).unwrap();
     store.prepare_recovery(&id, 0).unwrap();
     store.prepare(&id, 1).unwrap();
+    store
+        .grant_approval(&id, 2, &plan, &c.graph, &report, &c.planning)
+        .unwrap();
     let _receipt = store
-        .record_intent(&id, 2, &plan, &c.graph, &report, &c.planning)
+        .record_intent(&id, 3, &plan, &c.graph, &report, &c.planning)
         .unwrap();
     drop(store);
     (path, id.to_string())
@@ -79,7 +82,7 @@ fn inspection_is_read_only_and_preserves_unknown_outcome() {
     assert_eq!(inspect["provider_state_verified"], false);
     assert_eq!(inspect["execution_authorized"], false);
     let journal = report(run(home.path(), &root, &["journal", &id]));
-    assert_eq!(journal.as_array().unwrap().len(), 4);
+    assert_eq!(journal.as_array().unwrap().len(), 5);
     assert_eq!(contents(&root), before);
 }
 #[test]
@@ -164,7 +167,7 @@ fn torn_journal_and_future_database_schema_fail_without_writes() {
     let (root, id) = fixture(second.path());
     let db = root.join("transactions.sqlite3");
     let mut bytes = fs::read(&db).unwrap();
-    bytes[60..64].copy_from_slice(&2_u32.to_be_bytes());
+    bytes[60..64].copy_from_slice(&99_u32.to_be_bytes());
     fs::write(&db, bytes).unwrap();
     let before = contents(&root);
     assert!(
@@ -172,5 +175,79 @@ fn torn_journal_and_future_database_schema_fail_without_writes() {
             .status
             .success()
     );
+    assert_eq!(contents(&root), before);
+}
+
+#[test]
+fn approval_and_revocation_reject_non_terminal_without_writes() {
+    let home = tempfile::tempdir().unwrap();
+    let (root, id) = fixture(home.path());
+    let before = contents(&root);
+    let binary = env!("CARGO_BIN_EXE_agentmender");
+    let approval = "0".repeat(64);
+    for args in [
+        vec![
+            "approve",
+            "invalid",
+            "--transaction-id",
+            &id,
+            "--state-root",
+            root.to_str().unwrap(),
+        ],
+        vec![
+            "approvals",
+            "revoke",
+            &approval,
+            "--transaction-id",
+            &id,
+            "--state-root",
+            root.to_str().unwrap(),
+        ],
+    ] {
+        let output = Command::new(binary)
+            .env("HOME", home.path())
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(!output.status.success());
+        assert!(String::from_utf8_lossy(&output.stderr).contains("terminal"));
+        assert_eq!(contents(&root), before);
+    }
+}
+
+#[test]
+fn plan_inspection_returns_the_exact_durable_plan_without_writes() {
+    let home = tempfile::tempdir().unwrap();
+    let (root, id) = fixture(home.path());
+    let owned = OwnedStateRoot::open(
+        &root,
+        &[home.path().join(".codex"), home.path().join(".claude")],
+    )
+    .unwrap();
+    let reader = agentmender_persistence::TransactionReader::open(owned).unwrap();
+    let snapshot = reader.inspect(&id.parse().unwrap()).unwrap();
+    let plan = snapshot.review_plan().unwrap();
+    let digest = plan.digest().to_string();
+    let expected = serde_json::to_value(plan).unwrap();
+    drop(reader);
+    let before = contents(&root);
+    let output = Command::new(env!("CARGO_BIN_EXE_agentmender"))
+        .env("HOME", home.path())
+        .args([
+            "--json",
+            "plans",
+            "inspect",
+            &digest,
+            "--transaction-id",
+            &id,
+            "--state-root",
+        ])
+        .arg(&root)
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let review: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(review["report"]["plan"], expected);
+    assert_eq!(review["report"]["transaction_id"], id);
     assert_eq!(contents(&root), before);
 }

@@ -38,9 +38,10 @@ be deterministic for a fixed snapshot and must not read state or sample the cloc
 No current provider rule proves exclusive lifecycle ownership; all graph nodes
 remain protected. Provider-specific rule interpretation belongs in adapters.
 
-Domain has no adapters/filesystem logic. Application obtains fresh planning inputs
-through read-only provider ports and routes independent approval through explicit
-approval ports. CLI
+Domain has no adapters/filesystem logic and owns shared approval eligibility.
+Application obtains fresh planning inputs through read-only provider ports. CLI
+composes the independent human broker and protected persistence adapter, which
+enforces the domain predicate again before signing. CLI
 composes adapters and invokes use cases, with a fixed internal capture-worker
 entry point only. Do not add a general SQL or file-write interface.
 Planning-context hooks and helpers are pure. Never infer exhaustive effects from

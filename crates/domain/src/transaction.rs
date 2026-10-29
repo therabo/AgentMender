@@ -1,5 +1,6 @@
 //! Pure transaction knowledge. Records are integrity checks, not authority.
 use crate::{
+    ApprovalAction, ApprovalSnapshot, ApprovalState, ApprovalStatus, AuthorizationAuthentication,
     LifecycleIntent, LifecyclePlan, NativeLifecycleOperation, PlanDigest, PlanStatus, ProviderKind,
     StateFingerprint,
 };
@@ -266,9 +267,16 @@ pub enum Verification {
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+#[allow(clippy::large_enum_variant)] // Preserve the direct typed wire/API shape.
 pub enum TransactionEvent {
     Created {
         binding: TransactionBinding,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        plan: Option<LifecyclePlan>,
+    },
+    Authorization {
+        action: ApprovalAction,
+        authentication: AuthorizationAuthentication,
     },
     RecoveryPrepared {
         manifest: RecoveryManifest,
@@ -335,10 +343,33 @@ impl JournalRecord {
         previous_digest: Option<JournalDigest>,
         event: TransactionEvent,
     ) -> Self {
+        Self::with_version(1, id, sequence, binding_digest, previous_digest, event)
+    }
+    pub fn new_v2(
+        id: TransactionId,
+        sequence: u64,
+        binding_digest: BindingDigest,
+        previous_digest: Option<JournalDigest>,
+        event: TransactionEvent,
+    ) -> Self {
+        Self::with_version(2, id, sequence, binding_digest, previous_digest, event)
+    }
+    fn with_version(
+        version: u32,
+        id: TransactionId,
+        sequence: u64,
+        binding_digest: BindingDigest,
+        previous_digest: Option<JournalDigest>,
+        event: TransactionEvent,
+    ) -> Self {
         let digest = JournalDigest(hash(
-            "agentmender.journal.v1",
+            if version == 1 {
+                "agentmender.journal.v1"
+            } else {
+                "agentmender.journal.v2"
+            },
             &(
-                1u32,
+                version,
                 &id,
                 sequence,
                 &binding_digest,
@@ -347,7 +378,7 @@ impl JournalRecord {
             ),
         ));
         Self {
-            schema_version: 1,
+            schema_version: version,
             transaction_id: id,
             sequence,
             binding_digest,
@@ -355,6 +386,9 @@ impl JournalRecord {
             event,
             digest,
         }
+    }
+    pub fn schema_version(&self) -> u32 {
+        self.schema_version
     }
     pub fn digest(&self) -> &JournalDigest {
         &self.digest
@@ -375,8 +409,9 @@ impl JournalRecord {
         self.previous_digest.as_ref()
     }
     fn valid_digest(&self) -> bool {
-        self.schema_version == 1
-            && Self::new(
+        matches!(self.schema_version, 1 | 2)
+            && Self::with_version(
+                self.schema_version,
                 self.transaction_id.clone(),
                 self.sequence,
                 self.binding_digest.clone(),
@@ -393,16 +428,24 @@ pub struct TransactionSnapshot {
     binding: TransactionBinding,
     state: TransactionState,
     recovery: Option<RecoveryManifest>,
+    schema_version: u32,
+    review_plan: Option<LifecyclePlan>,
+    approval: ApprovalSnapshot,
     sequence: u64,
     last_digest: JournalDigest,
 }
 impl TransactionSnapshot {
     pub fn replay(records: &[JournalRecord]) -> Result<Self, TransactionError> {
         let first = records.first().ok_or(TransactionError)?;
-        let TransactionEvent::Created { binding } = &first.event else {
+        let TransactionEvent::Created { binding, plan } = &first.event else {
             return Err(TransactionError);
         };
-        if first.sequence != 0
+        if !(matches!((first.schema_version, plan), (1, None))
+            || (first.schema_version == 2
+                && plan.as_ref().is_some_and(|p| {
+                    TransactionBinding::from_plan(p).is_ok_and(|b| b == *binding)
+                })))
+            || first.sequence != 0
             || first.previous_digest.is_some()
             || !binding.valid()
             || first.binding_digest != binding.digest()
@@ -415,6 +458,9 @@ impl TransactionSnapshot {
             binding: binding.clone(),
             state: TransactionState::Created,
             recovery: None,
+            schema_version: first.schema_version,
+            review_plan: plan.clone(),
+            approval: ApprovalSnapshot::default(),
             sequence: 0,
             last_digest: first.digest.clone(),
         };
@@ -425,6 +471,7 @@ impl TransactionSnapshot {
     }
     fn apply(&mut self, r: &JournalRecord) -> Result<(), TransactionError> {
         if !r.valid_digest()
+            || r.schema_version != self.schema_version
             || r.transaction_id != self.id
             || r.binding_digest != self.binding.digest()
             || self.sequence.checked_add(1) != Some(r.sequence)
@@ -439,6 +486,51 @@ impl TransactionSnapshot {
                 && state == &self.binding.state_fingerprint
                 && *index == 0
         };
+        if let E::Authorization { action, .. } = &r.event {
+            if self.schema_version != 2 || self.state != S::Prepared {
+                return Err(TransactionError);
+            }
+            match action {
+                ApprovalAction::Granted { grant }
+                    if self.approval.state == ApprovalState::None
+                        && grant.structurally_valid(self) =>
+                {
+                    self.approval = ApprovalSnapshot {
+                        state: ApprovalState::Granted,
+                        grant: Some(grant.clone()),
+                    };
+                }
+                ApprovalAction::Revoked { approval_id, at }
+                    if self.approval.state == ApprovalState::Granted
+                        && self
+                            .approval
+                            .grant
+                            .as_ref()
+                            .is_some_and(|g| &g.id == approval_id && *at >= g.issued_at) =>
+                {
+                    self.approval.state = ApprovalState::Revoked
+                }
+                ApprovalAction::Consumed {
+                    approval_id,
+                    at,
+                    plan,
+                    state,
+                    operation_index,
+                } if self.approval.state == ApprovalState::Granted
+                    && current(plan, state, operation_index)
+                    && self.approval.grant.as_ref().is_some_and(|g| {
+                        &g.id == approval_id && g.scope_and_time_valid(self, *at)
+                    }) =>
+                {
+                    self.approval.state = ApprovalState::Consumed;
+                    self.state = S::OutcomeUnknown;
+                }
+                _ => return Err(TransactionError),
+            }
+            self.sequence = r.sequence;
+            self.last_digest = r.digest.clone();
+            return Ok(());
+        }
         self.state = match (&self.state, &r.event) {
             (S::Created, E::RecoveryPrepared { manifest })
                 if manifest.verify(&self.id, &self.binding) =>
@@ -454,7 +546,9 @@ impl TransactionSnapshot {
                     state,
                     operation_index,
                 },
-            ) if current(plan, state, operation_index) => S::OutcomeUnknown,
+            ) if self.schema_version == 1 && current(plan, state, operation_index) => {
+                S::OutcomeUnknown
+            }
             (
                 S::OutcomeUnknown,
                 E::Observed {
@@ -493,7 +587,8 @@ impl TransactionSnapshot {
                     state,
                     operation_index,
                 },
-            ) if current(plan, state, operation_index)
+            ) if self.schema_version == 1
+                && current(plan, state, operation_index)
                 && self.recovery.as_ref().is_some_and(|m| {
                     matches!(
                         m.compensation,
@@ -543,7 +638,8 @@ impl TransactionSnapshot {
         Ok(next)
     }
     pub fn next_record(&self, event: TransactionEvent) -> Result<JournalRecord, TransactionError> {
-        let r = JournalRecord::new(
+        let r = JournalRecord::with_version(
+            self.schema_version,
             self.id.clone(),
             self.sequence.checked_add(1).ok_or(TransactionError)?,
             self.binding.digest(),
@@ -553,6 +649,29 @@ impl TransactionSnapshot {
         let mut check = self.clone();
         check.apply(&r)?;
         Ok(r)
+    }
+    pub fn schema_version(&self) -> u32 {
+        self.schema_version
+    }
+    pub fn review_plan(&self) -> Option<&LifecyclePlan> {
+        self.review_plan.as_ref()
+    }
+    /// Reports the recorded lifecycle at a caller-supplied time; does not authenticate it.
+    pub fn approval_status_at(&self, now: u64) -> ApprovalStatus {
+        match self.approval.state {
+            ApprovalState::None => ApprovalStatus::None,
+            ApprovalState::Revoked => ApprovalStatus::Revoked,
+            ApprovalState::Consumed => ApprovalStatus::Consumed,
+            ApprovalState::Granted => match self.approval.grant.as_ref() {
+                Some(grant) if now < grant.issued_at => ApprovalStatus::Invalid,
+                Some(grant) if now >= grant.expires_at => ApprovalStatus::Expired,
+                Some(grant) if crate::approval_valid(self, grant, now) => ApprovalStatus::Granted,
+                _ => ApprovalStatus::Invalid,
+            },
+        }
+    }
+    pub fn approval(&self) -> &ApprovalSnapshot {
+        &self.approval
     }
     pub fn state(&self) -> TransactionState {
         self.state

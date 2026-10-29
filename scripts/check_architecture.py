@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Provider read-only and owned-persistence fitness (ADRs 0001-0011)."""
+"""Provider read-only and independent approval fitness (ADRs 0001-0012)."""
 import json
 import pathlib
 import re
@@ -108,6 +108,22 @@ def declaration_has_raw_payload(source, name):
     return bool(re.search(r'\b(?:PathBuf|Value|String|Vec\s*<\s*u8\b)', code[match.start():index]))
 
 
+def approval_boundary_violation(source, crate_name, module_name):
+    """ADR-0012: authority cannot enter MCP/providers or an execution CLI."""
+    code = mask_literals(production_source(source))
+    authority = r'\b(?:ApprovalGrant|ApprovalAction|ApprovalScope|ApprovalId|AuthorizationAuthentication|TransactionStore|RecoveryStore|DurableIntent|grant_approval|revoke_approval|record_intent|authorization_signing_bytes)\b'
+    if crate_name == 'mcp-server' or crate_name.startswith('provider-'):
+        return bool(re.search(authority, code))
+    if crate_name == 'cli':
+        if re.search(r'\b(?:record_intent|DurableIntent|AuthorizationAuthentication|authorization_signing_bytes|AuthorityMac)\b', code):
+            return True
+        if module_name != 'approvals.rs' and re.search(r'\b(?:TransactionStore|grant_approval|revoke_approval|create_transaction)\b', code):
+            return True
+        if module_name == 'approvals.rs' and re.search(r'\b(?:yes|force|confirm|authorized|auto_approve|yes_really_delete)\s*:\s*bool\b', code):
+            return True
+    return False
+
+
 # Regression: production code after a test module must still be audited.
 example = '#[cfg(test)] mod tests { let x = r#"}"#; fs::write("fixture", b"x"); }\nfn later() { fs::write("unsafe", b"x"); }'
 filtered = production_source(example)
@@ -143,6 +159,13 @@ except ValueError:
     pass
 else:
     raise AssertionError('missing declaration fitness canary failed')
+for crate_name in ['mcp-server', 'provider-api', 'provider-codex', 'provider-claude']:
+    for canary in ['fn bypass() { store.grant_approval(); }', 'use agentmender_domain::ApprovalGrant;']:
+        assert approval_boundary_violation(canary, crate_name, 'lib.rs')
+assert approval_boundary_violation('fn consume() { store.record_intent(); }', 'cli', 'approvals.rs')
+assert approval_boundary_violation('struct Flags { yes: bool }', 'cli', 'approvals.rs')
+assert approval_boundary_violation('fn bypass() { store.grant_approval(); }', 'cli', 'main.rs')
+assert not approval_boundary_violation('fn local() { store.grant_approval(); }', 'cli', 'approvals.rs')
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 metadata = json.loads(subprocess.check_output(
@@ -188,6 +211,8 @@ for path in (ROOT / "crates").glob("*/src/**/*.rs"):
     code = mask_literals(source)
     reviewed_capture = path == ROOT / "crates/provider-codex/src/capture.rs"
     crate_name = path.relative_to(ROOT / "crates").parts[0]
+    if approval_boundary_violation(source, crate_name, path.name):
+        errors.append(f"independent approval boundary violation: {path.relative_to(ROOT)}")
     owned_files = {ROOT / f"crates/persistence/src/{name}.rs" for name in ["owned", "recovery"]}
     reviewed_owned = path in owned_files
     for pattern in patterns:
@@ -221,7 +246,7 @@ for path in (ROOT / "crates").glob("*/src/**/*.rs"):
             errors.append(f"unreviewed persistence module: {path.relative_to(ROOT)}")
         if "Connection::" in code and path.name != "store.rs":
             errors.append(f"SQLite outside owned journal module: {path.relative_to(ROOT)}")
-    if crate_name in {"cli", "mcp-server", "application"} and re.search(
+    if crate_name in {"cli", "mcp-server", "application"} and path != ROOT / "crates/cli/src/approvals.rs" and re.search(
         r"\b(?:TransactionStore|RecoveryStore|DurableIntent|create_transaction|record_intent|record_compensation_intent)\b", code
     ):
         errors.append(f"inbound interface can advance durable transactions: {path.relative_to(ROOT)}")
@@ -248,8 +273,10 @@ for path in (ROOT / "crates").glob("*/src/**/*.rs"):
             errors.append(f"impure {name} port override: {path.relative_to(ROOT)}")
     if re.search(r'\bfn\s+(?:archive|unarchive|purge|repair|delete)\b', code):
         errors.append(f"lifecycle or repair method before its milestone: {path.relative_to(ROOT)}")
-    if re.search(r'\b(?:fn|struct|enum|trait)\s+(?:execute_plan|approve_plan|ApprovalGrant|ApprovalBroker|DeleteFile|RunSql|RemoveDirectory|ExecuteCommand)\b', code):
-        errors.append(f"execution/approval/recovery or low-level planning primitive before its milestone: {path.relative_to(ROOT)}")
+    if re.search(r'\b(?:fn|struct|enum|trait)\s+(?:execute_plan|execute_transaction|run_effect|provider_effect|approve_plan|ApprovalBroker|DeleteFile|RunSql|RemoveDirectory|ExecuteCommand)\b', code):
+        errors.append(f"execution or low-level planning primitive before its milestone: {path.relative_to(ROOT)}")
+    if re.search(r'\b(?:struct|enum|trait)\s+ApprovalGrant\b', code) and path != ROOT / 'crates/domain/src/approval.rs':
+        errors.append(f"approval model outside pure domain: {path.relative_to(ROOT)}")
     if crate_name == "domain" and any(marker in source for marker in [
         "sqlite_master", "state_5.sqlite", "claude-code-sessions", "cliSessionId",
         "forkedFromSessionId", "thread/list", "attached_thread_parent_id",
@@ -287,4 +314,14 @@ for name in ["TransactionEvent", "TransactionBinding", "RecoveryManifest"]:
         raise SystemExit(str(error)) from error
     if raw_payload:
         raise SystemExit(f"raw content or operation payload in {name}")
-print("Architecture and provider read-only/owned-persistence source checks passed (8 crates).")
+approval = production_source((ROOT / 'crates/domain/src/approval.rs').read_text())
+for name in ['ApprovalScope', 'ApprovalGrant', 'ApprovalAction', 'AuthorizationAuthentication']:
+    if declaration_has_raw_payload(approval, name):
+        raise SystemExit(f'raw content or operation payload in {name}')
+for marker in ['approval_eligible', 'approval_valid', 'authorization_signing_bytes', 'scope_and_time_valid']:
+    if marker not in approval:
+        raise SystemExit(f'ADR-0012 pure approval contract missing: {marker}')
+for marker in ['verify_slice', 'grant_approval', 'revoke_approval', 'ApprovalAction::Consumed', 'authority_metadata', 'migrate_v1']:
+    if marker not in store:
+        raise SystemExit(f'ADR-0012 authenticated persistence contract missing: {marker}')
+print("Architecture and provider read-only/independent-approval source checks passed (8 crates).")

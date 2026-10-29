@@ -309,6 +309,7 @@ pub(crate) struct RecoveryStage {
 #[derive(Clone, Copy)]
 pub(crate) enum FixedFile {
     Database,
+    AuthorityKey,
     Journal,
     Lock,
     SqliteRollbackJournal,
@@ -318,6 +319,7 @@ pub(crate) enum FixedFile {
 impl FixedFile {
     fn name(self) -> &'static str {
         match self {
+            Self::AuthorityKey => "authority.key",
             Self::Database => "transactions.sqlite3",
             Self::Journal => "transactions.journal",
             Self::Lock => "transactions.lock",

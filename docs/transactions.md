@@ -1,9 +1,12 @@
 # Durable transactions and restart recovery
 
-M6 implements AgentMender-owned persistence, with no provider executor or human
-approval system. A transaction, plan digest or durable intent receipt is not
-authorization. MCP's eight read-only tools are unchanged. Current provider plans
-remain Blocked/Unsupported; M6's positive lifecycle tests use synthetic contracts.
+M6 established persistence without a provider executor or human approval system.
+M7 now adds [independent approval](approvals.md), explicit schema2 migration and
+authenticated one-shot handoff. This document records the M6 foundation; legacy
+v1 attempts remain inspection-only. New v2 intent creation requires a valid grant
+and consumes it atomically with intent. A transaction or digest alone never
+authorizes an effect. MCP remains read-only and real provider plans stay blocked;
+positive tests use synthetic contracts.
 
 ## Bound attempts and deterministic knowledge
 

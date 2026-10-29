@@ -96,6 +96,16 @@ pub struct VerificationReport {
     pub failures: Vec<ProviderFailure>,
 }
 
+/// One fresh observation and its pure planning inputs. Never accepted from a caller as proof.
+pub struct ApprovalInputs {
+    pub graph: ArtifactGraph,
+    pub integrity: IntegrityReport,
+    pub context: PlanningContext,
+    pub plan: LifecyclePlan,
+    pub contexts: Vec<GraphContext>,
+    pub failures: Vec<ProviderFailure>,
+}
+
 #[derive(Debug, Serialize)]
 pub struct PlanningReport {
     pub plan: LifecyclePlan,
@@ -413,6 +423,38 @@ impl<'a> DiscoveryService<'a> {
         control: &QueryControl,
         id: &EntityId,
     ) -> Result<PlanningReport, ApplicationError> {
+        let inputs = self.approval_inputs_matching(selector, intent, scope, control, id)?;
+        Ok(PlanningReport {
+            plan: inputs.plan,
+            contexts: inputs.contexts,
+            failures: inputs.failures,
+        })
+    }
+
+    /// Acquire fresh provider inputs in one discovery pass, resolving the complete target identity.
+    pub fn approval_inputs(
+        &self,
+        selector: &dyn Fn(&ArtifactId) -> bool,
+        intent: LifecycleIntent,
+        scope: &DiscoveryScope,
+    ) -> Result<ApprovalInputs, ApplicationError> {
+        self.approval_inputs_matching(
+            selector,
+            intent,
+            scope,
+            &QueryControl::default(),
+            &selector_error_id(),
+        )
+    }
+
+    fn approval_inputs_matching(
+        &self,
+        selector: &dyn Fn(&ArtifactId) -> bool,
+        intent: LifecycleIntent,
+        scope: &DiscoveryScope,
+        control: &QueryControl,
+        id: &EntityId,
+    ) -> Result<ApprovalInputs, ApplicationError> {
         validate_scope(scope)?;
         let mut graphs = Vec::new();
         let mut failures = Vec::new();
@@ -510,7 +552,10 @@ impl<'a> DiscoveryService<'a> {
                     intent,
                 },
             );
-            Ok(PlanningReport {
+            Ok(ApprovalInputs {
+                graph: (*graph).clone(),
+                integrity: integrity.clone(),
+                context: planning.clone(),
                 plan,
                 contexts: graphs.iter().map(|(g, _)| g.context().clone()).collect(),
                 failures,

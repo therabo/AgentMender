@@ -4,17 +4,24 @@ use agentmender_domain::{
     PlanningContext, TransactionBinding, TransactionEvent, TransactionId, TransactionSnapshot,
     Verification,
 };
+use hmac::{Hmac, KeyInit, Mac};
 use rusqlite::{Connection, OpenFlags, params};
+use sha2::{Digest, Sha256};
 use std::{
     collections::BTreeMap,
     fs::File,
     io::{Read, Seek, SeekFrom, Write},
-    time::Duration,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use thiserror::Error;
 
 const APP_ID: i64 = 0x414d3631;
 const TABLE: &str = "CREATE TABLE events (position INTEGER PRIMARY KEY, transaction_id TEXT NOT NULL, sequence INTEGER NOT NULL, record TEXT NOT NULL, UNIQUE(transaction_id, sequence))";
+const AUTHORITY_TABLE: &str =
+    "CREATE TABLE authority_metadata (id INTEGER PRIMARY KEY CHECK(id = 1), key_id TEXT NOT NULL)";
+const AUTHORITY_UPDATE: &str = "CREATE TRIGGER authority_no_update BEFORE UPDATE ON authority_metadata BEGIN SELECT RAISE(ABORT, 'immutable authority'); END";
+const AUTHORITY_DELETE: &str = "CREATE TRIGGER authority_no_delete BEFORE DELETE ON authority_metadata BEGIN SELECT RAISE(ABORT, 'immutable authority'); END";
+const AUTHORITY_INSERT: &str = "CREATE TRIGGER authority_no_insert BEFORE INSERT ON authority_metadata BEGIN SELECT RAISE(ABORT, 'immutable authority'); END";
 const UPDATE_TRIGGER: &str = "CREATE TRIGGER events_no_update BEFORE UPDATE ON events BEGIN SELECT RAISE(ABORT, 'append only'); END";
 const DELETE_TRIGGER: &str = "CREATE TRIGGER events_no_delete BEFORE DELETE ON events BEGIN SELECT RAISE(ABORT, 'append only'); END";
 
@@ -47,6 +54,30 @@ pub struct DurableIntent {
     id: TransactionId,
     sequence: u64,
     digest: agentmender_domain::JournalDigest,
+    approval_id: agentmender_domain::ApprovalId,
+    plan: agentmender_domain::PlanDigest,
+    state: agentmender_domain::StateFingerprint,
+    operation_index: u32,
+}
+impl DurableIntent {
+    pub fn approval_id(&self) -> &agentmender_domain::ApprovalId {
+        &self.approval_id
+    }
+    pub fn plan_digest(&self) -> &agentmender_domain::PlanDigest {
+        &self.plan
+    }
+    pub fn state_fingerprint(&self) -> &agentmender_domain::StateFingerprint {
+        &self.state
+    }
+    pub fn operation_index(&self) -> u32 {
+        self.operation_index
+    }
+    pub fn transaction_id(&self) -> &TransactionId {
+        &self.id
+    }
+    pub fn sequence(&self) -> u64 {
+        self.sequence
+    }
 }
 
 pub struct TransactionStore {
@@ -146,23 +177,45 @@ fn schema(db: &Connection, initialize: bool) -> Result<()> {
         db.execute_batch(&format!("BEGIN IMMEDIATE; {TABLE}; {UPDATE_TRIGGER}; {DELETE_TRIGGER}; PRAGMA application_id={APP_ID}; PRAGMA user_version=1; COMMIT;"))?;
         return schema(db, false);
     }
-    if version != 1
-        || app != APP_ID
-        || objects
-            != vec![
-                ("table".into(), "events".into(), TABLE.into()),
-                (
-                    "trigger".into(),
-                    "events_no_delete".into(),
-                    DELETE_TRIGGER.into(),
-                ),
-                (
-                    "trigger".into(),
-                    "events_no_update".into(),
-                    UPDATE_TRIGGER.into(),
-                ),
-            ]
-    {
+    let mut expected: Vec<(String, String, String)> = vec![
+        ("table".into(), "events".into(), TABLE.into()),
+        (
+            "trigger".into(),
+            "events_no_delete".into(),
+            DELETE_TRIGGER.into(),
+        ),
+        (
+            "trigger".into(),
+            "events_no_update".into(),
+            UPDATE_TRIGGER.into(),
+        ),
+    ];
+    if version == 2 {
+        expected.extend([
+            (
+                "table".into(),
+                "authority_metadata".into(),
+                AUTHORITY_TABLE.into(),
+            ),
+            (
+                "trigger".into(),
+                "authority_no_delete".into(),
+                AUTHORITY_DELETE.into(),
+            ),
+            (
+                "trigger".into(),
+                "authority_no_insert".into(),
+                AUTHORITY_INSERT.into(),
+            ),
+            (
+                "trigger".into(),
+                "authority_no_update".into(),
+                AUTHORITY_UPDATE.into(),
+            ),
+        ]);
+        expected.sort_by(|a, b| a.1.cmp(&b.1));
+    }
+    if !matches!(version, 1 | 2) || app != APP_ID || objects != expected {
         return Err(StoreError::Invalid);
     }
     let mut check = db.prepare("PRAGMA integrity_check")?;
@@ -252,13 +305,175 @@ fn external(mut file: &File) -> Result<Vec<JournalRecord>> {
     validate(&records)?;
     Ok(records)
 }
-fn agree(db: &Connection, file: &File) -> Result<Vec<JournalRecord>> {
+fn agree(db: &Connection, file: &File, root: &OwnedStateRoot) -> Result<Vec<JournalRecord>> {
     let a = db_records(db)?;
     let b = external(file)?;
     if a != b {
         return Err(StoreError::Invalid);
     }
+    authenticate(db, root, &a)?;
     Ok(a)
+}
+type AuthorityMac = Hmac<Sha256>;
+fn key_id(key: &[u8; 32]) -> agentmender_domain::ApprovalKeyId {
+    let mut hash = Sha256::new();
+    hash.update(b"agentmender.authority-key.v2\0");
+    hash.update(key);
+    agentmender_domain::ApprovalKeyId::from_bytes(hash.finalize().into())
+}
+fn read_key(root: &OwnedStateRoot) -> Result<[u8; 32]> {
+    let mut f = root.open_existing_fixed(FixedFile::AuthorityKey, false)?;
+    let mut bytes = Vec::new();
+    (&mut f).take(33).read_to_end(&mut bytes)?;
+    bytes.try_into().map_err(|_| StoreError::Invalid)
+}
+fn preauthority_key(root: &OwnedStateRoot) -> Result<[u8; 32]> {
+    match root.open_existing_fixed(FixedFile::AuthorityKey, true) {
+        Ok(mut file) => {
+            let mut bytes = Vec::new();
+            (&mut file).take(33).read_to_end(&mut bytes)?;
+            let key: [u8; 32] = bytes.try_into().map_err(|_| StoreError::Invalid)?;
+            // An orphan may have survived an interrupted initialization before its
+            // original file or directory sync completed. Re-establish durability
+            // before its key ID can become authoritative.
+            #[cfg(test)]
+            fault_support::fault("orphan_before_file_sync")?;
+            file.sync_all()?;
+            #[cfg(test)]
+            fault_support::fault("orphan_before_dir_sync")?;
+            root.sync_dir()?;
+            #[cfg(test)]
+            fault_support::fault("orphan_after_dir_sync")?;
+            Ok(key)
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            let mut key = [0; 32];
+            getrandom::fill(&mut key).map_err(|_| StoreError::Random)?;
+            #[cfg(test)]
+            fault_support::fault("key_before_create")?;
+            let mut f = root.open_child("authority.key", true, true)?;
+            #[cfg(test)]
+            fault_support::fault("key_created")?;
+            #[cfg(test)]
+            if fault_support::active("key_partial") {
+                f.write_all(&key[..16])?;
+                fault_support::fault("key_partial")?;
+            }
+            f.write_all(&key)?;
+            #[cfg(test)]
+            fault_support::fault("key_written")?;
+            f.sync_all()?;
+            #[cfg(test)]
+            fault_support::fault("key_file_synced")?;
+            root.sync_dir()?;
+            #[cfg(test)]
+            fault_support::fault("key_dir_synced")?;
+            Ok(key)
+        }
+        Err(e) => Err(e.into()),
+    }
+}
+fn migrate_schema(db: &Connection, root: &OwnedStateRoot) -> Result<()> {
+    let version: i64 = db.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+    if version != 1 {
+        return Err(StoreError::Invalid);
+    }
+    let key = preauthority_key(root)?;
+    #[cfg(test)]
+    fault_support::fault("schema_before_begin")?;
+    db.execute_batch(&format!("BEGIN IMMEDIATE; {AUTHORITY_TABLE};"))?;
+    #[cfg(test)]
+    fault_support::fault("schema_table")?;
+    let result = (|| -> Result<()> {
+        db.execute(
+            "INSERT INTO authority_metadata(id,key_id) VALUES (1,?1)",
+            [key_id(&key).as_str()],
+        )?;
+        #[cfg(test)]
+        fault_support::fault("schema_metadata")?;
+        db.execute_batch(&format!(
+            "{AUTHORITY_UPDATE}; {AUTHORITY_DELETE}; {AUTHORITY_INSERT}; PRAGMA user_version=2;"
+        ))?;
+        #[cfg(test)]
+        fault_support::fault("schema_version")?;
+        db.execute_batch("COMMIT")?;
+        #[cfg(test)]
+        fault_support::fault("schema_commit")?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = db.execute_batch("ROLLBACK");
+    }
+    result?;
+    schema(db, false)
+}
+fn authenticate(db: &Connection, root: &OwnedStateRoot, records: &[JournalRecord]) -> Result<()> {
+    let version: i64 = db.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+    if version == 1 {
+        if records.iter().any(|r| r.schema_version() != 1) {
+            return Err(StoreError::Invalid);
+        }
+        return Ok(());
+    }
+    let key = read_key(root)?;
+    let id = key_id(&key);
+    let ids: Vec<String> = db
+        .prepare("SELECT key_id FROM authority_metadata WHERE id=1")?
+        .query_map([], |r| r.get(0))?
+        .collect::<std::result::Result<_, _>>()?;
+    let count: i64 = db.query_row("SELECT count(*) FROM authority_metadata", [], |r| r.get(0))?;
+    if count != 1 || ids != [id.as_str()] {
+        return Err(StoreError::Invalid);
+    }
+    for record in records {
+        if let TransactionEvent::Authorization {
+            action,
+            authentication,
+        } = record.event()
+        {
+            if authentication.key_id != id {
+                return Err(StoreError::Invalid);
+            }
+            let tag = authentication.tag.as_str().as_bytes();
+            let mut decoded = [0u8; 32];
+            for (i, pair) in tag.chunks_exact(2).enumerate() {
+                if i >= 32 {
+                    return Err(StoreError::Invalid);
+                }
+                let digit = |v: u8| -> Option<u8> {
+                    match v {
+                        b'0'..=b'9' => Some(v - b'0'),
+                        b'a'..=b'f' => Some(v - b'a' + 10),
+                        _ => None,
+                    }
+                };
+                decoded[i] = digit(pair[0]).ok_or(StoreError::Invalid)? * 16
+                    + digit(pair[1]).ok_or(StoreError::Invalid)?;
+            }
+            if tag.len() != 64 {
+                return Err(StoreError::Invalid);
+            }
+            let bytes = agentmender_domain::authorization_signing_bytes(
+                &id,
+                record.transaction_id(),
+                record.sequence(),
+                record.binding_digest(),
+                &record.previous_digest().cloned(),
+                action,
+            );
+            let mut mac = AuthorityMac::new_from_slice(&key).map_err(|_| StoreError::Invalid)?;
+            mac.update(&bytes);
+            mac.verify_slice(&decoded)
+                .map_err(|_| StoreError::Invalid)?;
+        }
+    }
+    Ok(())
+}
+fn now() -> Result<u64> {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .map_err(|_| StoreError::Preconditions)
 }
 impl TransactionStore {
     pub fn open(root: OwnedStateRoot) -> Result<Self> {
@@ -284,7 +499,10 @@ impl TransactionStore {
         }
         configure(&db, true)?;
         schema(&db, new_database)?;
-        agree(&db, &journal)?;
+        agree(&db, &journal, &root)?;
+        if new_database {
+            migrate_schema(&db, &root)?;
+        }
         root.sync_dir()?;
         Ok(Self {
             root,
@@ -294,13 +512,25 @@ impl TransactionStore {
             poisoned: false,
         })
     }
+    /// Explicitly migrate a validated legacy store while holding its writer lock.
+    pub fn migrate_v1(root: OwnedStateRoot) -> Result<()> {
+        let store = Self::open(root)?;
+        let version: i64 = store
+            .db
+            .query_row("PRAGMA user_version", [], |r| r.get(0))?;
+        if version != 1 {
+            return Err(StoreError::Invalid);
+        }
+        agree(&store.db, &store.journal, &store.root)?;
+        migrate_schema(&store.db, &store.root)
+    }
     pub fn list(&self) -> Result<Vec<TransactionSnapshot>> {
         self.ensure()?;
-        validate(&agree(&self.db, &self.journal)?)
+        validate(&agree(&self.db, &self.journal, &self.root)?)
     }
     pub fn records(&self, id: &TransactionId) -> Result<Vec<JournalRecord>> {
         self.ensure()?;
-        Ok(agree(&self.db, &self.journal)?
+        Ok(agree(&self.db, &self.journal, &self.root)?
             .into_iter()
             .filter(|r| r.transaction_id() == id)
             .collect())
@@ -319,7 +549,7 @@ impl TransactionStore {
         self.ensure()?;
         self.root.revalidate()?;
         self.root.validate_sqlite_sidecars()?;
-        let mut records = agree(&self.db, &self.journal)?;
+        let mut records = agree(&self.db, &self.journal, &self.root)?;
         if let Ok(snapshot) = TransactionSnapshot::replay(
             &records
                 .iter()
@@ -332,8 +562,13 @@ impl TransactionStore {
                 .verify_manifest(manifest)
                 .map_err(|_| StoreError::Preconditions)?;
         }
+        let version: i64 = self.db.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+        if record.schema_version() != 2 || version != 2 {
+            return Err(StoreError::Preconditions);
+        }
         records.push(record.clone());
         validate(&records)?;
+        authenticate(&self.db, &self.root, &records)?;
         let encoded = serde_json::to_vec(&record).map_err(|_| StoreError::Invalid)?;
         if encoded.len() > 131_072
             || records.len() > 100_000
@@ -392,12 +627,15 @@ impl TransactionStore {
         if !self.records(&id)?.is_empty() {
             return Err(StoreError::Stale);
         }
-        let r = JournalRecord::new(
+        let r = JournalRecord::new_v2(
             id.clone(),
             0,
             binding.digest(),
             None,
-            TransactionEvent::Created { binding },
+            TransactionEvent::Created {
+                binding,
+                plan: Some(plan.clone()),
+            },
         );
         self.append(r)?;
         Ok(id)
@@ -418,6 +656,9 @@ impl TransactionStore {
         let s = self.inspect(id)?;
         if s.sequence() != expected {
             return Err(StoreError::Stale);
+        }
+        if s.schema_version() != 2 {
+            return Err(StoreError::Preconditions);
         }
         let manifest = agentmender_domain::RecoveryManifest::new(id.clone(), s.binding());
         let r = s
@@ -450,6 +691,112 @@ impl TransactionStore {
             .map_err(|_| StoreError::Invalid)?;
         self.append(r)
     }
+    fn authorization(
+        &self,
+        snapshot: &TransactionSnapshot,
+        action: agentmender_domain::ApprovalAction,
+    ) -> Result<JournalRecord> {
+        let key = read_key(&self.root)?;
+        let id = key_id(&key);
+        let sequence = snapshot
+            .sequence()
+            .checked_add(1)
+            .ok_or(StoreError::Invalid)?;
+        let previous = Some(snapshot.last_digest().clone());
+        let bytes = agentmender_domain::authorization_signing_bytes(
+            &id,
+            snapshot.id(),
+            sequence,
+            &snapshot.binding().digest(),
+            &previous,
+            &action,
+        );
+        let mut mac = AuthorityMac::new_from_slice(&key).map_err(|_| StoreError::Invalid)?;
+        mac.update(&bytes);
+        let tag =
+            agentmender_domain::AuthenticationTag::from_bytes(mac.finalize().into_bytes().into());
+        snapshot
+            .next_record(TransactionEvent::Authorization {
+                action,
+                authentication: agentmender_domain::AuthorizationAuthentication { key_id: id, tag },
+            })
+            .map_err(|_| StoreError::Invalid)
+    }
+    pub fn grant_approval(
+        &mut self,
+        id: &TransactionId,
+        expected: u64,
+        plan: &LifecyclePlan,
+        graph: &ArtifactGraph,
+        report: &IntegrityReport,
+        context: &PlanningContext,
+    ) -> Result<agentmender_domain::ApprovalGrant> {
+        use agentmender_domain::{
+            ApprovalAction, ApprovalDirection, ApprovalGrant, ApprovalId, ApprovalNonce,
+            ApprovalPrincipal, ApprovalScope, approval_eligible,
+        };
+        let snapshot = self.inspect(id)?;
+        if snapshot.sequence() != expected {
+            return Err(StoreError::Stale);
+        }
+        let manifest = snapshot.recovery().ok_or(StoreError::Preconditions)?;
+        let verified = RecoveryStore::new(self.root.clone())
+            .verify_manifest(manifest)
+            .is_ok();
+        if snapshot.review_plan() != Some(plan)
+            || !approval_eligible(&snapshot, graph, report, context, verified)
+        {
+            return Err(StoreError::Preconditions);
+        }
+        let mut identity = [0; 32];
+        let mut nonce = [0; 32];
+        getrandom::fill(&mut identity).map_err(|_| StoreError::Random)?;
+        getrandom::fill(&mut nonce).map_err(|_| StoreError::Random)?;
+        let issued_at = now()?;
+        let grant = ApprovalGrant {
+            id: ApprovalId::from_bytes(identity),
+            nonce: ApprovalNonce::from_bytes(nonce),
+            scope: ApprovalScope {
+                transaction_id: id.clone(),
+                binding: snapshot.binding().clone(),
+                recovery_digest: manifest.digest().clone(),
+                operation_index: 0,
+                direction: ApprovalDirection::ForwardOnly,
+            },
+            principal: ApprovalPrincipal::LocalInteractiveUser,
+            issued_at,
+            expires_at: issued_at
+                .checked_add(300)
+                .ok_or(StoreError::Preconditions)?,
+        };
+        let record = self.authorization(
+            &snapshot,
+            ApprovalAction::Granted {
+                grant: grant.clone(),
+            },
+        )?;
+        self.append(record)?;
+        Ok(grant)
+    }
+    pub fn revoke_approval(
+        &mut self,
+        id: &TransactionId,
+        expected: u64,
+        approval_id: &agentmender_domain::ApprovalId,
+    ) -> Result<()> {
+        let snapshot = self.inspect(id)?;
+        if snapshot.sequence() != expected {
+            return Err(StoreError::Stale);
+        }
+        let record = self.authorization(
+            &snapshot,
+            agentmender_domain::ApprovalAction::Revoked {
+                approval_id: approval_id.clone(),
+                at: now()?,
+            },
+        )?;
+        self.append(record)
+    }
     pub fn record_intent(
         &mut self,
         id: &TransactionId,
@@ -473,13 +820,26 @@ impl TransactionStore {
         RecoveryStore::new(self.root.clone())
             .verify_manifest(manifest)
             .map_err(|_| StoreError::Preconditions)?;
-        let r = s
-            .next_record(TransactionEvent::Intent {
+        let grant = s
+            .approval()
+            .grant
+            .as_ref()
+            .ok_or(StoreError::Preconditions)?;
+        let at = now()?;
+        if !agentmender_domain::approval_valid(&s, grant, at) || s.review_plan() != Some(plan) {
+            return Err(StoreError::Preconditions);
+        }
+        let r = self.authorization(
+            &s,
+            agentmender_domain::ApprovalAction::Consumed {
+                approval_id: grant.id.clone(),
+                at,
                 plan: plan.digest().clone(),
                 state: plan.state_fingerprint().clone(),
                 operation_index: 0,
-            })
-            .map_err(|_| StoreError::Invalid)?;
+            },
+        )?;
+        let approval_id = grant.id.clone();
         let sequence = r.sequence();
         let digest = r.digest().clone();
         self.append(r)?;
@@ -487,6 +847,10 @@ impl TransactionStore {
             id: id.clone(),
             sequence,
             digest,
+            approval_id,
+            plan: plan.digest().clone(),
+            state: plan.state_fingerprint().clone(),
+            operation_index: 0,
         })
     }
     pub fn record_observation(
@@ -534,7 +898,7 @@ impl TransactionReader {
         )?;
         configure(&db, false)?;
         schema(&db, false)?;
-        agree(&db, &journal)?;
+        agree(&db, &journal, &root)?;
         Ok(Self {
             root,
             _lock: lock,
@@ -543,11 +907,11 @@ impl TransactionReader {
     }
     pub fn list(&self) -> Result<Vec<TransactionSnapshot>> {
         let f = self.root.open_existing_fixed(FixedFile::Journal, false)?;
-        validate(&agree(&self.db, &f)?)
+        validate(&agree(&self.db, &f, &self.root)?)
     }
     pub fn records(&self, id: &TransactionId) -> Result<Vec<JournalRecord>> {
         let f = self.root.open_existing_fixed(FixedFile::Journal, false)?;
-        Ok(agree(&self.db, &f)?
+        Ok(agree(&self.db, &f, &self.root)?
             .into_iter()
             .filter(|r| r.transaction_id() == id)
             .collect())
@@ -633,7 +997,13 @@ mod tests {
                 r.transaction_id() == &receipt.id
                     && r.sequence() == receipt.sequence
                     && r.digest() == &receipt.digest
-                    && matches!(r.event(), TransactionEvent::Intent { .. })
+                    && matches!(
+                        r.event(),
+                        TransactionEvent::Authorization {
+                            action: agentmender_domain::ApprovalAction::Consumed { .. },
+                            ..
+                        }
+                    )
             })
         };
         assert!(matches_receipt(&sql));
@@ -666,6 +1036,45 @@ mod tests {
             }
             return;
         }
+        if let Ok(action) = std::env::var("AGENTMENDER_TEST_RACE") {
+            let mut start = [0; 1];
+            std::io::stdin().read_exact(&mut start).unwrap();
+            let mut store = match TransactionStore::open(root) {
+                Ok(store) => store,
+                Err(StoreError::Locked) => std::process::exit(2),
+                Err(e) => panic!("race open: {e}"),
+            };
+            let id: TransactionId = std::env::var("AGENTMENDER_TEST_ID")
+                .unwrap()
+                .parse()
+                .unwrap();
+            let c = crate::test_fixture::case(0);
+            let plan = c.plan(LifecycleIntent::Archive);
+            let report = agentmender_domain::evaluate_integrity(&c.graph, &c.proof);
+            let result = match action.as_str() {
+                "grant" => store
+                    .grant_approval(&id, 2, &plan, &c.graph, &report, &c.planning)
+                    .map(|_| ()),
+                "consume" => store
+                    .record_intent(&id, 3, &plan, &c.graph, &report, &c.planning)
+                    .map(|_| ()),
+                "revoke" => {
+                    let snapshot = store.inspect(&id).unwrap();
+                    let grant = snapshot.approval().grant.as_ref().unwrap();
+                    store.revoke_approval(&id, 3, &grant.id).map(|_| ())
+                }
+                _ => panic!("unknown race action"),
+            };
+            match result {
+                Ok(()) => std::process::exit(0),
+                Err(StoreError::Stale) => std::process::exit(2),
+                Err(e) => panic!("unexpected race result: {e}"),
+            }
+        }
+        if std::env::var_os("AGENTMENDER_TEST_MIGRATE").is_some() {
+            let _ = TransactionStore::migrate_v1(root);
+            panic!("migration fault did not abort");
+        }
         let mut store = TransactionStore::open(root).unwrap();
         let c = crate::test_fixture::case(0);
         let plan = c.plan(LifecycleIntent::Archive);
@@ -673,12 +1082,12 @@ mod tests {
             let id: TransactionId = id.parse().unwrap();
             let report = agentmender_domain::evaluate_integrity(&c.graph, &c.proof);
             let receipt = store
-                .record_intent(&id, 2, &plan, &c.graph, &report, &c.planning)
+                .record_intent(&id, 3, &plan, &c.graph, &report, &c.planning)
                 .unwrap();
             let marker = path.parent().unwrap().join("fake-effect-marker");
             let receipt = synthetic_effect(&store, receipt, &marker);
             store
-                .record_observation(&id, 3, &receipt, Observation::Applied)
+                .record_observation(&id, 4, &receipt, Observation::Applied)
                 .unwrap();
             return;
         }
@@ -696,6 +1105,13 @@ mod tests {
                 }
                 "prepared" => {
                     let _ = store.prepare(&id, seq);
+                }
+                "grant" => {
+                    let _ = store.grant_approval(&id, seq, &plan, &c.graph, &report, &c.planning);
+                }
+                "revoke" => {
+                    let grant = snap.approval().grant.as_ref().unwrap();
+                    let _ = store.revoke_approval(&id, seq, &grant.id);
                 }
                 "intent" => {
                     let _ = store.record_intent(&id, seq, &plan, &c.graph, &report, &c.planning);
@@ -731,7 +1147,7 @@ mod tests {
         if let Ok(id) = std::env::var("AGENTMENDER_TEST_INTENT") {
             let id = id.parse().unwrap();
             let report = agentmender_domain::evaluate_integrity(&c.graph, &c.proof);
-            let _ = store.record_intent(&id, 2, &plan, &c.graph, &report, &c.planning);
+            let _ = store.record_intent(&id, 3, &plan, &c.graph, &report, &c.planning);
             panic!("intent fault did not abort");
         }
         if std::env::var_os("AGENTMENDER_TEST_ERROR").is_some() {
@@ -796,6 +1212,10 @@ mod tests {
         let id = store.create_transaction(&plan).unwrap();
         store.prepare_recovery(&id, 0).unwrap();
         store.prepare(&id, 1).unwrap();
+        let report = agentmender_domain::evaluate_integrity(&c.graph, &c.proof);
+        store
+            .grant_approval(&id, 2, &plan, &c.graph, &report, &c.planning)
+            .unwrap();
         drop(store);
         let status = Command::new(std::env::current_exe().unwrap())
             .arg("--exact")
@@ -817,6 +1237,8 @@ mod tests {
         for stage in [
             "recovery",
             "prepared",
+            "grant",
+            "revoke",
             "intent",
             "observed",
             "verification_started",
@@ -844,17 +1266,22 @@ mod tests {
                 if !["recovery", "prepared"].contains(&stage) {
                     store.prepare(&id, 1).unwrap();
                 }
+                if !["recovery", "prepared", "grant"].contains(&stage) {
+                    store
+                        .grant_approval(&id, 2, &plan, &c.graph, &report, &c.planning)
+                        .unwrap();
+                }
                 if ["verification_started", "verified"].contains(&stage) {
                     let receipt = store
-                        .record_intent(&id, 2, &plan, &c.graph, &report, &c.planning)
+                        .record_intent(&id, 3, &plan, &c.graph, &report, &c.planning)
                         .unwrap();
                     if ["verification_started", "verified"].contains(&stage) {
                         store
-                            .record_observation(&id, 3, &receipt, Observation::Applied)
+                            .record_observation(&id, 4, &receipt, Observation::Applied)
                             .unwrap();
                     }
                     if stage == "verified" {
-                        store.start_verification(&id, 4).unwrap();
+                        store.start_verification(&id, 5).unwrap();
                     }
                 }
                 let before = store.records(&id).unwrap().len() + usize::from(stage == "observed");
@@ -921,55 +1348,598 @@ mod tests {
         }
     }
     #[test]
-    fn synthetic_compensation_crash_remains_unknown() {
+    fn unsigned_compensation_is_rejected_for_v2() {
+        let dir = tempfile::tempdir().unwrap();
+        let root =
+            OwnedStateRoot::create(&dir.path().join("owned"), &[dir.path().join("provider")])
+                .unwrap();
+        let c = crate::test_fixture::case(0);
+        let plan = c.plan(LifecycleIntent::Archive);
+        let report = agentmender_domain::evaluate_integrity(&c.graph, &c.proof);
+        let mut store = TransactionStore::open(root).unwrap();
+        let id = store.create_transaction(&plan).unwrap();
+        store.prepare_recovery(&id, 0).unwrap();
+        store.prepare(&id, 1).unwrap();
+        store
+            .grant_approval(&id, 2, &plan, &c.graph, &report, &c.planning)
+            .unwrap();
+        let receipt = store
+            .record_intent(&id, 3, &plan, &c.graph, &report, &c.planning)
+            .unwrap();
+        store
+            .record_observation(&id, 4, &receipt, Observation::Applied)
+            .unwrap();
+        let snapshot = store.inspect(&id).unwrap();
+        assert!(
+            snapshot
+                .next_record(TransactionEvent::CompensationIntent {
+                    plan: plan.digest().clone(),
+                    state: plan.state_fingerprint().clone(),
+                    operation_index: 0
+                })
+                .is_err()
+        );
+    }
+    #[test]
+    fn explicit_v1_migration_preserves_history_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+        let root =
+            OwnedStateRoot::create(&dir.path().join("owned"), &[dir.path().join("provider")])
+                .unwrap();
+        let mut journal = root.open_fixed(FixedFile::Journal).unwrap();
+        drop(root.open_fixed(FixedFile::Lock).unwrap());
+        drop(root.open_fixed(FixedFile::Database).unwrap());
+        let db = Connection::open(database_path(&root).unwrap()).unwrap();
+        configure(&db, true).unwrap();
+        schema(&db, true).unwrap();
+        let plan = crate::test_fixture::case(0).plan(LifecycleIntent::Archive);
+        let binding = TransactionBinding::from_plan(&plan).unwrap();
+        let id = TransactionId::from_bytes([7; 32]);
+        let record = JournalRecord::new(
+            id.clone(),
+            0,
+            binding.digest(),
+            None,
+            TransactionEvent::Created {
+                binding,
+                plan: None,
+            },
+        );
+        let text = serde_json::to_string(&record).unwrap();
+        journal.write_all(text.as_bytes()).unwrap();
+        journal.write_all(b"\n").unwrap();
+        journal.sync_all().unwrap();
+        db.execute(
+            "INSERT INTO events(transaction_id,sequence,record) VALUES (?1,0,?2)",
+            params![id.as_str(), text],
+        )
+        .unwrap();
+        drop(db);
+        drop(journal);
+        let path = root.fixed_path(FixedFile::Journal);
+        let before = std::fs::read(&path).unwrap();
+        let reader = TransactionReader::open(root.clone()).unwrap();
+        assert_eq!(reader.inspect(&id).unwrap().schema_version(), 1);
+        drop(reader);
+        assert!(!root.fixed_path(FixedFile::AuthorityKey).exists());
+        TransactionStore::migrate_v1(root.clone()).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+        let mut store = TransactionStore::open(root).unwrap();
+        assert_eq!(store.inspect(&id).unwrap().schema_version(), 1);
+        assert!(store.prepare_recovery(&id, 0).is_err());
+    }
+    #[test]
+    fn competing_processes_serialize_authorization() {
+        use std::process::Stdio;
+        for actions in [
+            ["grant", "grant"],
+            ["consume", "consume"],
+            ["revoke", "consume"],
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let root =
+                OwnedStateRoot::create(&dir.path().join("owned"), &[dir.path().join("provider")])
+                    .unwrap();
+            let c = crate::test_fixture::case(0);
+            let plan = c.plan(LifecycleIntent::Archive);
+            let report = agentmender_domain::evaluate_integrity(&c.graph, &c.proof);
+            let mut store = TransactionStore::open(root.clone()).unwrap();
+            let id = store.create_transaction(&plan).unwrap();
+            store.prepare_recovery(&id, 0).unwrap();
+            store.prepare(&id, 1).unwrap();
+            if actions[0] != "grant" {
+                store
+                    .grant_approval(&id, 2, &plan, &c.graph, &report, &c.planning)
+                    .unwrap();
+            }
+            assert!(matches!(
+                TransactionReader::open(root.clone()),
+                Err(StoreError::Locked)
+            ));
+            drop(store);
+            let mut children: Vec<_> = actions
+                .iter()
+                .map(|action| {
+                    Command::new(std::env::current_exe().unwrap())
+                        .arg("--exact")
+                        .arg("store::tests::crash_child")
+                        .env("AGENTMENDER_TEST_ROOT", dir.path().join("owned"))
+                        .env("AGENTMENDER_TEST_ID", id.as_str())
+                        .env("AGENTMENDER_TEST_RACE", action)
+                        .stdin(Stdio::piped())
+                        .stdout(Stdio::null())
+                        .spawn()
+                        .unwrap()
+                })
+                .collect();
+            for child in &mut children {
+                child.stdin.take().unwrap().write_all(b"x").unwrap();
+            }
+            let codes: Vec<_> = children
+                .iter_mut()
+                .map(|child| child.wait().unwrap().code().unwrap())
+                .collect();
+            assert_eq!(
+                codes.iter().filter(|code| **code == 0).count(),
+                1,
+                "{actions:?}: {codes:?}"
+            );
+            assert!(codes.iter().all(|code| *code == 0 || *code == 2));
+            let reader = TransactionReader::open(root.clone()).unwrap();
+            let snapshot = reader.inspect(&id).unwrap();
+            assert_eq!(
+                snapshot.sequence(),
+                if actions[0] == "grant" { 3 } else { 4 }
+            );
+            if actions[0] == "grant" {
+                assert_eq!(
+                    snapshot.approval().state,
+                    agentmender_domain::ApprovalState::Granted
+                );
+            } else {
+                assert!(matches!(
+                    snapshot.approval().state,
+                    agentmender_domain::ApprovalState::Consumed
+                        | agentmender_domain::ApprovalState::Revoked
+                ));
+            }
+            assert_eq!(
+                db_records(&reader.db).unwrap().len(),
+                snapshot.sequence() as usize + 1
+            );
+        }
+    }
+    #[test]
+    fn migration_key_and_schema_crash_cuts_preserve_legacy_history() {
+        for boundary in [
+            "key_before_create",
+            "key_created",
+            "key_partial",
+            "key_written",
+            "key_file_synced",
+            "key_dir_synced",
+            "orphan_before_file_sync",
+            "orphan_before_dir_sync",
+            "orphan_after_dir_sync",
+            "schema_before_begin",
+            "schema_table",
+            "schema_metadata",
+            "schema_version",
+            "schema_commit",
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let root =
+                OwnedStateRoot::create(&dir.path().join("owned"), &[dir.path().join("provider")])
+                    .unwrap();
+            let mut journal = root.open_fixed(FixedFile::Journal).unwrap();
+            drop(root.open_fixed(FixedFile::Lock).unwrap());
+            drop(root.open_fixed(FixedFile::Database).unwrap());
+            let db = Connection::open(database_path(&root).unwrap()).unwrap();
+            configure(&db, true).unwrap();
+            schema(&db, true).unwrap();
+            let plan = crate::test_fixture::case(0).plan(LifecycleIntent::Archive);
+            let binding = TransactionBinding::from_plan(&plan).unwrap();
+            let id = TransactionId::from_bytes([7; 32]);
+            let record = JournalRecord::new(
+                id.clone(),
+                0,
+                binding.digest(),
+                None,
+                TransactionEvent::Created {
+                    binding,
+                    plan: None,
+                },
+            );
+            let text = serde_json::to_string(&record).unwrap();
+            writeln!(journal, "{text}").unwrap();
+            journal.sync_all().unwrap();
+            db.execute(
+                "INSERT INTO events(transaction_id,sequence,record) VALUES (?1,0,?2)",
+                params![id.as_str(), &text],
+            )
+            .unwrap();
+            drop(db);
+            drop(journal);
+            let path = root.fixed_path(FixedFile::Journal);
+            let before = std::fs::read(&path).unwrap();
+            let key_path = root.fixed_path(FixedFile::AuthorityKey);
+            if boundary.starts_with("orphan_") {
+                let mut orphan = root.open_child("authority.key", true, true).unwrap();
+                orphan.write_all(&[9; 32]).unwrap();
+            }
+            let status = Command::new(std::env::current_exe().unwrap())
+                .arg("--exact")
+                .arg("store::tests::crash_child")
+                .env("AGENTMENDER_TEST_ROOT", dir.path().join("owned"))
+                .env("AGENTMENDER_TEST_MIGRATE", "1")
+                .env("AGENTMENDER_TEST_FAULT", boundary)
+                .status()
+                .unwrap();
+            assert!(!status.success(), "{boundary}");
+            #[cfg(unix)]
+            assert!(status.code().is_none(), "fault was not reached: {boundary}");
+            assert_eq!(std::fs::read(&path).unwrap(), before, "{boundary}");
+            let db = Connection::open(database_path(&root).unwrap()).unwrap();
+            let version: i64 = db
+                .query_row("PRAGMA user_version", [], |r| r.get(0))
+                .unwrap();
+            assert_eq!(
+                version,
+                if boundary == "schema_commit" { 2 } else { 1 },
+                "{boundary}"
+            );
+            assert_eq!(db_records(&db).unwrap(), vec![record], "{boundary}");
+            let raw: String = db
+                .query_row("SELECT record FROM events", [], |r| r.get(0))
+                .unwrap();
+            assert_eq!(raw, text, "{boundary}");
+            drop(db);
+            let key = std::fs::read(&key_path).ok();
+            if matches!(boundary, "key_created" | "key_partial") {
+                assert!(TransactionStore::migrate_v1(root.clone()).is_err());
+                assert_eq!(std::fs::read(&key_path).unwrap(), key.unwrap());
+            } else {
+                if version == 1 {
+                    TransactionStore::migrate_v1(root.clone()).unwrap();
+                }
+                let adopted = std::fs::read(&key_path).unwrap();
+                assert_eq!(adopted.len(), 32);
+                if let Some(key) = key {
+                    assert_eq!(adopted, key);
+                }
+                let store = TransactionStore::open(root.clone()).unwrap();
+                assert_eq!(store.inspect(&id).unwrap().sequence(), 0);
+                let raw: String = store
+                    .db
+                    .query_row("SELECT record FROM events", [], |r| r.get(0))
+                    .unwrap();
+                assert_eq!(raw, text, "{boundary}");
+                let anchored: String = store
+                    .db
+                    .query_row(
+                        "SELECT key_id FROM authority_metadata WHERE id=1",
+                        [],
+                        |r| r.get(0),
+                    )
+                    .unwrap();
+                let bytes: [u8; 32] = adopted.try_into().unwrap();
+                assert_eq!(anchored, key_id(&bytes).as_str());
+            }
+            assert_eq!(std::fs::read(&path).unwrap(), before);
+        }
+    }
+    #[test]
+    fn migrated_legacy_compensation_unknown_is_preserved() {
         use agentmender_domain::{
             CompensationContract, NativeLifecycleOperation, RecoveryManifest, TransactionState,
         };
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("owned");
-        let root = OwnedStateRoot::create(&path, &[dir.path().join("provider")]).unwrap();
-        let c = crate::test_fixture::case(0);
-        let plan = c.plan(LifecycleIntent::Archive);
-        let report = agentmender_domain::evaluate_integrity(&c.graph, &c.proof);
-        let mut store = TransactionStore::open(root.clone()).unwrap();
-        let id = store.create_transaction(&plan).unwrap();
-        let snapshot = store.inspect(&id).unwrap();
-        let manifest = RecoveryManifest::new(id.clone(), snapshot.binding()).with_compensation(
+        let root =
+            OwnedStateRoot::create(&dir.path().join("owned"), &[dir.path().join("provider")])
+                .unwrap();
+        let mut journal = root.open_fixed(FixedFile::Journal).unwrap();
+        drop(root.open_fixed(FixedFile::Lock).unwrap());
+        drop(root.open_fixed(FixedFile::Database).unwrap());
+        let db = Connection::open(database_path(&root).unwrap()).unwrap();
+        configure(&db, true).unwrap();
+        schema(&db, true).unwrap();
+        let plan = crate::test_fixture::case(0).plan(LifecycleIntent::Archive);
+        let binding = TransactionBinding::from_plan(&plan).unwrap();
+        let id = TransactionId::from_bytes([9; 32]);
+        let first = JournalRecord::new(
+            id.clone(),
+            0,
+            binding.digest(),
+            None,
+            TransactionEvent::Created {
+                binding: binding.clone(),
+                plan: None,
+            },
+        );
+        let mut records = vec![first];
+        let manifest = RecoveryManifest::new(id.clone(), &binding).with_compensation(
             CompensationContract::ReviewedSemantic {
                 operation: NativeLifecycleOperation::UnarchiveSession,
                 evidence: "a".repeat(64).parse().unwrap(),
             },
         );
-        let recovery = RecoveryStore::new(root.clone());
-        let point = recovery.prepare(&manifest).unwrap();
-        recovery.verify(&point, &manifest).unwrap();
-        let r = snapshot
-            .next_record(TransactionEvent::RecoveryPrepared { manifest })
+        for event in [
+            TransactionEvent::RecoveryPrepared { manifest },
+            TransactionEvent::Prepared,
+            TransactionEvent::Intent {
+                plan: plan.digest().clone(),
+                state: plan.state_fingerprint().clone(),
+                operation_index: 0,
+            },
+            TransactionEvent::Observed {
+                observation: Observation::Applied,
+            },
+            TransactionEvent::CompensationIntent {
+                plan: plan.digest().clone(),
+                state: plan.state_fingerprint().clone(),
+                operation_index: 0,
+            },
+        ] {
+            records.push(
+                TransactionSnapshot::replay(&records)
+                    .unwrap()
+                    .next_record(event)
+                    .unwrap(),
+            );
+        }
+        for record in &records {
+            let text = serde_json::to_string(record).unwrap();
+            writeln!(journal, "{text}").unwrap();
+            db.execute(
+                "INSERT INTO events(transaction_id,sequence,record) VALUES (?1,?2,?3)",
+                params![id.as_str(), record.sequence() as i64, text],
+            )
             .unwrap();
-        store.append(r).unwrap();
-        store.prepare(&id, 1).unwrap();
-        let receipt = store
-            .record_intent(&id, 2, &plan, &c.graph, &report, &c.planning)
-            .unwrap();
-        store
-            .record_observation(&id, 3, &receipt, Observation::Applied)
-            .unwrap();
-        drop(store);
-        let status = Command::new(std::env::current_exe().unwrap())
-            .arg("--exact")
-            .arg("store::tests::crash_child")
-            .env("AGENTMENDER_TEST_ROOT", &path)
-            .env("AGENTMENDER_TEST_ID", id.as_str())
-            .env("AGENTMENDER_TEST_STAGE", "compensation")
-            .env("AGENTMENDER_TEST_FAULT", "commit")
-            .status()
-            .unwrap();
-        assert!(!status.success());
-        let reopened = TransactionStore::open(root).unwrap();
+        }
+        journal.sync_all().unwrap();
+        drop(journal);
+        drop(db);
+        TransactionStore::migrate_v1(root.clone()).unwrap();
         assert_eq!(
-            reopened.inspect(&id).unwrap().state(),
+            TransactionReader::open(root)
+                .unwrap()
+                .inspect(&id)
+                .unwrap()
+                .state(),
             TransactionState::CompensationOutcomeUnknown
         );
+    }
+    #[test]
+    fn forged_mac_fails_even_when_hashes_and_stores_agree() {
+        let dir = tempfile::tempdir().unwrap();
+        let root =
+            OwnedStateRoot::create(&dir.path().join("owned"), &[dir.path().join("provider")])
+                .unwrap();
+        let c = crate::test_fixture::case(0);
+        let plan = c.plan(LifecycleIntent::Archive);
+        let report = agentmender_domain::evaluate_integrity(&c.graph, &c.proof);
+        let mut store = TransactionStore::open(root.clone()).unwrap();
+        let id = store.create_transaction(&plan).unwrap();
+        store.prepare_recovery(&id, 0).unwrap();
+        store.prepare(&id, 1).unwrap();
+        store
+            .grant_approval(&id, 2, &plan, &c.graph, &report, &c.planning)
+            .unwrap();
+        let records = store.records(&id).unwrap();
+        let old = records.last().unwrap();
+        let TransactionEvent::Authorization {
+            action,
+            authentication,
+        } = old.event()
+        else {
+            panic!("expected authorization");
+        };
+        let forged = JournalRecord::new_v2(
+            id.clone(),
+            old.sequence(),
+            old.binding_digest().clone(),
+            old.previous_digest().cloned(),
+            TransactionEvent::Authorization {
+                action: action.clone(),
+                authentication: agentmender_domain::AuthorizationAuthentication {
+                    key_id: authentication.key_id.clone(),
+                    tag: agentmender_domain::AuthenticationTag::from_bytes([0; 32]),
+                },
+            },
+        );
+        let text = serde_json::to_string(&forged).unwrap();
+        drop(store);
+        let db = Connection::open(database_path(&root).unwrap()).unwrap();
+        db.execute_batch("DROP TRIGGER events_no_update").unwrap();
+        db.execute(
+            "UPDATE events SET record=?1 WHERE transaction_id=?2 AND sequence=3",
+            params![text, id.as_str()],
+        )
+        .unwrap();
+        db.execute_batch(UPDATE_TRIGGER).unwrap();
+        drop(db);
+        let mut lines: Vec<String> = records[..3]
+            .iter()
+            .map(|r| serde_json::to_string(r).unwrap())
+            .collect();
+        lines.push(text);
+        std::fs::write(
+            root.fixed_path(FixedFile::Journal),
+            format!("{}\n", lines.join("\n")),
+        )
+        .unwrap();
+        assert!(TransactionReader::open(root.clone()).is_err());
+        assert!(TransactionStore::open(root).is_err());
+    }
+    #[test]
+    fn every_authorization_field_is_mac_bound() {
+        use agentmender_domain::{
+            ApprovalAction, ApprovalKeyId, AuthorizationAuthentication, BindingDigest,
+            JournalDigest,
+        };
+        let cases = [
+            ("grant", "/grant/id"),
+            ("grant", "/grant/nonce"),
+            ("grant", "/grant/scope/transaction_id"),
+            ("grant", "/grant/scope/recovery_digest"),
+            ("grant", "/grant/scope/binding/plan_digest"),
+            ("grant", "/grant/scope/binding/state_fingerprint"),
+            ("grant", "/grant/scope/binding/provider"),
+            ("grant", "/grant/scope/binding/intent"),
+            ("grant", "/grant/scope/binding/operation"),
+            ("grant", "/grant/scope/binding/target"),
+            ("grant", "/grant/scope/binding/native_identity"),
+            ("grant", "/grant/scope/binding/profile"),
+            ("grant", "/grant/scope/binding/capability_effect"),
+            ("grant", "/grant/scope/binding/conditions"),
+            ("grant", "/grant/scope/binding/operation_commitment"),
+            ("grant", "/grant/scope/operation_index"),
+            ("grant", "/grant/issued_at"),
+            ("grant", "/grant/expires_at"),
+            ("grant", "key_id"),
+            ("grant", "transaction_id"),
+            ("grant", "sequence"),
+            ("grant", "previous"),
+            ("grant", "binding"),
+            ("revoke", "/approval_id"),
+            ("revoke", "/at"),
+            ("consume", "/approval_id"),
+            ("consume", "/at"),
+            ("consume", "/plan"),
+            ("consume", "/state"),
+            ("consume", "/operation_index"),
+        ];
+        for (stage, field) in cases {
+            let dir = tempfile::tempdir().unwrap();
+            let root =
+                OwnedStateRoot::create(&dir.path().join("owned"), &[dir.path().join("provider")])
+                    .unwrap();
+            let c = crate::test_fixture::case(0);
+            let plan = c.plan(LifecycleIntent::Archive);
+            let report = agentmender_domain::evaluate_integrity(&c.graph, &c.proof);
+            let mut store = TransactionStore::open(root.clone()).unwrap();
+            let id = store.create_transaction(&plan).unwrap();
+            store.prepare_recovery(&id, 0).unwrap();
+            store.prepare(&id, 1).unwrap();
+            let grant = store
+                .grant_approval(&id, 2, &plan, &c.graph, &report, &c.planning)
+                .unwrap();
+            if stage == "revoke" {
+                store.revoke_approval(&id, 3, &grant.id).unwrap();
+            }
+            if stage == "consume" {
+                store
+                    .record_intent(&id, 3, &plan, &c.graph, &report, &c.planning)
+                    .unwrap();
+            }
+            let records = store.records(&id).unwrap();
+            let old = records.last().unwrap();
+            let TransactionEvent::Authorization {
+                action,
+                authentication,
+            } = old.event()
+            else {
+                panic!("expected authorization");
+            };
+            let mut value = serde_json::to_value(action).unwrap();
+            if field.starts_with('/') {
+                let slot = value.pointer_mut(field).unwrap();
+                *slot = match slot {
+                    serde_json::Value::String(v) if v.len() == 71 && v.starts_with("sha256:") => {
+                        serde_json::Value::String(format!("sha256:{}", "f".repeat(64)))
+                    }
+                    serde_json::Value::String(v) if v.len() == 64 => {
+                        serde_json::Value::String("f".repeat(64))
+                    }
+                    serde_json::Value::String(v) if field.ends_with("provider") => {
+                        serde_json::Value::String(
+                            if v == "codex" { "claude" } else { "codex" }.into(),
+                        )
+                    }
+                    serde_json::Value::String(_) if field.ends_with("intent") => {
+                        serde_json::Value::String("purge".into())
+                    }
+                    serde_json::Value::String(_) if field.ends_with("operation") => {
+                        serde_json::Value::String("delete_session".into())
+                    }
+                    serde_json::Value::Number(n) => serde_json::json!(n.as_u64().unwrap() + 1),
+                    _ => panic!("unexpected field {field}"),
+                };
+            }
+            let changed_action: ApprovalAction = serde_json::from_value(value).unwrap();
+            let changed_key = if field == "key_id" {
+                ApprovalKeyId::from_bytes([42; 32])
+            } else {
+                authentication.key_id.clone()
+            };
+            let changed_id = if field == "transaction_id" {
+                TransactionId::from_bytes([42; 32])
+            } else {
+                id.clone()
+            };
+            let sequence = old.sequence() + u64::from(field == "sequence");
+            let previous = if field == "previous" {
+                Some("f".repeat(64).parse::<JournalDigest>().unwrap())
+            } else {
+                old.previous_digest().cloned()
+            };
+            let binding = if field == "binding" {
+                "f".repeat(64).parse::<BindingDigest>().unwrap()
+            } else {
+                old.binding_digest().clone()
+            };
+            let forged = JournalRecord::new_v2(
+                changed_id.clone(),
+                sequence,
+                binding,
+                previous,
+                TransactionEvent::Authorization {
+                    action: changed_action,
+                    authentication: AuthorizationAuthentication {
+                        key_id: changed_key,
+                        tag: authentication.tag.clone(),
+                    },
+                },
+            );
+            assert!(
+                authenticate(&store.db, &root, std::slice::from_ref(&forged)).is_err(),
+                "MAC accepted {stage} {field}"
+            );
+            let text = serde_json::to_string(&forged).unwrap();
+            let mut lines: Vec<String> = records[..records.len() - 1]
+                .iter()
+                .map(|r| serde_json::to_string(r).unwrap())
+                .collect();
+            lines.push(text.clone());
+            drop(store);
+            let db = Connection::open(database_path(&root).unwrap()).unwrap();
+            db.execute_batch("DROP TRIGGER events_no_update").unwrap();
+            db.execute(
+                "UPDATE events SET transaction_id=?1, sequence=?2, record=?3 WHERE position=?4",
+                params![
+                    changed_id.as_str(),
+                    sequence as i64,
+                    text,
+                    records.len() as i64
+                ],
+            )
+            .unwrap();
+            db.execute_batch(UPDATE_TRIGGER).unwrap();
+            drop(db);
+            std::fs::write(
+                root.fixed_path(FixedFile::Journal),
+                format!("{}\n", lines.join("\n")),
+            )
+            .unwrap();
+            assert!(
+                TransactionReader::open(root.clone()).is_err(),
+                "reader accepted {stage} {field}"
+            );
+            assert!(
+                TransactionStore::open(root).is_err(),
+                "writer accepted {stage} {field}"
+            );
+        }
     }
     #[test]
     fn process_lock_blocks_writer_and_reader_until_release() {
@@ -1007,6 +1977,11 @@ mod tests {
                 .unwrap();
             store.prepare_recovery(&id, 0).unwrap();
             store.prepare(&id, 1).unwrap();
+            let plan = c.plan(LifecycleIntent::Archive);
+            let report = agentmender_domain::evaluate_integrity(&c.graph, &c.proof);
+            store
+                .grant_approval(&id, 2, &plan, &c.graph, &report, &c.planning)
+                .unwrap();
             drop(store);
             let status = Command::new(std::env::current_exe().unwrap())
                 .arg("--exact")
@@ -1030,12 +2005,15 @@ mod tests {
             assert_eq!(reopened.inspect(&id).unwrap().state(), expected);
             let history = reopened.records(&id).unwrap();
             assert!(matches!(
-                history[3].event(),
-                TransactionEvent::Intent { .. }
+                history[4].event(),
+                TransactionEvent::Authorization {
+                    action: agentmender_domain::ApprovalAction::Consumed { .. },
+                    ..
+                }
             ));
             if observed {
                 assert!(matches!(
-                    history[4].event(),
+                    history[5].event(),
                     TransactionEvent::Observed {
                         observation: Observation::Applied
                     }

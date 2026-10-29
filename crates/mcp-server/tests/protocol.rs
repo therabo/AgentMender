@@ -248,3 +248,65 @@ async fn duplicate_keys_do_not_reach_executor() {
         .expect("duplicate frame must terminate transport");
     assert_eq!(calls.load(Ordering::SeqCst), 0);
 }
+
+#[tokio::test]
+async fn authority_calls_and_confirmation_arguments_never_dispatch() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let recorded = calls.clone();
+    let exec: Executor = Arc::new(move |_, _| {
+        recorded.fetch_add(1, Ordering::SeqCst);
+        Err(ApplicationError::Cancelled)
+    });
+    let (client, server) = tokio::io::duplex(128 * 1024);
+    let (sr, sw) = tokio::io::split(server);
+    let task = tokio::spawn(serve_io(sr, sw, exec, [9; 32]));
+    let (cr, mut cw) = tokio::io::split(client);
+    let mut cr = BufReader::new(cr);
+    let meta = json!({"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientInfo":{"name":"test","version":"1"},"io.modelcontextprotocol/clientCapabilities":{}});
+
+    for name in [
+        "approve_plan",
+        "authorize_transaction",
+        "confirm_delete",
+        "grant_permission",
+        "sign_plan",
+        "execute_plan",
+    ] {
+        let response = exchange(&mut cr, &mut cw, json!({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"_meta":meta,"name":name,"arguments":{}}})).await;
+        assert_eq!(response["error"]["code"], -32602, "{name}: {response}");
+        assert_eq!(calls.load(Ordering::SeqCst), 0, "{name} dispatched");
+    }
+
+    let target = json!({"provider":"codex","class":"session","token":"a".repeat(64)});
+    for (name, arguments) in [
+        ("providers", json!({})),
+        ("plan_lifecycle", json!({"target":target,"intent":"purge"})),
+        ("repair_plan", json!({"target":target})),
+    ] {
+        // A valid control proves the extra field causes each rejection.
+        let before = calls.load(Ordering::SeqCst);
+        let response = exchange(&mut cr, &mut cw, json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"_meta":meta,"name":name,"arguments":arguments}})).await;
+        assert_eq!(
+            response["result"]["structuredContent"]["error"], "cancelled",
+            "{name}: {response}"
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), before + 1);
+        for field in ["confirm", "authorized", "yes_really_delete"] {
+            let mut extra = arguments.clone();
+            extra[field] = json!(true);
+            let response = exchange(&mut cr, &mut cw, json!({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"_meta":meta,"name":name,"arguments":extra}})).await;
+            assert_eq!(
+                response["error"]["code"], -32602,
+                "{name} {field}: {response}"
+            );
+            assert_eq!(
+                calls.load(Ordering::SeqCst),
+                before + 1,
+                "{name} {field} dispatched"
+            );
+        }
+    }
+    drop(cw);
+    drop(cr);
+    task.await.unwrap().unwrap();
+}

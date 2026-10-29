@@ -1,5 +1,19 @@
 # Discovery test boundaries
 
+M7 adds 21 generated approval properties at 256 cases each (5,376 cases), seed
+`0x4d375f6170707276`, plus strict serialization regression. Run
+`cargo test --locked -p agentmender-domain --test approval_properties`.
+They cover exact scope/binding, eligibility, expiry, terminal revocation/consumption,
+protocol origin and independent binding-field changes. They do not authenticate
+MACs; persistence separately tests 30 signed-field forgeries with recomputed public
+hashes and matching copies, key loss/substitution, reopen, 14 key/schema crash cuts,
+three competing-process authority races and grant/revoke/consume append crashes.
+CLI tests cover non-terminal/JSON rejection, escaped bounded review, blocked
+preparation without root creation and read-only exact-plan inspection. MCP protocol
+regressions reject six approval/execution names and three boolean confirmation
+fields before dispatch. Production MCP/provider code remains read-only.
+See [approval semantics](../../../docs/approvals.md). M7 performs no provider effect.
+
 M6 transaction tests use only private temporary roots and synthetic Ready plans.
 `cargo test --locked -p agentmender-domain --test transaction_properties` runs nine
 properties with 256 cases each and seed `0x4d365f74786e7331`, plus four regressions.

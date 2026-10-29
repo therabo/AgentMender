@@ -34,6 +34,7 @@ fn snapshot(id: u8, final_state: TransactionState) -> TransactionSnapshot {
         None,
         TransactionEvent::Created {
             binding: binding.clone(),
+            plan: None,
         },
     )];
     if final_state == TransactionState::Created {

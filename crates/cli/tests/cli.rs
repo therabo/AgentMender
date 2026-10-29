@@ -541,3 +541,62 @@ fn plan_rejects_ambiguous_ids_and_incomplete_absence() {
     let error: serde_json::Value = serde_json::from_slice(&missing.stderr).unwrap();
     assert_eq!(error["code"], "inspection_unavailable");
 }
+
+#[test]
+fn blocked_prepare_does_not_create_owned_root() {
+    let home = tempfile::tempdir().unwrap();
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/codex/known");
+    let prefix = [
+        "--json",
+        "--provider",
+        "codex",
+        "--fixture",
+        fixture.to_str().unwrap(),
+    ];
+    let scan = run(home.path(), &[&prefix[..], &["scan"]].concat());
+    let report: serde_json::Value = serde_json::from_slice(&scan.stdout).unwrap();
+    let id = report["report"]["snapshots"][0]["sessions"][0]["id"]
+        .as_str()
+        .unwrap();
+    let root = home.path().join("owned");
+    let output = run(
+        home.path(),
+        &[
+            &prefix[1..],
+            &[
+                "plans",
+                "prepare",
+                "archive",
+                id,
+                "--state-root",
+                root.to_str().unwrap(),
+            ],
+        ]
+        .concat(),
+    );
+    assert_eq!(output.status.code(), Some(2));
+    let plan: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_ne!(plan["content"]["status"], "ready");
+    assert!(!plan["content"]["blockers"].as_array().unwrap().is_empty());
+    assert!(!root.exists());
+    let json_prepare = run(
+        home.path(),
+        &[
+            &prefix[..],
+            &[
+                "plans",
+                "prepare",
+                "archive",
+                id,
+                "--state-root",
+                root.to_str().unwrap(),
+            ],
+        ]
+        .concat(),
+    );
+    assert!(!json_prepare.status.success());
+    let error: serde_json::Value = serde_json::from_slice(&json_prepare.stderr).unwrap();
+    assert_eq!(error["code"], "invalid_arguments");
+    assert!(json_prepare.stdout.is_empty());
+    assert!(!root.exists());
+}

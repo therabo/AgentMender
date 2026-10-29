@@ -17,6 +17,7 @@ use agentmender_provider_codex::CodexAdapter;
 use clap::{Parser, Subcommand, ValueEnum};
 use serde::Serialize;
 
+mod approvals;
 mod transactions;
 
 #[derive(Clone, Parser)]
@@ -81,6 +82,21 @@ impl From<PlanIntent> for LifecycleIntent {
 enum Action {
     Providers,
     Mcp,
+    Plans {
+        #[command(subcommand)]
+        action: approvals::PlanAction,
+    },
+    Approve {
+        plan_id: String,
+        #[arg(long)]
+        transaction_id: String,
+        #[arg(long, value_parser = absolute_path)]
+        state_root: PathBuf,
+    },
+    Approvals {
+        #[command(subcommand)]
+        action: approvals::ApprovalAction,
+    },
     Scan,
     Inspect {
         id: String,
@@ -537,6 +553,15 @@ fn run(args: Args) -> Result<bool, CliError> {
     if let Action::Transactions { state_root, action } = &args.command {
         return transactions::run(&args, state_root, action);
     }
+    if let Action::Approvals { action } = &args.command {
+        return approvals::administration(&args, action);
+    }
+    if let Action::Plans {
+        action: action @ approvals::PlanAction::Inspect { .. },
+    } = &args.command
+    {
+        return approvals::inspect_plan(&args, action);
+    }
     if args.desktop_fixture && !matches!(args.provider, Some(SelectedProvider::Claude)) {
         return Err(CliError::new(
             ErrorCode::InvalidArguments,
@@ -632,12 +657,32 @@ fn run(args: Args) -> Result<bool, CliError> {
     let adapters = adapters(&args, None)?;
     let service = DiscoveryService::new(adapters.iter().map(|a| a.as_ref()).collect());
     let scope = DiscoveryScope {
-        project_path: args.project,
+        project_path: args.project.clone(),
         include_archived: !args.active_only,
         max_entries: args.max_entries,
     };
+    match &args.command {
+        Action::Plans {
+            action:
+                approvals::PlanAction::Prepare {
+                    intent,
+                    id,
+                    state_root,
+                },
+        } => return approvals::prepare(&args, &service, &scope, *intent, id, state_root),
+        Action::Approve {
+            plan_id,
+            transaction_id,
+            state_root,
+        } => return approvals::approve(&args, &service, plan_id, transaction_id, state_root),
+        _ => {}
+    }
     match args.command {
-        Action::Mcp | Action::Transactions { .. } => unreachable!("handled above"),
+        Action::Mcp
+        | Action::Transactions { .. }
+        | Action::Plans { .. }
+        | Action::Approve { .. }
+        | Action::Approvals { .. } => unreachable!("handled above"),
         Action::Providers => {
             let report = service.providers();
             let incomplete = !report.failures.is_empty()
