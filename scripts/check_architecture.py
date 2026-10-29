@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read-only architecture fitness checks; complements review and sandbox canaries."""
+"""Provider read-only and owned-persistence fitness (ADRs 0001-0011)."""
 import json
 import pathlib
 import re
@@ -122,7 +122,8 @@ allowed = {
     "agentmender-provider-codex": {"agentmender-domain", "agentmender-provider-api"},
     "agentmender-provider-claude": {"agentmender-domain", "agentmender-provider-api"},
     "agentmender-mcp-server": {"agentmender-domain", "agentmender-application"},
-    "agentmender": {"agentmender-domain", "agentmender-provider-api", "agentmender-application", "agentmender-provider-codex", "agentmender-provider-claude", "agentmender-mcp-server"},
+    "agentmender-persistence": {"agentmender-domain"},
+    "agentmender": {"agentmender-domain", "agentmender-provider-api", "agentmender-application", "agentmender-provider-codex", "agentmender-provider-claude", "agentmender-mcp-server", "agentmender-persistence"},
 }
 errors = []
 actual_packages = {p["name"] for p in metadata["packages"]}
@@ -153,8 +154,14 @@ for path in (ROOT / "crates").glob("*/src/**/*.rs"):
     source = production_source(path.read_text())
     code = mask_literals(source)
     reviewed_capture = path == ROOT / "crates/provider-codex/src/capture.rs"
+    crate_name = path.relative_to(ROOT / "crates").parts[0]
+    owned_files = {ROOT / f"crates/persistence/src/{name}.rs" for name in ["owned", "recovery"]}
+    reviewed_owned = path in owned_files
     for pattern in patterns:
-        if re.search(pattern, source) and not (reviewed_capture and pattern in patterns[1:]):
+        if (re.search(pattern, source)
+            and not (reviewed_capture and pattern in patterns[1:])
+            and not (reviewed_owned and pattern in patterns[:3])
+            and not (crate_name == "persistence" and path.name == "store.rs" and pattern == patterns[-1])):
             errors.append(f"possible provider mutation: {path.relative_to(ROOT)}: {pattern}")
     if path != ROOT / "crates/provider-api/src/macos_sandbox.rs" and (re.search(r"\bunsafe\b", code) or re.search(r"allow\s*\(\s*unsafe_code", code)):
         errors.append(f"unsafe code outside reviewed OS boundary: {path.relative_to(ROOT)}")
@@ -162,7 +169,31 @@ for path in (ROOT / "crates").glob("*/src/**/*.rs"):
         errors.append("disposable capture safety markers missing; review required")
     if "Command::new" in source and path != ROOT / "crates/provider-api/src/process.rs":
         errors.append(f"process dispatch outside sandbox boundary: {path.relative_to(ROOT)}")
-    crate_name = path.relative_to(ROOT / "crates").parts[0]
+    if crate_name == "persistence":
+        if re.search(r"\b(?:agentmender_provider_\w+|agentmender_application|agentmender_mcp_server|std::process|Command)\b", code):
+            errors.append(f"persistence crosses provider/inbound boundary: {path.relative_to(ROOT)}")
+        # ADR-0011: remove only the verified temporary second link after atomic
+        # no-replace publication. Final manifests and journal are never removed.
+        mutation_code = code
+        if path.name == "owned.rs":
+            stage_cleanup = r"\bfs::remove_file\s*\(\s*&stage\.path\s*\)"
+            if len(re.findall(stage_cleanup, mutation_code)) != 1:
+                errors.append("reviewed recovery staging cleanup contract changed")
+            mutation_code = re.sub(stage_cleanup, "stage_cleanup", mutation_code)
+        if re.search(r"\b(?:remove_file|remove_dir|remove_dir_all|rename|copy|set_len|truncate)\s*\(", mutation_code):
+            errors.append(f"persistent history or recovery rewrite/removal: {path.relative_to(ROOT)}")
+        if path.name == "recovery.rs" and not all(marker in source for marker in ["RecoveryManifest", "create_recovery_stage", "publish_recovery", "sync_all", "verify"]):
+            errors.append("typed durable recovery storage contract missing")
+        if path.name not in {"owned.rs", "recovery.rs", "store.rs", "windows_permissions.rs", "lib.rs"}:
+            errors.append(f"unreviewed persistence module: {path.relative_to(ROOT)}")
+        if "Connection::" in code and path.name != "store.rs":
+            errors.append(f"SQLite outside owned journal module: {path.relative_to(ROOT)}")
+    if crate_name in {"cli", "mcp-server", "application"} and re.search(
+        r"\b(?:TransactionStore|RecoveryStore|DurableIntent|create_transaction|record_intent|record_compensation_intent)\b", code
+    ):
+        errors.append(f"inbound interface can advance durable transactions: {path.relative_to(ROOT)}")
+    if crate_name.startswith("provider-") and re.search(r"\b(?:TransactionStore|RecoveryStore|DurableIntent|CleanupTransaction|TransactionEvent|JournalRecord)\b", code):
+        errors.append(f"provider adapter contains transaction authority: {path.relative_to(ROOT)}")
     if crate_name == "mcp-server":
         if (re.search(r"\b(?:agentmender_provider_(?:api|codex|claude)|std::(?:fs|process|net)|tokio::(?:fs|process|net)|rusqlite|sqlite|Command|File|OpenOptions)\b", code)
             or re.search(r"\buse\s+(?:std|tokio)\s*::\s*\{[^;]*(?:\bfs\b|\bprocess\b|\bnet\b)", code)
@@ -184,7 +215,7 @@ for path in (ROOT / "crates").glob("*/src/**/*.rs"):
             errors.append(f"impure {name} port override: {path.relative_to(ROOT)}")
     if re.search(r'\bfn\s+(?:archive|unarchive|purge|repair|delete)\b', code):
         errors.append(f"lifecycle or repair method before its milestone: {path.relative_to(ROOT)}")
-    if re.search(r'\b(?:fn|struct|enum|trait)\s+(?:execute_plan|approve_plan|ApprovalGrant|ApprovalBroker|RecoveryStore|RecoveryCoordinator|CleanupTransaction|TransactionJournal|DeleteFile|RunSql|RemoveDirectory|ExecuteCommand)\b', code):
+    if re.search(r'\b(?:fn|struct|enum|trait)\s+(?:execute_plan|approve_plan|ApprovalGrant|ApprovalBroker|DeleteFile|RunSql|RemoveDirectory|ExecuteCommand)\b', code):
         errors.append(f"execution/approval/recovery or low-level planning primitive before its milestone: {path.relative_to(ROOT)}")
     if crate_name == "domain" and any(marker in source for marker in [
         "sqlite_master", "state_5.sqlite", "claude-code-sessions", "cliSessionId",
@@ -211,4 +242,13 @@ if errors:
     sys.exit(1)
 if 'unsafe_code = "forbid"' not in (ROOT / "Cargo.toml").read_text():
     raise SystemExit("workspace unsafe-code prohibition changed")
-print("Architecture and real-state read-only source checks passed (7 crates).")
+store = production_source((ROOT / "crates/persistence/src/store.rs").read_text())
+for marker in ["try_lock", "synchronous=EXTRA", "BEGIN IMMEDIATE", "events_no_update", "events_no_delete", "validate_against", "verify_manifest", "SQLITE_OPEN_READ_ONLY", "SQLITE_OPEN_NOFOLLOW"]:
+    if marker not in store:
+        raise SystemExit(f"ADR-0011 journal safety contract missing: {marker}")
+transactions = production_source((ROOT / "crates/domain/src/transaction.rs").read_text())
+for enum in ["TransactionEvent", "TransactionBinding", "RecoveryManifest"]:
+    declaration = re.search(r"(?:enum|struct)\s+" + enum + r"\s*\{([^}]*?(?:\n\}))", transactions, re.S)
+    if declaration and re.search(r"\b(?:PathBuf|Value|String|Vec\s*<\s*u8)\b", declaration.group(1)):
+        raise SystemExit(f"raw content or operation payload in {enum}")
+print("Architecture and provider read-only/owned-persistence source checks passed (8 crates).")

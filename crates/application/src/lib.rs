@@ -1,4 +1,5 @@
 //! Query use cases shared by CLI and the read-only MCP interface.
+pub mod transactions;
 use agentmender_domain::*;
 use agentmender_provider_api::{ProviderAdapter, ProviderError, validate_scope};
 use serde::Serialize;

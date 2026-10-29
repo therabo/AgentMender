@@ -10,6 +10,7 @@ agentmender-domain.workspace = true
 agentmender-provider-api.workspace = true
 agentmender-application.workspace = true
 agentmender-mcp-server.workspace = true
+agentmender-persistence.workspace = true
 agentmender-provider-codex.workspace = true
 agentmender-provider-claude.workspace = true
 clap.workspace = true

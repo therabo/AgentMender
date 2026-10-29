@@ -17,6 +17,8 @@ use agentmender_provider_codex::CodexAdapter;
 use clap::{Parser, Subcommand, ValueEnum};
 use serde::Serialize;
 
+mod transactions;
+
 #[derive(Clone, Parser)]
 #[command(version, about = "Read-only inventory of AI agent state")]
 struct Args {
@@ -80,11 +82,25 @@ enum Action {
     Providers,
     Mcp,
     Scan,
-    Inspect { id: String },
+    Inspect {
+        id: String,
+    },
     Graph,
     Verify,
-    Plan { intent: PlanIntent, id: String },
-    Explain { id: String },
+    Plan {
+        intent: PlanIntent,
+        id: String,
+    },
+    Explain {
+        id: String,
+    },
+    /// Inspect existing AgentMender-owned durable knowledge without provider access.
+    Transactions {
+        #[arg(long, value_parser = absolute_path)]
+        state_root: PathBuf,
+        #[command(subcommand)]
+        action: transactions::TransactionAction,
+    },
 }
 
 fn entry_limit(value: &str) -> Result<usize, String> {
@@ -150,6 +166,7 @@ enum ErrorCode {
     AmbiguousEntity,
     InspectionUnavailable,
     OutputError,
+    TransactionUnavailable,
 }
 #[derive(Serialize)]
 struct CliError {
@@ -517,6 +534,9 @@ fn adapters(
     Ok(adapters)
 }
 fn run(args: Args) -> Result<bool, CliError> {
+    if let Action::Transactions { state_root, action } = &args.command {
+        return transactions::run(&args, state_root, action);
+    }
     if args.desktop_fixture && !matches!(args.provider, Some(SelectedProvider::Claude)) {
         return Err(CliError::new(
             ErrorCode::InvalidArguments,
@@ -617,7 +637,7 @@ fn run(args: Args) -> Result<bool, CliError> {
         max_entries: args.max_entries,
     };
     match args.command {
-        Action::Mcp => unreachable!("handled above"),
+        Action::Mcp | Action::Transactions { .. } => unreachable!("handled above"),
         Action::Providers => {
             let report = service.providers();
             let incomplete = !report.failures.is_empty()
