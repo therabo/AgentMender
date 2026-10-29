@@ -1158,6 +1158,21 @@ mod tests {
             panic!("fault did not abort");
         }
     }
+    fn after_child_exit<T>(mut operation: impl FnMut() -> Result<T>) -> Result<T> {
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        loop {
+            match operation() {
+                Err(StoreError::Locked) => {
+                    let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+                    if remaining.is_zero() {
+                        return Err(StoreError::Locked);
+                    }
+                    std::thread::sleep(remaining.min(Duration::from_millis(10)));
+                }
+                result => return result,
+            }
+        }
+    }
     #[test]
     fn crash_and_error_boundaries() {
         for (var, boundary, diverged, count) in [
@@ -1190,14 +1205,21 @@ mod tests {
             } else {
                 assert!(status.success());
             }
-            let opened = TransactionStore::open(root.clone());
+            let opened = after_child_exit(|| TransactionStore::open(root.clone()));
             if diverged {
-                assert!(opened.is_err());
-                let prefix = TransactionReader::external_prefix(&root).unwrap();
-                assert_eq!(prefix.records.len(), count);
+                match opened {
+                    Err(StoreError::Invalid) => {}
+                    Err(e) => panic!("{var} {boundary}: expected invalid divergence, got {e}"),
+                    Ok(_) => panic!(
+                        "{var} {boundary}: expected invalid divergence, reopened successfully"
+                    ),
+                }
+                let prefix = after_child_exit(|| TransactionReader::external_prefix(&root))
+                    .unwrap_or_else(|e| panic!("{var} {boundary}: external prefix: {e}"));
+                assert_eq!(prefix.records.len(), count, "{var} {boundary}");
             } else {
-                let s = opened.unwrap();
-                assert_eq!(s.list().unwrap().len(), count);
+                let s = opened.unwrap_or_else(|e| panic!("{var} {boundary}: reopen: {e}"));
+                assert_eq!(s.list().unwrap().len(), count, "{var} {boundary}");
             }
         }
     }
