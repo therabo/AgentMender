@@ -16,6 +16,8 @@ pub mod integrity;
 pub use integrity::*;
 pub mod planning;
 pub use planning::*;
+pub mod transaction;
+pub use transaction::*;
 
 /// Recognize an observed provider path without resolving it on this host.
 /// Provider metadata and fixtures may describe another OS. This is not a safe
