@@ -1,5 +1,11 @@
 # Dependency decisions
 
+M9 adds only the already locked `proptest` workspace package as a Claude provider
+development dependency for zero-authority guards. No new registry package/version,
+production dependency, runtime, MSRV or persistence schema is introduced. The opt-in
+native evidence reproducer uses Python's standard library and the existing macOS
+sandbox facility; production remains Rust-only and Claude read-only.
+
 M8 reuses the locked workspace packages. Application and provider-codex add only
 the existing persistence crate for ADR-0013's narrow durable handoff. Application
 tests reuse existing tempfile/proptest. No new registry package, RPC/HTTP stack,

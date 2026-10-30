@@ -95,6 +95,7 @@ version = "0.1.0"
 dependencies = [
  "agentmender-domain",
  "agentmender-provider-api",
+ "proptest",
  "serde",
  "serde_json",
  "tempfile",

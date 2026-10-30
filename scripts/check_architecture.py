@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Provider observation, independent approval and gated lifecycle fitness (ADRs 0001-0013)."""
+"""Provider observation, independent approval and gated lifecycle fitness (ADRs 0001-0014)."""
 import json
 import pathlib
 import re
@@ -145,6 +145,33 @@ def approval_boundary_violation(source, crate_name, module_name):
     return False
 
 
+def claude_lifecycle_violation(source):
+    """ADR-0014: no Claude effects until project identity/scope/proofs are validated.
+
+    Audit every production module, including code after test modules. Only the
+    existing fixed read-only version/bundle probes may cross the process helper.
+    This is source fitness, supplemented by compiled guard properties and review.
+    """
+    code = mask_literals(production_source(source))
+    forbidden = (
+        r'\b(?:Command|Child|Stdio|OpenOptions|DirBuilder|File|Write|DurableEffectPort|'
+        r'DurableIntent|DurableObservation|EffectAttempt|NativeEffectBoundary|'
+        r'LifecycleCapability|NativeLifecycleOperation)\b|'
+        r'\b(?:remove_file|remove_dir|remove_dir_all|rename|copy|create_dir|'
+        r'create_dir_all|set_len|set_permissions|write_all|write_fmt|truncate)\s*\(|'
+        r'\b(?:std|tokio)\s*::\s*(?:process|net)\b|'
+        r'\buse\s+std\s*::\s*fs\b|'
+        r'\buse\s+std\s*::\s*\{[^;]*\bfs\b|'
+        r'\.(?:write|write_vectored)\s*\(|'
+        r'\bfn\s+(?:planning_context|dispatch|launch|execute|reconcile|'
+        r'archive|unarchive|purge|delete|restore)\b'
+    )
+    if re.search(forbidden, code):
+        return True
+    return any(name not in {'probe_version', 'read_bundle_metadata', 'BundleMetadata'}
+               for name in re.findall(r'\bprocess\s*::\s*(\w+)', code))
+
+
 # Regression: production code after a test module must still be audited.
 example = '#[cfg(test)] mod tests { let x = r#"}"#; fs::write("fixture", b"x"); }\nfn later() { fs::write("unsafe", b"x"); }'
 filtered = production_source(example)
@@ -192,6 +219,22 @@ for canary in ['use agentmender_persistence::TransactionStore;', 'fn bypass() { 
     assert approval_boundary_violation(canary, 'provider-codex', 'lifecycle.rs')
 assert approval_boundary_violation('fn bypass() { store.record_intent(); }', 'cli', 'lifecycle.rs')
 assert impl_methods('impl DurableIntent { pub fn bypass() -> Self { Self {} } }', 'DurableIntent') == {'bypass'}
+for canary in [
+    'fn later() { fs::remove_file(path); }',
+    'fn later() { file.write_all(bytes); }',
+    'use std::fs as storage; fn later() { storage::write(path, bytes); }',
+    'use std::{fs as storage}; fn later() { storage::write(path, bytes); }',
+    'use std::fs::OpenOptions as Options;',
+    'fn later() { process::spawn_provider(args); }',
+    'fn later() { let c = LifecycleCapability {}; }',
+    'fn planning_context(&self) -> Context { context }',
+    'fn dispatch(&self, intent: DurableIntent) {}',
+]:
+    assert claude_lifecycle_violation(canary), 'Claude lifecycle fitness canary failed'
+assert claude_lifecycle_violation('#[cfg(test)] mod tests {}\nfn later() { fs::rename(a, b); }')
+assert not claude_lifecycle_violation('#[cfg(test)] mod tests { fn fixture() { fs::write(a, b); } }')
+assert not claude_lifecycle_violation('fn read() { process::probe_version(kind, exe); }')
+assert not claude_lifecycle_violation('fn read() { let text = "purge; fs::remove_file(path)"; }')
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 metadata = json.loads(subprocess.check_output(
@@ -238,6 +281,8 @@ for path in (ROOT / "crates").glob("*/src/**/*.rs"):
     reviewed_capture = path == ROOT / "crates/provider-codex/src/capture.rs"
     reviewed_lifecycle = path == ROOT / "crates/provider-codex/src/lifecycle.rs"
     crate_name = path.relative_to(ROOT / "crates").parts[0]
+    if crate_name == 'provider-claude' and claude_lifecycle_violation(source):
+        errors.append(f'Claude lifecycle authority before validated project contract: {path.relative_to(ROOT)}')
     if approval_boundary_violation(source, crate_name, path.name):
         errors.append(f"independent approval boundary violation: {path.relative_to(ROOT)}")
     owned_files = {ROOT / f"crates/persistence/src/{name}.rs" for name in ["owned", "recovery"]}
@@ -418,4 +463,4 @@ if len(execution) != 1 or not (0 <= execution[0].find('.record_intent(') < execu
     raise SystemExit('native dispatch does not follow durable intent in the execution workflow')
 if not re.search(r'fn\s+dispatch\s*\([^;{]*\bDurableIntent\b', mask_literals(handoff)):
     raise SystemExit('lifecycle effect port lost its owned durable gate')
-print("Architecture, independent approval and gated Codex lifecycle checks passed (8 crates).")
+print("Architecture, independent approval, gated Codex and read-only Claude checks passed (8 crates).")

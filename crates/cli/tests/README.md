@@ -1,5 +1,19 @@
 # Discovery test boundaries
 
+M9 remains OPEN with zero Claude execution profiles. Its provider guard suite adds
+one generated property, 256 cases, seed `0x4d395f636c617564`, plus two deterministic
+tests. Both fixture classes exercise every project/session and intent; actual
+transcript disappearance is tested only on copied private fixtures. Claimed versions,
+read-only compatibility, IDs and locators never create mutation authority. CLI guards
+reject Claude execute/reconcile before durable-root access and verify an actual
+Unsupported preparation plan without creating a transaction or grant.
+
+`scripts/probe_claude_lifecycle.py` is a separately opted-in macOS investigation
+reproducer for the exact installed Code 2.1.222 binary. It generates all synthetic
+state and asserts six native counterexamples. It is not run by CI or a production
+adapter acceptance test. See `compatibility/claude/lifecycle-m9/README.md` and
+`docs/claude-lifecycle.md` for provenance, exact pin/isolation and OPEN limitations.
+
 M8 adds sixteen generated verification properties at 256 cases each, seed
 `0x4d385f6c69666531` (4,096 cases), focused execution/reconciliation/retained-state
 regressions and compile-fail one-shot gate checks. Reopen tests cover intent,

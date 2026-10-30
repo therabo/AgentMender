@@ -152,22 +152,45 @@ fn lifecycle_rejects_fixture_and_claude_configuration_before_state_access() {
     let home = tempfile::tempdir().unwrap();
     let missing = home.path().join("must-not-be-created");
     let id = "a".repeat(64);
-    for options in [
-        vec!["--provider", "claude"],
-        vec!["--provider", "codex", "--fixture", "unused"],
-    ] {
+    for action in ["execute", "reconcile"] {
+        for options in [
+            vec!["--provider", "claude"],
+            vec!["--provider", "codex", "--fixture", "unused"],
+        ] {
+            let output = Command::new(env!("CARGO_BIN_EXE_agentmender"))
+                .env_clear()
+                .env("HOME", home.path())
+                .env("PATH", "")
+                .args(options)
+                .args(["--json", "transactions", "--state-root"])
+                .arg(&missing)
+                .args([action, &id])
+                .output()
+                .unwrap();
+            assert_eq!(output.status.code(), Some(2));
+            assert!(!missing.exists());
+        }
+    }
+    let (root, id) = fixture(home.path());
+    let before = contents(&root);
+    for action in ["execute", "reconcile"] {
         let output = Command::new(env!("CARGO_BIN_EXE_agentmender"))
             .env_clear()
             .env("HOME", home.path())
             .env("PATH", "")
-            .args(options)
-            .args(["--json", "transactions", "--state-root"])
-            .arg(&missing)
-            .args(["execute", &id])
+            .args([
+                "--provider",
+                "claude",
+                "--json",
+                "transactions",
+                "--state-root",
+            ])
+            .arg(&root)
+            .args([action, &id])
             .output()
             .unwrap();
         assert_eq!(output.status.code(), Some(2));
-        assert!(!missing.exists());
+        assert_eq!(contents(&root), before);
     }
 }
 #[test]
@@ -292,4 +315,51 @@ fn plan_inspection_returns_the_exact_durable_plan_without_writes() {
     assert_eq!(review["report"]["plan"], expected);
     assert_eq!(review["report"]["transaction_id"], id);
     assert_eq!(contents(&root), before);
+}
+
+#[test]
+fn claude_unsupported_prepare_never_creates_state_or_grants() {
+    let home = tempfile::tempdir().unwrap();
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/claude")
+        .join("2.1.311-synthetic");
+    let scan = Command::new(env!("CARGO_BIN_EXE_agentmender"))
+        .env_clear()
+        .env("HOME", home.path())
+        .env("PATH", "")
+        .args(["--json", "--provider", "claude", "--fixture"])
+        .arg(&fixture)
+        .arg("scan")
+        .output()
+        .unwrap();
+    assert!(
+        scan.status.success(),
+        "{}",
+        String::from_utf8_lossy(&scan.stderr)
+    );
+    let result: serde_json::Value = serde_json::from_slice(&scan.stdout).unwrap();
+    let id = result["report"]["snapshots"][0]["sessions"][0]["id"]
+        .as_str()
+        .unwrap();
+    let root = home.path().join("missing-owned-root");
+    let prepare = Command::new(env!("CARGO_BIN_EXE_agentmender"))
+        .env_clear()
+        .env("HOME", home.path())
+        .env("PATH", "")
+        .args(["--provider", "claude", "--fixture"])
+        .arg(&fixture)
+        .args(["plans", "prepare", "purge", id, "--state-root"])
+        .arg(&root)
+        .output()
+        .unwrap();
+    assert_eq!(prepare.status.code(), Some(2));
+    let plan: serde_json::Value = serde_json::from_slice(&prepare.stdout).unwrap();
+    assert_eq!(plan["content"]["status"], "unsupported");
+    assert_eq!(plan["content"]["request"]["target"]["local_id"], id);
+    assert_eq!(plan["content"]["request"]["intent"], "purge");
+    assert!(plan["content"]["operations"].as_array().unwrap().is_empty());
+    assert!(plan["content"]["capability"].is_null());
+    assert!(plan["content"]["effect_contract"].is_null());
+    assert!(plan.get("transaction_id").is_none());
+    assert!(!root.exists());
 }
