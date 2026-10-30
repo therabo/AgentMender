@@ -1601,7 +1601,7 @@ mod tests {
                     .status()
                     .unwrap();
                 assert!(!status.success());
-                let reopened = TransactionStore::open(root.clone());
+                let reopened = after_child_exit(|| TransactionStore::open(root.clone()));
                 if ["before_write", "commit"].contains(&boundary) {
                     let store = reopened.unwrap();
                     assert_eq!(
@@ -1616,7 +1616,8 @@ mod tests {
                     }
                 } else {
                     assert!(reopened.is_err());
-                    let prefix = TransactionReader::external_prefix(&root).unwrap();
+                    let prefix =
+                        after_child_exit(|| TransactionReader::external_prefix(&root)).unwrap();
                     assert_eq!(
                         prefix.records.len(),
                         before + usize::from(boundary != "partial")
