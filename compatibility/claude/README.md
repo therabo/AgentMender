@@ -1,5 +1,10 @@
 # Claude installation and metadata evidence
 
+M9's separate [native lifecycle investigation](lifecycle-m9/README.md) keeps Claude
+read-only. Project purge exists in installed Code 2.1.222, but no lifecycle profile
+is enabled: dry-run startup writes, nonexclusive selector scope and ambiguous
+partial failures prevent safe execution. ReadOnlyKnown below grants no mutation.
+
 ## Actual installation finding
 
 **OBSERVED LOCALLY, 2026-10-28:** Claude Desktop exists at

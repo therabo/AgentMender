@@ -15,3 +15,4 @@
 | [0011: Durable transaction knowledge before provider execution](0011-durable-transaction-knowledge.md) | Accepted |
 | [0012: Independent local approval and atomic authorization handoff](0012-independent-local-approval.md) | Accepted |
 | [0013: Exact Codex unarchive through a consumed durable handoff](0013-codex-durable-native-handoff.md) | Accepted |
+| [0014: Claude project lifecycle evidence gate](0014-claude-project-lifecycle-evidence-gate.md) | Accepted safety boundary; M9 OPEN |

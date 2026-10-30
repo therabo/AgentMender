@@ -1,0 +1,46 @@
+{
+  "provider": "claude",
+  "providers_exit": 0,
+  "scan_exit": 2,
+  "presence": "installed",
+  "version": "2.1.222",
+  "installations": [
+    {
+      "surface": "desktop",
+      "version": "4.29.0"
+    },
+    {
+      "surface": "bundled_cli",
+      "version": "2.1.222"
+    }
+  ],
+  "compatibility": "read_only_known",
+  "evidence": "real_partial",
+  "completeness": "partial",
+  "workspaces": 1,
+  "projects": 1,
+  "sessions": 7,
+  "artifacts": 71,
+  "references": 8,
+  "inspect_succeeded": true,
+  "verify_exit": 2,
+  "verification_status": "unknown",
+  "verification_evidence": "real_partial",
+  "verification_diagnostics": [],
+  "integrity_findings": 0,
+  "integrity_blockers": 125,
+  "integrity_blocker_codes": [
+    "missing_integrity_contract",
+    "partial_coverage",
+    "unknown_artifact",
+    "unknown_producer",
+    "unmet_prerequisite"
+  ],
+  "residuals": 0,
+  "diagnostics": [],
+  "coverage": "bounded Desktop sidecars and configured CLI inventory; other histories and session classes omitted; all artifacts protected",
+  "fingerprinted_entries": 51,
+  "changed_entries": 0,
+  "fingerprints_match": true,
+  "atime_excluded": true
+}

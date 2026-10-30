@@ -1,5 +1,15 @@
 # AgentMender engineering constraints
 
+M8 is formally integrated at `83f0692cdda33bc3be34146ab8ceefab5dadf1f3`.
+M9 investigation belongs on `milestone/m9-claude-lifecycle`. ADR-0014 keeps M9 OPEN:
+zero Claude mutation operations/profiles, no dispatcher or storage fallback.
+Installed Code 2.1.222 recognizes project purge, but isolated native dry-run itself
+writes configuration/backups. Never invoke it against real state before durable
+intent. Existing heuristic projects do not supply native purge identity or closed
+effects. Do not widen session targets, introduce a fake project executor, or change
+Codex semantics. Evidence/guard tests do not establish M9 lifecycle completion.
+Historical milestone constraints below remain context except where later ADRs apply.
+
 Current development scope is M8 on `milestone/m8-codex-lifecycle`, after M7 was
 formally integrated at `5cf94c01d1d14acf6034d7bb7f5521547ee470dd`.
 ADR-0013 supersedes the historical M7-only execution prohibitions below only for

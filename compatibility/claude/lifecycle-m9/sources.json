@@ -1,0 +1,30 @@
+{
+  "retrieved_date": "2026-10-30",
+  "sources": [
+    {
+      "url": "https://code.claude.com/docs/en/claude-directory#clear-local-data",
+      "type": "OfficialDocumentation",
+      "claim": "Current purge project selection/effects/retention; pre2.1.288 name project purge; current contract cannot alone attest installed2.1.222."
+    },
+    {
+      "url": "https://code.claude.com/docs/en/cli-reference",
+      "type": "OfficialDocumentation",
+      "claim": "Current native CLI purge flags; installed exact help independently verified."
+    },
+    {
+      "url": "https://code.claude.com/docs/en/changelog",
+      "type": "OfficialDocumentation",
+      "claim": "Introduced project purge in2.1.126; renamed2.1.288; later fixes mention silent deletion error exit0/hang and Unicode-history/subfolder behavior. No current version semantics inherited."
+    },
+    {
+      "url": "https://code.claude.com/docs/en/desktop#archive-a-session",
+      "type": "OfficialDocumentation",
+      "claim": "Desktop session UI archive with worktree/uncommitted changes and delayed cleanup effects; no exact4.29.0 external typed contract established."
+    },
+    {
+      "url": "https://code.claude.com/docs/en/sessions#where-transcripts-are-stored",
+      "type": "OfficialDocumentation",
+      "claim": "Local CLI sessions tied to project directory; transcript format internal and changeable; resume is continuation, not an unarchive lifecycle contract."
+    }
+  ]
+}

@@ -1,0 +1,108 @@
+{
+  "schema_version": 1,
+  "observed_date": "2026-10-30",
+  "classification": "investigation_only_not_an_execution_profile",
+  "lifecycle_profile_enabled": false,
+  "production_mutation_operations": [],
+  "installation": {
+    "desktop": {
+      "id": "com.anthropic.claudefordesktop",
+      "version": "4.29.0",
+      "executable": "Claude",
+      "info_sha256": "37df81cc86ec35bdd98394cb8bce309464862bea55e4bb758a3aae26e18d6c7b",
+      "executable_sha256": "2aee4aefad116fded9baf446fe474b8f725b5face9ef65c671f681638f1f35d2",
+      "executable_bytes": 120064,
+      "Contents/_CodeSignature/CodeResources": {
+        "sha256": "0132e154a4de5287b515fb1d4bc8f7d905ba69776dec772b830cd10b0911d4f2",
+        "bytes": 19414
+      },
+      "Contents/embedded.provisionprofile": {
+        "sha256": "47163ea1a0f9af4b400a6644bb5b334b53fbff08945f8589ad3dd121ce8f4069",
+        "bytes": 12521
+      }
+    },
+    "code": {
+      "id": "com.anthropic.claude-code",
+      "version": "2.1.222",
+      "executable": "claude",
+      "info_sha256": "1c4546041b57aabe93c3508d88bbc6c6b3e54bb0db29eda6a0cacb9142de1d83",
+      "executable_sha256": "16ad925cea3d7752af589f8a63b0d5689b2ad3e95f01797847e6034715e84e12",
+      "executable_bytes": 271289792,
+      "Contents/_CodeSignature/CodeResources": {
+        "sha256": "6686de10a28a2fe11b36cbb86dcbacc827cfc4ea116b4dabf1845e5aee629e9b",
+        "bytes": 2200
+      }
+    }
+  },
+  "native_contract_candidate": {
+    "command": "--bare project purge <internally generated synthetic project path>",
+    "provider_target": "project_path_selector",
+    "validated_lossless_domain_mapping": false,
+    "closed_effect_boundary": false,
+    "authoritative_deletion_proof": false,
+    "compensation": "not_compensatable"
+  },
+  "isolation": {
+    "private_generated_home_config_cwd": true,
+    "outside_writes_denied": true,
+    "network_fork_mach_denied": true,
+    "real_home_content_denied_except_exact_binary_bundle": true,
+    "credentials_copied": false,
+    "real_user_lifecycle_effects": false
+  },
+  "initial_probes": 17,
+  "first_reproduction_probes": 15,
+  "final_checked_script_run": {
+    "provenance": "ActualInstalledNativeBehaviorOnSyntheticFixturesOnly",
+    "production_execution_supported": false,
+    "executable_sha256": "16ad925cea3d7752af589f8a63b0d5689b2ad3e95f01797847e6034715e84e12",
+    "source_executable_unchanged": true,
+    "native_probe_count": 15,
+    "yes_invocations": 6,
+    "checks_passed": 6,
+    "checks_failed": 0,
+    "labels": [
+      "version",
+      "help",
+      "project-help",
+      "purge-help",
+      "nonbare-startup",
+      "basic-dry",
+      "basic-apply",
+      "basic-post-dry",
+      "collision-dry",
+      "collision-apply",
+      "nested-dry",
+      "nested-apply",
+      "denied-dry",
+      "denied-apply",
+      "denied-late-apply"
+    ]
+  },
+  "total_native_probes": 62,
+  "total_synthetic_yes_invocations": 24,
+  "final_findings": {
+    "dry_run_changed_config": true,
+    "dry_run_created_backup": true,
+    "collision_deleted_two_transcripts": true,
+    "nested_deleted_two_transcripts": true,
+    "denied_first_exit_zero_without_deletions_or_summary": true,
+    "denied_late_exit_zero_after_six_session_store_deletions_without_summary": true
+  },
+  "initial_raw_evidence_sha256": {
+    "version.json": "ce72bec49e98278743fbc2f294b3caae0e0f0f4ec38521016749ea062dc4e4f8",
+    "project-help.json": "b1c3e604c4cb8b3fca7971fdf855859f7caedbc12ee26a28a239c13f0b01de4e",
+    "project-purge-help.json": "951c65e1b0b00331f85ae34a3aaf3071e520f7c5b7c48dc6c8d6f31d5fec6d9b",
+    "case-basic-bare-dry-run.json": "c515d4d198407d83c8fab29df33f39c15615e49fb9d8cddd37b6bacb2398cdc0",
+    "case-basic-bare-purge.json": "ab091dbde9db085f4abd4b25904e2b61f0d271f30bc269b08b914253574e3dab",
+    "collision-apply.json": "558f48b738b5baf26dfdde85919363db4fe51eff47d9ba31d916a6d602f23d19",
+    "nested-apply.json": "172e07669ce002229ad308bfb206ba8f786bfbc69a3bd69f6799981b68aa5d8f",
+    "denied-apply.json": "d0b4529174795385966cda8974f3894f0ab89f25438a07f00ccfdd80600c058d",
+    "denied-late-apply.json": "d48c7450c6aec7e408605040b72a03f30a664d7fe889c31e60499685270029dd",
+    "write-denial.json": "396bbad2dfde80eb7e00c12f533284ae22d6e348f768bfdc6d6fd1405534c942",
+    "identity-recheck.json": "35ff330bd706804ed928f88e161c1a893973bead4dfae1abbf74bd6e8beb28d8"
+  },
+  "reproduction_script_sha256": "35683501625e22a6692ccf2050b0e1134f98bec874e91e32a4f2f63924d46764",
+  "provenance_limit": "Actual installed native behavior on explicitly synthetic disposable inputs; not captured real histories, exhaustive provider semantics, planning proofs or mutation authority.",
+  "preflight_hardening_reproduction_probes": 15
+}

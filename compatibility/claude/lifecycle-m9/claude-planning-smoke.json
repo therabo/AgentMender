@@ -1,0 +1,179 @@
+{
+  "plans": [
+    {
+      "target_class": "sessions",
+      "intent": "archive",
+      "exit": 2,
+      "status": "unsupported",
+      "operations": 0,
+      "capability_present": false,
+      "effect_contract_present": false,
+      "blockers": [
+        "capability_unavailable",
+        "effect_boundary_unavailable",
+        "evidence_status_unverified",
+        "incomplete_discovery",
+        "integrity_unverified",
+        "native_identity_unverified"
+      ]
+    },
+    {
+      "target_class": "sessions",
+      "intent": "unarchive",
+      "exit": 2,
+      "status": "unsupported",
+      "operations": 0,
+      "capability_present": false,
+      "effect_contract_present": false,
+      "blockers": [
+        "capability_unavailable",
+        "effect_boundary_unavailable",
+        "evidence_status_unverified",
+        "incomplete_discovery",
+        "integrity_unverified",
+        "native_identity_unverified"
+      ]
+    },
+    {
+      "target_class": "sessions",
+      "intent": "purge",
+      "exit": 2,
+      "status": "unsupported",
+      "operations": 0,
+      "capability_present": false,
+      "effect_contract_present": false,
+      "blockers": [
+        "capability_unavailable",
+        "effect_boundary_unavailable",
+        "evidence_status_unverified",
+        "incomplete_discovery",
+        "integrity_unverified",
+        "native_identity_unverified"
+      ]
+    },
+    {
+      "target_class": "sessions",
+      "intent": "soft-delete",
+      "exit": 2,
+      "status": "unsupported",
+      "operations": 0,
+      "capability_present": false,
+      "effect_contract_present": false,
+      "blockers": [
+        "evidence_status_unverified",
+        "incomplete_discovery",
+        "integrity_unverified",
+        "native_identity_unverified",
+        "unsupported_intent"
+      ]
+    },
+    {
+      "target_class": "sessions",
+      "intent": "repair",
+      "exit": 2,
+      "status": "unsupported",
+      "operations": 0,
+      "capability_present": false,
+      "effect_contract_present": false,
+      "blockers": [
+        "evidence_status_unverified",
+        "incomplete_discovery",
+        "integrity_unverified",
+        "native_identity_unverified",
+        "unsupported_intent"
+      ]
+    },
+    {
+      "target_class": "projects",
+      "intent": "archive",
+      "exit": 2,
+      "status": "unsupported",
+      "operations": 0,
+      "capability_present": false,
+      "effect_contract_present": false,
+      "blockers": [
+        "capability_unavailable",
+        "effect_boundary_unavailable",
+        "evidence_status_unverified",
+        "incomplete_discovery",
+        "integrity_unverified",
+        "native_identity_unverified",
+        "target_not_native_session"
+      ]
+    },
+    {
+      "target_class": "projects",
+      "intent": "unarchive",
+      "exit": 2,
+      "status": "unsupported",
+      "operations": 0,
+      "capability_present": false,
+      "effect_contract_present": false,
+      "blockers": [
+        "capability_unavailable",
+        "effect_boundary_unavailable",
+        "evidence_status_unverified",
+        "incomplete_discovery",
+        "integrity_unverified",
+        "native_identity_unverified",
+        "target_not_native_session"
+      ]
+    },
+    {
+      "target_class": "projects",
+      "intent": "purge",
+      "exit": 2,
+      "status": "unsupported",
+      "operations": 0,
+      "capability_present": false,
+      "effect_contract_present": false,
+      "blockers": [
+        "capability_unavailable",
+        "effect_boundary_unavailable",
+        "evidence_status_unverified",
+        "incomplete_discovery",
+        "integrity_unverified",
+        "native_identity_unverified",
+        "target_not_native_session"
+      ]
+    },
+    {
+      "target_class": "projects",
+      "intent": "soft-delete",
+      "exit": 2,
+      "status": "unsupported",
+      "operations": 0,
+      "capability_present": false,
+      "effect_contract_present": false,
+      "blockers": [
+        "evidence_status_unverified",
+        "incomplete_discovery",
+        "integrity_unverified",
+        "native_identity_unverified",
+        "target_not_native_session",
+        "unsupported_intent"
+      ]
+    },
+    {
+      "target_class": "projects",
+      "intent": "repair",
+      "exit": 2,
+      "status": "unsupported",
+      "operations": 0,
+      "capability_present": false,
+      "effect_contract_present": false,
+      "blockers": [
+        "evidence_status_unverified",
+        "incomplete_discovery",
+        "integrity_unverified",
+        "native_identity_unverified",
+        "target_not_native_session",
+        "unsupported_intent"
+      ]
+    }
+  ],
+  "fingerprinted_entries": 51,
+  "changed_entries": 0,
+  "fingerprints_match": true,
+  "atime_excluded": true
+}
