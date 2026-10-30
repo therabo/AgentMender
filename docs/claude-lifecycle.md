@@ -1,10 +1,33 @@
-# Claude project lifecycle investigation: M9 OPEN
+# Claude project lifecycle investigation: M9 BLOCKED
 
 M9 enables **zero Claude mutation operations**. Native project purge exists in the
 installed Code binary, but its target/effects/verification contract is insufficient
 for AgentMender execution. No Claude mutation adapter or lifecycle compatibility
 profile is installed. Discovery remains read-only. See [ADR-0014](adr/0014-claude-project-lifecycle-evidence-gate.md)
 and the [native evidence record](../compatibility/claude/lifecycle-m9/README.md).
+
+## Current official release follow-up
+
+[ADR-0015](adr/0015-current-claude-purge-provider-blockers.md) changes the milestone
+assessment to BLOCKED: the current local provider contract requires upstream
+identity/effects/verification evidence before safe completion. The latest public
+non-prerelease is Code 2.1.314; the separately named delayed `stable` update channel
+serves 2.1.308. Both were acquired privately without installing or upgrading them.
+Their [separate evidence and comparison](../compatibility/claude/lifecycle-m9/current-2026-10-30/README.md)
+must not be applied retroactively to 2.1.222.
+
+Fresh-case current-version probes confirm continued dry-run/startup writes,
+colliding selectors and nested cascades. Partial deletion failures now exit 1,
+while continuing other destructive effects. This improves error reporting without
+proving identity, atomicity, complete effects or a deletion postcondition. There
+is still no authoritative complete read-only reconciliation interface. No mutation
+adapter or new production profile was added. All six operations below remain
+Unsupported for all investigated exact versions.
+
+The following installed-profile sections preserve the historical 2.1.222 findings.
+Historical counts and exit-0 behavior describe that exact binary only. The older
+reproducer reused state within several cases; the follow-up uses independent
+fresh cases, with an explicitly marked shared concurrency experiment.
 
 ## Environment and authority
 
@@ -119,7 +142,9 @@ write/transport/authority additions and capability-producing planning overrides.
 Existing Codex and MCP tests remain unchanged. These gates protect the OPEN state;
 they do not replace native lifecycle execution/crash/reconciliation acceptance tests.
 
-M9 requires a lossless native project identity, closed effects including startup and
-all cascades, a safe planning-time native observation contract, authoritative fresh
-verification and a reviewed explicit project handoff before it can pass. No M10 work
-is started or recommended while this gate remains OPEN.
+M9 requires an upstream lossless native project identity and exhaustive membership,
+a versioned closed effects/retention contract including startup and concurrency,
+and authoritative coherent read-only observations proving absence and retained
+invariants after ambiguous outcomes. Only then can an explicit project handoff
+reuse M6-M8 and receive positive native acceptance tests. No M10 work is started
+or recommended; M9 is not merged.

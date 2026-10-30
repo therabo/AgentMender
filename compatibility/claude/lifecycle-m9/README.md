@@ -4,6 +4,10 @@ Observed 2026-10-30 after [M8 formal integration](../../../docs/milestones/m8-in
 This directory contains categorical investigation evidence, not caller-importable
 proofs or lifecycle compatibility. **M9 is OPEN; all six operations are Unsupported.**
 
+This is the preserved installed-2.1.222 investigation. The subsequent
+[current-release investigation](current-2026-10-30/README.md) changes the milestone
+assessment to BLOCKED without changing this exact profile's findings or support.
+
 Exact installation identities, executable/signing-file hashes, isolation facts,
 probe counts, counterexamples and raw-evidence commitments are in [evidence.json](evidence.json).
 Desktop 4.29.0 (`com.anthropic.claudefordesktop`) owns Code 2.1.222

@@ -1,0 +1,313 @@
+{
+  "report_at_utc": "2026-10-30T16:17:55.762795+00:00",
+  "channels": {
+    "latest": "2.1.314",
+    "latest_github_release": {
+      "prerelease": false,
+      "draft": false,
+      "published_at": "2026-10-30T01:06:26Z",
+      "url": "https://github.com/anthropics/claude-code/releases/tag/v2.1.314"
+    },
+    "stable_named_channel": "2.1.308",
+    "meaning": "Latest public non-prerelease release and delayed stable update channel differ. Primary research 2.1.314; separate control 2.1.308. Neither confers lifecycle compatibility."
+  },
+  "artifacts": [
+    {
+      "version": "2.1.314",
+      "channel": "latest non-prerelease",
+      "url": "https://downloads.claude.ai/claude-code-releases/2.1.314/darwin-arm64/claude",
+      "bytes": 278848096,
+      "sha256": "21d6e7b9a6f07b4cfcb7df13760b3b72aa25e084e13a5354413382987ba832ed",
+      "manifest_match": true,
+      "file": "Mach-O 64-bit executable arm64",
+      "manifest_build_commit": "5c99a5b6399766569a32979c715862fdb61c7efa",
+      "manifest_build_date": "2026-10-29T23:00:10Z",
+      "code_signature": {
+        "identifier": "com.anthropic.claude-code",
+        "authority": "Developer ID Application: Anthropic PBC (Q6L2SF6YDW)",
+        "team_id": "Q6L2SF6YDW",
+        "cdhash": "33bc52834785912c4ff7dd9e2b9e8c1dd38ef9fd",
+        "strict_verification": "PASS",
+        "notarization_check": "not independently performed; codesign disk/designated requirement verification only"
+      }
+    },
+    {
+      "version": "2.1.308",
+      "channel": "delayed stable channel control",
+      "url": "https://downloads.claude.ai/claude-code-releases/2.1.308/darwin-arm64/claude",
+      "bytes": 274675680,
+      "sha256": "ca923c86ac84b30574a82331a05b6e066c27477a926ceaffe46a845a33e4dd37",
+      "manifest_match": true,
+      "file": "Mach-O 64-bit executable arm64",
+      "manifest_build_commit": "320f66eb8f834be58a10c98283ebef19e3640c37",
+      "manifest_build_date": "2026-10-22T03:48:37Z",
+      "code_signature": {
+        "identifier": "com.anthropic.claude-code",
+        "authority": "Developer ID Application: Anthropic PBC (Q6L2SF6YDW)",
+        "team_id": "Q6L2SF6YDW",
+        "cdhash": "fd57a7c2a1187656002a4fa9752a6afba4f67248",
+        "strict_verification": "PASS",
+        "notarization_check": "not independently performed; codesign disk/designated requirement verification only"
+      }
+    }
+  ],
+  "manifest_signature_verification": [
+    {
+      "manifest": "manifest.json",
+      "key_fingerprint": "31DDDE24DDFAB679F42D7BD2BAA929FF1A7ECACE",
+      "key_user_ids": [
+        "Anthropic Claude Code Release Signing <security@anthropic.com>"
+      ],
+      "signature_version": 4,
+      "signature_type": "binary document",
+      "signature_algorithm": "RSA",
+      "hash_algorithm": "SHA512",
+      "exit": 0,
+      "stdout": "Verified OK\n",
+      "stderr": "",
+      "verification": "VALID",
+      "caveat": "Narrow OpenPGP v4 RSA extraction + OpenSSL verification; gpg unavailable; no trustdb/keyring or general OpenPGP certification check performed.",
+      "committed_manifest": "2.1.314-manifest.json"
+    },
+    {
+      "manifest": "stable308-manifest.json",
+      "key_fingerprint": "31DDDE24DDFAB679F42D7BD2BAA929FF1A7ECACE",
+      "key_user_ids": [
+        "Anthropic Claude Code Release Signing <security@anthropic.com>"
+      ],
+      "signature_version": 4,
+      "signature_type": "binary document",
+      "signature_algorithm": "RSA",
+      "hash_algorithm": "SHA512",
+      "exit": 0,
+      "stdout": "Verified OK\n",
+      "stderr": "",
+      "verification": "VALID",
+      "caveat": "Narrow OpenPGP v4 RSA extraction + OpenSSL verification; gpg unavailable; no trustdb/keyring or general OpenPGP certification check performed.",
+      "committed_manifest": "2.1.308-manifest.json"
+    }
+  ],
+  "docs_claims": {
+    "source": "https://code.claude.com/docs/en/claude-directory#clear-local-data",
+    "summary": "Purge targets a project path, removing project transcripts/memory, session tasks/debug/file-history, matching history lines and configuration entry. No match exits 1. Images/scratchpad, shell snapshots, backups and heap dumps remain. Project key documentation is path sanitization; no lossless native target identifier or authoritative complete read-only verification contract is supplied. Other stores and startup effects require empirical classification.",
+    "authority_limit": "Documentation is evidence, not complete effect proof; present docs are not proof of either exact executable behavior."
+  },
+  "changelog_review": {
+    "source": "https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md",
+    "range": "2.1.223 through 2.1.314",
+    "release_sections_reviewed": 78,
+    "relevant_claims": [
+      {
+        "version": "2.1.224",
+        "claim": "Long (>200-character) project paths: shared sanitized-prefix session-directory collision fix; no general identity guarantee.",
+        "kind": "release-note claim; not exact-binary result"
+      },
+      {
+        "version": "2.1.228",
+        "claim": "Retention no longer deletes contents under project memory.",
+        "kind": "release-note claim; not exact-binary result"
+      },
+      {
+        "version": "2.1.234",
+        "claim": "Adds CLAUDE_CODE_PROJECT_DIR_NAME for hosts with per-session configuration directories.",
+        "kind": "release-note claim; not exact-binary result"
+      },
+      {
+        "version": "2.1.239",
+        "claim": "Resume stops crossing punctuation-colliding directories; no purge identity guarantee.",
+        "kind": "release-note claim; not exact-binary result"
+      },
+      {
+        "version": "2.1.246",
+        "claim": "Retention stops deleting manually created worktrees; directory change refreshes project configuration/hooks.",
+        "kind": "release-note claim; not exact-binary result"
+      },
+      {
+        "version": "2.1.248",
+        "claim": "Desktop/Cowork transcripts gain distinct retention policy; desktopSessionCleanupPeriodDays introduced.",
+        "kind": "release-note claim; not exact-binary result"
+      },
+      {
+        "version": "2.1.251",
+        "claim": "Fixes transcript overwrite after directory-change relocation onto an existing same-session-ID transcript.",
+        "kind": "release-note claim; not exact-binary result"
+      },
+      {
+        "version": "2.1.257",
+        "claim": "Interrupted daemon temp folders enter retention cleanup.",
+        "kind": "release-note claim; not exact-binary result"
+      },
+      {
+        "version": "2.1.268",
+        "claim": "Agents UI deletion handles worktree failures; no validated external session-delete contract follows.",
+        "kind": "release-note claim; not exact-binary result"
+      },
+      {
+        "version": "2.1.275",
+        "claim": "Rewind handles incomplete checkpoint-copy failures; separate zsh sandbox-command exit-code fix, unrelated to purge.",
+        "kind": "release-note claim; not exact-binary result"
+      },
+      {
+        "version": "2.1.280",
+        "claim": "Windows cleanup stops deleting relocated cleanup-directory symlinks/junctions.",
+        "kind": "release-note claim; not exact-binary result"
+      },
+      {
+        "version": "2.1.288",
+        "claim": "Renames project purge to purge; old alias retained with notice.",
+        "kind": "release-note claim; not exact-binary result"
+      },
+      {
+        "version": "2.1.293",
+        "claim": "Purge deletion errors: continue remaining removals, list failures, exit 1; previously exit 0/hang.",
+        "kind": "release-note claim; not exact-binary result"
+      },
+      {
+        "version": "2.1.295",
+        "claim": "Interrupted ultrareview seed-admin temporary files enter retention cleanup.",
+        "kind": "release-note claim; not exact-binary result"
+      },
+      {
+        "version": "2.1.296",
+        "claim": "Purge history filtering handles U+2028/U+2029 in prompt text.",
+        "kind": "release-note claim; not exact-binary result"
+      },
+      {
+        "version": "2.1.300",
+        "claim": "Purge handles subfolder projects containing U+2028/U+2029.",
+        "kind": "release-note claim; not exact-binary result"
+      },
+      {
+        "version": "2.1.302",
+        "claim": "Subcommands wait for queued configuration writes; prevents lost writes and leftover temporary files.",
+        "kind": "release-note claim; not exact-binary result"
+      },
+      {
+        "version": "2.1.304",
+        "claim": "Managed settings hooks can constrain retention cleanupPeriodDays.",
+        "kind": "release-note claim; not exact-binary result"
+      },
+      {
+        "version": "2.1.310",
+        "claim": "Retention avoids deleting recent files under very large cleanupPeriodDays.",
+        "kind": "release-note claim; not exact-binary result"
+      },
+      {
+        "version": "2.1.311",
+        "claim": "Purge wording clarifies computer-local deletion, excluding Anthropic-stored data.",
+        "kind": "release-note claim; not exact-binary result"
+      },
+      {
+        "version": "2.1.311",
+        "claim": "Resumed session task lists and branch task-list writes corrected.",
+        "kind": "release-note claim; not exact-binary result"
+      },
+      {
+        "version": "2.1.314",
+        "claim": "Skills/plugins trash receives size bound independent of cleanupPeriodDays.",
+        "kind": "release-note claim; not exact-binary result"
+      }
+    ],
+    "not_found": "No release-note claim establishes read-only purge dry-run, fully injective target identity, exhaustive effects, authoritative negative proof or read-only reconciliation.",
+    "review_method": "Topic search across all78 release sections, then review relevant matching release-note lines; no claim that every unrelated changelog line was analyzed."
+  },
+  "native_probes_by_A": 0,
+  "sources": [
+    {
+      "name": "installer.sh",
+      "url": "https://claude.ai/install.sh",
+      "final_url": "https://downloads.claude.ai/claude-code-releases/bootstrap.sh",
+      "bytes": 9704,
+      "sha256": "3a68d3406cf674e17bed1733a4dcf37805e2e47d87417700007d7e1aa766a944",
+      "retrieved_on": "2026-10-30"
+    },
+    {
+      "name": "setup.md",
+      "url": "https://code.claude.com/docs/en/setup.md",
+      "final_url": "https://code.claude.com/docs/en/setup.md",
+      "bytes": 35892,
+      "sha256": "b5caffe667a021b59163d6db8f7bc9b26d903c011e3fb35822f3d0b2f9afc09d",
+      "retrieved_on": "2026-10-30"
+    },
+    {
+      "name": "directory.md",
+      "url": "https://code.claude.com/docs/en/claude-directory.md",
+      "final_url": "https://code.claude.com/docs/en/claude-directory.md",
+      "bytes": 31697,
+      "sha256": "a63249a82acb6bf9400441b34b12cc2f4b690fa633c6c34655902fb6884bae01",
+      "retrieved_on": "2026-10-30"
+    },
+    {
+      "name": "CHANGELOG.md",
+      "url": "https://raw.githubusercontent.com/anthropics/claude-code/main/CHANGELOG.md",
+      "final_url": "https://raw.githubusercontent.com/anthropics/claude-code/main/CHANGELOG.md",
+      "bytes": 1121848,
+      "sha256": "1786d423ae4312abf0dcdf9ea0ae15c07919bb3957caf34f84a7d1c2ccd047a5",
+      "retrieved_on": "2026-10-30"
+    },
+    {
+      "name": "releases.json",
+      "url": "https://api.github.com/repos/anthropics/claude-code/releases/latest",
+      "final_url": "https://api.github.com/repos/anthropics/claude-code/releases/latest",
+      "bytes": 34421,
+      "sha256": "cc207fff4ae08ebecf0c8f2e142bbc4036c949825e0fc13d51572fcc49e85aa6",
+      "retrieved_on": "2026-10-30"
+    },
+    {
+      "name": "manifest.json",
+      "url": "https://downloads.claude.ai/claude-code-releases/2.1.314/manifest.json",
+      "final_url": "https://downloads.claude.ai/claude-code-releases/2.1.314/manifest.json",
+      "bytes": 1999,
+      "sha256": "ded1c9a0a47ae65dc03165b0fab7b0bbd4aadd55de20b53c9f994308552d623d",
+      "retrieved_on": "2026-10-30",
+      "committed_file": "2.1.314-manifest.json"
+    },
+    {
+      "name": "manifest.json.sig",
+      "url": "https://downloads.claude.ai/claude-code-releases/2.1.314/manifest.json.sig",
+      "final_url": "https://downloads.claude.ai/claude-code-releases/2.1.314/manifest.json.sig",
+      "bytes": 833,
+      "sha256": "65dbd70d1f608e6ae0c1987fbc0ab34c71fb0c85cacfe37c1c15a731680aca64",
+      "retrieved_on": "2026-10-30",
+      "committed_file": "2.1.314-manifest.json.sig"
+    },
+    {
+      "name": "stable308-manifest.json",
+      "url": "https://downloads.claude.ai/claude-code-releases/2.1.308/manifest.json",
+      "final_url": "https://downloads.claude.ai/claude-code-releases/2.1.308/manifest.json",
+      "bytes": 2084,
+      "sha256": "9a01bbf1996be52f13508ef9e47ef3fcf544ac39037ca91b4c87f2b4efc425fb",
+      "retrieved_on": "2026-10-30",
+      "committed_file": "2.1.308-manifest.json"
+    },
+    {
+      "name": "stable308-manifest.json.sig",
+      "url": "https://downloads.claude.ai/claude-code-releases/2.1.308/manifest.json.sig",
+      "final_url": "https://downloads.claude.ai/claude-code-releases/2.1.308/manifest.json.sig",
+      "bytes": 833,
+      "sha256": "5ef4c968e3bd190ed59f2c824ebde9e5e13a6aea79ab5d4a25d1433e37a3c59f",
+      "retrieved_on": "2026-10-30",
+      "committed_file": "2.1.308-manifest.json.sig"
+    },
+    {
+      "name": "claude-code.asc",
+      "url": "https://downloads.claude.ai/keys/claude-code.asc",
+      "final_url": "https://downloads.claude.ai/keys/claude-code.asc",
+      "bytes": 1688,
+      "sha256": "bd70a5e4a268002704024ceba7f8446024114e94f3f0bdd11c23a9e592be81c6",
+      "retrieved_on": "2026-10-30",
+      "committed_file": "claude-code.asc"
+    }
+  ],
+  "static_evidence_files": [
+    "artifact-static-verification.json",
+    "stable308-artifact-static-verification.json",
+    "manifest-signature-verification.json",
+    "verify_manifest_openssl.py",
+    "resume-channel-verification.json",
+    "stable308-distribution-provenance.json"
+  ],
+  "classification": "OfficialArtifactInvestigationOnlyNotAnExecutionProfile",
+  "lifecycle_profile_enabled": false,
+  "production_mutation_operations": []
+}

@@ -12,10 +12,12 @@ unarchive adapter with independent verification and read-only reconciliation.
 Archive/delete execution and repair remain unsupported; current real plans remain
 Blocked/Unsupported. See [the exact lifecycle boundary](docs/codex-lifecycle.md).
 
-M9 Claude project lifecycle remains **OPEN** after exact installed-binary investigation.
-Native project purge exists, but dry-run startup writes, colliding/nested project
-effects and ambiguous partial failures prevent safe execution support. Claude remains
-read-only with zero lifecycle profiles. See [Claude evidence and guarded limits](docs/claude-lifecycle.md).
+M9 Claude project lifecycle is **BLOCKED** pending an upstream identity/effects/
+verification contract. Separate investigation of current official Code 2.1.314
+and delayed-stable 2.1.308 preserves the unsupported installed 2.1.222 profile.
+Purge error reporting has improved, but writable dry-run, ambiguous selectors and
+incomplete negative proof prevent execution support. Claude remains read-only with
+zero lifecycle profiles. See [Claude evidence and guarded limits](docs/claude-lifecycle.md).
 
 ```sh
 cargo run -- providers --json

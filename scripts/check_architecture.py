@@ -229,6 +229,10 @@ for canary in [
     'fn later() { let c = LifecycleCapability {}; }',
     'fn planning_context(&self) -> Context { context }',
     'fn dispatch(&self, intent: DurableIntent) {}',
+    'fn later() { let observation = DurableObservation {}; }',
+    'use std::process::Command as ClaudeCommand;',
+    'fn later() { let effects = NativeEffectBoundary {}; }',
+    'fn later() { File::options().truncate(true).open(history); }',
 ]:
     assert claude_lifecycle_violation(canary), 'Claude lifecycle fitness canary failed'
 assert claude_lifecycle_violation('#[cfg(test)] mod tests {}\nfn later() { fs::rename(a, b); }')

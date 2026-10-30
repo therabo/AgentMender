@@ -1,0 +1,1472 @@
+{
+  "schema_version": 1,
+  "observed_date": "2026-10-30",
+  "classification": "ActualExactNativeBehaviorOnSyntheticFixturesOnly_NotExecutionProfile",
+  "production_mutation_operations": [],
+  "production_lifecycle_profile_enabled": false,
+  "final_checked_native_probe_count": 106,
+  "final_checked_yes_invocations": 84,
+  "exploratory_native_probe_count": 97,
+  "all_this_cycle_native_probe_count": 203,
+  "all_this_cycle_yes_invocations": 159,
+  "isolation": {
+    "macos_seatbelt": true,
+    "native_writes_restricted_to_new_case": true,
+    "real_home_file_contents_denied_without_exception": true,
+    "outside_writes_denied": true,
+    "network_fork_mach_denied": true,
+    "write_read_fork_network_canaries_observed_denied": true,
+    "clean_environment": true,
+    "private_generated_home_config_tmp_cwd": true,
+    "copied_credentials": false,
+    "maximum_output_bytes_per_process": 262144,
+    "maximum_time_seconds_per_process": 10,
+    "all_children_reaped_before_final_fingerprint": true,
+    "snapshot_symlinks": "lstat without traversal",
+    "concurrency_exception": "two bounded native processes intentionally share one NEW fixture",
+    "no_real_claude_state_changed": true
+  },
+  "reproducer": {
+    "candidate_sha256": "1fb66eabeb321f261a466d66fcfcc80dbd344cfeb013dce4a25c0928e9e4e2de",
+    "final_native_runs_executed_script_sha256": "e8bbd6570ef16898210ff61d213d3692885b691ad53d1140084ea08c93f5aa0b",
+    "candidate_delta_after_native_runs": "Stricter canary EPERM/output checks and mutually exclusive case-mode flags only; stricter canary-only rerun passed. Native selection, argv, policy, fixture and bounded launcher unchanged.",
+    "independently_reproduced_exact_committed_script_sha256": "1fb66eabeb321f261a466d66fcfcc80dbd344cfeb013dce4a25c0928e9e4e2de",
+    "independent_run_result": "Both exact versions passed all seven core checks with the committed script including stricter canary checks."
+  },
+  "exact_version_results": [
+    {
+      "version": "2.1.314",
+      "native_writes_restricted_to_case": true,
+      "native_probe_count": 41,
+      "sequential_probe_count": 39,
+      "concurrent_probes": 2,
+      "yes_invocations": 35,
+      "production_execution_supported": false,
+      "fresh_case_per_invocation": true,
+      "concurrency_exception": "two processes deliberately share one fresh case",
+      "binary_sha256": "21d6e7b9a6f07b4cfcb7df13760b3b72aa25e084e13a5354413382987ba832ed",
+      "source_binary_unchanged": true,
+      "labels": [
+        "version",
+        "help",
+        "purge-help",
+        "project-help",
+        "basic-dry",
+        "basic-apply",
+        "collision-apply",
+        "nested-apply",
+        "denied-first",
+        "denied-late",
+        "nested-denied-first",
+        "nested-denied-late",
+        "normalize-dot",
+        "normalize-parent",
+        "relative",
+        "trailing-slash",
+        "case-alias",
+        "unicode-decomposed",
+        "symlink-selector",
+        "no-state-apply",
+        "no-state-dry",
+        "nonbare-startup",
+        "no-state-nonbare",
+        "denied-config",
+        "denied-history",
+        "deny-all-writes",
+        "encoded-only",
+        "transcript-cwd-mismatch",
+        "unrelated-key-same-cwd",
+        "sigterm-0.001",
+        "sigterm-0.1",
+        "sigterm-0.25",
+        "sigkill-first-removal",
+        "forced-timeout-100ms",
+        "unicode-separator-0x2028",
+        "unicode-separator-0x2029",
+        "custom-project-dir",
+        "long-shared-prefix",
+        "long-sdk-hashed-prefix"
+      ],
+      "raw_summary_sha256": "87bc63a2415564f571b6119d3930abf030b7306df1c6983e2768d7e59e6b2b51",
+      "core_findings_checks": {
+        "normal_cases_exit0": true,
+        "dry_run_config_write": true,
+        "dry_run_backup_creation": true,
+        "selector_collision": true,
+        "nested_cascade": true,
+        "first_denial_exit1_partial": true,
+        "late_denial_exit1_partial": true
+      },
+      "cases": [
+        {
+          "label": "basic-apply",
+          "returncode": 0,
+          "bounded_failure": null,
+          "expected_timeout": false,
+          "interruption_sent": false,
+          "removed_file_count": 8,
+          "created_file_count": 1,
+          "changed_file_count": 2,
+          "removed_namespaces": [
+            "config/debug",
+            "config/file-history",
+            "config/projects",
+            "config/tasks"
+          ],
+          "created_namespaces": [
+            "config/backups"
+          ],
+          "changed_namespaces": [
+            "config/.claude.json",
+            "config/history.jsonl"
+          ],
+          "raw_sha256": "3761a8f838661564553819c8cce5dfad01ef4b85d05f9a6a629611a95d746c34"
+        },
+        {
+          "label": "basic-dry",
+          "returncode": 0,
+          "bounded_failure": null,
+          "expected_timeout": false,
+          "interruption_sent": false,
+          "removed_file_count": 0,
+          "created_file_count": 1,
+          "changed_file_count": 1,
+          "removed_namespaces": [],
+          "created_namespaces": [
+            "config/backups"
+          ],
+          "changed_namespaces": [
+            "config/.claude.json"
+          ],
+          "raw_sha256": "8435b2fef162e132e82d8f3ea789f7234c0746b1089c9d5187a801a4c4844539"
+        },
+        {
+          "label": "case-alias",
+          "returncode": 0,
+          "bounded_failure": null,
+          "expected_timeout": false,
+          "interruption_sent": false,
+          "removed_file_count": 8,
+          "created_file_count": 1,
+          "changed_file_count": 2,
+          "removed_namespaces": [
+            "config/debug",
+            "config/file-history",
+            "config/projects",
+            "config/tasks"
+          ],
+          "created_namespaces": [
+            "config/backups"
+          ],
+          "changed_namespaces": [
+            "config/.claude.json",
+            "config/history.jsonl"
+          ],
+          "raw_sha256": "d78bbd366f8e683aee3fb8ab785b67a22bd55f11f658e4c8120dde969f7119ca"
+        },
+        {
+          "label": "collision-apply",
+          "returncode": 0,
+          "bounded_failure": null,
+          "expected_timeout": false,
+          "interruption_sent": false,
+          "removed_file_count": 15,
+          "created_file_count": 1,
+          "changed_file_count": 2,
+          "removed_namespaces": [
+            "config/debug",
+            "config/file-history",
+            "config/projects",
+            "config/tasks"
+          ],
+          "created_namespaces": [
+            "config/backups"
+          ],
+          "changed_namespaces": [
+            "config/.claude.json",
+            "config/history.jsonl"
+          ],
+          "raw_sha256": "456b911fbb8bed04956213024503d27ff1d53f0eb7bd2d4195709a96fa1e61c1"
+        },
+        {
+          "label": "concurrent",
+          "process_count": 2,
+          "returncodes": [
+            0,
+            0
+          ],
+          "bounded_failures": [
+            null,
+            null
+          ],
+          "raw_sha256": "39d88126005159f68c84c23bde75e484c675ceb9df95336ad8cf96156624261f"
+        },
+        {
+          "label": "custom-project-dir",
+          "returncode": 0,
+          "bounded_failure": null,
+          "expected_timeout": false,
+          "interruption_sent": false,
+          "removed_file_count": 8,
+          "created_file_count": 1,
+          "changed_file_count": 2,
+          "removed_namespaces": [
+            "config/debug",
+            "config/file-history",
+            "config/projects",
+            "config/tasks"
+          ],
+          "created_namespaces": [
+            "config/backups"
+          ],
+          "changed_namespaces": [
+            "config/.claude.json",
+            "config/history.jsonl"
+          ],
+          "raw_sha256": "fe1e717bf072b3f53d9d563d03b6cd7ac9f4960cfc8c14f31d8c509412f61059"
+        },
+        {
+          "label": "denied-config",
+          "returncode": 1,
+          "bounded_failure": null,
+          "expected_timeout": false,
+          "interruption_sent": false,
+          "removed_file_count": 8,
+          "created_file_count": 1,
+          "changed_file_count": 1,
+          "removed_namespaces": [
+            "config/debug",
+            "config/file-history",
+            "config/projects",
+            "config/tasks"
+          ],
+          "created_namespaces": [
+            "config/backups"
+          ],
+          "changed_namespaces": [
+            "config/history.jsonl"
+          ],
+          "raw_sha256": "3df6a707978fd6f6789d6cf20abe48c525ad256fe78f9b6d332156dae44314db"
+        },
+        {
+          "label": "denied-first",
+          "returncode": 1,
+          "bounded_failure": null,
+          "expected_timeout": false,
+          "interruption_sent": false,
+          "removed_file_count": 7,
+          "created_file_count": 1,
+          "changed_file_count": 2,
+          "removed_namespaces": [
+            "config/debug",
+            "config/file-history",
+            "config/projects"
+          ],
+          "created_namespaces": [
+            "config/backups"
+          ],
+          "changed_namespaces": [
+            "config/.claude.json",
+            "config/history.jsonl"
+          ],
+          "raw_sha256": "3dc472613ffa9e8429082825af9a878fe626a9776ccf38620eb6aa68fb4f548a"
+        },
+        {
+          "label": "denied-history",
+          "returncode": 1,
+          "bounded_failure": null,
+          "expected_timeout": false,
+          "interruption_sent": false,
+          "removed_file_count": 8,
+          "created_file_count": 1,
+          "changed_file_count": 1,
+          "removed_namespaces": [
+            "config/debug",
+            "config/file-history",
+            "config/projects",
+            "config/tasks"
+          ],
+          "created_namespaces": [
+            "config/backups"
+          ],
+          "changed_namespaces": [
+            "config/.claude.json"
+          ],
+          "raw_sha256": "5ce7c393136aba7a2fb4612646224ace3c720a4f60dc1321b4c1776c8598097a"
+        },
+        {
+          "label": "denied-late",
+          "returncode": 1,
+          "bounded_failure": null,
+          "expected_timeout": false,
+          "interruption_sent": false,
+          "removed_file_count": 3,
+          "created_file_count": 1,
+          "changed_file_count": 2,
+          "removed_namespaces": [
+            "config/debug",
+            "config/file-history",
+            "config/tasks"
+          ],
+          "created_namespaces": [
+            "config/backups"
+          ],
+          "changed_namespaces": [
+            "config/.claude.json",
+            "config/history.jsonl"
+          ],
+          "raw_sha256": "2b24f1144ad7736544db105b096cf9a62027aec4b709ed0e8593b1f044beb2c5"
+        },
+        {
+          "label": "deny-all-writes",
+          "returncode": 1,
+          "bounded_failure": null,
+          "expected_timeout": false,
+          "interruption_sent": false,
+          "removed_file_count": 0,
+          "created_file_count": 0,
+          "changed_file_count": 0,
+          "removed_namespaces": [],
+          "created_namespaces": [],
+          "changed_namespaces": [],
+          "raw_sha256": "67fb9217ac839f97258d586b284850df934a5e57379e09ba7f0a6b85f4bbfc86"
+        },
+        {
+          "label": "encoded-only",
+          "returncode": 0,
+          "bounded_failure": null,
+          "expected_timeout": false,
+          "interruption_sent": false,
+          "removed_file_count": 8,
+          "created_file_count": 1,
+          "changed_file_count": 2,
+          "removed_namespaces": [
+            "config/debug",
+            "config/file-history",
+            "config/projects",
+            "config/tasks"
+          ],
+          "created_namespaces": [
+            "config/backups"
+          ],
+          "changed_namespaces": [
+            "config/.claude.json",
+            "config/history.jsonl"
+          ],
+          "raw_sha256": "9ad7e79567edd88a0bf53374e0a62f914c232046c3b00a70a300253ca454df75"
+        },
+        {
+          "label": "forced-timeout-100ms",
+          "returncode": -9,
+          "bounded_failure": "timeout",
+          "expected_timeout": true,
+          "interruption_sent": false,
+          "removed_file_count": 0,
+          "created_file_count": 1,
+          "changed_file_count": 1,
+          "removed_namespaces": [],
+          "created_namespaces": [
+            "config/backups"
+          ],
+          "changed_namespaces": [
+            "config/.claude.json"
+          ],
+          "raw_sha256": "78db8419391d7f61c777df88564c9a6e6bfe1cf34213844aa41f09521654155b"
+        },
+        {
+          "label": "help",
+          "returncode": 0,
+          "bounded_failure": null,
+          "expected_timeout": false,
+          "interruption_sent": false,
+          "removed_file_count": 0,
+          "created_file_count": 0,
+          "changed_file_count": 0,
+          "removed_namespaces": [],
+          "created_namespaces": [],
+          "changed_namespaces": [],
+          "raw_sha256": "83e498b390449ec1eb5f21da98c748315a4b1b52ba895e6f66e9817d1b866049"
+        },
+        {
+          "label": "long-sdk-hashed-prefix",
+          "returncode": 0,
+          "bounded_failure": null,
+          "expected_timeout": false,
+          "interruption_sent": false,
+          "removed_file_count": 1,
+          "created_file_count": 1,
+          "changed_file_count": 1,
+          "removed_namespaces": [
+            "config/projects"
+          ],
+          "created_namespaces": [
+            "config/backups"
+          ],
+          "changed_namespaces": [
+            "config/.claude.json"
+          ],
+          "raw_sha256": "0d9421bf8dd9fcbe7daa4376892c104094ac2456d7d1eec88957780edcb9edff"
+        },
+        {
+          "label": "long-shared-prefix",
+          "returncode": 0,
+          "bounded_failure": null,
+          "expected_timeout": false,
+          "interruption_sent": false,
+          "removed_file_count": 0,
+          "created_file_count": 1,
+          "changed_file_count": 1,
+          "removed_namespaces": [],
+          "created_namespaces": [
+            "config/backups"
+          ],
+          "changed_namespaces": [
+            "config/.claude.json"
+          ],
+          "raw_sha256": "1d2e4ba959d1d6d134bce40f4cfde53bdbbd735b3cc6caaaa91a0e40b7fd5254"
+        },
+        {
+          "label": "nested-apply",
+          "returncode": 0,
+          "bounded_failure": null,
+          "expected_timeout": false,
+          "interruption_sent": false,
+          "removed_file_count": 16,
+          "created_file_count": 1,
+          "changed_file_count": 2,
+          "removed_namespaces": [
+            "config/debug",
+            "config/file-history",
+            "config/projects",
+            "config/tasks"
+          ],
+          "created_namespaces": [
+            "config/backups"
+          ],
+          "changed_namespaces": [
+            "config/.claude.json",
+            "config/history.jsonl"
+          ],
+          "raw_sha256": "4c211276ffdab83be5d19f5b23b86f6be0990a2737670a53d309d5af021be9fb"
+        },
+        {
+          "label": "nested-denied-first",
+          "returncode": 1,
+          "bounded_failure": null,
+          "expected_timeout": false,
+          "interruption_sent": false,
+          "removed_file_count": 15,
+          "created_file_count": 1,
+          "changed_file_count": 2,
+          "removed_namespaces": [
+            "config/debug",
+            "config/file-history",
+            "config/projects",
+            "config/tasks"
+          ],
+          "created_namespaces": [
+            "config/backups"
+          ],
+          "changed_namespaces": [
+            "config/.claude.json",
+            "config/history.jsonl"
+          ],
+          "raw_sha256": "d2b8424adb478426f061388eb7b91ca844d0ddf1f5dcbef41769fc96d501c9e8"
+        },
+        {
+          "label": "nested-denied-late",
+          "returncode": 1,
+          "bounded_failure": null,
+          "expected_timeout": false,
+          "interruption_sent": false,
+          "removed_file_count": 11,
+          "created_file_count": 1,
+          "changed_file_count": 2,
+          "removed_namespaces": [
+            "config/debug",
+            "config/file-history",
+            "config/projects",
+            "config/tasks"
+          ],
+          "created_namespaces": [
+            "config/backups"
+          ],
+          "changed_namespaces": [
+            "config/.claude.json",
+            "config/history.jsonl"
+          ],
+          "raw_sha256": "82eafbacadd5da0109d740c54d84f988fdb3d7e7b65656567563354993ae2907"
+        },
+        {
+          "label": "no-state-apply",
+          "returncode": 1,
+          "bounded_failure": null,
+          "expected_timeout": false,
+          "interruption_sent": false,
+          "removed_file_count": 0,
+          "created_file_count": 2,
+          "changed_file_count": 0,
+          "removed_namespaces": [],
+          "created_namespaces": [
+            "config/.claude.json",
+            "config/backups"
+          ],
+          "changed_namespaces": [],
+          "raw_sha256": "9c2437c623d2cf0da044d2c574e96d5ed2d4c331248ced18857aaae325b970b8"
+        },
+        {
+          "label": "no-state-dry",
+          "returncode": 1,
+          "bounded_failure": null,
+          "expected_timeout": false,
+          "interruption_sent": false,
+          "removed_file_count": 0,
+          "created_file_count": 2,
+          "changed_file_count": 0,
+          "removed_namespaces": [],
+          "created_namespaces": [
+            "config/.claude.json",
+            "config/backups"
+          ],
+          "changed_namespaces": [],
+          "raw_sha256": "6defab3b057c28836227ae678c6066957ebd408bc4eccd2f9db9cef50cee3593"
+        },
+        {
+          "label": "no-state-nonbare",
+          "returncode": 1,
+          "bounded_failure": null,
+          "expected_timeout": false,
+          "interruption_sent": false,
+          "removed_file_count": 0,
+          "created_file_count": 2,
+          "changed_file_count": 0,
+          "removed_namespaces": [],
+          "created_namespaces": [
+            "config/.claude.json",
+            "config/backups"
+          ],
+          "changed_namespaces": [],
+          "raw_sha256": "183d2fa91be8da522310165c4c33a9c750861bfdf8fc843b96e37fc9e354d87e"
+        },
+        {
+          "label": "nonbare-startup",
+          "returncode": 0,
+          "bounded_failure": null,
+          "expected_timeout": false,
+          "interruption_sent": false,
+          "removed_file_count": 8,
+          "created_file_count": 1,
+          "changed_file_count": 2,
+          "removed_namespaces": [
+            "config/debug",
+            "config/file-history",
+            "config/projects",
+            "config/tasks"
+          ],
+          "created_namespaces": [
+            "config/backups"
+          ],
+          "changed_namespaces": [
+            "config/.claude.json",
+            "config/history.jsonl"
+          ],
+          "raw_sha256": "be648bf09c39d41b01f1ea77da6efcefab84a5014934301e796fe0de72b10df1"
+        },
+        {
+          "label": "normalize-dot",
+          "returncode": 0,
+          "bounded_failure": null,
+          "expected_timeout": false,
+          "interruption_sent": false,
+          "removed_file_count": 8,
+          "created_file_count": 1,
+          "changed_file_count": 2,
+          "removed_namespaces": [
+            "config/debug",
+            "config/file-history",
+            "config/projects",
+            "config/tasks"
+          ],
+          "created_namespaces": [
+            "config/backups"
+          ],
+          "changed_namespaces": [
+            "config/.claude.json",
+            "config/history.jsonl"
+          ],
+          "raw_sha256": "02060f9a362fb3060761d16432d9f5670f9e17e27a355dbb844361b5f8488aa5"
+        },
+        {
+          "label": "normalize-parent",
+          "returncode": 0,
+          "bounded_failure": null,
+          "expected_timeout": false,
+          "interruption_sent": false,
+          "removed_file_count": 8,
+          "created_file_count": 1,
+          "changed_file_count": 2,
+          "removed_namespaces": [
+            "config/debug",
+            "config/file-history",
+            "config/projects",
+            "config/tasks"
+          ],
+          "created_namespaces": [
+            "config/backups"
+          ],
+          "changed_namespaces": [
+            "config/.claude.json",
+            "config/history.jsonl"
+          ],
+          "raw_sha256": "bbbf9445bcf091cf120ff0299a0d7905ca755474faff2cd9211aee7e504cfbb6"
+        },
+        {
+          "label": "project-help",
+          "returncode": 0,
+          "bounded_failure": null,
+          "expected_timeout": false,
+          "interruption_sent": false,
+          "removed_file_count": 0,
+          "created_file_count": 0,
+          "changed_file_count": 0,
+          "removed_namespaces": [],
+          "created_namespaces": [],
+          "changed_namespaces": [],
+          "raw_sha256": "41ce925cb34cece90bd259c4f5fef0ec2c77c8856381376e971b3db8d30cfc91"
+        },
+        {
+          "label": "purge-help",
+          "returncode": 0,
+          "bounded_failure": null,
+          "expected_timeout": false,
+          "interruption_sent": false,
+          "removed_file_count": 0,
+          "created_file_count": 0,
+          "changed_file_count": 0,
+          "removed_namespaces": [],
+          "created_namespaces": [],
+          "changed_namespaces": [],
+          "raw_sha256": "fb835ab24a615af193c0ea1417f7d11b72f861806274af06d6a37c740c342564"
+        },
+        {
+          "label": "relative",
+          "returncode": 0,
+          "bounded_failure": null,
+          "expected_timeout": false,
+          "interruption_sent": false,
+          "removed_file_count": 8,
+          "created_file_count": 1,
+          "changed_file_count": 2,
+          "removed_namespaces": [
+            "config/debug",
+            "config/file-history",
+            "config/projects",
+            "config/tasks"
+          ],
+          "created_namespaces": [
+            "config/backups"
+          ],
+          "changed_namespaces": [
+            "config/.claude.json",
+            "config/history.jsonl"
+          ],
+          "raw_sha256": "534f16f3e970bf52d1d1056ce07e743bdcda96122fc933a33b0598b557abf05f"
+        },
+        {
+          "label": "sigkill-first-removal",
+          "returncode": -9,
+          "bounded_failure": null,
+          "expected_timeout": false,
+          "interruption_sent": true,
+          "removed_file_count": 912,
+          "created_file_count": 1,
+          "changed_file_count": 1,
+          "removed_namespaces": [
+            "config/tasks"
+          ],
+          "created_namespaces": [
+            "config/backups"
+          ],
+          "changed_namespaces": [
+            "config/.claude.json"
+          ],
+          "raw_sha256": "e5b1b7f1c7417df8937d02b9c8347a69973c50eca73b1468561d97313a3c54c6"
+        },
+        {
+          "label": "sigterm-0.001",
+          "returncode": -15,
+          "bounded_failure": null,
+          "expected_timeout": false,
+          "interruption_sent": true,
+          "removed_file_count": 0,
+          "created_file_count": 0,
+          "changed_file_count": 0,
+          "removed_namespaces": [],
+          "created_namespaces": [],
+          "changed_namespaces": [],
+          "raw_sha256": "da0dcdb0847d3fe821576dd5f8e1ebd7ab396e749c65ccc2bcbbb9d6ea5cdd47"
+        },
+        {
+          "label": "sigterm-0.1",
+          "returncode": 143,
+          "bounded_failure": null,
+          "expected_timeout": false,
+          "interruption_sent": true,
+          "removed_file_count": 0,
+          "created_file_count": 1,
+          "changed_file_count": 1,
+          "removed_namespaces": [],
+          "created_namespaces": [
+            "config/backups"
+          ],
+          "changed_namespaces": [
+            "config/.claude.json"
+          ],
+          "raw_sha256": "bbced1960d3c4299273070c66ff0c225f59a581ed421ea14e1b4108b6b86a0e2"
+        },
+        {
+          "label": "sigterm-0.25",
+          "returncode": 0,
+          "bounded_failure": null,
+          "expected_timeout": false,
+          "interruption_sent": false,
+          "removed_file_count": 8,
+          "created_file_count": 1,
+          "changed_file_count": 2,
+          "removed_namespaces": [
+            "config/debug",
+            "config/file-history",
+            "config/projects",
+            "config/tasks"
+          ],
+          "created_namespaces": [
+            "config/backups"
+          ],
+          "changed_namespaces": [
+            "config/.claude.json",
+            "config/history.jsonl"
+          ],
+          "raw_sha256": "f2743181d2c8c29dff2ed8d71f26d30904f7778c88b3c8f76d7dd6065fc79399"
+        },
+        {
+          "label": "symlink-selector",
+          "returncode": 0,
+          "bounded_failure": null,
+          "expected_timeout": false,
+          "interruption_sent": false,
+          "removed_file_count": 8,
+          "created_file_count": 1,
+          "changed_file_count": 2,
+          "removed_namespaces": [
+            "config/debug",
+            "config/file-history",
+            "config/projects",
+            "config/tasks"
+          ],
+          "created_namespaces": [
+            "config/backups"
+          ],
+          "changed_namespaces": [
+            "config/.claude.json",
+            "config/history.jsonl"
+          ],
+          "raw_sha256": "7c6c49be2f0f6643bb58782a97d60b65998a3c4e73c595e75cb19b19c48af584"
+        },
+        {
+          "label": "trailing-slash",
+          "returncode": 0,
+          "bounded_failure": null,
+          "expected_timeout": false,
+          "interruption_sent": false,
+          "removed_file_count": 8,
+          "created_file_count": 1,
+          "changed_file_count": 2,
+          "removed_namespaces": [
+            "config/debug",
+            "config/file-history",
+            "config/projects",
+            "config/tasks"
+          ],
+          "created_namespaces": [
+            "config/backups"
+          ],
+          "changed_namespaces": [
+            "config/.claude.json",
+            "config/history.jsonl"
+          ],
+          "raw_sha256": "1b6a593d01f82660cbcb40cd5389e23cb2879c02db62d10fd7439f003cb8ff66"
+        },
+        {
+          "label": "transcript-cwd-mismatch",
+          "returncode": 0,
+          "bounded_failure": null,
+          "expected_timeout": false,
+          "interruption_sent": false,
+          "removed_file_count": 8,
+          "created_file_count": 1,
+          "changed_file_count": 2,
+          "removed_namespaces": [
+            "config/debug",
+            "config/file-history",
+            "config/projects",
+            "config/tasks"
+          ],
+          "created_namespaces": [
+            "config/backups"
+          ],
+          "changed_namespaces": [
+            "config/.claude.json",
+            "config/history.jsonl"
+          ],
+          "raw_sha256": "81123c23a4604609dd92ecce9808f5260db6d911d12f0d6695017a8dd2c79e3e"
+        },
+        {
+          "label": "unicode-decomposed",
+          "returncode": 0,
+          "bounded_failure": null,
+          "expected_timeout": false,
+          "interruption_sent": false,
+          "removed_file_count": 8,
+          "created_file_count": 1,
+          "changed_file_count": 2,
+          "removed_namespaces": [
+            "config/debug",
+            "config/file-history",
+            "config/projects",
+            "config/tasks"
+          ],
+          "created_namespaces": [
+            "config/backups"
+          ],
+          "changed_namespaces": [
+            "config/.claude.json",
+            "config/history.jsonl"
+          ],
+          "raw_sha256": "6042505b00850b728d00a5d3ebd54a1c8a9c4321e18aa83fae2db6b4a901b3b1"
+        },
+        {
+          "label": "unicode-separator-0x2028",
+          "returncode": 0,
+          "bounded_failure": null,
+          "expected_timeout": false,
+          "interruption_sent": false,
+          "removed_file_count": 9,
+          "created_file_count": 1,
+          "changed_file_count": 2,
+          "removed_namespaces": [
+            "config/debug",
+            "config/file-history",
+            "config/projects",
+            "config/tasks"
+          ],
+          "created_namespaces": [
+            "config/backups"
+          ],
+          "changed_namespaces": [
+            "config/.claude.json",
+            "config/history.jsonl"
+          ],
+          "raw_sha256": "572bc5ab840c33065cf0156936bfbf7d991f8617f203999e16642a11a44d98e0"
+        },
+        {
+          "label": "unicode-separator-0x2029",
+          "returncode": 0,
+          "bounded_failure": null,
+          "expected_timeout": false,
+          "interruption_sent": false,
+          "removed_file_count": 9,
+          "created_file_count": 1,
+          "changed_file_count": 2,
+          "removed_namespaces": [
+            "config/debug",
+            "config/file-history",
+            "config/projects",
+            "config/tasks"
+          ],
+          "created_namespaces": [
+            "config/backups"
+          ],
+          "changed_namespaces": [
+            "config/.claude.json",
+            "config/history.jsonl"
+          ],
+          "raw_sha256": "d94dcad5a5df89ad3786f819500f7ed86410bef8d1ed0592a2c574b8809c901f"
+        },
+        {
+          "label": "unrelated-key-same-cwd",
+          "returncode": 0,
+          "bounded_failure": null,
+          "expected_timeout": false,
+          "interruption_sent": false,
+          "removed_file_count": 8,
+          "created_file_count": 1,
+          "changed_file_count": 2,
+          "removed_namespaces": [
+            "config/debug",
+            "config/file-history",
+            "config/projects",
+            "config/tasks"
+          ],
+          "created_namespaces": [
+            "config/backups"
+          ],
+          "changed_namespaces": [
+            "config/.claude.json",
+            "config/history.jsonl"
+          ],
+          "raw_sha256": "1e02bdd4928c2b7804f602d2438cf94abb2742d2b46712a3ea341d6f83663976"
+        },
+        {
+          "label": "version",
+          "returncode": 0,
+          "bounded_failure": null,
+          "expected_timeout": false,
+          "interruption_sent": false,
+          "removed_file_count": 0,
+          "created_file_count": 0,
+          "changed_file_count": 0,
+          "removed_namespaces": [],
+          "created_namespaces": [],
+          "changed_namespaces": [],
+          "raw_sha256": "39bfa42e420b0f7706f1bea9a745727cbf7558c89958504b0a7f6e434d7e1742"
+        }
+      ],
+      "isolation_attestation_sha256": "497e51c1adb6bce815f08f44163a5f6db22890b818ab85447fa24e054da38d1a"
+    },
+    {
+      "version": "2.1.308",
+      "native_writes_restricted_to_case": true,
+      "native_probe_count": 12,
+      "sequential_probe_count": 12,
+      "concurrent_probes": 0,
+      "yes_invocations": 7,
+      "production_execution_supported": false,
+      "fresh_case_per_invocation": true,
+      "concurrency_exception": null,
+      "binary_sha256": "ca923c86ac84b30574a82331a05b6e066c27477a926ceaffe46a845a33e4dd37",
+      "source_binary_unchanged": true,
+      "labels": [
+        "version",
+        "help",
+        "purge-help",
+        "project-help",
+        "basic-dry",
+        "basic-apply",
+        "collision-apply",
+        "nested-apply",
+        "denied-first",
+        "denied-late",
+        "nested-denied-first",
+        "nested-denied-late"
+      ],
+      "raw_summary_sha256": "e9347c7c8c8b4a65ac9855f18c63a1daca5f79c63ff7c65de3812db78e523c62",
+      "core_findings_checks": {
+        "normal_cases_exit0": true,
+        "dry_run_config_write": true,
+        "dry_run_backup_creation": true,
+        "selector_collision": true,
+        "nested_cascade": true,
+        "first_denial_exit1_partial": true,
+        "late_denial_exit1_partial": true
+      },
+      "cases": [
+        {
+          "label": "basic-apply",
+          "returncode": 0,
+          "bounded_failure": null,
+          "expected_timeout": false,
+          "interruption_sent": false,
+          "removed_file_count": 8,
+          "created_file_count": 1,
+          "changed_file_count": 2,
+          "removed_namespaces": [
+            "config/debug",
+            "config/file-history",
+            "config/projects",
+            "config/tasks"
+          ],
+          "created_namespaces": [
+            "config/backups"
+          ],
+          "changed_namespaces": [
+            "config/.claude.json",
+            "config/history.jsonl"
+          ],
+          "raw_sha256": "3d08f8fdc3e732841e9b19331ec11e41977173ef6f1fa39bf797c16887915e29"
+        },
+        {
+          "label": "basic-dry",
+          "returncode": 0,
+          "bounded_failure": null,
+          "expected_timeout": false,
+          "interruption_sent": false,
+          "removed_file_count": 0,
+          "created_file_count": 1,
+          "changed_file_count": 1,
+          "removed_namespaces": [],
+          "created_namespaces": [
+            "config/backups"
+          ],
+          "changed_namespaces": [
+            "config/.claude.json"
+          ],
+          "raw_sha256": "b9bfc5c4f8d901fd5a039865ed21711d29e9442a5b5c6c1c460c785feccf5b31"
+        },
+        {
+          "label": "collision-apply",
+          "returncode": 0,
+          "bounded_failure": null,
+          "expected_timeout": false,
+          "interruption_sent": false,
+          "removed_file_count": 15,
+          "created_file_count": 1,
+          "changed_file_count": 2,
+          "removed_namespaces": [
+            "config/debug",
+            "config/file-history",
+            "config/projects",
+            "config/tasks"
+          ],
+          "created_namespaces": [
+            "config/backups"
+          ],
+          "changed_namespaces": [
+            "config/.claude.json",
+            "config/history.jsonl"
+          ],
+          "raw_sha256": "615c3e469cd72c0a1ef488670adbdd7e65227a3dd9eb7fbfbd57b4e802bece35"
+        },
+        {
+          "label": "denied-first",
+          "returncode": 1,
+          "bounded_failure": null,
+          "expected_timeout": false,
+          "interruption_sent": false,
+          "removed_file_count": 7,
+          "created_file_count": 1,
+          "changed_file_count": 2,
+          "removed_namespaces": [
+            "config/debug",
+            "config/file-history",
+            "config/projects"
+          ],
+          "created_namespaces": [
+            "config/backups"
+          ],
+          "changed_namespaces": [
+            "config/.claude.json",
+            "config/history.jsonl"
+          ],
+          "raw_sha256": "2726b0b62bfd9c91e77a7c2d7531696902f4fd5038f5f00f3807b634166a74c6"
+        },
+        {
+          "label": "denied-late",
+          "returncode": 1,
+          "bounded_failure": null,
+          "expected_timeout": false,
+          "interruption_sent": false,
+          "removed_file_count": 3,
+          "created_file_count": 1,
+          "changed_file_count": 2,
+          "removed_namespaces": [
+            "config/debug",
+            "config/file-history",
+            "config/tasks"
+          ],
+          "created_namespaces": [
+            "config/backups"
+          ],
+          "changed_namespaces": [
+            "config/.claude.json",
+            "config/history.jsonl"
+          ],
+          "raw_sha256": "1890ef3706b80f3af29e301772732e31c0039eb1b94a334bad5272751d1d7cdf"
+        },
+        {
+          "label": "help",
+          "returncode": 0,
+          "bounded_failure": null,
+          "expected_timeout": false,
+          "interruption_sent": false,
+          "removed_file_count": 0,
+          "created_file_count": 0,
+          "changed_file_count": 0,
+          "removed_namespaces": [],
+          "created_namespaces": [],
+          "changed_namespaces": [],
+          "raw_sha256": "e4f068b4dfc6e855a2562914b278dd92a541789fa7bcb5c38ec2588bc661286a"
+        },
+        {
+          "label": "nested-apply",
+          "returncode": 0,
+          "bounded_failure": null,
+          "expected_timeout": false,
+          "interruption_sent": false,
+          "removed_file_count": 16,
+          "created_file_count": 1,
+          "changed_file_count": 2,
+          "removed_namespaces": [
+            "config/debug",
+            "config/file-history",
+            "config/projects",
+            "config/tasks"
+          ],
+          "created_namespaces": [
+            "config/backups"
+          ],
+          "changed_namespaces": [
+            "config/.claude.json",
+            "config/history.jsonl"
+          ],
+          "raw_sha256": "a53f4a95e7cd32c75b2d0ec87b5eaa3d7635033f01e6a290afce20e9134a9eae"
+        },
+        {
+          "label": "nested-denied-first",
+          "returncode": 1,
+          "bounded_failure": null,
+          "expected_timeout": false,
+          "interruption_sent": false,
+          "removed_file_count": 15,
+          "created_file_count": 1,
+          "changed_file_count": 2,
+          "removed_namespaces": [
+            "config/debug",
+            "config/file-history",
+            "config/projects",
+            "config/tasks"
+          ],
+          "created_namespaces": [
+            "config/backups"
+          ],
+          "changed_namespaces": [
+            "config/.claude.json",
+            "config/history.jsonl"
+          ],
+          "raw_sha256": "2968ef13a72cc1ba90383726e92a51639be8936cb2eb297ee110b2958808247b"
+        },
+        {
+          "label": "nested-denied-late",
+          "returncode": 1,
+          "bounded_failure": null,
+          "expected_timeout": false,
+          "interruption_sent": false,
+          "removed_file_count": 11,
+          "created_file_count": 1,
+          "changed_file_count": 2,
+          "removed_namespaces": [
+            "config/debug",
+            "config/file-history",
+            "config/projects",
+            "config/tasks"
+          ],
+          "created_namespaces": [
+            "config/backups"
+          ],
+          "changed_namespaces": [
+            "config/.claude.json",
+            "config/history.jsonl"
+          ],
+          "raw_sha256": "b1469975a563f6d88dc15cd718ec230c27cf5012aa3d47b84b18f172cc884df5"
+        },
+        {
+          "label": "project-help",
+          "returncode": 0,
+          "bounded_failure": null,
+          "expected_timeout": false,
+          "interruption_sent": false,
+          "removed_file_count": 0,
+          "created_file_count": 0,
+          "changed_file_count": 0,
+          "removed_namespaces": [],
+          "created_namespaces": [],
+          "changed_namespaces": [],
+          "raw_sha256": "1b7d4db7e7cf91479b7b68a5500b40e0e886f59e9f6c448ad35c22e8c084b200"
+        },
+        {
+          "label": "purge-help",
+          "returncode": 0,
+          "bounded_failure": null,
+          "expected_timeout": false,
+          "interruption_sent": false,
+          "removed_file_count": 0,
+          "created_file_count": 0,
+          "changed_file_count": 0,
+          "removed_namespaces": [],
+          "created_namespaces": [],
+          "changed_namespaces": [],
+          "raw_sha256": "18619a32064ea288fb7412479bcd6b8ba388e94a64a19e6085fd29b7a812e061"
+        },
+        {
+          "label": "version",
+          "returncode": 0,
+          "bounded_failure": null,
+          "expected_timeout": false,
+          "interruption_sent": false,
+          "removed_file_count": 0,
+          "created_file_count": 0,
+          "changed_file_count": 0,
+          "removed_namespaces": [],
+          "created_namespaces": [],
+          "changed_namespaces": [],
+          "raw_sha256": "d1c5a08ebb3e280f0c72dade81eedca9cd791090ffe935ee9869865cda101039"
+        }
+      ],
+      "isolation_attestation_sha256": "fa8e09972c8156e502eb1a306683fe0cda0134b33683eb8cc397d5c571dca013"
+    }
+  ],
+  "findings": {
+    "dry_run_read_only": false,
+    "dry_run_creates_config_backup": true,
+    "no_state_is_read_only": false,
+    "selector_collision_short_path": true,
+    "parent_nested_cascade": true,
+    "nested_config_entry_retained_after_child_transcript_removal": true,
+    "sidecar_denial_exit_status_fixed_to_nonzero": true,
+    "denial_can_leave_partial_destructive_effects": true,
+    "startup_writes_global_configuration_metadata": true,
+    "lossless_agentmender_project_to_native_target_mapping_proven": false,
+    "complete_effect_boundary_proven": false,
+    "authoritative_negative_proof_proven": false,
+    "safe_read_only_reconciliation_proven": false,
+    "production_readiness": "Unsupported"
+  },
+  "identity_observations": {
+    "normalization": "dot/parent/trailing slash/relative selections resolve to fixture target",
+    "symlink": "existing alias selector resolved target; alias itself remained",
+    "case_unicode": "casefold and NFC/decomposed alias selections resolved same target on tested macOS volume only; no cross-filesystem claim",
+    "encoded_collision": "a-b and a/b share <=200-character sanitized bucket; selecting a-b removed both transcript/session sidecar sets while retaining second config/history entry",
+    "transcript_cwd_not_authority": "mismatched transcript cwd did not prevent bucket deletion; same-cwd transcript in unrelated bucket survived",
+    "nested": "configured nested project transcripts/history cascade; nested config project entry retained",
+    "custom_directory_name": "fixed synthetic CLAUDE_CODE_PROJECT_DIR_NAME bucket was purged",
+    "long_paths": "SDK-style 200-character prefix plus signed32-bit/base36 hash selected correct target and retained differing suffix; legacy truncated-only bucket unrecognized despite config-only purge success. Does not establish exhaustive compatibility."
+  },
+  "effect_boundary": {
+    "direct_observed": [
+      "selected projects bucket including transcript/memory/subagents/tool-results/mcp-tasks",
+      "session-ID tasks/debug/file-history",
+      "matching target/nested history records",
+      "selected config project entry"
+    ],
+    "cascaded_observed": [
+      "colliding project bucket sessions",
+      "nested configured projects buckets and session sidecars/history"
+    ],
+    "startup_or_shared_changes": [
+      "global configuration migration/startup fields",
+      "new config backups retaining earlier project configuration"
+    ],
+    "retained_in_fixture": [
+      "unrelated and prefix sibling project buckets/state",
+      "nested config project entry",
+      "plans",
+      "paste-cache",
+      "image-cache",
+      "uploads",
+      "dev-mods",
+      "session-env",
+      "sessions",
+      "todos",
+      "usage-data",
+      "feedback/drafts",
+      "jobs",
+      "daemon",
+      "shell-snapshots",
+      "preexisting backups",
+      "stats-cache",
+      "settings",
+      "remote-settings",
+      "agent-memory",
+      "plugins",
+      "skills",
+      "cache",
+      "feedback-bundles",
+      "generated workspace source files",
+      "generated temp images and scratchpad markers",
+      "home/.claude.json when CLAUDE_CONFIG_DIR selected config/.claude.json"
+    ],
+    "unknown": [
+      "other provider namespaces or layout variants not instantiated",
+      "SessionStore/custom store semantics",
+      "complete project membership across encoded keys/aliases/versions",
+      "unsandboxed startup effects denied by experimental policy",
+      "global coherent read-only complete observation boundary",
+      "concurrent writer/exclusion/serializability guarantees"
+    ]
+  },
+  "interruptions": {
+    "early": "1ms SIGTERM: sample no fixture changes; not general predispatch or no-effect proof",
+    "after_startup": "100ms SIGTERM: sample changed configuration/backup with transcripts retained",
+    "during_removal": "SIGKILL on first observed task removal left partial task deletions, transcript/history still present",
+    "after_response": "250ms signal sample process already exited; no signal sent",
+    "timeout": "forced 100ms deadline kill/reap; sample may show no diff but native timeout classification remains Unknown after possible startup",
+    "concurrency": "two same-target processes both returned0; this is no exclusion or serializability proof"
+  },
+  "limits": [
+    "Finite synthetic fixture observations do not prove complete effect closure or ownership.",
+    "No destructive production adapter was added.",
+    "Historical2.1.222 findings remain separate and unchanged; old reproducer reused state so this cycle uses new fixtures for every independent case."
+  ],
+  "independent_reproduction": [
+    {
+      "version": "2.1.314",
+      "native_writes_restricted_to_case": true,
+      "native_probe_count": 41,
+      "sequential_probe_count": 39,
+      "concurrent_probes": 2,
+      "yes_invocations": 35,
+      "production_execution_supported": false,
+      "fresh_case_per_invocation": true,
+      "concurrency_exception": "two processes deliberately share one fresh case",
+      "binary_sha256": "21d6e7b9a6f07b4cfcb7df13760b3b72aa25e084e13a5354413382987ba832ed",
+      "source_binary_unchanged": true,
+      "labels": [
+        "version",
+        "help",
+        "purge-help",
+        "project-help",
+        "basic-dry",
+        "basic-apply",
+        "collision-apply",
+        "nested-apply",
+        "denied-first",
+        "denied-late",
+        "nested-denied-first",
+        "nested-denied-late",
+        "normalize-dot",
+        "normalize-parent",
+        "relative",
+        "trailing-slash",
+        "case-alias",
+        "unicode-decomposed",
+        "symlink-selector",
+        "no-state-apply",
+        "no-state-dry",
+        "nonbare-startup",
+        "no-state-nonbare",
+        "denied-config",
+        "denied-history",
+        "deny-all-writes",
+        "encoded-only",
+        "transcript-cwd-mismatch",
+        "unrelated-key-same-cwd",
+        "sigterm-0.001",
+        "sigterm-0.1",
+        "sigterm-0.25",
+        "sigkill-first-removal",
+        "forced-timeout-100ms",
+        "unicode-separator-0x2028",
+        "unicode-separator-0x2029",
+        "custom-project-dir",
+        "long-shared-prefix",
+        "long-sdk-hashed-prefix"
+      ],
+      "raw_summary_sha256": "512a135ad54062d06e25e7e1f59b7724a55400a6fa23e29df9c924c7b11d0729",
+      "core_findings_checks": {
+        "normal_cases_exit0": true,
+        "dry_run_config_write": true,
+        "dry_run_backup_creation": true,
+        "selector_collision": true,
+        "nested_cascade": true,
+        "first_denial_exit1_partial": true,
+        "late_denial_exit1_partial": true
+      },
+      "isolation_attestation_sha256": "004a887f855c6f5a732a7cf7e413814b4166ae97e55cb5d5d13a895d2f5594f7",
+      "raw_report_commitments": {
+        "2.1.314-basic-apply.json": "2b6787dc312c7eefb156ab92709b08d169d29f83851ca6c03cd6dfe2e68f00a6",
+        "2.1.314-basic-dry.json": "105bd112a5690725f1392127be1367ae9827534d621890b3392cd058d799cf9e",
+        "2.1.314-case-alias.json": "ecce2424188c66eb383d82ed40e9269de4038700a4ecd9dc2f1857f8c91ffd9a",
+        "2.1.314-collision-apply.json": "810ce28765a4f247d6608f66735f5cc660106c2b6a27b549a926de22f8194b30",
+        "2.1.314-concurrent.json": "a1e68c913b4e1a12becae3cf38e4e28f75a48a25b1e098290748aa9ac351e067",
+        "2.1.314-custom-project-dir.json": "a63b7b25a97cb04ee4eaa3ff9e8382238c534775ac154500d2f63e38d0e3f557",
+        "2.1.314-denied-config.json": "b6dd29b3b65975112ca3cd3aeb508bdd936fe631d1c2e4e2cb1597bf436e288c",
+        "2.1.314-denied-first.json": "acba48fd337b32646b15e68dcc9bc18a642fc730c3630cfb4498bed957568027",
+        "2.1.314-denied-history.json": "568f99551ed9c19c43ba3fd89c1a6b1c97b5e070af8b89d1a0a989be31a940dd",
+        "2.1.314-denied-late.json": "bac03c329d9e4abf729d09fb9702e3a0dd5e4817a2bc79ed1a9d2cf6d3b1f600",
+        "2.1.314-deny-all-writes.json": "e2bf95064bf9d002e7dcafc88909f99dbc54c4b38f78eb1ff31a15582bc6f64d",
+        "2.1.314-encoded-only.json": "d873c1f375e662fd78ce0178ee840e59d8a95f0edac8d0d9824c74d42cc590a6",
+        "2.1.314-forced-timeout-100ms.json": "6e7155f32db7c6b65f8c5a9dd76b344a59a207f66e9b677f118a537597abb346",
+        "2.1.314-help.json": "f6bdbb947d0ab45df67092e7b65228cca2918145af9bb69fd5d2c060c88392b0",
+        "2.1.314-long-sdk-hashed-prefix.json": "5789e91debedaa6c727a745cae0037066fa3e13f6fb833e697044d07ccad0396",
+        "2.1.314-long-shared-prefix.json": "4681d3d7bd14ed14eccd2f388b4ec9edf446f4aa9e49fd90a193cfb35273b70d",
+        "2.1.314-nested-apply.json": "72eec5ff76e1c426de74f1ef7f69e7385fca8ce595c5f676a0c5de8f5e173188",
+        "2.1.314-nested-denied-first.json": "288e1613f1ba6e8ffa58ce70c2f818a75dc1e1149a1f20fdf5f961010e9385e8",
+        "2.1.314-nested-denied-late.json": "cdeb318a7f5f0bff023355b52a6baef8539ae729c419aa51c3b5e83edfd8b202",
+        "2.1.314-no-state-apply.json": "00c0028c0d981ff98958a840db29228917cfaa56551b052b2d3794c73c7d1a65",
+        "2.1.314-no-state-dry.json": "e68c263e125443fe77febc9ffcc6b08c65c509ef2fc253bcb139a42e2be3fe18",
+        "2.1.314-no-state-nonbare.json": "e8096965893b674412e078e6bf9748a26c0535ac5acb9c0b2fe90cb6d1503ec6",
+        "2.1.314-nonbare-startup.json": "bfb2898b42e56fb940463ac05ca1c97292c44516d9a2f93c4ed33d523f2d1bba",
+        "2.1.314-normalize-dot.json": "a78101792053639a35a455bb1f5298174f2c6d1f2e3e08cb1e45d649dac67d9d",
+        "2.1.314-normalize-parent.json": "8ac2d35f964ac52da193d18edd868265746cba1b72907e4ee2bc095214038f16",
+        "2.1.314-project-help.json": "faee1c6a114e1254af212fcb28f7b9db358ca0fbe72d9846c1f556dff2c4b67f",
+        "2.1.314-purge-help.json": "28c9973238196f2b1ec0fedd47f940a8dd1734d988aa211e5a249f4cbb6dd520",
+        "2.1.314-relative.json": "b15c173272f144ed11cfaa38aee3a57fcc322a4c0ab646f567094445429d3404",
+        "2.1.314-sigkill-first-removal.json": "2288e71eba49ed63c91f11a60ef5205b0a737f630873c6620b024e93274380e5",
+        "2.1.314-sigterm-0.001.json": "46d63351b2dafedd186defd15ca66027396e45272582795aa6210e9cf8d30dbb",
+        "2.1.314-sigterm-0.1.json": "b08a2ae45f96570f72b277c6b5d9ac9955bb1c94743f791345b6e195c30fad13",
+        "2.1.314-sigterm-0.25.json": "a94b8c66502b7557f46841f54906dec6ab0a741d4238ca13feef0bed82fbccf2",
+        "2.1.314-symlink-selector.json": "cb3b8afa1ab28fc913d9bba46c0b263589120f0411831f778b5038479866d0ed",
+        "2.1.314-trailing-slash.json": "2d5754ba08a66e233b3926c6affcedbbad5a232ac6d3f729a0d6912c4431bbca",
+        "2.1.314-transcript-cwd-mismatch.json": "16b8eb920c42741e0f5537399326d12ed9edad45c09f754d0e4369f40db6b3bb",
+        "2.1.314-unicode-decomposed.json": "e919428e7837dd7872abc7dc1ed6710c5414352e18dd63b1442ee93c4112a0fb",
+        "2.1.314-unicode-separator-0x2028.json": "d4f2044190c4dd6b6c2410f91a9ff718bc1565a91256d9c769aece3a0b66a016",
+        "2.1.314-unicode-separator-0x2029.json": "828376014965b52f98a03403f7725714b3b5643eafde681de0fec388081c5ae9",
+        "2.1.314-unrelated-key-same-cwd.json": "4006686599e98a5c47a15201353bbca3263c55b645e15334ef8ad85d0c5622ec",
+        "2.1.314-version.json": "d1b0a598a660ad89576fd6c21407c30f1d249696b964a7d949485b0ef7f76bb1"
+      }
+    },
+    {
+      "version": "2.1.308",
+      "native_writes_restricted_to_case": true,
+      "native_probe_count": 12,
+      "sequential_probe_count": 12,
+      "concurrent_probes": 0,
+      "yes_invocations": 7,
+      "production_execution_supported": false,
+      "fresh_case_per_invocation": true,
+      "concurrency_exception": null,
+      "binary_sha256": "ca923c86ac84b30574a82331a05b6e066c27477a926ceaffe46a845a33e4dd37",
+      "source_binary_unchanged": true,
+      "labels": [
+        "version",
+        "help",
+        "purge-help",
+        "project-help",
+        "basic-dry",
+        "basic-apply",
+        "collision-apply",
+        "nested-apply",
+        "denied-first",
+        "denied-late",
+        "nested-denied-first",
+        "nested-denied-late"
+      ],
+      "raw_summary_sha256": "bfde3e450a7416b67417987c5cf10a3f2746803b5ead6b3e5e1edc2098e57067",
+      "core_findings_checks": {
+        "normal_cases_exit0": true,
+        "dry_run_config_write": true,
+        "dry_run_backup_creation": true,
+        "selector_collision": true,
+        "nested_cascade": true,
+        "first_denial_exit1_partial": true,
+        "late_denial_exit1_partial": true
+      },
+      "isolation_attestation_sha256": "6d40f74536932a05bc723b8819b8418e88da897b77fc9fe79afc755c7bfc7ce9",
+      "raw_report_commitments": {
+        "2.1.308-basic-apply.json": "58a02ac423f8e6bf07581e5f6201f75a99dbfdbcc5a2d8fed1599b8e5b8ecb11",
+        "2.1.308-basic-dry.json": "561437f1882459b816426d2de728df04b878022917371456589ee32cc989df99",
+        "2.1.308-collision-apply.json": "5d60dbdf294339894a82f3c14609346914c50b15dcb6700a4ab226be3801d817",
+        "2.1.308-denied-first.json": "8283559be6cf85ed78e1f767d506910818712e3e063b91be5986d6a06dfe0437",
+        "2.1.308-denied-late.json": "41761dfccea2ed3b7a62979c87fd3052b9c54cd5fc18c89281e2dad30a7d8694",
+        "2.1.308-help.json": "8217f857957af6c3c939ed788b1b551a60da8b1d7f896dfcabed07440496f24e",
+        "2.1.308-nested-apply.json": "61517d98a25a12d654e6627a01cb533487a8a035a0b5c659262e21f08ec6b1f5",
+        "2.1.308-nested-denied-first.json": "1abd400a8460c517cc67ce781163471074b2c98cbf6e57b1aa953d566b51e865",
+        "2.1.308-nested-denied-late.json": "76d1bef615b2d186df9c13ed7849173de68e0257a7b0c4672bb3d2001b30cfcf",
+        "2.1.308-project-help.json": "a164fd26518cf5442d7b52ed8874cfd372838c17c96f82b46455745abe864d4a",
+        "2.1.308-purge-help.json": "e9f3859aed4b2e0b9de743e1fc4381b6dc365749f985863d80041c96a9b5ca48",
+        "2.1.308-version.json": "2759ff1c8a24024f0cc555b56391c3df31ce7de80e31fdddd92abfd3e9ea69bc"
+      }
+    }
+  ],
+  "reviewer_checked_native_probe_count": 53,
+  "independent_reproduction_native_probe_count": 53
+}

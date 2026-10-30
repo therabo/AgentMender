@@ -5,6 +5,10 @@
 Accepted safety boundary, 2026-10-30. M9 remains OPEN. Extends ADR-0008/0009/0013;
 does not enable a Claude mutation interface or change Codex behavior.
 
+Follow-up: [ADR-0015](0015-current-claude-purge-provider-blockers.md) preserves this
+safety boundary and the exact 2.1.222 evidence, but changes the milestone assessment
+to BLOCKED after independently investigating current official releases.
+
 ## Context and evidence
 
 M8 was formally integrated at `83f0692cdda33bc3be34146ab8ceefab5dadf1f3`

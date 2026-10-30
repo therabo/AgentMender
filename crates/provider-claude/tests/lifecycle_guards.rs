@@ -180,7 +180,7 @@ fn missing_copied_transcripts_cannot_create_authority() {
 proptest! {
     #![proptest_config(ProptestConfig { cases: 256, rng_seed: RngSeed::Fixed(0x4d395f636c617564), .. ProptestConfig::default() })]
     #[test]
-    fn claimed_profile_and_identity_never_create_authority(desktop in any::<bool>(), known in any::<bool>(), project_id in any::<bool>(), path in any::<bool>(), session_id in any::<bool>(), choice in 0usize..5, version in "[a-z0-9]{1,20}") {
+    fn claimed_profile_and_identity_never_create_authority(desktop in any::<bool>(), known in any::<bool>(), project_id in any::<bool>(), path in any::<bool>(), session_id in any::<bool>(), choice in 0usize..5, version in prop_oneof![Just("2.1.222".to_owned()), Just("2.1.308".to_owned()), Just("2.1.314".to_owned()), "[a-z0-9]{1,20}"]) {
         let (fixture_path, adapter) = fixture(desktop);
         let before = files(&fixture_path);
         let mut snapshot = adapter.discover(&DiscoveryScope::default()).unwrap();
