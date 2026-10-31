@@ -1,6 +1,8 @@
 # Discovery test boundaries
 
-M9 remains OPEN with zero Claude execution profiles. Its provider guard suite adds
+M9 capability remains BLOCKED BY PROVIDER with zero Claude execution profiles.
+The investigation is CLOSED FOR CURRENT PROVIDER CONTRACT. Its provider guard
+suite adds
 one generated property, 256 cases, seed `0x4d395f636c617564`, plus two deterministic
 tests. Both fixture classes exercise every project/session and intent; actual
 transcript disappearance is tested only on copied private fixtures. Claimed versions,
@@ -12,7 +14,8 @@ Unsupported preparation plan without creating a transaction or grant.
 reproducer for the exact installed Code 2.1.222 binary. It generates all synthetic
 state and asserts six native counterexamples. It is not run by CI or a production
 adapter acceptance test. See `compatibility/claude/lifecycle-m9/README.md` and
-`docs/claude-lifecycle.md` for provenance, exact pin/isolation and OPEN limitations.
+`docs/claude-lifecycle.md` for provenance, exact pin/isolation and
+provider-blocked limitations.
 
 M8 adds sixteen generated verification properties at 256 cases each, seed
 `0x4d385f6c69666531` (4,096 cases), focused execution/reconciliation/retained-state

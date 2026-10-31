@@ -12,8 +12,11 @@ unarchive adapter with independent verification and read-only reconciliation.
 Archive/delete execution and repair remain unsupported; current real plans remain
 Blocked/Unsupported. See [the exact lifecycle boundary](docs/codex-lifecycle.md).
 
-M9 Claude project lifecycle is **BLOCKED** pending an upstream identity/effects/
-verification contract. Separate investigation of current official Code 2.1.314
+M9 capability status is **BLOCKED BY PROVIDER**. Its investigation is **CLOSED FOR
+CURRENT PROVIDER CONTRACT**; integration retains blocker evidence and permanent
+safety guards, not completed lifecycle capability. Claude lifecycle operations
+remain **Unsupported**, pending an upstream identity/effects/verification contract.
+Separate investigation of current official Code 2.1.314
 and delayed-stable 2.1.308 preserves the unsupported installed 2.1.222 profile.
 Purge error reporting has improved, but writable dry-run, ambiguous selectors and
 incomplete negative proof prevent execution support. Claude remains read-only with

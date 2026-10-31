@@ -1,5 +1,10 @@
 # Claude project lifecycle investigation: M9 BLOCKED
 
+M9 capability status: **BLOCKED BY PROVIDER**. Investigation status: **CLOSED FOR
+CURRENT PROVIDER CONTRACT**. Claude lifecycle operations: **Unsupported**.
+Integration preserves blocker evidence and safety guards; it does not make M9 PASS
+or establish completed lifecycle capability. See the [closeout record](milestones/m9-closeout.md).
+
 M9 enables **zero Claude mutation operations**. Native project purge exists in the
 installed Code binary, but its target/effects/verification contract is insufficient
 for AgentMender execution. No Claude mutation adapter or lifecycle compatibility
@@ -139,7 +144,8 @@ Guard tests cover both fixture classes, project/session granularity, all intenti
 unknown or claimed profiles, changing storage observations, unsupported preparation,
 and rejection before durable-root access. Architecture fitness rejects Claude
 write/transport/authority additions and capability-producing planning overrides.
-Existing Codex and MCP tests remain unchanged. These gates protect the OPEN state;
+Existing Codex and MCP tests remain unchanged. These gates protect the
+provider-blocked state;
 they do not replace native lifecycle execution/crash/reconciliation acceptance tests.
 
 M9 requires an upstream lossless native project identity and exhaustive membership,
@@ -147,4 +153,6 @@ a versioned closed effects/retention contract including startup and concurrency,
 and authoritative coherent read-only observations proving absence and retained
 invariants after ambiguous outcomes. Only then can an explicit project handoff
 reuse M6-M8 and receive positive native acceptance tests. No M10 work is started
-or recommended; M9 is not merged.
+or recommended by this investigation. The 2026-10-31 closeout authorizes
+history-preserving integration of evidence and guards only, subject to exact-head
+CI, local gates and clean-tree verification.

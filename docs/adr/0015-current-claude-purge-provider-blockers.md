@@ -7,6 +7,12 @@ safe completion requires an upstream provider change or authoritative new contra
 Extends ADR-0014's unchanged safety boundary; supersedes only its OPEN milestone
 assessment. No Claude lifecycle profile, operation or dispatcher is enabled.
 
+2026-10-31 closeout: capability status remains BLOCKED BY PROVIDER; investigation
+status is CLOSED FOR CURRENT PROVIDER CONTRACT. The explicit closeout authorizes
+fast-forward integration of evidence/guards after exact-head CI and local gates.
+This supersedes the historical no-integration decision below, without changing
+any capability or safety boundary. See [M9 closeout](../milestones/m9-closeout.md).
+
 ## Context
 
 The previous exact installed profile (Desktop 4.29.0 / Code 2.1.222) remains

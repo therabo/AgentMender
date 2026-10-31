@@ -1,8 +1,10 @@
 # AgentMender engineering constraints
 
 M8 is formally integrated at `83f0692cdda33bc3be34146ab8ceefab5dadf1f3`.
-M9 investigation belongs on `milestone/m9-claude-lifecycle`. ADR-0015 keeps M9 BLOCKED:
-zero Claude mutation operations/profiles, no dispatcher or storage fallback.
+M9 capability status: BLOCKED BY PROVIDER. Its investigation is CLOSED FOR CURRENT
+PROVIDER CONTRACT on `milestone/m9-claude-lifecycle`; integration retains blocker
+evidence and permanent guards, not a completed lifecycle capability. ADR-0015
+keeps zero Claude mutation operations/profiles, no dispatcher or storage fallback.
 Installed Code 2.1.222 recognizes project purge, but isolated native dry-run itself
 writes configuration/backups. Never invoke it against real state before durable
 intent. Existing heuristic projects do not supply native purge identity or closed
