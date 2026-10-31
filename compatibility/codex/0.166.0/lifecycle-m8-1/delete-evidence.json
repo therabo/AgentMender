@@ -1,0 +1,636 @@
+{
+  "provider_version": "0.166.0",
+  "platform": "aarch64-apple-darwin",
+  "binary_sha256": "39acf979729dd290f9a24ee38b2914e036c91b65952872e28ae2a6b88a7db7c1",
+  "provenance": "Official release archive digest independently matched by role A; source is separately tag-pinned evidence, not binary source equivalence.",
+  "isolation": {
+    "fresh_owned_roots": true,
+    "all_environment_paths_isolated": true,
+    "outside_writes_denied": true,
+    "real_home_content_denied": true,
+    "network_forks_mach_denied": true,
+    "no_unsandboxed_retry": true
+  },
+  "fixture_origin": "Explicitly synthetic JSONL fixtures before native lifecycle effects; no production sessions.",
+  "cases": [
+    {
+      "case": "mixed-tree",
+      "target": "ab000000-1111-4111-8111-000000000001",
+      "child": "ab000000-1111-4111-8111-000000000002",
+      "grandchild": "ab000000-1111-4111-8111-000000000003",
+      "unrelated": "ab000000-1111-4111-8111-000000000004",
+      "forked_from_only": "ab000000-1111-4111-8111-000000000005",
+      "never_seeded": "ab000000-1111-4111-8111-000000000006",
+      "delete": {
+        "rpc_accepted": true
+      },
+      "after": {
+        "('ab000000-1111-4111-8111-000000000001', False)": {
+          "rpc_error_code": -32600,
+          "error_category": "thread_not_loaded",
+          "absence_proof": false
+        },
+        "('ab000000-1111-4111-8111-000000000001', True)": {
+          "rpc_error_code": -32600,
+          "error_category": "thread_not_loaded",
+          "absence_proof": false
+        },
+        "('ab000000-1111-4111-8111-000000000002', False)": {
+          "rpc_error_code": -32600,
+          "error_category": "thread_not_loaded",
+          "absence_proof": false
+        },
+        "('ab000000-1111-4111-8111-000000000002', True)": {
+          "rpc_error_code": -32600,
+          "error_category": "thread_not_loaded",
+          "absence_proof": false
+        },
+        "('ab000000-1111-4111-8111-000000000003', False)": {
+          "rpc_error_code": -32600,
+          "error_category": "thread_not_loaded",
+          "absence_proof": false
+        },
+        "('ab000000-1111-4111-8111-000000000003', True)": {
+          "rpc_error_code": -32600,
+          "error_category": "thread_not_loaded",
+          "absence_proof": false
+        },
+        "('ab000000-1111-4111-8111-000000000004', False)": {
+          "id": "ab000000-1111-4111-8111-000000000004",
+          "source": "cli",
+          "path_namespace": "sessions",
+          "metadata_present": true,
+          "rollout_intact_proof": false
+        },
+        "('ab000000-1111-4111-8111-000000000004', True)": {
+          "id": "ab000000-1111-4111-8111-000000000004",
+          "source": "cli",
+          "path_namespace": "sessions",
+          "metadata_present": true,
+          "rollout_intact_proof": false
+        },
+        "('ab000000-1111-4111-8111-000000000005', False)": {
+          "id": "ab000000-1111-4111-8111-000000000005",
+          "source": "cli",
+          "path_namespace": "sessions",
+          "metadata_present": true,
+          "rollout_intact_proof": false
+        },
+        "('ab000000-1111-4111-8111-000000000005', True)": {
+          "id": "ab000000-1111-4111-8111-000000000005",
+          "source": "cli",
+          "path_namespace": "sessions",
+          "metadata_present": true,
+          "rollout_intact_proof": false
+        },
+        "('ab000000-1111-4111-8111-000000000006', False)": {
+          "rpc_error_code": -32600,
+          "error_category": "thread_not_loaded",
+          "absence_proof": false
+        },
+        "('ab000000-1111-4111-8111-000000000006', True)": {
+          "rpc_error_code": -32600,
+          "error_category": "thread_not_loaded",
+          "absence_proof": false
+        }
+      },
+      "after_restart": {
+        "('ab000000-1111-4111-8111-000000000001', False)": {
+          "rpc_error_code": -32600,
+          "error_category": "thread_not_loaded",
+          "absence_proof": false
+        },
+        "('ab000000-1111-4111-8111-000000000001', True)": {
+          "rpc_error_code": -32600,
+          "error_category": "thread_not_loaded",
+          "absence_proof": false
+        },
+        "('ab000000-1111-4111-8111-000000000002', False)": {
+          "rpc_error_code": -32600,
+          "error_category": "thread_not_loaded",
+          "absence_proof": false
+        },
+        "('ab000000-1111-4111-8111-000000000002', True)": {
+          "rpc_error_code": -32600,
+          "error_category": "thread_not_loaded",
+          "absence_proof": false
+        },
+        "('ab000000-1111-4111-8111-000000000003', False)": {
+          "rpc_error_code": -32600,
+          "error_category": "thread_not_loaded",
+          "absence_proof": false
+        },
+        "('ab000000-1111-4111-8111-000000000003', True)": {
+          "rpc_error_code": -32600,
+          "error_category": "thread_not_loaded",
+          "absence_proof": false
+        },
+        "('ab000000-1111-4111-8111-000000000004', False)": {
+          "id": "ab000000-1111-4111-8111-000000000004",
+          "source": "cli",
+          "path_namespace": "sessions",
+          "metadata_present": true,
+          "rollout_intact_proof": false
+        },
+        "('ab000000-1111-4111-8111-000000000004', True)": {
+          "id": "ab000000-1111-4111-8111-000000000004",
+          "source": "cli",
+          "path_namespace": "sessions",
+          "metadata_present": true,
+          "rollout_intact_proof": false
+        },
+        "('ab000000-1111-4111-8111-000000000005', False)": {
+          "id": "ab000000-1111-4111-8111-000000000005",
+          "source": "cli",
+          "path_namespace": "sessions",
+          "metadata_present": true,
+          "rollout_intact_proof": false
+        },
+        "('ab000000-1111-4111-8111-000000000005', True)": {
+          "id": "ab000000-1111-4111-8111-000000000005",
+          "source": "cli",
+          "path_namespace": "sessions",
+          "metadata_present": true,
+          "rollout_intact_proof": false
+        },
+        "('ab000000-1111-4111-8111-000000000006', False)": {
+          "rpc_error_code": -32600,
+          "error_category": "thread_not_loaded",
+          "absence_proof": false
+        },
+        "('ab000000-1111-4111-8111-000000000006', True)": {
+          "rpc_error_code": -32600,
+          "error_category": "thread_not_loaded",
+          "absence_proof": false
+        }
+      },
+      "retained_rollout_hashes": [
+        {
+          "id": "ab000000-1111-4111-8111-000000000004",
+          "before_sha256": "e2b405c0c7d0cfc55f0b3fcd42d236bc8669e655128a2c597b570021acc2fbb9",
+          "after_sha256": "e2b405c0c7d0cfc55f0b3fcd42d236bc8669e655128a2c597b570021acc2fbb9",
+          "unchanged": true
+        },
+        {
+          "id": "ab000000-1111-4111-8111-000000000005",
+          "before_sha256": "841e0064d361a3fa1b0ac3e09899018d1ace92de3eeb4d50713318a38cf3301b",
+          "after_sha256": "841e0064d361a3fa1b0ac3e09899018d1ace92de3eeb4d50713318a38cf3301b",
+          "unchanged": true
+        }
+      ],
+      "source_relationship": {
+        "id": "ab000000-1111-4111-8111-000000000002",
+        "source": {
+          "subAgent": {
+            "thread_spawn": {
+              "parent_thread_id": "ab000000-1111-4111-8111-000000000001",
+              "depth": 1,
+              "agent_path": null,
+              "agent_nickname": null,
+              "agent_role": null
+            }
+          }
+        },
+        "path_namespace": "sessions",
+        "metadata_present": true,
+        "rollout_intact_proof": false
+      },
+      "rollout_observation": {
+        "target_present": false,
+        "child_present": false,
+        "grandchild_present": false,
+        "is_native_absence_proof": false
+      },
+      "native_lists_before": {
+        "(False, False)": {
+          "ids": [
+            "ab000000-1111-4111-8111-000000000005",
+            "ab000000-1111-4111-8111-000000000004"
+          ],
+          "protocol_pagination_ended": true,
+          "namespace_complete_proof": false
+        },
+        "(False, True)": {
+          "ids": [
+            "ab000000-1111-4111-8111-000000000005",
+            "ab000000-1111-4111-8111-000000000004",
+            "ab000000-1111-4111-8111-000000000001"
+          ],
+          "protocol_pagination_ended": true,
+          "namespace_complete_proof": false
+        },
+        "(True, False)": {
+          "ids": [
+            "ab000000-1111-4111-8111-000000000003"
+          ],
+          "protocol_pagination_ended": true,
+          "namespace_complete_proof": false
+        },
+        "(True, True)": {
+          "ids": [
+            "ab000000-1111-4111-8111-000000000003"
+          ],
+          "protocol_pagination_ended": true,
+          "namespace_complete_proof": false
+        }
+      },
+      "ancestor_lists_before": {
+        "False": {
+          "ids": [
+            "ab000000-1111-4111-8111-000000000002"
+          ],
+          "namespace_complete_proof": false
+        },
+        "True": {
+          "ids": [
+            "ab000000-1111-4111-8111-000000000003"
+          ],
+          "namespace_complete_proof": false
+        }
+      },
+      "shared_name_index_retained_ids": [
+        "ab000000-1111-4111-8111-000000000004"
+      ]
+    },
+    {
+      "case": "root-rollout-denied",
+      "target": "ab000000-1111-4111-8111-000000000001",
+      "child": "ab000000-1111-4111-8111-000000000002",
+      "grandchild": "ab000000-1111-4111-8111-000000000003",
+      "unrelated": "ab000000-1111-4111-8111-000000000004",
+      "forked_from_only": "ab000000-1111-4111-8111-000000000005",
+      "never_seeded": "ab000000-1111-4111-8111-000000000006",
+      "delete": {
+        "rpc_error_code": -32603,
+        "error_category": "denied_root_rollout_after_descendant_effects",
+        "absence_proof": false
+      },
+      "after": {
+        "('ab000000-1111-4111-8111-000000000001', False)": {
+          "id": "ab000000-1111-4111-8111-000000000001",
+          "source": "cli",
+          "path_namespace": "sessions",
+          "metadata_present": true,
+          "rollout_intact_proof": false
+        },
+        "('ab000000-1111-4111-8111-000000000001', True)": {
+          "id": "ab000000-1111-4111-8111-000000000001",
+          "source": "cli",
+          "path_namespace": "sessions",
+          "metadata_present": true,
+          "rollout_intact_proof": false
+        },
+        "('ab000000-1111-4111-8111-000000000002', False)": {
+          "id": "ab000000-1111-4111-8111-000000000002",
+          "source": {
+            "subAgent": {
+              "thread_spawn": {
+                "parent_thread_id": "ab000000-1111-4111-8111-000000000001",
+                "depth": 1,
+                "agent_path": null,
+                "agent_nickname": null,
+                "agent_role": null
+              }
+            }
+          },
+          "path_namespace": "sessions",
+          "metadata_present": true,
+          "rollout_intact_proof": false
+        },
+        "('ab000000-1111-4111-8111-000000000002', True)": {
+          "rpc_error_code": -32600,
+          "error_category": "thread_not_loaded",
+          "absence_proof": false
+        },
+        "('ab000000-1111-4111-8111-000000000003', False)": {
+          "id": "ab000000-1111-4111-8111-000000000003",
+          "source": {
+            "subAgent": {
+              "thread_spawn": {
+                "parent_thread_id": "ab000000-1111-4111-8111-000000000002",
+                "depth": 1,
+                "agent_path": null,
+                "agent_nickname": null,
+                "agent_role": null
+              }
+            }
+          },
+          "path_namespace": "archived_sessions",
+          "metadata_present": true,
+          "rollout_intact_proof": false
+        },
+        "('ab000000-1111-4111-8111-000000000003', True)": {
+          "rpc_error_code": -32600,
+          "error_category": "thread_not_loaded",
+          "absence_proof": false
+        },
+        "('ab000000-1111-4111-8111-000000000004', False)": {
+          "id": "ab000000-1111-4111-8111-000000000004",
+          "source": "cli",
+          "path_namespace": "sessions",
+          "metadata_present": true,
+          "rollout_intact_proof": false
+        },
+        "('ab000000-1111-4111-8111-000000000004', True)": {
+          "id": "ab000000-1111-4111-8111-000000000004",
+          "source": "cli",
+          "path_namespace": "sessions",
+          "metadata_present": true,
+          "rollout_intact_proof": false
+        },
+        "('ab000000-1111-4111-8111-000000000005', False)": {
+          "id": "ab000000-1111-4111-8111-000000000005",
+          "source": "cli",
+          "path_namespace": "sessions",
+          "metadata_present": true,
+          "rollout_intact_proof": false
+        },
+        "('ab000000-1111-4111-8111-000000000005', True)": {
+          "id": "ab000000-1111-4111-8111-000000000005",
+          "source": "cli",
+          "path_namespace": "sessions",
+          "metadata_present": true,
+          "rollout_intact_proof": false
+        },
+        "('ab000000-1111-4111-8111-000000000006', False)": {
+          "rpc_error_code": -32600,
+          "error_category": "thread_not_loaded",
+          "absence_proof": false
+        },
+        "('ab000000-1111-4111-8111-000000000006', True)": {
+          "rpc_error_code": -32600,
+          "error_category": "thread_not_loaded",
+          "absence_proof": false
+        }
+      },
+      "after_restart": {
+        "('ab000000-1111-4111-8111-000000000001', False)": {
+          "id": "ab000000-1111-4111-8111-000000000001",
+          "source": "cli",
+          "path_namespace": "sessions",
+          "metadata_present": true,
+          "rollout_intact_proof": false
+        },
+        "('ab000000-1111-4111-8111-000000000001', True)": {
+          "id": "ab000000-1111-4111-8111-000000000001",
+          "source": "cli",
+          "path_namespace": "sessions",
+          "metadata_present": true,
+          "rollout_intact_proof": false
+        },
+        "('ab000000-1111-4111-8111-000000000002', False)": {
+          "id": "ab000000-1111-4111-8111-000000000002",
+          "source": {
+            "subAgent": {
+              "thread_spawn": {
+                "parent_thread_id": "ab000000-1111-4111-8111-000000000001",
+                "depth": 1,
+                "agent_path": null,
+                "agent_nickname": null,
+                "agent_role": null
+              }
+            }
+          },
+          "path_namespace": "sessions",
+          "metadata_present": true,
+          "rollout_intact_proof": false
+        },
+        "('ab000000-1111-4111-8111-000000000002', True)": {
+          "rpc_error_code": -32600,
+          "error_category": "thread_not_loaded",
+          "absence_proof": false
+        },
+        "('ab000000-1111-4111-8111-000000000003', False)": {
+          "id": "ab000000-1111-4111-8111-000000000003",
+          "source": {
+            "subAgent": {
+              "thread_spawn": {
+                "parent_thread_id": "ab000000-1111-4111-8111-000000000002",
+                "depth": 1,
+                "agent_path": null,
+                "agent_nickname": null,
+                "agent_role": null
+              }
+            }
+          },
+          "path_namespace": "archived_sessions",
+          "metadata_present": true,
+          "rollout_intact_proof": false
+        },
+        "('ab000000-1111-4111-8111-000000000003', True)": {
+          "rpc_error_code": -32600,
+          "error_category": "thread_not_loaded",
+          "absence_proof": false
+        },
+        "('ab000000-1111-4111-8111-000000000004', False)": {
+          "id": "ab000000-1111-4111-8111-000000000004",
+          "source": "cli",
+          "path_namespace": "sessions",
+          "metadata_present": true,
+          "rollout_intact_proof": false
+        },
+        "('ab000000-1111-4111-8111-000000000004', True)": {
+          "id": "ab000000-1111-4111-8111-000000000004",
+          "source": "cli",
+          "path_namespace": "sessions",
+          "metadata_present": true,
+          "rollout_intact_proof": false
+        },
+        "('ab000000-1111-4111-8111-000000000005', False)": {
+          "id": "ab000000-1111-4111-8111-000000000005",
+          "source": "cli",
+          "path_namespace": "sessions",
+          "metadata_present": true,
+          "rollout_intact_proof": false
+        },
+        "('ab000000-1111-4111-8111-000000000005', True)": {
+          "id": "ab000000-1111-4111-8111-000000000005",
+          "source": "cli",
+          "path_namespace": "sessions",
+          "metadata_present": true,
+          "rollout_intact_proof": false
+        },
+        "('ab000000-1111-4111-8111-000000000006', False)": {
+          "rpc_error_code": -32600,
+          "error_category": "thread_not_loaded",
+          "absence_proof": false
+        },
+        "('ab000000-1111-4111-8111-000000000006', True)": {
+          "rpc_error_code": -32600,
+          "error_category": "thread_not_loaded",
+          "absence_proof": false
+        }
+      },
+      "retained_rollout_hashes": [
+        {
+          "id": "ab000000-1111-4111-8111-000000000004",
+          "before_sha256": "b6637a36b2133018fd4a7ca0da29835af1be684492d67dfe395cefcdc4912425",
+          "after_sha256": "b6637a36b2133018fd4a7ca0da29835af1be684492d67dfe395cefcdc4912425",
+          "unchanged": true
+        },
+        {
+          "id": "ab000000-1111-4111-8111-000000000005",
+          "before_sha256": "7569fd0148a9cdf40a20059ec9d23656789c1a9b2e960aecd935a00c3c04d5c3",
+          "after_sha256": "7569fd0148a9cdf40a20059ec9d23656789c1a9b2e960aecd935a00c3c04d5c3",
+          "unchanged": true
+        }
+      ],
+      "source_relationship": {
+        "id": "ab000000-1111-4111-8111-000000000002",
+        "source": {
+          "subAgent": {
+            "thread_spawn": {
+              "parent_thread_id": "ab000000-1111-4111-8111-000000000001",
+              "depth": 1,
+              "agent_path": null,
+              "agent_nickname": null,
+              "agent_role": null
+            }
+          }
+        },
+        "path_namespace": "sessions",
+        "metadata_present": true,
+        "rollout_intact_proof": false
+      },
+      "rollout_observation": {
+        "target_present": true,
+        "child_present": false,
+        "grandchild_present": false,
+        "is_native_absence_proof": false
+      },
+      "native_lists_before": {
+        "(False, False)": {
+          "ids": [
+            "ab000000-1111-4111-8111-000000000005",
+            "ab000000-1111-4111-8111-000000000004"
+          ],
+          "protocol_pagination_ended": true,
+          "namespace_complete_proof": false
+        },
+        "(False, True)": {
+          "ids": [
+            "ab000000-1111-4111-8111-000000000005",
+            "ab000000-1111-4111-8111-000000000004",
+            "ab000000-1111-4111-8111-000000000001"
+          ],
+          "protocol_pagination_ended": true,
+          "namespace_complete_proof": false
+        },
+        "(True, False)": {
+          "ids": [
+            "ab000000-1111-4111-8111-000000000003"
+          ],
+          "protocol_pagination_ended": true,
+          "namespace_complete_proof": false
+        },
+        "(True, True)": {
+          "ids": [
+            "ab000000-1111-4111-8111-000000000003"
+          ],
+          "protocol_pagination_ended": true,
+          "namespace_complete_proof": false
+        }
+      },
+      "ancestor_lists_before": {
+        "False": {
+          "ids": [
+            "ab000000-1111-4111-8111-000000000002"
+          ],
+          "namespace_complete_proof": false
+        },
+        "True": {
+          "ids": [
+            "ab000000-1111-4111-8111-000000000003"
+          ],
+          "namespace_complete_proof": false
+        }
+      },
+      "shared_name_index_retained_ids": [
+        "ab000000-1111-4111-8111-000000000001",
+        "ab000000-1111-4111-8111-000000000004"
+      ]
+    }
+  ],
+  "uuid_identity": {
+    "native_success_aliases": {
+      "ab000000-1111-4111-8111-000000000001": "ab000000-1111-4111-8111-000000000001",
+      "AB000000-1111-4111-8111-000000000001": "ab000000-1111-4111-8111-000000000001",
+      "ab000000111141118111000000000001": "ab000000-1111-4111-8111-000000000001",
+      "{ab000000-1111-4111-8111-000000000001}": "ab000000-1111-4111-8111-000000000001",
+      "urn:uuid:ab000000-1111-4111-8111-000000000001": "ab000000-1111-4111-8111-000000000001"
+    },
+    "native_rejected_aliases": [
+      " ab000000-1111-4111-8111-000000000001",
+      "ab000000-1111-4111-8111-000000000001 ",
+      "ab000000-1111-411198111-000000000001",
+      "not-uuid"
+    ],
+    "required_adapter_rule": "Preserve complete original observation and canonical 128-bit identity separately; require unique exact requested canonical identity; reject malformed/conflicting/lossy descriptors. Do not use truncated prefix or arbitrary normalization."
+  },
+  "negative_proof_conclusion": {
+    "delete_support": "Unsupported",
+    "reconcile": "Read-only; no retries or recreated dispatch authority. Generic errors, lists, files, RPC success and notifications never prove absence.",
+    "compensation": "NotCompensatable",
+    "observed_counterexample": "After partial-error deletion, includeTurns:false succeeds for retained stale metadata while includeTurns:true equals never-seeded thread_not_loaded; true-path cannot prove absent entity or metadata.",
+    "false_read_gap": "No empirical includeTurns:false same-response DB-error conflation was established. read_sqlite_metadata initially converts get_thread errors to None (read_thread.rs:357-362), but thread_rollout_resolver.rs:87-122 re-queries and propagates persistent errors. Public response is a flattened generic error, without an admitted exact absence contract. Even a trustworthy current thread-view miss does not attest to exhaustive materialized-history, cleanup, retained/shared/global or live-cascade namespace closure.",
+    "database_denial_probe": "Separate copied synthetic partial poststate with read+write-denied state DB exited native startup EOF1; it did not establish same-response masking, and no weaker retry occurred.",
+    "retained_global_limit": "Retained synthetic rollout hashes and shared name entry checks passed in tested fixtures only; no complete logical shared/global contract established.",
+    "source_error_masking_limit": "Do not cite initial .ok().flatten() as proof that persistent DB error becomes thread_not_loaded: resolver requery can recover or return Internal."
+  },
+  "source_references": [
+    {
+      "commit": "6ff1e1ca3b30fc8b914720681fcf5fe62e95f856",
+      "path": "codex-rs/app-server/src/request_processors/thread_delete.rs",
+      "lines": "31-72",
+      "finding": "Delete subtree reverse descendants then root; notifications only after success"
+    },
+    {
+      "commit": "6ff1e1ca3b30fc8b914720681fcf5fe62e95f856",
+      "path": "codex-rs/core/src/thread_manager.rs",
+      "lines": "1146-1181",
+      "finding": "Persisted agent graph union live runtime subtree"
+    },
+    {
+      "commit": "6ff1e1ca3b30fc8b914720681fcf5fe62e95f856",
+      "path": "codex-rs/thread-store/src/local/delete_thread.rs",
+      "lines": "123-176,231-341",
+      "finding": "Reference checks and cleanup; irreversible history/file/name deletion before final state cleanup"
+    },
+    {
+      "commit": "6ff1e1ca3b30fc8b914720681fcf5fe62e95f856",
+      "path": "codex-rs/thread-store/src/local/read_thread.rs",
+      "lines": "357-363,365-400",
+      "finding": "Metadata DB error discarded; successful metadata read can survive missing rollout"
+    },
+    {
+      "commit": "6ff1e1ca3b30fc8b914720681fcf5fe62e95f856",
+      "path": "codex-rs/app-server/src/request_processors/thread_processor.rs",
+      "lines": "3069-3257,6351-6370",
+      "finding": "Read false/true store+live fallback and generic flattened invalid-request errors"
+    },
+    {
+      "commit": "6ff1e1ca3b30fc8b914720681fcf5fe62e95f856",
+      "path": "codex-rs/state/src/runtime/threads.rs",
+      "lines": "1192-1246",
+      "finding": "Separate logs/queue/memory/goals cleanup then final transaction"
+    },
+    {
+      "commit": "6ff1e1ca3b30fc8b914720681fcf5fe62e95f856",
+      "path": "codex-rs/state/src/runtime/threads.rs",
+      "lines": "1306-1321",
+      "finding": "Relation lists include empty previews but exclude attached except attached filter"
+    },
+    {
+      "commit": "6ff1e1ca3b30fc8b914720681fcf5fe62e95f856",
+      "path": "codex-rs/protocol/src/thread_id.rs",
+      "lines": "14-49,96-107",
+      "finding": "128-bit UUID parsing/canonical string serialization"
+    },
+    {
+      "commit": "6ff1e1ca3b30fc8b914720681fcf5fe62e95f856",
+      "path": "codex-rs/thread-store/src/local/thread_rollout_resolver.rs",
+      "lines": "67-150",
+      "finding": "Selected-current-rollout resolution; re-queries DB and propagates persistent errors, so initial metadata suppression alone is not a full false-read masking counterexample."
+    }
+  ]
+}

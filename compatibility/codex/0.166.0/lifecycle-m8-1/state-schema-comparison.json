@@ -1,0 +1,8 @@
+{
+  "oldEntries": 66,
+  "newEntries": 66,
+  "equal": true,
+  "compactSHA256": "1b88a3f88c8edb6f742d219835a821d0515b7b811b4342cd650e6ac8069f4647",
+  "query": "SELECT type,name,tbl_name,sql FROM sqlite_master ORDER BY type,name",
+  "source": "private native-initialized disposable root only"
+}

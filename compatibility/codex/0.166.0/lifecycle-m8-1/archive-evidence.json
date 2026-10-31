@@ -1,0 +1,752 @@
+{
+  "kind": "actual_exact_binary_observations",
+  "binaryVersion": "0.166.0",
+  "binarySha256": "39acf979729dd290f9a24ee38b2914e036c91b65952872e28ae2a6b88a7db7c1",
+  "syntheticFixtureOnly": true,
+  "isolation": {
+    "freshPrivateHomeCodeHomeTmpCwd": true,
+    "writeOutsideOwnedCaseDenied": true,
+    "allUsersDanielContentReadDenied": true,
+    "networkForkMachDenied": true,
+    "writeReadForkNetworkCanariesPassed": true
+  },
+  "cases": [
+    {
+      "case": "hidden-tree",
+      "ids": {
+        "root": "00000001-1111-4111-8111-000000000001",
+        "hidden_child": "00000002-1111-4111-8111-000000000002",
+        "grandchild": "00000003-1111-4111-8111-000000000003",
+        "sibling": "00000004-1111-4111-8111-000000000004",
+        "unrelated": "00000005-1111-4111-8111-000000000005"
+      },
+      "before": {
+        "00000001-1111-4111-8111-000000000001": {
+          "state": "active",
+          "sha256": "006d2a3ed2ca82f2ae1f84133499c9ea96dd13541618aa02e05070b4ef860a49"
+        },
+        "00000002-1111-4111-8111-000000000002": {
+          "state": "active",
+          "sha256": "1c10eae3fc6c9a60d84ae93351ccbb80356bec96a859893ed19fd5bf0b310d30"
+        },
+        "00000003-1111-4111-8111-000000000003": {
+          "state": "active",
+          "sha256": "c93d8737225c19f5b3b6982c0d89684ed6148f054c261283c4f671c690ca87b5"
+        },
+        "00000004-1111-4111-8111-000000000004": {
+          "state": "active",
+          "sha256": "8a7fb2769e98d84f9cdab3d187e278e0b8ec20b308a853918478bb56569dafa3"
+        },
+        "00000005-1111-4111-8111-000000000005": {
+          "state": "active",
+          "sha256": "b82eca4106bd70cae28766b10410318caae907808f3fb401204a0c3d85d78bbe"
+        }
+      },
+      "after_archive_files": {
+        "00000001-1111-4111-8111-000000000001": {
+          "state": "archived",
+          "sha256": "006d2a3ed2ca82f2ae1f84133499c9ea96dd13541618aa02e05070b4ef860a49"
+        },
+        "00000002-1111-4111-8111-000000000002": {
+          "state": "archived",
+          "sha256": "1c10eae3fc6c9a60d84ae93351ccbb80356bec96a859893ed19fd5bf0b310d30"
+        },
+        "00000003-1111-4111-8111-000000000003": {
+          "state": "archived",
+          "sha256": "c93d8737225c19f5b3b6982c0d89684ed6148f054c261283c4f671c690ca87b5"
+        },
+        "00000004-1111-4111-8111-000000000004": {
+          "state": "archived",
+          "sha256": "8a7fb2769e98d84f9cdab3d187e278e0b8ec20b308a853918478bb56569dafa3"
+        },
+        "00000005-1111-4111-8111-000000000005": {
+          "state": "active",
+          "sha256": "b82eca4106bd70cae28766b10410318caae907808f3fb401204a0c3d85d78bbe"
+        }
+      },
+      "after_unarchive_files": {
+        "00000001-1111-4111-8111-000000000001": {
+          "state": "active",
+          "sha256": "006d2a3ed2ca82f2ae1f84133499c9ea96dd13541618aa02e05070b4ef860a49"
+        },
+        "00000002-1111-4111-8111-000000000002": {
+          "state": "active",
+          "sha256": "1c10eae3fc6c9a60d84ae93351ccbb80356bec96a859893ed19fd5bf0b310d30"
+        },
+        "00000003-1111-4111-8111-000000000003": {
+          "state": "active",
+          "sha256": "c93d8737225c19f5b3b6982c0d89684ed6148f054c261283c4f671c690ca87b5"
+        },
+        "00000004-1111-4111-8111-000000000004": {
+          "state": "active",
+          "sha256": "8a7fb2769e98d84f9cdab3d187e278e0b8ec20b308a853918478bb56569dafa3"
+        },
+        "00000005-1111-4111-8111-000000000005": {
+          "state": "active",
+          "sha256": "b82eca4106bd70cae28766b10410318caae907808f3fb401204a0c3d85d78bbe"
+        }
+      },
+      "archive": {
+        "kind": "accepted",
+        "returnedRootId": null
+      },
+      "unarchive": {
+        "kind": "accepted",
+        "returnedRootId": "00000001-1111-4111-8111-000000000001"
+      },
+      "beforeRelations": {
+        "False": {
+          "ids": [
+            "00000004-1111-4111-8111-000000000004",
+            "00000003-1111-4111-8111-000000000003",
+            "00000002-1111-4111-8111-000000000002"
+          ],
+          "pageCount": 2,
+          "terminalNextCursorNull": true,
+          "errors": []
+        },
+        "True": {
+          "ids": [],
+          "pageCount": 1,
+          "terminalNextCursorNull": true,
+          "errors": []
+        }
+      },
+      "beforeListings": {
+        "False-False": {
+          "ids": [
+            "00000005-1111-4111-8111-000000000005",
+            "00000004-1111-4111-8111-000000000004"
+          ],
+          "pageCount": 2,
+          "terminalNextCursorNull": true,
+          "errors": []
+        },
+        "False-True": {
+          "ids": [
+            "00000005-1111-4111-8111-000000000005",
+            "00000004-1111-4111-8111-000000000004",
+            "00000003-1111-4111-8111-000000000003",
+            "00000001-1111-4111-8111-000000000001"
+          ],
+          "pageCount": 2,
+          "terminalNextCursorNull": true,
+          "errors": []
+        },
+        "True-False": {
+          "ids": [],
+          "pageCount": 1,
+          "terminalNextCursorNull": true,
+          "errors": []
+        },
+        "True-True": {
+          "ids": [],
+          "pageCount": 1,
+          "terminalNextCursorNull": true,
+          "errors": []
+        }
+      }
+    },
+    {
+      "case": "mixed-tree",
+      "ids": {
+        "root": "00000001-1111-4111-8111-000000000001",
+        "hidden_child": "00000002-1111-4111-8111-000000000002",
+        "grandchild": "00000003-1111-4111-8111-000000000003",
+        "sibling": "00000004-1111-4111-8111-000000000004",
+        "unrelated": "00000005-1111-4111-8111-000000000005"
+      },
+      "before": {
+        "00000002-1111-4111-8111-000000000002": {
+          "state": "archived",
+          "sha256": "d54a6a1b9361a2e0dca54bb1e7133a52b8215be7e188a72e38d514f435a7e5cc"
+        },
+        "00000001-1111-4111-8111-000000000001": {
+          "state": "active",
+          "sha256": "bf05c10abe67cf6e90bd3e1442a939dd8cf65f2d2561ef2588294ef05fbbaf42"
+        },
+        "00000003-1111-4111-8111-000000000003": {
+          "state": "active",
+          "sha256": "2009623635af98f2fb60dd2d309ae8fb845abd304239e9c54343ce379d8c0a2f"
+        },
+        "00000004-1111-4111-8111-000000000004": {
+          "state": "active",
+          "sha256": "064a347b8f3715199aa230e72c459a29089abca13e6c7ad4a17ed92aa8b250ab"
+        },
+        "00000005-1111-4111-8111-000000000005": {
+          "state": "active",
+          "sha256": "65b99e81ebbce5f1859661d2b230ea17b7f848183c30bd50393a57296d5a8b3d"
+        }
+      },
+      "after_archive_files": {
+        "00000001-1111-4111-8111-000000000001": {
+          "state": "archived",
+          "sha256": "bf05c10abe67cf6e90bd3e1442a939dd8cf65f2d2561ef2588294ef05fbbaf42"
+        },
+        "00000002-1111-4111-8111-000000000002": {
+          "state": "archived",
+          "sha256": "d54a6a1b9361a2e0dca54bb1e7133a52b8215be7e188a72e38d514f435a7e5cc"
+        },
+        "00000003-1111-4111-8111-000000000003": {
+          "state": "archived",
+          "sha256": "2009623635af98f2fb60dd2d309ae8fb845abd304239e9c54343ce379d8c0a2f"
+        },
+        "00000004-1111-4111-8111-000000000004": {
+          "state": "archived",
+          "sha256": "064a347b8f3715199aa230e72c459a29089abca13e6c7ad4a17ed92aa8b250ab"
+        },
+        "00000005-1111-4111-8111-000000000005": {
+          "state": "active",
+          "sha256": "65b99e81ebbce5f1859661d2b230ea17b7f848183c30bd50393a57296d5a8b3d"
+        }
+      },
+      "after_unarchive_files": {
+        "00000001-1111-4111-8111-000000000001": {
+          "state": "active",
+          "sha256": "bf05c10abe67cf6e90bd3e1442a939dd8cf65f2d2561ef2588294ef05fbbaf42"
+        },
+        "00000002-1111-4111-8111-000000000002": {
+          "state": "active",
+          "sha256": "d54a6a1b9361a2e0dca54bb1e7133a52b8215be7e188a72e38d514f435a7e5cc"
+        },
+        "00000003-1111-4111-8111-000000000003": {
+          "state": "active",
+          "sha256": "2009623635af98f2fb60dd2d309ae8fb845abd304239e9c54343ce379d8c0a2f"
+        },
+        "00000004-1111-4111-8111-000000000004": {
+          "state": "active",
+          "sha256": "064a347b8f3715199aa230e72c459a29089abca13e6c7ad4a17ed92aa8b250ab"
+        },
+        "00000005-1111-4111-8111-000000000005": {
+          "state": "active",
+          "sha256": "65b99e81ebbce5f1859661d2b230ea17b7f848183c30bd50393a57296d5a8b3d"
+        }
+      },
+      "archive": {
+        "kind": "accepted",
+        "returnedRootId": null
+      },
+      "unarchive": {
+        "kind": "accepted",
+        "returnedRootId": "00000001-1111-4111-8111-000000000001"
+      },
+      "beforeRelations": {
+        "False": {
+          "ids": [
+            "00000004-1111-4111-8111-000000000004",
+            "00000003-1111-4111-8111-000000000003"
+          ],
+          "pageCount": 1,
+          "terminalNextCursorNull": true,
+          "errors": []
+        },
+        "True": {
+          "ids": [
+            "00000002-1111-4111-8111-000000000002"
+          ],
+          "pageCount": 1,
+          "terminalNextCursorNull": true,
+          "errors": []
+        }
+      },
+      "beforeListings": {
+        "False-False": {
+          "ids": [
+            "00000005-1111-4111-8111-000000000005",
+            "00000004-1111-4111-8111-000000000004"
+          ],
+          "pageCount": 2,
+          "terminalNextCursorNull": true,
+          "errors": []
+        },
+        "False-True": {
+          "ids": [
+            "00000005-1111-4111-8111-000000000005",
+            "00000004-1111-4111-8111-000000000004",
+            "00000003-1111-4111-8111-000000000003",
+            "00000001-1111-4111-8111-000000000001"
+          ],
+          "pageCount": 2,
+          "terminalNextCursorNull": true,
+          "errors": []
+        },
+        "True-False": {
+          "ids": [
+            "00000002-1111-4111-8111-000000000002"
+          ],
+          "pageCount": 1,
+          "terminalNextCursorNull": true,
+          "errors": []
+        },
+        "True-True": {
+          "ids": [
+            "00000002-1111-4111-8111-000000000002"
+          ],
+          "pageCount": 1,
+          "terminalNextCursorNull": true,
+          "errors": []
+        }
+      }
+    },
+    {
+      "case": "archive-denied-child",
+      "ids": {
+        "root": "00000001-1111-4111-8111-000000000001",
+        "hidden_child": "00000002-1111-4111-8111-000000000002",
+        "grandchild": "00000003-1111-4111-8111-000000000003",
+        "sibling": "00000004-1111-4111-8111-000000000004",
+        "unrelated": "00000005-1111-4111-8111-000000000005"
+      },
+      "before": {
+        "00000001-1111-4111-8111-000000000001": {
+          "state": "active",
+          "sha256": "8935becd565e8dedaf0fe57ebe6d9f5b65d75148e81f1d1a668d17c01d2369c0"
+        },
+        "00000002-1111-4111-8111-000000000002": {
+          "state": "active",
+          "sha256": "af9a5d546e8a9d8d0f9c3cf9237b3ba3afd768b5738f086643071a8cc1e03b92"
+        },
+        "00000003-1111-4111-8111-000000000003": {
+          "state": "active",
+          "sha256": "0ef48306f9296a4a30de4321541f7507b6d130c4c24505be18de1ca8747fda1f"
+        },
+        "00000004-1111-4111-8111-000000000004": {
+          "state": "active",
+          "sha256": "044939ecd86d518747772e0829e8d4be0d75cf9f646bf0aa8ef57fc3b50fa856"
+        },
+        "00000005-1111-4111-8111-000000000005": {
+          "state": "active",
+          "sha256": "f95d2252d85574ba93729b118faeaf4a451a72491d123ea0ee37d8fa16e43a8e"
+        }
+      },
+      "after_archive_files": {
+        "00000001-1111-4111-8111-000000000001": {
+          "state": "archived",
+          "sha256": "8935becd565e8dedaf0fe57ebe6d9f5b65d75148e81f1d1a668d17c01d2369c0"
+        },
+        "00000003-1111-4111-8111-000000000003": {
+          "state": "archived",
+          "sha256": "0ef48306f9296a4a30de4321541f7507b6d130c4c24505be18de1ca8747fda1f"
+        },
+        "00000004-1111-4111-8111-000000000004": {
+          "state": "archived",
+          "sha256": "044939ecd86d518747772e0829e8d4be0d75cf9f646bf0aa8ef57fc3b50fa856"
+        },
+        "00000002-1111-4111-8111-000000000002": {
+          "state": "active",
+          "sha256": "af9a5d546e8a9d8d0f9c3cf9237b3ba3afd768b5738f086643071a8cc1e03b92"
+        },
+        "00000005-1111-4111-8111-000000000005": {
+          "state": "active",
+          "sha256": "f95d2252d85574ba93729b118faeaf4a451a72491d123ea0ee37d8fa16e43a8e"
+        }
+      },
+      "after_unarchive_files": {
+        "00000001-1111-4111-8111-000000000001": {
+          "state": "active",
+          "sha256": "8935becd565e8dedaf0fe57ebe6d9f5b65d75148e81f1d1a668d17c01d2369c0"
+        },
+        "00000002-1111-4111-8111-000000000002": {
+          "state": "active",
+          "sha256": "af9a5d546e8a9d8d0f9c3cf9237b3ba3afd768b5738f086643071a8cc1e03b92"
+        },
+        "00000003-1111-4111-8111-000000000003": {
+          "state": "active",
+          "sha256": "0ef48306f9296a4a30de4321541f7507b6d130c4c24505be18de1ca8747fda1f"
+        },
+        "00000004-1111-4111-8111-000000000004": {
+          "state": "active",
+          "sha256": "044939ecd86d518747772e0829e8d4be0d75cf9f646bf0aa8ef57fc3b50fa856"
+        },
+        "00000005-1111-4111-8111-000000000005": {
+          "state": "active",
+          "sha256": "f95d2252d85574ba93729b118faeaf4a451a72491d123ea0ee37d8fa16e43a8e"
+        }
+      },
+      "archive": {
+        "kind": "accepted",
+        "returnedRootId": null
+      },
+      "unarchive": {
+        "kind": "accepted",
+        "returnedRootId": "00000001-1111-4111-8111-000000000001"
+      },
+      "beforeRelations": {
+        "False": {
+          "ids": [
+            "00000004-1111-4111-8111-000000000004",
+            "00000003-1111-4111-8111-000000000003",
+            "00000002-1111-4111-8111-000000000002"
+          ],
+          "pageCount": 2,
+          "terminalNextCursorNull": true,
+          "errors": []
+        },
+        "True": {
+          "ids": [],
+          "pageCount": 1,
+          "terminalNextCursorNull": true,
+          "errors": []
+        }
+      },
+      "beforeListings": {
+        "False-False": {
+          "ids": [
+            "00000005-1111-4111-8111-000000000005",
+            "00000004-1111-4111-8111-000000000004"
+          ],
+          "pageCount": 2,
+          "terminalNextCursorNull": true,
+          "errors": []
+        },
+        "False-True": {
+          "ids": [
+            "00000005-1111-4111-8111-000000000005",
+            "00000004-1111-4111-8111-000000000004",
+            "00000003-1111-4111-8111-000000000003",
+            "00000001-1111-4111-8111-000000000001"
+          ],
+          "pageCount": 2,
+          "terminalNextCursorNull": true,
+          "errors": []
+        },
+        "True-False": {
+          "ids": [],
+          "pageCount": 1,
+          "terminalNextCursorNull": true,
+          "errors": []
+        },
+        "True-True": {
+          "ids": [],
+          "pageCount": 1,
+          "terminalNextCursorNull": true,
+          "errors": []
+        }
+      }
+    },
+    {
+      "case": "unarchive-only-denied-child",
+      "ids": {
+        "root": "00000001-1111-4111-8111-000000000001",
+        "child": "00000002-1111-4111-8111-000000000002",
+        "grandchild": "00000003-1111-4111-8111-000000000003",
+        "unrelated": "00000005-1111-4111-8111-000000000005"
+      },
+      "before": {
+        "00000001-1111-4111-8111-000000000001": {
+          "state": "archived",
+          "sha256": "645d978390ba62be9deeee813e29035cc0117dbe6db7feda571808356ed06fe9"
+        },
+        "00000002-1111-4111-8111-000000000002": {
+          "state": "archived",
+          "sha256": "9dc250856a9a0fb620745d0bf4d576e861825403ea07b4932c3c4400a6e335ac"
+        },
+        "00000003-1111-4111-8111-000000000003": {
+          "state": "archived",
+          "sha256": "7123a0b8ccf5dcb3105363194eeffdc881650608991458b43410b193b86e9133"
+        },
+        "00000005-1111-4111-8111-000000000005": {
+          "state": "active",
+          "sha256": "55a775cfb9a05d00ba812c19fc4aa3c261826c72c86676d8cba9861429da2e49"
+        }
+      },
+      "after": {
+        "00000002-1111-4111-8111-000000000002": {
+          "state": "archived",
+          "sha256": "9dc250856a9a0fb620745d0bf4d576e861825403ea07b4932c3c4400a6e335ac"
+        },
+        "00000001-1111-4111-8111-000000000001": {
+          "state": "active",
+          "sha256": "645d978390ba62be9deeee813e29035cc0117dbe6db7feda571808356ed06fe9"
+        },
+        "00000003-1111-4111-8111-000000000003": {
+          "state": "active",
+          "sha256": "7123a0b8ccf5dcb3105363194eeffdc881650608991458b43410b193b86e9133"
+        },
+        "00000005-1111-4111-8111-000000000005": {
+          "state": "active",
+          "sha256": "55a775cfb9a05d00ba812c19fc4aa3c261826c72c86676d8cba9861429da2e49"
+        }
+      },
+      "operation_response": {
+        "kind": "accepted",
+        "returnedRootId": "00000001-1111-4111-8111-000000000001"
+      },
+      "beforeRelations": {
+        "False": {
+          "ids": [],
+          "pageCount": 1,
+          "terminalNextCursorNull": true,
+          "errors": []
+        },
+        "True": {
+          "ids": [
+            "00000003-1111-4111-8111-000000000003",
+            "00000002-1111-4111-8111-000000000002"
+          ],
+          "pageCount": 1,
+          "terminalNextCursorNull": true,
+          "errors": []
+        }
+      }
+    },
+    {
+      "case": "archive-root-denied",
+      "ids": {
+        "root": "00000001-1111-4111-8111-000000000001",
+        "child": "00000002-1111-4111-8111-000000000002",
+        "grandchild": "00000003-1111-4111-8111-000000000003",
+        "unrelated": "00000005-1111-4111-8111-000000000005"
+      },
+      "before": {
+        "00000001-1111-4111-8111-000000000001": {
+          "state": "active",
+          "sha256": "f58b6c0a0eeb4ead24cd67d7310f7593c7c1337d388a1e78c30286bed6e2ffb5"
+        },
+        "00000002-1111-4111-8111-000000000002": {
+          "state": "active",
+          "sha256": "10b34092b6719831dd1d08882388203c17a8c52f3fb53b445f099128618a624c"
+        },
+        "00000003-1111-4111-8111-000000000003": {
+          "state": "active",
+          "sha256": "ea86b69cb62d7d7cf21bcda7a5359459c253145b7e70611b1b3638feb192e2d8"
+        },
+        "00000005-1111-4111-8111-000000000005": {
+          "state": "active",
+          "sha256": "f32f4a86f5f479664af98ce95ee392cbdfcdc3f4a2602605636e200ae72337e6"
+        }
+      },
+      "after": {
+        "00000001-1111-4111-8111-000000000001": {
+          "state": "active",
+          "sha256": "f58b6c0a0eeb4ead24cd67d7310f7593c7c1337d388a1e78c30286bed6e2ffb5"
+        },
+        "00000002-1111-4111-8111-000000000002": {
+          "state": "active",
+          "sha256": "10b34092b6719831dd1d08882388203c17a8c52f3fb53b445f099128618a624c"
+        },
+        "00000003-1111-4111-8111-000000000003": {
+          "state": "active",
+          "sha256": "ea86b69cb62d7d7cf21bcda7a5359459c253145b7e70611b1b3638feb192e2d8"
+        },
+        "00000005-1111-4111-8111-000000000005": {
+          "state": "active",
+          "sha256": "f32f4a86f5f479664af98ce95ee392cbdfcdc3f4a2602605636e200ae72337e6"
+        }
+      },
+      "operation_response": {
+        "kind": "native_error",
+        "code": -32603,
+        "message": "failed to archive session: thread-store internal error: failed to archive thread: Operation not permitted (os error 1)"
+      },
+      "beforeRelations": {
+        "False": {
+          "ids": [
+            "00000003-1111-4111-8111-000000000003",
+            "00000002-1111-4111-8111-000000000002"
+          ],
+          "pageCount": 1,
+          "terminalNextCursorNull": true,
+          "errors": []
+        },
+        "True": {
+          "ids": [],
+          "pageCount": 1,
+          "terminalNextCursorNull": true,
+          "errors": []
+        }
+      }
+    },
+    {
+      "case": "unarchive-root-denied",
+      "ids": {
+        "root": "00000001-1111-4111-8111-000000000001",
+        "child": "00000002-1111-4111-8111-000000000002",
+        "grandchild": "00000003-1111-4111-8111-000000000003",
+        "unrelated": "00000005-1111-4111-8111-000000000005"
+      },
+      "before": {
+        "00000001-1111-4111-8111-000000000001": {
+          "state": "archived",
+          "sha256": "f5a98ca54f288b41bd141de112b506b99898c77f8928598ab5447cd98d6f1713"
+        },
+        "00000002-1111-4111-8111-000000000002": {
+          "state": "archived",
+          "sha256": "6488a391b6adb5a15f4f3b2585d25e00843ca67d92a4d7aa13b3af1152f3ba78"
+        },
+        "00000003-1111-4111-8111-000000000003": {
+          "state": "archived",
+          "sha256": "4e60517042476a707af0bfcd7adc1c1737102565a19c90932a799a11e3ee4366"
+        },
+        "00000005-1111-4111-8111-000000000005": {
+          "state": "active",
+          "sha256": "d375613d4433d54e1da9b4143901638703e1428655c2a7009247470803d92ee7"
+        }
+      },
+      "after": {
+        "00000001-1111-4111-8111-000000000001": {
+          "state": "archived",
+          "sha256": "f5a98ca54f288b41bd141de112b506b99898c77f8928598ab5447cd98d6f1713"
+        },
+        "00000002-1111-4111-8111-000000000002": {
+          "state": "archived",
+          "sha256": "6488a391b6adb5a15f4f3b2585d25e00843ca67d92a4d7aa13b3af1152f3ba78"
+        },
+        "00000003-1111-4111-8111-000000000003": {
+          "state": "archived",
+          "sha256": "4e60517042476a707af0bfcd7adc1c1737102565a19c90932a799a11e3ee4366"
+        },
+        "00000005-1111-4111-8111-000000000005": {
+          "state": "active",
+          "sha256": "d375613d4433d54e1da9b4143901638703e1428655c2a7009247470803d92ee7"
+        }
+      },
+      "operation_response": {
+        "kind": "native_error",
+        "code": -32603,
+        "message": "failed to unarchive session: thread-store internal error: failed to unarchive thread: Operation not permitted (os error 1)"
+      },
+      "beforeRelations": {
+        "False": {
+          "ids": [],
+          "pageCount": 1,
+          "terminalNextCursorNull": true,
+          "errors": []
+        },
+        "True": {
+          "ids": [
+            "00000003-1111-4111-8111-000000000003",
+            "00000002-1111-4111-8111-000000000002"
+          ],
+          "pageCount": 1,
+          "terminalNextCursorNull": true,
+          "errors": []
+        }
+      }
+    },
+    {
+      "case": "attached-namespace",
+      "ids": {
+        "root": "00000001-1111-4111-8111-000000000001",
+        "spawned_attached_child": "00000002-1111-4111-8111-000000000002",
+        "grandchild": "00000003-1111-4111-8111-000000000003",
+        "attached_fork_only": "00000006-1111-4111-8111-000000000006",
+        "unrelated": "00000005-1111-4111-8111-000000000005"
+      },
+      "before": {
+        "00000001-1111-4111-8111-000000000001": {
+          "state": "active",
+          "sha256": "0bab2ec1131a081043059b96f352189f48b723408849a57419c007ad39a23e51"
+        },
+        "00000002-1111-4111-8111-000000000002": {
+          "state": "active",
+          "sha256": "5a2c78166c304f69beccebebe8a1a458fdffb48cd56f1b8ecdff6a414d6978b4"
+        },
+        "00000003-1111-4111-8111-000000000003": {
+          "state": "active",
+          "sha256": "16c9556fda7d1744f67263bae72eded7b75ef5957af28580696c09579b47f8c6"
+        },
+        "00000005-1111-4111-8111-000000000005": {
+          "state": "active",
+          "sha256": "04e0460ad6adbf0ca4719f45678a89c248a92f6fa5ad1dbb4a75ab48d80cee7c"
+        },
+        "00000006-1111-4111-8111-000000000006": {
+          "state": "active",
+          "sha256": "b455e2550450d6fccb0e92818231b729517b913c77c69b3e5888760af54098a1"
+        }
+      },
+      "after_archive": {
+        "00000001-1111-4111-8111-000000000001": {
+          "state": "archived",
+          "sha256": "0bab2ec1131a081043059b96f352189f48b723408849a57419c007ad39a23e51"
+        },
+        "00000002-1111-4111-8111-000000000002": {
+          "state": "archived",
+          "sha256": "5a2c78166c304f69beccebebe8a1a458fdffb48cd56f1b8ecdff6a414d6978b4"
+        },
+        "00000003-1111-4111-8111-000000000003": {
+          "state": "archived",
+          "sha256": "16c9556fda7d1744f67263bae72eded7b75ef5957af28580696c09579b47f8c6"
+        },
+        "00000005-1111-4111-8111-000000000005": {
+          "state": "active",
+          "sha256": "04e0460ad6adbf0ca4719f45678a89c248a92f6fa5ad1dbb4a75ab48d80cee7c"
+        },
+        "00000006-1111-4111-8111-000000000006": {
+          "state": "active",
+          "sha256": "b455e2550450d6fccb0e92818231b729517b913c77c69b3e5888760af54098a1"
+        }
+      },
+      "after_unarchive": {
+        "00000001-1111-4111-8111-000000000001": {
+          "state": "active",
+          "sha256": "0bab2ec1131a081043059b96f352189f48b723408849a57419c007ad39a23e51"
+        },
+        "00000002-1111-4111-8111-000000000002": {
+          "state": "active",
+          "sha256": "5a2c78166c304f69beccebebe8a1a458fdffb48cd56f1b8ecdff6a414d6978b4"
+        },
+        "00000003-1111-4111-8111-000000000003": {
+          "state": "active",
+          "sha256": "16c9556fda7d1744f67263bae72eded7b75ef5957af28580696c09579b47f8c6"
+        },
+        "00000005-1111-4111-8111-000000000005": {
+          "state": "active",
+          "sha256": "04e0460ad6adbf0ca4719f45678a89c248a92f6fa5ad1dbb4a75ab48d80cee7c"
+        },
+        "00000006-1111-4111-8111-000000000006": {
+          "state": "active",
+          "sha256": "b455e2550450d6fccb0e92818231b729517b913c77c69b3e5888760af54098a1"
+        }
+      },
+      "archive": {
+        "kind": "accepted",
+        "returnedRootId": null
+      },
+      "unarchive": {
+        "kind": "accepted",
+        "returnedRootId": "00000001-1111-4111-8111-000000000001"
+      },
+      "ordinary": {
+        "ids": [
+          "00000005-1111-4111-8111-000000000005",
+          "00000003-1111-4111-8111-000000000003",
+          "00000001-1111-4111-8111-000000000001"
+        ],
+        "pageCount": 2,
+        "terminalNextCursorNull": true,
+        "errors": []
+      },
+      "ancestor": {
+        "ids": [
+          "00000003-1111-4111-8111-000000000003"
+        ],
+        "pageCount": 1,
+        "terminalNextCursorNull": true,
+        "errors": []
+      },
+      "children": {
+        "ids": [],
+        "pageCount": 1,
+        "terminalNextCursorNull": true,
+        "errors": []
+      },
+      "attached": {
+        "ids": [
+          "00000006-1111-4111-8111-000000000006",
+          "00000002-1111-4111-8111-000000000002"
+        ],
+        "pageCount": 1,
+        "terminalNextCursorNull": true,
+        "errors": []
+      }
+    }
+  ],
+  "limitations": [
+    "Native-generated SQLite/index/log changes are outside the JSONL hash check.",
+    "List page completion reports protocol cursor termination, never namespace completeness.",
+    "No live loaded agents were created; live-subtree union is tag-source evidence, not actual-binary observation.",
+    "The duplicated attached+spawn source fixture tests accepted metadata combinations, not proof that current UI creates them.",
+    "Full raw responses remain private and are not suitable for committing."
+  ]
+}

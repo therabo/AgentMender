@@ -1,5 +1,13 @@
 # AgentMender engineering constraints
 
+M9 blocker evidence is formally integrated at
+`9daa237ac6eadeb3d74e71b19ba31bcd6eef97ef`; capability stays BLOCKED BY PROVIDER.
+Current scope is M8.1 on `milestone/m8-1-codex-full-cleanup`. Investigate current
+Codex in private isolated state only. Preserve exact historical M8 pins and
+independent approval/durable-intent/revalidation gates. Archive/delete need complete
+pre-dispatch effects and authoritative postconditions, otherwise Unsupported.
+No NLP layer or M10 work. See docs/milestones/m9-integration.md.
+
 M8 is formally integrated at `83f0692cdda33bc3be34146ab8ceefab5dadf1f3`.
 M9 capability status: BLOCKED BY PROVIDER. Its investigation is CLOSED FOR CURRENT
 PROVIDER CONTRACT on `milestone/m9-claude-lifecycle`; integration retains blocker

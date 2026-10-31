@@ -1,5 +1,10 @@
 # Codex compatibility evidence
 
+The separate [0.166.0 M8.1 investigation](0.166.0/lifecycle-m8-1/README.md) retains
+exact release/binary/schema/native evidence without enabling a production profile.
+Full cleanup remains BLOCKED BY PROVIDER; changed unarchive cascades do not inherit
+old target-only authority. Historical evidence below is unchanged.
+
 M8 separately validates a conditional unarchive dispatch profile; read-only
 compatibility below is never mutation authority. See [exact native evidence and
 counterexamples](0.165.0-alpha.1.2/lifecycle-m8/README.md) and

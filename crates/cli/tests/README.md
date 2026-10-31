@@ -1,5 +1,11 @@
 # Discovery test boundaries
 
+M8.1 adds two focused exact-version/effect-scope guards, source-fitness canaries
+and deterministic current-schema/evidence checks. No new operation/profile is
+enabled. The separately opted-in `scripts/probe_codex_current_lifecycle.py` uses
+only fresh synthetic roots and the pinned official 0.166.0 binary; CI needs no
+Codex installation. Existing property/crash suites and historical M8 pins remain.
+
 M9 capability remains BLOCKED BY PROVIDER with zero Claude execution profiles.
 The investigation is CLOSED FOR CURRENT PROVIDER CONTRACT. Its provider guard
 suite adds

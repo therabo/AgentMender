@@ -1,3 +1,6 @@
 # Captured protocol evidence is hashed byte-for-byte. Preserve its original bytes
 # on Windows too; Git newline conversion must not change the evidence bundle.
 /compatibility/codex/0.165.0-alpha.1.2/lifecycle/** -text
+/compatibility/codex/0.166.0/lifecycle-m8-1/** -text
+# The research manifest also commits to the exact standalone reproducer bytes.
+/scripts/probe_codex_current_lifecycle.py -text

@@ -1,5 +1,9 @@
 # Codex native lifecycle execution
 
+M8.1 separately investigated stable `0.166.0`; its archive/delete and cascading
+unarchive remain Unsupported. No historical exact profile was changed. See the
+[current cleanup report](codex-full-cleanup.md) and ADR-0016.
+
 M8 adds a typed, independently approved execution path. Only exact-profile native
 unarchive is conditionally supported. Current real plans remain Blocked/Unsupported:
 their partial discovery, unclosed effects and unknown integrity cannot gain approval.

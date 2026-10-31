@@ -12,6 +12,12 @@ unarchive adapter with independent verification and read-only reconciliation.
 Archive/delete execution and repair remain unsupported; current real plans remain
 Blocked/Unsupported. See [the exact lifecycle boundary](docs/codex-lifecycle.md).
 
+M8.1 independently investigated official stable Codex `0.166.0`. Full cleanup is
+**BLOCKED BY PROVIDER**: archive/delete lack complete preapproval effects and
+complete postcondition/retention proof. New unarchive cascades, so it inherits no
+historical target-only authority. No new production profile was enabled. See the
+[full cleanup report](docs/codex-full-cleanup.md).
+
 M9 capability status is **BLOCKED BY PROVIDER**. Its investigation is **CLOSED FOR
 CURRENT PROVIDER CONTRACT**; integration retains blocker evidence and permanent
 safety guards, not completed lifecycle capability. Claude lifecycle operations

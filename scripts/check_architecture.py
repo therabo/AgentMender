@@ -316,6 +316,11 @@ for path in (ROOT / "crates").glob("*/src/**/*.rs"):
         pins = list(method_bodies(source, 'pin_image'))
         if not launch or not all('DurableObservation' in body.split('{', 1)[0] for body in launch):
             errors.append('Codex native launcher lacks the nonconstructible handoff gate')
+        native_launch = [body for body in launch if '"thread/unarchive"' in body]
+        if len(native_launch) != 1 or source.count('"thread/unarchive"') != 1:
+            errors.append('Codex native lifecycle method escaped its private launcher')
+        elif not (0 <= native_launch[0].find('self.validate_executable()') < native_launch[0].find('.spawn()')):
+            errors.append('Codex executable identity is not checked before provider startup')
         if len(pins) != 1 or 'EvidenceSandbox' not in pins[0].split('{', 1)[0]:
             errors.append('executable pin writer lacks its opaque owned sandbox')
         elif re.search(r'\b(?:remove_file|remove_dir|remove_dir_all|rename|copy|set_len|truncate|set_permissions)\s*\(', mask_literals(pins[0])):

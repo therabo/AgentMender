@@ -1,0 +1,17 @@
+{
+  "classification": "independent repository opt-in reproducer; exact binary, fresh synthetic state only",
+  "version": "0.166.0",
+  "passed_cases": 7,
+  "failed_cases": 0,
+  "script": "scripts/probe_codex_current_lifecycle.py",
+  "script_sha256": "9412acb04ea3e1720af1fd7bb6e21910f49fd803f46ead0a37c72e452f01efc2",
+  "kernel_canaries": {
+    "outside_write": "DENIED",
+    "actual_account_home_read": "DENIED",
+    "loopback_egress": "DENIED",
+    "fork": "DENIED"
+  },
+  "mach_lookup": "explicit policy denial, no separate canary",
+  "no_production_promotion": true,
+  "no_real_user_sessions_mutated": true
+}

@@ -1,0 +1,32 @@
+[
+  {
+    "path": "codex-rs/core/src/thread_manager.rs",
+    "url": "https://raw.githubusercontent.com/openai/codex/6ff1e1ca3b30fc8b914720681fcf5fe62e95f856/codex-rs/core/src/thread_manager.rs",
+    "sha256": "649c77f487598381a2d1a371b67a78b6d0c89582642aa9e4b2d122a7287a27fe",
+    "matchesTagArchive": true
+  },
+  {
+    "path": "codex-rs/app-server/src/request_processors/thread_processor.rs",
+    "url": "https://raw.githubusercontent.com/openai/codex/6ff1e1ca3b30fc8b914720681fcf5fe62e95f856/codex-rs/app-server/src/request_processors/thread_processor.rs",
+    "sha256": "c03d31e07c8831c7cf153e6429f4ab908d1035b21ba593e701d5a3767121b5a8",
+    "matchesTagArchive": true
+  },
+  {
+    "path": "codex-rs/app-server/src/request_processors/thread_delete.rs",
+    "url": "https://raw.githubusercontent.com/openai/codex/6ff1e1ca3b30fc8b914720681fcf5fe62e95f856/codex-rs/app-server/src/request_processors/thread_delete.rs",
+    "sha256": "5090073a863a47189dba2ff697b3a0cfd39de9d1797cd3a6e1b84039753b1275",
+    "matchesTagArchive": true
+  },
+  {
+    "path": "codex-rs/thread-store/src/local/read_thread.rs",
+    "url": "https://raw.githubusercontent.com/openai/codex/6ff1e1ca3b30fc8b914720681fcf5fe62e95f856/codex-rs/thread-store/src/local/read_thread.rs",
+    "sha256": "a20101d62bedb87d63640a8723d84034bdf7dce9387c1daeb2387b14781dc335",
+    "matchesTagArchive": true
+  },
+  {
+    "path": "codex-rs/state/src/runtime/threads.rs",
+    "url": "https://raw.githubusercontent.com/openai/codex/6ff1e1ca3b30fc8b914720681fcf5fe62e95f856/codex-rs/state/src/runtime/threads.rs",
+    "sha256": "6d0e170a3180e51188ac08397a37649f6abbe91a44e2a574f1e133323d253b75",
+    "matchesTagArchive": true
+  }
+]

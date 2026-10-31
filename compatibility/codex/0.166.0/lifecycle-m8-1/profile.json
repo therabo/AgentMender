@@ -1,0 +1,32 @@
+{
+  "classification": "research-only exact compatibility candidate; not an enabled lifecycle profile",
+  "observed_date": "2026-10-31",
+  "version": "0.166.0",
+  "platform": "macos-arm64",
+  "adapter_version": "0.1.0",
+  "binary_sha256": "39acf979729dd290f9a24ee38b2914e036c91b65952872e28ae2a6b88a7db7c1",
+  "archive_sha256": "c48824462fc57681eafb0925d97b11b589010475613904f570b42fea53e240d5",
+  "app_server_version": "0.166.0",
+  "interface_candidate": "codex-app-server-0.166.0",
+  "state_layout": "codex-state-5:1b88a3f88c8edb6f742d219835a821d0515b7b811b4342cd650e6ac8069f4647",
+  "schema_fingerprints": {
+    "stable": "1a0c7ce9118772a7b2f3ca351d976bdb244e7b34633e897dbe0c68a9ff6fcfa2",
+    "experimental": "ce6e6f326f53a36fa184cba45a1e813a38cd31d4862e6250d9700dc3595a4a43"
+  },
+  "selected_schema_manifest_sha256": "aa6a1ec6c3e59f9f39d8605ff7f353d6b0ca5353d86a949d3814e2183334ab75",
+  "source_commit": "6ff1e1ca3b30fc8b914720681fcf5fe62e95f856",
+  "execution": {
+    "archive": "Unsupported",
+    "delete": "Unsupported",
+    "unarchive": "Unsupported for this candidate; historical exact profile unchanged"
+  },
+  "complete_predispatch_effect_boundary": false,
+  "authoritative_complete_deletion_proof": false,
+  "complete_retained_verification": false,
+  "read_only_complete_reconciliation": false,
+  "compensation": "NotCompensatable",
+  "full_cleanup": "BLOCKED BY PROVIDER",
+  "production_profile_registered": false,
+  "real_user_sessions_mutated": false,
+  "source_to_binary_identity": "official release association; reproducible build identity not established"
+}

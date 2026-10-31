@@ -1,0 +1,106 @@
+{
+  "classification": "isolated official release acquisition and native schema evidence; no production compatibility promotion",
+  "observedAt": "2026-10-31T00:43:37.172784+00:00",
+  "release": {
+    "tag_name": "rust-v0.166.0",
+    "name": "0.166.0",
+    "draft": false,
+    "prerelease": false,
+    "published_at": "2026-10-29T19:47:53Z",
+    "html_url": "https://github.com/openai/codex/releases/tag/rust-v0.166.0",
+    "id": 428320524,
+    "immutable": false
+  },
+  "officialDocs": [
+    "https://learn.chatgpt.com/docs/codex/cli",
+    "https://learn.chatgpt.com/docs/app-server"
+  ],
+  "distribution": {
+    "package": "@openai/codex",
+    "latestVersion": "0.166.0",
+    "url": "https://registry.npmjs.org/@openai%2Fcodex/latest"
+  },
+  "artifact": {
+    "id": 689702766,
+    "name": "codex-aarch64-apple-darwin.tar.gz",
+    "size": 107610108,
+    "digest": "sha256:c48824462fc57681eafb0925d97b11b589010475613904f570b42fea53e240d5",
+    "browser_download_url": "https://github.com/openai/codex/releases/download/rust-v0.166.0/codex-aarch64-apple-darwin.tar.gz"
+  },
+  "archiveSHA256": "c48824462fc57681eafb0925d97b11b589010475613904f570b42fea53e240d5",
+  "archiveMatchesUpstreamDigest": true,
+  "binary": {
+    "path": "<private-investigation>/binary/codex-aarch64-apple-darwin",
+    "sha256": "39acf979729dd290f9a24ee38b2914e036c91b65952872e28ae2a6b88a7db7c1",
+    "format": "Mach-O 64-bit executable arm64",
+    "observedVersion": "codex-cli 0.166.0"
+  },
+  "source": {
+    "archive": "<private-investigation>/downloads/source-rust-v0.166.0.tar.gz",
+    "archiveSHA256": "b32b28ac8dfd6653a153fd2e93a810d499378b03c4e341d8ea9952ae2b78d57d",
+    "archiveUrl": "https://api.github.com/repos/openai/codex/tarball/rust-v0.166.0",
+    "root": "<private-investigation>/source/openai-codex-5933893",
+    "annotatedTagSHA": "593389380740f7b4762771573c447ccfdc59742f",
+    "commit": "6ff1e1ca3b30fc8b914720681fcf5fe62e95f856",
+    "githubTagSignatureVerification": {
+      "verified": false,
+      "reason": "unsigned",
+      "signature": null,
+      "payload": null,
+      "verified_at": null
+    },
+    "executed": false,
+    "sourceToBinaryIdentity": "official release/tag association; reproducible-build byte identity not established"
+  },
+  "runtimeIsolation": {
+    "envClear": true,
+    "variables": [
+      "HOME",
+      "CODEX_HOME",
+      "TMPDIR",
+      "PATH",
+      "RUST_BACKTRACE",
+      "LANG"
+    ],
+    "privateRootMode": "0700",
+    "writeBoundary": "fresh individual runtime only",
+    "denied": [
+      "all <real-home> file data reads",
+      "writes outside fresh runtime",
+      "network",
+      "process-fork",
+      "mach-lookup"
+    ],
+    "canaries": {
+      "outsideWrite": "EPERM",
+      "protectedRead": "EPERM",
+      "fork": "EPERM",
+      "network": "EPERM"
+    },
+    "machLookup": "explicit policy denial; not separately canary-probed"
+  },
+  "schemas": {
+    "stable": {
+      "root": "<private-investigation>/runtime-schemas-stable-25d98ac1fd2048279c37a4f0fb016e1f/schemas",
+      "count": 321
+    },
+    "experimental": {
+      "root": "<private-investigation>/runtime-schemas-experimental-b98141c36070408bba627af2300313a4/schemas",
+      "count": 467
+    },
+    "repeatGeneration": "same path sets and exact hashes under fresh independent runtimes"
+  },
+  "stateSchema": {
+    "oldEntries": 66,
+    "newEntries": 66,
+    "equal": true,
+    "compactSHA256": "1b88a3f88c8edb6f742d219835a821d0515b7b811b4342cd650e6ac8069f4647",
+    "query": "SELECT type,name,tbl_name,sql FROM sqlite_master ORDER BY type,name",
+    "source": "private native-initialized disposable root only"
+  },
+  "interfaceCandidate": "codex-app-server-0.166.0 (derived identifier only; not registered in AgentMender)",
+  "realUserStateRead": false,
+  "realUserStateMutated": false,
+  "repositoryChangedByAgentA": false,
+  "installedBinaryExecutedByAgentA": false
+}

@@ -17,3 +17,5 @@
 | [0013: Exact Codex unarchive through a consumed durable handoff](0013-codex-durable-native-handoff.md) | Accepted |
 | [0014: Claude project lifecycle evidence gate](0014-claude-project-lifecycle-evidence-gate.md) | Accepted safety boundary; M9 OPEN |
 | [0015: Current Claude purge provider blockers](0015-current-claude-purge-provider-blockers.md) | Accepted; M9 BLOCKED; preserves 0014 safety boundary |
+
+- [0016: Current Codex cleanup provider-contract gate](0016-current-codex-cleanup-provider-contract-gate.md)

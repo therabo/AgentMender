@@ -67,7 +67,10 @@ pub(super) fn planning_context(
 mod tests {
     use super::*;
     use crate::CodexAdapter;
-    use agentmender_domain::{CompatibilityStatus, DiscoverySnapshot};
+    use agentmender_domain::{
+        CompatibilityStatus, DiscoverySnapshot, GraphNodeKind, IntegrityContext, LifecycleIntent,
+        LifecycleRequest, PlanStatus, evaluate_integrity, plan_lifecycle,
+    };
     use agentmender_provider_api::ProviderAdapter;
     use serde_json::Value;
     use sha2::{Digest, Sha256};
@@ -148,6 +151,48 @@ mod tests {
         .finish()
         .unwrap();
         assert!(planning_context(&foreign_graph, &DiscoveryScope::default()).is_err());
+    }
+    #[test]
+    fn current_and_neighboring_versions_cannot_inherit_historical_authority() {
+        for version in ["0.166.0", "0.166.0-alpha.1", "0.165.1", "0.167.0"] {
+            assert!(ExactProfile::lookup(version).is_none(), "{version}");
+            // Keep the old layout, interface, adapter and read-only status deliberately:
+            // matching protocol/storage shapes cannot transfer an execution contract.
+            let mut s = snapshot();
+            s.provider.fingerprint.executable_version = Some(version.into());
+            let graph = crate::graph::build_graph(&s).unwrap();
+            let planning = planning_context(&graph, &DiscoveryScope::default()).unwrap();
+            assert!(planning.capabilities.is_empty(), "{version}");
+            assert!(planning.effects.is_none(), "{version}");
+            let target = graph
+                .nodes()
+                .iter()
+                .find(|n| n.id.class == GraphNodeKind::Session)
+                .unwrap();
+            let report = evaluate_integrity(&graph, &IntegrityContext::default());
+            for intent in [
+                LifecycleIntent::Archive,
+                LifecycleIntent::Unarchive,
+                LifecycleIntent::SoftDelete,
+                LifecycleIntent::Purge,
+            ] {
+                let plan = plan_lifecycle(
+                    &graph,
+                    &report,
+                    &planning,
+                    LifecycleRequest {
+                        target: target.id.clone(),
+                        intent,
+                    },
+                );
+                assert_ne!(
+                    plan.content().status,
+                    PlanStatus::Ready,
+                    "{version} {intent:?}"
+                );
+                assert!(plan.content().operations.is_empty(), "{version} {intent:?}");
+            }
+        }
     }
     fn hex(bytes: &[u8]) -> String {
         bytes.iter().map(|byte| format!("{byte:02x}")).collect()

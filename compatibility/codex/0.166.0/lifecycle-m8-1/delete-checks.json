@@ -1,0 +1,50 @@
+{
+  "checks": [
+    {
+      "name": "mixed-tree retained unrelated/fork hash unchanged",
+      "passed": true
+    },
+    {
+      "name": "mixed-tree descendants rollout removed",
+      "passed": true
+    },
+    {
+      "name": "mixed delete response accepted",
+      "passed": true
+    },
+    {
+      "name": "root-rollout-denied retained unrelated/fork hash unchanged",
+      "passed": true
+    },
+    {
+      "name": "root-rollout-denied descendants rollout removed",
+      "passed": true
+    },
+    {
+      "name": "partial error code",
+      "passed": true
+    },
+    {
+      "name": "after stale metadata ab000000-1111-4111-8111-000000000002",
+      "passed": true
+    },
+    {
+      "name": "after stale metadata ab000000-1111-4111-8111-000000000003",
+      "passed": true
+    },
+    {
+      "name": "after_restart stale metadata ab000000-1111-4111-8111-000000000002",
+      "passed": true
+    },
+    {
+      "name": "after_restart stale metadata ab000000-1111-4111-8111-000000000003",
+      "passed": true
+    },
+    {
+      "name": "summary strips private raw context",
+      "passed": true
+    }
+  ],
+  "passed": 11,
+  "failed": 0
+}

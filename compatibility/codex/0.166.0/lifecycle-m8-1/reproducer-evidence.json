@@ -1,0 +1,537 @@
+{
+  "version": "0.166.0",
+  "binary_sha256": "39acf979729dd290f9a24ee38b2914e036c91b65952872e28ae2a6b88a7db7c1",
+  "classification": "native operations on explicitly synthetic fixtures",
+  "production_compatibility_promoted": false,
+  "isolation_canaries": {
+    "outside_write": "DENIED",
+    "protected_directory_read": "DENIED",
+    "network": "DENIED",
+    "fork": "DENIED"
+  },
+  "mach_lookup": "explicitly denied in policy; no separate canary",
+  "cases": [
+    {
+      "case": "single",
+      "before": {
+        "ab000000-1111-4111-8111-000000000001": "active",
+        "ab000000-1111-4111-8111-000000000005": "active"
+      },
+      "ordinary": {
+        "ids": [
+          "ab000000-1111-4111-8111-000000000001",
+          "ab000000-1111-4111-8111-000000000005"
+        ],
+        "pagination_ended": true,
+        "namespace_closed": false
+      },
+      "ancestor": {
+        "False": {
+          "ids": [],
+          "pagination_ended": true,
+          "namespace_closed": false
+        },
+        "True": {
+          "ids": [],
+          "pagination_ended": true,
+          "namespace_closed": false
+        }
+      },
+      "attached": null,
+      "archive": {
+        "accepted": true
+      },
+      "after_archive": {
+        "ab000000-1111-4111-8111-000000000001": "archived",
+        "ab000000-1111-4111-8111-000000000005": "active"
+      },
+      "unarchive": {
+        "accepted": true,
+        "canonical_id": "ab000000-1111-4111-8111-000000000001",
+        "metadata_present": true
+      },
+      "after_unarchive": {
+        "ab000000-1111-4111-8111-000000000001": "active",
+        "ab000000-1111-4111-8111-000000000005": "active"
+      },
+      "retained_fixture_rollouts_unchanged": true,
+      "complete_effect_or_retention_proof": false
+    },
+    {
+      "case": "hidden-tree",
+      "before": {
+        "ab000000-1111-4111-8111-000000000001": "active",
+        "ab000000-1111-4111-8111-000000000005": "active",
+        "ab000000-1111-4111-8111-000000000002": "active",
+        "ab000000-1111-4111-8111-000000000003": "active",
+        "ab000000-1111-4111-8111-000000000004": "active"
+      },
+      "ordinary": {
+        "ids": [
+          "ab000000-1111-4111-8111-000000000001",
+          "ab000000-1111-4111-8111-000000000003",
+          "ab000000-1111-4111-8111-000000000004",
+          "ab000000-1111-4111-8111-000000000005"
+        ],
+        "pagination_ended": true,
+        "namespace_closed": false
+      },
+      "ancestor": {
+        "False": {
+          "ids": [
+            "ab000000-1111-4111-8111-000000000002",
+            "ab000000-1111-4111-8111-000000000003",
+            "ab000000-1111-4111-8111-000000000004"
+          ],
+          "pagination_ended": true,
+          "namespace_closed": false
+        },
+        "True": {
+          "ids": [],
+          "pagination_ended": true,
+          "namespace_closed": false
+        }
+      },
+      "attached": null,
+      "archive": {
+        "accepted": true
+      },
+      "after_archive": {
+        "ab000000-1111-4111-8111-000000000001": "archived",
+        "ab000000-1111-4111-8111-000000000005": "active",
+        "ab000000-1111-4111-8111-000000000002": "archived",
+        "ab000000-1111-4111-8111-000000000003": "archived",
+        "ab000000-1111-4111-8111-000000000004": "archived"
+      },
+      "unarchive": {
+        "accepted": true,
+        "canonical_id": "ab000000-1111-4111-8111-000000000001",
+        "metadata_present": true
+      },
+      "after_unarchive": {
+        "ab000000-1111-4111-8111-000000000001": "active",
+        "ab000000-1111-4111-8111-000000000005": "active",
+        "ab000000-1111-4111-8111-000000000002": "active",
+        "ab000000-1111-4111-8111-000000000003": "active",
+        "ab000000-1111-4111-8111-000000000004": "active"
+      },
+      "retained_fixture_rollouts_unchanged": true,
+      "complete_effect_or_retention_proof": false
+    },
+    {
+      "case": "mixed-tree",
+      "before": {
+        "ab000000-1111-4111-8111-000000000001": "active",
+        "ab000000-1111-4111-8111-000000000005": "active",
+        "ab000000-1111-4111-8111-000000000002": "archived",
+        "ab000000-1111-4111-8111-000000000003": "active",
+        "ab000000-1111-4111-8111-000000000004": "active"
+      },
+      "ordinary": {
+        "ids": [
+          "ab000000-1111-4111-8111-000000000001",
+          "ab000000-1111-4111-8111-000000000003",
+          "ab000000-1111-4111-8111-000000000004",
+          "ab000000-1111-4111-8111-000000000005"
+        ],
+        "pagination_ended": true,
+        "namespace_closed": false
+      },
+      "ancestor": {
+        "False": {
+          "ids": [
+            "ab000000-1111-4111-8111-000000000003",
+            "ab000000-1111-4111-8111-000000000004"
+          ],
+          "pagination_ended": true,
+          "namespace_closed": false
+        },
+        "True": {
+          "ids": [
+            "ab000000-1111-4111-8111-000000000002"
+          ],
+          "pagination_ended": true,
+          "namespace_closed": false
+        }
+      },
+      "attached": null,
+      "archive": {
+        "accepted": true
+      },
+      "after_archive": {
+        "ab000000-1111-4111-8111-000000000001": "archived",
+        "ab000000-1111-4111-8111-000000000005": "active",
+        "ab000000-1111-4111-8111-000000000002": "archived",
+        "ab000000-1111-4111-8111-000000000003": "archived",
+        "ab000000-1111-4111-8111-000000000004": "archived"
+      },
+      "unarchive": {
+        "accepted": true,
+        "canonical_id": "ab000000-1111-4111-8111-000000000001",
+        "metadata_present": true
+      },
+      "after_unarchive": {
+        "ab000000-1111-4111-8111-000000000001": "active",
+        "ab000000-1111-4111-8111-000000000005": "active",
+        "ab000000-1111-4111-8111-000000000002": "active",
+        "ab000000-1111-4111-8111-000000000003": "active",
+        "ab000000-1111-4111-8111-000000000004": "active"
+      },
+      "retained_fixture_rollouts_unchanged": true,
+      "complete_effect_or_retention_proof": false
+    },
+    {
+      "case": "archive-denied-child",
+      "before": {
+        "ab000000-1111-4111-8111-000000000001": "active",
+        "ab000000-1111-4111-8111-000000000005": "active",
+        "ab000000-1111-4111-8111-000000000002": "active",
+        "ab000000-1111-4111-8111-000000000003": "active",
+        "ab000000-1111-4111-8111-000000000004": "active"
+      },
+      "ordinary": {
+        "ids": [
+          "ab000000-1111-4111-8111-000000000001",
+          "ab000000-1111-4111-8111-000000000003",
+          "ab000000-1111-4111-8111-000000000004",
+          "ab000000-1111-4111-8111-000000000005"
+        ],
+        "pagination_ended": true,
+        "namespace_closed": false
+      },
+      "ancestor": {
+        "False": {
+          "ids": [
+            "ab000000-1111-4111-8111-000000000002",
+            "ab000000-1111-4111-8111-000000000003",
+            "ab000000-1111-4111-8111-000000000004"
+          ],
+          "pagination_ended": true,
+          "namespace_closed": false
+        },
+        "True": {
+          "ids": [],
+          "pagination_ended": true,
+          "namespace_closed": false
+        }
+      },
+      "attached": null,
+      "archive": {
+        "accepted": true
+      },
+      "after_archive": {
+        "ab000000-1111-4111-8111-000000000001": "archived",
+        "ab000000-1111-4111-8111-000000000005": "active",
+        "ab000000-1111-4111-8111-000000000002": "active",
+        "ab000000-1111-4111-8111-000000000003": "archived",
+        "ab000000-1111-4111-8111-000000000004": "archived"
+      },
+      "unarchive": {
+        "accepted": true,
+        "canonical_id": "ab000000-1111-4111-8111-000000000001",
+        "metadata_present": true
+      },
+      "after_unarchive": {
+        "ab000000-1111-4111-8111-000000000001": "active",
+        "ab000000-1111-4111-8111-000000000005": "active",
+        "ab000000-1111-4111-8111-000000000002": "active",
+        "ab000000-1111-4111-8111-000000000003": "active",
+        "ab000000-1111-4111-8111-000000000004": "active"
+      },
+      "retained_fixture_rollouts_unchanged": true,
+      "complete_effect_or_retention_proof": false
+    },
+    {
+      "case": "attached-tree",
+      "before": {
+        "ab000000-1111-4111-8111-000000000001": "active",
+        "ab000000-1111-4111-8111-000000000005": "active",
+        "ab000000-1111-4111-8111-000000000002": "active",
+        "ab000000-1111-4111-8111-000000000003": "active",
+        "ab000000-1111-4111-8111-000000000004": "active",
+        "ab000000-1111-4111-8111-000000000006": "active"
+      },
+      "ordinary": {
+        "ids": [
+          "ab000000-1111-4111-8111-000000000001",
+          "ab000000-1111-4111-8111-000000000003",
+          "ab000000-1111-4111-8111-000000000004",
+          "ab000000-1111-4111-8111-000000000005"
+        ],
+        "pagination_ended": true,
+        "namespace_closed": false
+      },
+      "ancestor": {
+        "False": {
+          "ids": [
+            "ab000000-1111-4111-8111-000000000003",
+            "ab000000-1111-4111-8111-000000000004"
+          ],
+          "pagination_ended": true,
+          "namespace_closed": false
+        },
+        "True": {
+          "ids": [],
+          "pagination_ended": true,
+          "namespace_closed": false
+        }
+      },
+      "attached": {
+        "ids": [
+          "ab000000-1111-4111-8111-000000000002",
+          "ab000000-1111-4111-8111-000000000006"
+        ],
+        "pagination_ended": true,
+        "namespace_closed": false
+      },
+      "archive": {
+        "accepted": true
+      },
+      "after_archive": {
+        "ab000000-1111-4111-8111-000000000001": "archived",
+        "ab000000-1111-4111-8111-000000000005": "active",
+        "ab000000-1111-4111-8111-000000000002": "archived",
+        "ab000000-1111-4111-8111-000000000003": "archived",
+        "ab000000-1111-4111-8111-000000000004": "archived",
+        "ab000000-1111-4111-8111-000000000006": "active"
+      },
+      "unarchive": {
+        "accepted": true,
+        "canonical_id": "ab000000-1111-4111-8111-000000000001",
+        "metadata_present": true
+      },
+      "after_unarchive": {
+        "ab000000-1111-4111-8111-000000000001": "active",
+        "ab000000-1111-4111-8111-000000000005": "active",
+        "ab000000-1111-4111-8111-000000000002": "active",
+        "ab000000-1111-4111-8111-000000000003": "active",
+        "ab000000-1111-4111-8111-000000000004": "active",
+        "ab000000-1111-4111-8111-000000000006": "active"
+      },
+      "retained_fixture_rollouts_unchanged": true,
+      "complete_effect_or_retention_proof": false
+    },
+    {
+      "case": "delete-mixed-tree",
+      "delete": {
+        "accepted": true
+      },
+      "before": {
+        "ab000000-1111-4111-8111-000000000001": "active",
+        "ab000000-1111-4111-8111-000000000002": "active",
+        "ab000000-1111-4111-8111-000000000003": "archived",
+        "ab000000-1111-4111-8111-000000000005": "active",
+        "ab000000-1111-4111-8111-000000000006": "active"
+      },
+      "after": {
+        "ab000000-1111-4111-8111-000000000001": "unobserved",
+        "ab000000-1111-4111-8111-000000000002": "unobserved",
+        "ab000000-1111-4111-8111-000000000003": "unobserved",
+        "ab000000-1111-4111-8111-000000000005": "active",
+        "ab000000-1111-4111-8111-000000000006": "active"
+      },
+      "reads": {
+        "ab000000-1111-4111-8111-000000000001": {
+          "False": {
+            "error_code": -32600,
+            "category": "thread_not_loaded",
+            "absence_proof": false
+          },
+          "True": {
+            "error_code": -32600,
+            "category": "thread_not_loaded",
+            "absence_proof": false
+          }
+        },
+        "ab000000-1111-4111-8111-000000000002": {
+          "False": {
+            "error_code": -32600,
+            "category": "thread_not_loaded",
+            "absence_proof": false
+          },
+          "True": {
+            "error_code": -32600,
+            "category": "thread_not_loaded",
+            "absence_proof": false
+          }
+        },
+        "ab000000-1111-4111-8111-000000000003": {
+          "False": {
+            "error_code": -32600,
+            "category": "thread_not_loaded",
+            "absence_proof": false
+          },
+          "True": {
+            "error_code": -32600,
+            "category": "thread_not_loaded",
+            "absence_proof": false
+          }
+        },
+        "ab000000-1111-4111-8111-000000000007": {
+          "False": {
+            "error_code": -32600,
+            "category": "thread_not_loaded",
+            "absence_proof": false
+          },
+          "True": {
+            "error_code": -32600,
+            "category": "thread_not_loaded",
+            "absence_proof": false
+          }
+        }
+      },
+      "restart_reads": {
+        "ab000000-1111-4111-8111-000000000002": {
+          "False": {
+            "error_code": -32600,
+            "category": "thread_not_loaded",
+            "absence_proof": false
+          },
+          "True": {
+            "error_code": -32600,
+            "category": "thread_not_loaded",
+            "absence_proof": false
+          }
+        },
+        "ab000000-1111-4111-8111-000000000003": {
+          "False": {
+            "error_code": -32600,
+            "category": "thread_not_loaded",
+            "absence_proof": false
+          },
+          "True": {
+            "error_code": -32600,
+            "category": "thread_not_loaded",
+            "absence_proof": false
+          }
+        },
+        "ab000000-1111-4111-8111-000000000007": {
+          "False": {
+            "error_code": -32600,
+            "category": "thread_not_loaded",
+            "absence_proof": false
+          },
+          "True": {
+            "error_code": -32600,
+            "category": "thread_not_loaded",
+            "absence_proof": false
+          }
+        }
+      },
+      "retained_fixture_rollouts_unchanged": true,
+      "authoritative_absence_proof": false
+    },
+    {
+      "case": "delete-denied-root",
+      "delete": {
+        "error_code": -32603,
+        "category": "provider_error",
+        "absence_proof": false
+      },
+      "before": {
+        "ab000000-1111-4111-8111-000000000001": "active",
+        "ab000000-1111-4111-8111-000000000002": "active",
+        "ab000000-1111-4111-8111-000000000003": "archived",
+        "ab000000-1111-4111-8111-000000000005": "active",
+        "ab000000-1111-4111-8111-000000000006": "active"
+      },
+      "after": {
+        "ab000000-1111-4111-8111-000000000001": "active",
+        "ab000000-1111-4111-8111-000000000002": "unobserved",
+        "ab000000-1111-4111-8111-000000000003": "unobserved",
+        "ab000000-1111-4111-8111-000000000005": "active",
+        "ab000000-1111-4111-8111-000000000006": "active"
+      },
+      "reads": {
+        "ab000000-1111-4111-8111-000000000001": {
+          "False": {
+            "accepted": true,
+            "canonical_id": "ab000000-1111-4111-8111-000000000001",
+            "metadata_present": true
+          },
+          "True": {
+            "accepted": true,
+            "canonical_id": "ab000000-1111-4111-8111-000000000001",
+            "metadata_present": true
+          }
+        },
+        "ab000000-1111-4111-8111-000000000002": {
+          "False": {
+            "accepted": true,
+            "canonical_id": "ab000000-1111-4111-8111-000000000002",
+            "metadata_present": true
+          },
+          "True": {
+            "error_code": -32600,
+            "category": "thread_not_loaded",
+            "absence_proof": false
+          }
+        },
+        "ab000000-1111-4111-8111-000000000003": {
+          "False": {
+            "accepted": true,
+            "canonical_id": "ab000000-1111-4111-8111-000000000003",
+            "metadata_present": true
+          },
+          "True": {
+            "error_code": -32600,
+            "category": "thread_not_loaded",
+            "absence_proof": false
+          }
+        },
+        "ab000000-1111-4111-8111-000000000007": {
+          "False": {
+            "error_code": -32600,
+            "category": "thread_not_loaded",
+            "absence_proof": false
+          },
+          "True": {
+            "error_code": -32600,
+            "category": "thread_not_loaded",
+            "absence_proof": false
+          }
+        }
+      },
+      "restart_reads": {
+        "ab000000-1111-4111-8111-000000000002": {
+          "False": {
+            "accepted": true,
+            "canonical_id": "ab000000-1111-4111-8111-000000000002",
+            "metadata_present": true
+          },
+          "True": {
+            "error_code": -32600,
+            "category": "thread_not_loaded",
+            "absence_proof": false
+          }
+        },
+        "ab000000-1111-4111-8111-000000000003": {
+          "False": {
+            "accepted": true,
+            "canonical_id": "ab000000-1111-4111-8111-000000000003",
+            "metadata_present": true
+          },
+          "True": {
+            "error_code": -32600,
+            "category": "thread_not_loaded",
+            "absence_proof": false
+          }
+        },
+        "ab000000-1111-4111-8111-000000000007": {
+          "False": {
+            "error_code": -32600,
+            "category": "thread_not_loaded",
+            "absence_proof": false
+          },
+          "True": {
+            "error_code": -32600,
+            "category": "thread_not_loaded",
+            "absence_proof": false
+          }
+        }
+      },
+      "retained_fixture_rollouts_unchanged": true,
+      "authoritative_absence_proof": false
+    }
+  ]
+}

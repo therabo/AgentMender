@@ -565,6 +565,12 @@ mod tests {
             "/../domain/tests/common/mod.rs"
         ));
     }
+    mod unarchive_fixtures {
+        include!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../application/tests/lifecycle_common/mod.rs"
+        ));
+    }
 
     #[test]
     fn only_unarchive_is_eligible_and_synthetic_plans_are_rejected() {
@@ -589,6 +595,98 @@ mod tests {
                 .preflight(&case.plan(LifecycleIntent::Unarchive))
                 .is_err()
         );
+    }
+
+    #[test]
+    fn historical_contract_cannot_be_transferred_to_current_version_or_wider_scope() {
+        let executable = PathBuf::from("/synthetic-codex");
+        let adapter = CodexLifecycleAdapter::new(
+            CodexAdapter::new(ProviderLocation {
+                state_root: "/synthetic-planning".into(),
+                executable: Some(executable.clone()),
+            })
+            .with_evidence_helper(executable.clone(), "/synthetic-home".into()),
+        );
+        let mut old = unarchive_fixtures::case(0)
+            .plan(LifecycleIntent::Unarchive)
+            .content()
+            .clone();
+        old.status = PlanStatus::Ready;
+        old.evidence_status = EvidenceStatus::SnapshotVerified;
+        old.compatibility_status = CompatibilityStatus::ReadOnlyKnown;
+        old.provider.executable = Some(executable);
+        old.provider.executable_version = Some(VERSION.into());
+        old.provider.interface_id = Some("codex-app-server-0.165.0-alpha.1.2".into());
+        old.provider.layout_id = Some(LAYOUT.into());
+        old.provider.adapter_version = env!("CARGO_PKG_VERSION").into();
+        let cap = old.capability.as_mut().unwrap();
+        cap.fingerprint = old.provider.clone();
+        cap.protocol_evidence_digest = PROTOCOL.into();
+        old.effect_contract.as_mut().unwrap().id = EntityId::new(CONTRACT).unwrap();
+        old.observation_scope.include_archived = true;
+        assert_eq!(adapter.validate_plan_content(&old), Ok(()));
+
+        let mut current = old.clone();
+        current.provider.executable_version = Some("0.166.0".into());
+        current.capability.as_mut().unwrap().fingerprint = current.provider.clone();
+        assert_eq!(
+            adapter.validate_plan_content(&current),
+            Err(EffectError::ProfileMismatch)
+        );
+        for (intent, operation) in [
+            (
+                LifecycleIntent::Archive,
+                NativeLifecycleOperation::ArchiveSession,
+            ),
+            (
+                LifecycleIntent::SoftDelete,
+                NativeLifecycleOperation::DeleteSession,
+            ),
+            (
+                LifecycleIntent::Purge,
+                NativeLifecycleOperation::DeleteSession,
+            ),
+        ] {
+            let mut p = current.clone();
+            p.request.intent = intent;
+            p.operations[0].operation = operation;
+            assert_eq!(
+                adapter.validate_plan_content(&p),
+                Err(EffectError::UnsupportedOperation)
+            );
+        }
+
+        let mut descendant = old.request.target.clone();
+        descendant.local_id = EntityId::new("other").unwrap();
+        let mut expanded = old.clone();
+        expanded.operations[0].affected.push(descendant.clone());
+        assert_eq!(
+            adapter.validate_plan_content(&expanded),
+            Err(EffectError::NativeIdentityMismatch)
+        );
+        let mut expanded_contract = old.clone();
+        expanded_contract
+            .effect_contract
+            .as_mut()
+            .unwrap()
+            .affected
+            .push(descendant);
+        assert_eq!(
+            adapter.validate_plan_content(&expanded_contract),
+            Err(EffectError::ProfileMismatch)
+        );
+        for scope in [
+            NativeEffectScope::TargetOnly,
+            NativeEffectScope::TargetAndDescendants,
+            NativeEffectScope::TargetAndAttemptedDescendants,
+        ] {
+            let mut p = old.clone();
+            p.capability.as_mut().unwrap().effect_scope = scope;
+            assert_eq!(
+                adapter.validate_plan_content(&p),
+                Err(EffectError::ProfileMismatch)
+            );
+        }
     }
 
     #[cfg(target_os = "macos")]

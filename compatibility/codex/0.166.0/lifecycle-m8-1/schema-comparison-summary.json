@@ -1,0 +1,252 @@
+[
+  {
+    "kind": "stable",
+    "path": "v1/InitializeParams.json",
+    "sha256": "b55124e7c0f36a1789396daa5578217a92be67f053903696236686e59f6f212e",
+    "priorPath": "compatibility/codex/0.165.0-alpha.1.2/v1/InitializeParams.json",
+    "equal": true,
+    "structuralEqual": true,
+    "structuralChangePaths": []
+  },
+  {
+    "kind": "stable",
+    "path": "v1/InitializeResponse.json",
+    "sha256": "62ad689c2cb6379913c1d72749cfd8de5089d35760214123518eb92eef11acc9",
+    "priorPath": "compatibility/codex/0.165.0-alpha.1.2/v1/InitializeResponse.json",
+    "equal": true,
+    "structuralEqual": true,
+    "structuralChangePaths": []
+  },
+  {
+    "kind": "stable",
+    "path": "v2/ThreadListParams.json",
+    "sha256": "e9da2e0bf099d21ab7982210073f927a50370c4e28be7140c314f82c524070bd",
+    "priorPath": "compatibility/codex/0.165.0-alpha.1.2/v2/ThreadListParams.json",
+    "equal": true,
+    "structuralEqual": true,
+    "structuralChangePaths": []
+  },
+  {
+    "kind": "stable",
+    "path": "v2/ThreadListResponse.json",
+    "sha256": "8ffb6a66d99d98f0c1db0e90ed5c9758ecb600066a1fbf56a50a8c145ab306cf",
+    "priorPath": "compatibility/codex/0.165.0-alpha.1.2/v2/ThreadListResponse.json",
+    "equal": false,
+    "structuralEqual": false,
+    "structuralChangePaths": [
+      "/definitions/CodexErrorInfo/anyOf",
+      "/definitions/ThreadItem/oneOf",
+      "/definitions/ThreadItem/properties",
+      "/definitions/ThreadItem/type"
+    ]
+  },
+  {
+    "kind": "stable",
+    "path": "v2/ThreadReadParams.json",
+    "sha256": "dfe040c6ac71d30795b8be3f3ff232e66f362a37f883b491e5d1ea367f470db4",
+    "priorPath": null,
+    "equal": null,
+    "structuralEqual": null,
+    "structuralChangePaths": []
+  },
+  {
+    "kind": "stable",
+    "path": "v2/ThreadReadResponse.json",
+    "sha256": "6eb05cf9bf73d9f873e782868189cd37dc393d12c7a7c49118adb9756b30c485",
+    "priorPath": null,
+    "equal": null,
+    "structuralEqual": null,
+    "structuralChangePaths": []
+  },
+  {
+    "kind": "stable",
+    "path": "v2/ThreadArchiveParams.json",
+    "sha256": "dc2c0b133b814a5d9d543cc37afdb3f4f22feca35b7cea4272834b20a1e47705",
+    "priorPath": "compatibility/codex/0.165.0-alpha.1.2/lifecycle/v2/ThreadArchiveParams.json",
+    "equal": true,
+    "structuralEqual": true,
+    "structuralChangePaths": []
+  },
+  {
+    "kind": "stable",
+    "path": "v2/ThreadArchiveResponse.json",
+    "sha256": "2e021dabd0930ae3e2beb68cd0ddbafc40fc20cfbf8dbcb5e2f9c0493d06a08c",
+    "priorPath": "compatibility/codex/0.165.0-alpha.1.2/lifecycle/v2/ThreadArchiveResponse.json",
+    "equal": true,
+    "structuralEqual": true,
+    "structuralChangePaths": []
+  },
+  {
+    "kind": "stable",
+    "path": "v2/ThreadUnarchiveParams.json",
+    "sha256": "a1d5d847b61ea16ab09d5b9d1c1461134a7829292aae02a7e11b0a69b00c76ca",
+    "priorPath": "compatibility/codex/0.165.0-alpha.1.2/lifecycle/v2/ThreadUnarchiveParams.json",
+    "equal": true,
+    "structuralEqual": true,
+    "structuralChangePaths": []
+  },
+  {
+    "kind": "stable",
+    "path": "v2/ThreadUnarchiveResponse.json",
+    "sha256": "5f1886e0eb98920026e1194ef0f4dd0924eb7f2ac3e7d5638c3c522efa4c260a",
+    "priorPath": "compatibility/codex/0.165.0-alpha.1.2/lifecycle/v2/ThreadUnarchiveResponse.json",
+    "equal": false,
+    "structuralEqual": false,
+    "structuralChangePaths": [
+      "/definitions/CodexErrorInfo/anyOf",
+      "/definitions/ThreadItem/oneOf",
+      "/definitions/ThreadItem/properties",
+      "/definitions/ThreadItem/type"
+    ]
+  },
+  {
+    "kind": "stable",
+    "path": "v2/ThreadDeleteParams.json",
+    "sha256": "0d5425d94af95e3dd20971cee052b2cb8c7d0d23195db1d17fde4e59cfbdec4a",
+    "priorPath": "compatibility/codex/0.165.0-alpha.1.2/lifecycle/v2/ThreadDeleteParams.json",
+    "equal": true,
+    "structuralEqual": true,
+    "structuralChangePaths": []
+  },
+  {
+    "kind": "stable",
+    "path": "v2/ThreadDeleteResponse.json",
+    "sha256": "333c0c5df96d78d1bcbdb19b57ddfa941de9a02bdae1c29d13c5311c2cdf6527",
+    "priorPath": "compatibility/codex/0.165.0-alpha.1.2/lifecycle/v2/ThreadDeleteResponse.json",
+    "equal": true,
+    "structuralEqual": true,
+    "structuralChangePaths": []
+  },
+  {
+    "kind": "experimental",
+    "path": "v1/InitializeParams.json",
+    "sha256": "b55124e7c0f36a1789396daa5578217a92be67f053903696236686e59f6f212e",
+    "priorPath": "compatibility/codex/0.165.0-alpha.1.2/v1/InitializeParams.json",
+    "equal": true,
+    "structuralEqual": true,
+    "structuralChangePaths": []
+  },
+  {
+    "kind": "experimental",
+    "path": "v1/InitializeResponse.json",
+    "sha256": "62ad689c2cb6379913c1d72749cfd8de5089d35760214123518eb92eef11acc9",
+    "priorPath": "compatibility/codex/0.165.0-alpha.1.2/v1/InitializeResponse.json",
+    "equal": true,
+    "structuralEqual": true,
+    "structuralChangePaths": []
+  },
+  {
+    "kind": "experimental",
+    "path": "v2/ThreadListParams.json",
+    "sha256": "1781b1778cb08619f0bf12528b128e55648b86569114196b1b5ec565b9b7935d",
+    "priorPath": "compatibility/codex/0.165.0-alpha.1.2/v2/ThreadListParams.json",
+    "equal": false,
+    "structuralEqual": false,
+    "structuralChangePaths": [
+      "/properties/ancestorThreadId",
+      "/properties/attachedToThreadId",
+      "/properties/parentThreadId",
+      "/properties/projectId"
+    ]
+  },
+  {
+    "kind": "experimental",
+    "path": "v2/ThreadListResponse.json",
+    "sha256": "0a4820f94729dd2799d141e1ac8d375ac54bb6ab2d75a4684f5c73623df536ba",
+    "priorPath": "compatibility/codex/0.165.0-alpha.1.2/v2/ThreadListResponse.json",
+    "equal": false,
+    "structuralEqual": false,
+    "structuralChangePaths": [
+      "/definitions/CodexErrorInfo/anyOf",
+      "/definitions/Thread/properties/canAcceptDirectInput",
+      "/definitions/Thread/properties/daybreakEnabled",
+      "/definitions/Thread/properties/environments",
+      "/definitions/Thread/properties/extra",
+      "/definitions/ThreadItem/oneOf",
+      "/definitions/ThreadItem/properties",
+      "/definitions/ThreadItem/type",
+      "/properties/readStates"
+    ]
+  },
+  {
+    "kind": "experimental",
+    "path": "v2/ThreadReadParams.json",
+    "sha256": "dfe040c6ac71d30795b8be3f3ff232e66f362a37f883b491e5d1ea367f470db4",
+    "priorPath": null,
+    "equal": null,
+    "structuralEqual": null,
+    "structuralChangePaths": []
+  },
+  {
+    "kind": "experimental",
+    "path": "v2/ThreadReadResponse.json",
+    "sha256": "25f3eb2888f592c7810420b054aba8ffb5fa134dd2a2d1cce5a90c2f038be7f6",
+    "priorPath": null,
+    "equal": null,
+    "structuralEqual": null,
+    "structuralChangePaths": []
+  },
+  {
+    "kind": "experimental",
+    "path": "v2/ThreadArchiveParams.json",
+    "sha256": "dc2c0b133b814a5d9d543cc37afdb3f4f22feca35b7cea4272834b20a1e47705",
+    "priorPath": "compatibility/codex/0.165.0-alpha.1.2/lifecycle/v2/ThreadArchiveParams.json",
+    "equal": true,
+    "structuralEqual": true,
+    "structuralChangePaths": []
+  },
+  {
+    "kind": "experimental",
+    "path": "v2/ThreadArchiveResponse.json",
+    "sha256": "2e021dabd0930ae3e2beb68cd0ddbafc40fc20cfbf8dbcb5e2f9c0493d06a08c",
+    "priorPath": "compatibility/codex/0.165.0-alpha.1.2/lifecycle/v2/ThreadArchiveResponse.json",
+    "equal": true,
+    "structuralEqual": true,
+    "structuralChangePaths": []
+  },
+  {
+    "kind": "experimental",
+    "path": "v2/ThreadUnarchiveParams.json",
+    "sha256": "a1d5d847b61ea16ab09d5b9d1c1461134a7829292aae02a7e11b0a69b00c76ca",
+    "priorPath": "compatibility/codex/0.165.0-alpha.1.2/lifecycle/v2/ThreadUnarchiveParams.json",
+    "equal": true,
+    "structuralEqual": true,
+    "structuralChangePaths": []
+  },
+  {
+    "kind": "experimental",
+    "path": "v2/ThreadUnarchiveResponse.json",
+    "sha256": "0c5f690638a2404859478916136b2218d61d13bde7e5e28b187a6b2c6c35f7c3",
+    "priorPath": "compatibility/codex/0.165.0-alpha.1.2/lifecycle/v2/ThreadUnarchiveResponse.json",
+    "equal": false,
+    "structuralEqual": false,
+    "structuralChangePaths": [
+      "/definitions/CodexErrorInfo/anyOf",
+      "/definitions/Thread/properties/canAcceptDirectInput",
+      "/definitions/Thread/properties/daybreakEnabled",
+      "/definitions/Thread/properties/environments",
+      "/definitions/Thread/properties/extra",
+      "/definitions/ThreadItem/oneOf",
+      "/definitions/ThreadItem/properties",
+      "/definitions/ThreadItem/type"
+    ]
+  },
+  {
+    "kind": "experimental",
+    "path": "v2/ThreadDeleteParams.json",
+    "sha256": "0d5425d94af95e3dd20971cee052b2cb8c7d0d23195db1d17fde4e59cfbdec4a",
+    "priorPath": "compatibility/codex/0.165.0-alpha.1.2/lifecycle/v2/ThreadDeleteParams.json",
+    "equal": true,
+    "structuralEqual": true,
+    "structuralChangePaths": []
+  },
+  {
+    "kind": "experimental",
+    "path": "v2/ThreadDeleteResponse.json",
+    "sha256": "333c0c5df96d78d1bcbdb19b57ddfa941de9a02bdae1c29d13c5311c2cdf6527",
+    "priorPath": "compatibility/codex/0.165.0-alpha.1.2/lifecycle/v2/ThreadDeleteResponse.json",
+    "equal": true,
+    "structuralEqual": true,
+    "structuralChangePaths": []
+  }
+]
