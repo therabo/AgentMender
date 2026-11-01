@@ -76,7 +76,7 @@ fn reader(args: &Args, path: &Path) -> Result<TransactionReader, CliError> {
     TransactionReader::open(root(args, path, false)?).map_err(|_| unavailable())
 }
 /// JSON escapes all C0 controls; escape directional controls and other format controls too.
-fn safe<T: serde::Serialize>(value: &T) -> Result<String, CliError> {
+pub(super) fn safe<T: serde::Serialize>(value: &T) -> Result<String, CliError> {
     let json = serde_json::to_string_pretty(value).map_err(|_| unavailable())?;
     let escaped: String = json.chars().map(|c| if (c.is_control() && c != '\n') || matches!(c, '\u{061c}' | '\u{200e}'..='\u{200f}' | '\u{2028}'..='\u{202e}' | '\u{2066}'..='\u{206f}') { format!("\\u{:04x}", c as u32) } else { c.to_string() }).collect();
     if escaped.len() > 512 * 1024 {
@@ -170,7 +170,15 @@ pub fn prepare(
     }
     let id = EntityId::new(id)
         .map_err(|_| CliError::new(ErrorCode::InvalidIdentity, "invalid target"))?;
-    let inputs = service.approval_inputs(&|target| target.local_id == id, intent.into(), scope)?;
+    let inputs = if matches!(intent, PlanIntent::CleanupSession) {
+        agentmender_application::cleanup_inputs(
+            &super::lifecycle::scoped_adapter(args)?,
+            id.as_str(),
+            scope,
+        )?
+    } else {
+        service.approval_inputs(&|target| target.local_id == id, intent.into(), scope)?
+    };
     println!("{}", safe(&inputs.plan)?);
     if inputs.plan.content().status != PlanStatus::Ready || !inputs.failures.is_empty() {
         return Ok(true);
@@ -227,12 +235,27 @@ pub fn approve(
     let recovery_verified = r.recovery_available(&id).map_err(|_| unavailable())?;
     print_review(&s, false)?;
     let content = plan.content();
+    if let Some(manifest) = &content.cleanup_manifest {
+        let planned = manifest
+            .payloads
+            .iter()
+            .try_fold(0u64, |sum, p| sum.checked_add(p.identity.size_bytes))
+            .ok_or_else(unavailable)?;
+        println!(
+            "Scoped cleanup for session {} under {} removes the frozen payload and canonical database row. Planned logical payload bytes: {}. The operation is irreversible; recovery stores reconciliation metadata only and cannot restore the payload. Verification applies to the fenced cutoff. Optional index action: {}. Retained residuals: {}. Other provider stores are not erased.",
+            manifest.native_session_id,
+            safe(&manifest.root.path)?,
+            planned,
+            if manifest.optional_index.is_some() {
+                "listed in the review"
+            } else {
+                "none"
+            },
+            safe(&manifest.residuals)?
+        );
+    }
     let target = content.request.target.clone();
-    let fresh = service.approval_inputs(
-        &|candidate| candidate == &target,
-        content.request.intent,
-        &content.observation_scope,
-    )?;
+    let fresh = fresh_inputs(args, service, &plan, &target)?;
     println!(
         "Fresh plan blockers:\n{}",
         safe(&fresh.plan.content().blockers)?
@@ -252,11 +275,7 @@ pub fn approve(
     let mut store = TransactionStore::open(root(args, path, false)?).map_err(|_| unavailable())?;
     let content = plan.content();
     let target = content.request.target.clone();
-    let inputs = service.approval_inputs(
-        &|candidate| candidate == &target,
-        content.request.intent,
-        &content.observation_scope,
-    )?;
+    let inputs = fresh_inputs(args, service, &plan, &target)?;
     let grant = store
         .grant_approval(
             &id,
@@ -269,6 +288,33 @@ pub fn approve(
         .map_err(|_| unavailable())?;
     println!("approval_id: {}", grant.id);
     Ok(false)
+}
+fn fresh_inputs(
+    args: &Args,
+    service: &DiscoveryService<'_>,
+    plan: &agentmender_domain::LifecyclePlan,
+    target: &agentmender_domain::ArtifactId,
+) -> Result<agentmender_application::ApprovalInputs, CliError> {
+    let content = plan.content();
+    if content.request.intent == agentmender_domain::LifecycleIntent::CleanupSession {
+        let native = content
+            .cleanup_manifest
+            .as_ref()
+            .ok_or_else(unavailable)?
+            .native_session_id
+            .as_str();
+        Ok(agentmender_application::cleanup_inputs(
+            &super::lifecycle::scoped_adapter(args)?,
+            native,
+            &content.observation_scope,
+        )?)
+    } else {
+        Ok(service.approval_inputs(
+            &|candidate| candidate == target,
+            content.request.intent,
+            &content.observation_scope,
+        )?)
+    }
 }
 pub fn administration(args: &Args, action: &ApprovalAction) -> Result<bool, CliError> {
     match action {

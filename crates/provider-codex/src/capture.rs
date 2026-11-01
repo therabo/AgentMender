@@ -216,7 +216,7 @@ pub(super) fn fingerprints_changed(before: &[FileFingerprint], after: &[FileFing
     before != after || before.iter().chain(after).any(|file| !file.stable_read)
 }
 
-fn configure(connection: &Connection) -> Result<(), ProviderError> {
+pub(super) fn configure(connection: &Connection) -> Result<(), ProviderError> {
     for (limit, value) in [
         (Limit::SQLITE_LIMIT_LENGTH, 1024 * 1024),
         (Limit::SQLITE_LIMIT_SQL_LENGTH, 64 * 1024),
@@ -235,7 +235,7 @@ fn configure(connection: &Connection) -> Result<(), ProviderError> {
         .map_err(sqlite_error)
 }
 
-fn bounded_backup(
+pub(super) fn bounded_backup(
     from: &Connection,
     to: &mut Connection,
     deadline: Instant,
@@ -274,7 +274,10 @@ fn bounded_backup(
 }
 
 type SchemaEntry = (String, String, String, Option<String>);
-fn verify_schema(connection: &Connection, profile: ExactProfile) -> Result<(), ProviderError> {
+pub(super) fn verify_schema(
+    connection: &Connection,
+    profile: ExactProfile,
+) -> Result<(), ProviderError> {
     let mut statement = connection
         .prepare("SELECT type,name,tbl_name,sql FROM sqlite_master ORDER BY type,name LIMIT 129")
         .map_err(sqlite_error)?;
@@ -391,7 +394,7 @@ fn capture_database(
 }
 
 #[cfg(target_os = "macos")]
-fn validate_worker_request(request: &CaptureRequest) -> Result<(), ProviderError> {
+pub(super) fn validate_worker_request(request: &CaptureRequest) -> Result<(), ProviderError> {
     use std::os::unix::fs::{MetadataExt, PermissionsExt};
     let canonical =
         |path: &Path| path.is_absolute() && path.canonicalize().is_ok_and(|p| p == path);

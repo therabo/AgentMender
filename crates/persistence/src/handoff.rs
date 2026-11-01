@@ -1,6 +1,6 @@
 //! Narrow typed lifecycle boundary. Implementations must retain no execution gate.
 use crate::{DurableIntent, DurableObservation};
-use agentmender_domain::{ArtifactGraph, IntegrityReport, LifecyclePlan};
+use agentmender_domain::{ArtifactGraph, CleanupReport, IntegrityReport, LifecyclePlan};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EffectError {
@@ -47,4 +47,20 @@ pub trait DurableEffectPort {
     fn preflight(&self, plan: &LifecyclePlan) -> Result<(), EffectError>;
     fn dispatch(&self, intent: DurableIntent, plan: &LifecyclePlan) -> EffectAttempt;
     fn observe(&self, plan: &LifecyclePlan) -> Result<EffectObservation, EffectError>;
+}
+
+/// Cleanup is a separate, local operation. A successful report must describe
+/// observations captured while the provider's exclusive mutation fence held.
+#[derive(Debug)]
+pub struct CleanupAttempt {
+    pub observation: DurableObservation,
+    pub outcome: NativeOutcome,
+    pub report: Option<CleanupReport>,
+}
+
+pub trait DurableCleanupPort {
+    fn preflight(&self, plan: &LifecyclePlan) -> Result<(), EffectError>;
+    fn dispatch(&self, intent: DurableIntent, plan: &LifecyclePlan) -> CleanupAttempt;
+    /// Read-only reconciliation of the frozen manifest; never dispatches.
+    fn observe(&self, plan: &LifecyclePlan) -> Result<CleanupReport, EffectError>;
 }

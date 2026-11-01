@@ -7,8 +7,8 @@ use agentmender_domain::{
     evaluate_integrity,
 };
 use agentmender_persistence::{
-    DurableEffectPort, EffectError, EffectObservation, NativeObservation, NativeOutcome,
-    StoreError, TransactionStore,
+    DurableCleanupPort, DurableEffectPort, EffectError, EffectObservation, NativeObservation,
+    NativeOutcome, StoreError, TransactionStore,
 };
 use thiserror::Error;
 
@@ -22,6 +22,112 @@ pub enum LifecycleError {
     Native(EffectError),
     #[error("native lifecycle outcome is unknown: {0:?}")]
     Ambiguous(EffectError),
+}
+
+/// Production scoped entry point obtains fresh inputs from the dedicated read port.
+pub fn execute_scoped_cleanup(
+    store: &mut TransactionStore,
+    id: &TransactionId,
+    read: &dyn agentmender_provider_api::ScopedCleanupReadPort,
+    port: &dyn DurableCleanupPort,
+) -> Result<TransactionState, LifecycleError> {
+    let snapshot = store.inspect(id)?;
+    let plan = snapshot
+        .review_plan()
+        .ok_or(LifecycleError::Preconditions)?
+        .clone();
+    let c = plan.content();
+    if snapshot.schema_version() != 2
+        || snapshot.state() != TransactionState::Prepared
+        || snapshot.approval().state != ApprovalState::Granted
+        || c.status != PlanStatus::Ready
+        || c.request.intent != LifecycleIntent::CleanupSession
+        || c.operations.len() != 1
+        || c.operations[0].operation != NativeLifecycleOperation::ScopedCleanupSession
+    {
+        return Err(LifecycleError::Preconditions);
+    }
+    let manifest = c
+        .cleanup_manifest
+        .as_ref()
+        .ok_or(LifecycleError::Preconditions)?;
+    port.preflight(&plan).map_err(LifecycleError::Native)?;
+    let inputs = crate::cleanup_inputs(
+        read,
+        manifest.native_session_id.as_str(),
+        &c.observation_scope,
+    )
+    .map_err(|_| LifecycleError::Preconditions)?;
+    if !same_serialized(&inputs.plan, &plan)
+        || plan.validate_against(&inputs.graph, &inputs.integrity, &inputs.context)
+            != PlanValidation::Current
+    {
+        return Err(LifecycleError::Preconditions);
+    }
+    let receipt = store.record_intent(
+        id,
+        snapshot.sequence(),
+        &plan,
+        &inputs.graph,
+        &inputs.integrity,
+        &inputs.context,
+    )?;
+    let sequence = receipt.sequence();
+    let attempt = port.dispatch(receipt, &plan);
+    match attempt.outcome {
+        NativeOutcome::Unknown(reason) => {
+            if let Some(report) = attempt.report {
+                if report.outcome != agentmender_domain::CleanupOutcome::OutcomeUnknown {
+                    return Err(LifecycleError::Preconditions);
+                }
+                store.record_cleanup_observation(id, sequence, &attempt.observation, report)?;
+            }
+            return Err(LifecycleError::Ambiguous(reason));
+        }
+        NativeOutcome::NeverDispatched(_) => {
+            let report = attempt.report.ok_or(LifecycleError::Preconditions)?;
+            if !matches!(
+                report.outcome,
+                agentmender_domain::CleanupOutcome::Blocked
+                    | agentmender_domain::CleanupOutcome::Failed
+            ) {
+                return Err(LifecycleError::Preconditions);
+            }
+            store.record_cleanup_observation(id, sequence, &attempt.observation, report)?;
+        }
+        NativeOutcome::Accepted => store.record_cleanup_observation(
+            id,
+            sequence,
+            &attempt.observation,
+            attempt.report.ok_or(LifecycleError::Preconditions)?,
+        )?,
+    }
+    Ok(store.inspect(id)?.state())
+}
+
+/// Reconciliation is read-only and never reissues the consumed intent.
+pub fn reconcile_cleanup(
+    store: &mut TransactionStore,
+    id: &TransactionId,
+    port: &dyn DurableCleanupPort,
+) -> Result<TransactionState, LifecycleError> {
+    let snapshot = store.inspect_consumed(id)?;
+    let plan = snapshot
+        .review_plan()
+        .ok_or(LifecycleError::Preconditions)?;
+    if !matches!(
+        snapshot.state(),
+        TransactionState::OutcomeUnknown | TransactionState::RecoveryRequired
+    ) || plan.content().request.intent != LifecycleIntent::CleanupSession
+    {
+        return Err(LifecycleError::Preconditions);
+    }
+    let report = match port.observe(plan) {
+        Ok(report) => report,
+        Err(_) => return Ok(snapshot.state()),
+    };
+    store.record_cleanup_reconciliation(id, snapshot.sequence(), report)?;
+    Ok(store.inspect(id)?.state())
 }
 
 fn is_unarchive_plan(plan: &LifecyclePlan) -> bool {

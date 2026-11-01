@@ -1,0 +1,679 @@
+//! Receipt-gated orchestration for the exact local scoped-cleanup profile.
+//! The filesystem and database modules contain the fixed provider operations;
+//! this module never accepts arbitrary paths or SQL from a caller.
+use crate::{
+    CodexAdapter, scoped_files,
+    scoped_profile::{
+        self, SCOPED_ADAPTER, SCOPED_CODEX_EXECUTABLE_SHA256, SCOPED_CODEX_SCHEMA_SHA256,
+        SCOPED_CODEX_VERSION,
+    },
+    scoped_storage,
+};
+use agentmender_domain::{
+    CleanupActionOutcome, CleanupActionReport, CleanupManifest, CleanupOutcome, CleanupReport,
+    GraphNodeKind, LifecycleIntent, LifecyclePlan, NativeLifecycleOperation, PlanStatus,
+    ProviderKind, validate_cleanup_report,
+};
+use agentmender_persistence::{
+    CleanupAttempt, DurableCleanupPort, DurableIntent, EffectError, NativeOutcome,
+};
+use sha2::{Digest, Sha256};
+use std::io::Read;
+
+pub struct CodexScopedCleanupAdapter {
+    reader: CodexAdapter,
+    #[cfg(test)]
+    synthetic_pin: bool,
+    #[cfg(test)]
+    fault: Option<TestFault>,
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TestFault {
+    AfterUnlink,
+    AfterCommit,
+    CrashAfterUnlink,
+    CrashAfterCommit,
+}
+
+impl CodexScopedCleanupAdapter {
+    pub fn new(reader: CodexAdapter) -> Self {
+        Self {
+            reader,
+            #[cfg(test)]
+            synthetic_pin: false,
+            #[cfg(test)]
+            fault: None,
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn for_owned_test(reader: CodexAdapter) -> Self {
+        Self {
+            reader,
+            synthetic_pin: true,
+            fault: None,
+        }
+    }
+
+    fn capture_target(
+        &self,
+        target: &str,
+    ) -> Result<crate::ScopedCaptureResult, agentmender_provider_api::ProviderError> {
+        #[cfg(test)]
+        if self.synthetic_pin {
+            return crate::scoped_capture::snapshot(&self.reader.location.state_root, target);
+        }
+        use agentmender_provider_api::{ProviderError, evidence::EvidenceSandbox, process};
+        let (helper, real_home) = self.reader.evidence_helper.as_ref().ok_or_else(|| {
+            ProviderError::CapabilityUnavailable(
+                "protected scoped evidence helper unavailable".into(),
+            )
+        })?;
+        let sandbox = EvidenceSandbox::new(&self.reader.location.state_root, real_home)?;
+        if sandbox.source_root() != self.reader.location.state_root {
+            return Err(ProviderError::CapabilityUnavailable(
+                "source root identity rejected".into(),
+            ));
+        }
+        let request = crate::ScopedCaptureRequest {
+            source_root: sandbox.source_root().into(),
+            mirror_root: sandbox.path().into(),
+            probe_path: sandbox.probe_path().into(),
+            target_id: target.into(),
+        };
+        crate::scoped_capture::read_worker_result(
+            process::spawn_codex_scoped_capture(helper, &sandbox)?,
+            &request,
+        )
+    }
+
+    fn manifest<'a>(&self, plan: &'a LifecyclePlan) -> Result<&'a CleanupManifest, EffectError> {
+        let p = plan.content();
+        let m = p
+            .cleanup_manifest
+            .as_ref()
+            .ok_or(EffectError::InvalidEvidence)?;
+        if p.schema_version != 2
+            || p.status != PlanStatus::Ready
+            || p.request.intent != LifecycleIntent::CleanupSession
+            || p.request.target != m.target
+            || p.native_target_id.as_ref() != Some(&m.native_session_id)
+            || m.target.provider != ProviderKind::Codex
+            || m.target.class != GraphNodeKind::Session
+            || m.root.path != self.reader.location.state_root
+            || self.reader.fixture.is_some()
+            || p.operations.len() != 1
+            || p.operations[0].operation != NativeLifecycleOperation::ScopedCleanupSession
+            || p.operations[0].target != m.target
+            || p.operations[0].native_id != m.native_session_id
+            || p.provider.executable.as_ref() != self.reader.location.executable.as_ref()
+            || p.observation_scope.project_path.is_some()
+            || !p.observation_scope.include_archived
+            || m.payloads.len() != 1
+            || !scoped_profile::validate_manifest_profile(m)
+            || !scoped_files::valid_rollout_name(
+                &m.payloads[0].identity.path,
+                m.native_session_id.as_str(),
+            )
+        {
+            return Err(EffectError::InvalidEvidence);
+        }
+        Ok(m)
+    }
+
+    fn validate_executable(&self) -> Result<(), EffectError> {
+        #[cfg(test)]
+        if self.synthetic_pin {
+            return Ok(());
+        }
+        if !cfg!(all(target_os = "macos", target_arch = "aarch64")) {
+            return Err(EffectError::UnsupportedVersion);
+        }
+        let path = self
+            .reader
+            .location
+            .executable
+            .as_deref()
+            .ok_or(EffectError::Unavailable)?;
+        if !path.is_absolute() || path.canonicalize().map_err(|_| EffectError::Unavailable)? != path
+        {
+            return Err(EffectError::ProfileMismatch);
+        }
+        let metadata = std::fs::symlink_metadata(path).map_err(|_| EffectError::Unavailable)?;
+        if !metadata.is_file() || metadata.file_type().is_symlink() || metadata.len() != 268_972_064
+        {
+            return Err(EffectError::ProfileMismatch);
+        }
+        let file = std::fs::File::open(path).map_err(|_| EffectError::Unavailable)?;
+        let before = file.metadata().map_err(|_| EffectError::Unavailable)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            if metadata.dev() != before.dev()
+                || metadata.ino() != before.ino()
+                || before.nlink() != 1
+            {
+                return Err(EffectError::ProfileMismatch);
+            }
+        }
+        let mut input = std::io::BufReader::new(&file);
+        let mut hash = Sha256::new();
+        let mut bytes = [0u8; 65536];
+        loop {
+            let n = input
+                .read(&mut bytes)
+                .map_err(|_| EffectError::Unavailable)?;
+            if n == 0 {
+                break;
+            }
+            hash.update(&bytes[..n]);
+        }
+        let after = file.metadata().map_err(|_| EffectError::Unavailable)?;
+        if before.len() != after.len()
+            || before.modified().ok() != after.modified().ok()
+            || hash
+                .finalize()
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect::<String>()
+                != SCOPED_CODEX_EXECUTABLE_SHA256
+        {
+            return Err(EffectError::ProfileMismatch);
+        }
+        Ok(())
+    }
+}
+
+fn not_expired(expires_at: u64) -> bool {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .is_ok_and(|now| now.as_secs() < expires_at)
+}
+
+fn report(
+    manifest: &CleanupManifest,
+    outcome: CleanupOutcome,
+    action: CleanupActionOutcome,
+    row_absent: bool,
+    retained: bool,
+) -> CleanupReport {
+    let bytes = manifest.payloads[0].identity.size_bytes;
+    CleanupReport {
+        outcome,
+        actions: vec![CleanupActionReport {
+            artifact: manifest.payloads[0].artifact.clone(),
+            outcome: action,
+            logical_unlinked_bytes: if action == CleanupActionOutcome::Removed {
+                bytes
+            } else {
+                0
+            },
+        }],
+        canonical_row_absent: row_absent,
+        retained_primary_unchanged: retained,
+        optional_index: manifest
+            .optional_index
+            .as_ref()
+            .map(|_| CleanupActionOutcome::Retained),
+        post_cutoff_residue: false,
+        logical_planned_bytes: bytes,
+        logical_unlinked_bytes: if action == CleanupActionOutcome::Removed {
+            bytes
+        } else {
+            0
+        },
+        physical_reclaimed_bytes: None,
+    }
+}
+
+fn report_blocked(manifest: &CleanupManifest) -> CleanupReport {
+    report(
+        manifest,
+        CleanupOutcome::Blocked,
+        CleanupActionOutcome::Retained,
+        false,
+        false,
+    )
+}
+
+impl DurableCleanupPort for CodexScopedCleanupAdapter {
+    fn preflight(&self, plan: &LifecyclePlan) -> Result<(), EffectError> {
+        self.manifest(plan)?;
+        self.validate_executable()?;
+        let manifest = self.manifest(plan)?;
+        let snapshot = self
+            .capture_target(manifest.native_session_id.as_str())
+            .map_err(|_| EffectError::Unavailable)?;
+        let cwd = snapshot
+            .cwd
+            .as_deref()
+            .ok_or(EffectError::InvalidEvidence)?;
+        crate::scoped_config::validate(&manifest.root.path, cwd)
+    }
+
+    fn dispatch(&self, intent: DurableIntent, plan: &LifecyclePlan) -> CleanupAttempt {
+        let matches = intent.plan_digest() == plan.digest()
+            && intent.state_fingerprint() == plan.state_fingerprint()
+            && intent.operation_index() == 0;
+        let expires_at = intent.expires_at();
+        let observation = intent.into_observation();
+        let (outcome, mut report) = if !matches || !not_expired(expires_at) {
+            (
+                NativeOutcome::NeverDispatched(EffectError::InvalidEvidence),
+                None,
+            )
+        } else if let Err(error) = self.preflight(plan) {
+            (NativeOutcome::NeverDispatched(error), None)
+        } else {
+            self.execute(plan, expires_at)
+        };
+        if matches!(outcome, NativeOutcome::NeverDispatched(_))
+            && report.is_none()
+            && let Ok(manifest) = self.manifest(plan)
+        {
+            report = Some(report_blocked(manifest));
+        }
+        CleanupAttempt {
+            observation,
+            outcome,
+            report,
+        }
+    }
+
+    fn observe(&self, plan: &LifecyclePlan) -> Result<CleanupReport, EffectError> {
+        let manifest = self.manifest(plan)?;
+        let (action, retained_files) = scoped_files::reconcile_files(manifest)?;
+        let db = self
+            .capture_target(manifest.native_session_id.as_str())
+            .map_err(|_| EffectError::Unavailable)?;
+        let row_absent = db
+            .rows
+            .iter()
+            .find(|r| r.table == "threads")
+            .is_some_and(|r| r.count == 0);
+        let retained_database = db.retained_database_sha256 == manifest.retained_database_sha256;
+        // Independent read-only observations cannot establish one simultaneous
+        // fenced cutoff, so preserve the overall unknown state even if individual
+        // frozen actions are observed absent. No destructive authority is recreated.
+        let retained_at_cutoff = false;
+        let _ = (retained_files, retained_database);
+        Ok(report(
+            manifest,
+            CleanupOutcome::OutcomeUnknown,
+            action,
+            row_absent,
+            retained_at_cutoff,
+        ))
+    }
+}
+
+impl CodexScopedCleanupAdapter {
+    fn execute(
+        &self,
+        plan: &LifecyclePlan,
+        expires_at: u64,
+    ) -> (NativeOutcome, Option<CleanupReport>) {
+        let m = match self.manifest(plan) {
+            Ok(m) => m,
+            Err(e) => return (NativeOutcome::NeverDispatched(e), None),
+        };
+        let writers = match scoped_files::WriterFence::acquire(m) {
+            Ok(v) => v,
+            Err(e) => return (NativeOutcome::NeverDispatched(e), None),
+        };
+        if let Err(e) = scoped_files::validate_before_unlink(m) {
+            return (NativeOutcome::NeverDispatched(e), None);
+        }
+        // Sidecar descriptors are acquired before SQLite and dropped after it,
+        // so closing them cannot discard SQLite's process-scoped POSIX locks.
+        let sidecars = match scoped_files::DatabaseSidecars::acquire(m) {
+            Ok(v) => v,
+            Err(e) => return (NativeOutcome::NeverDispatched(e), None),
+        };
+        let mut database = match scoped_storage::DatabaseFence::acquire(m) {
+            Ok(v) => v,
+            // SQLite may have opened or changed its own WAL coordination files.
+            Err(e) => return (NativeOutcome::Unknown(e), None),
+        };
+        if let Err(e) = sidecars.validate(m) {
+            return (NativeOutcome::Unknown(e), None);
+        }
+        let cwd = match database.target_cwd(m) {
+            Ok(cwd) => cwd,
+            Err(e) => return (NativeOutcome::Unknown(e), None),
+        };
+        if let Err(e) = crate::scoped_config::validate(&m.root.path, &cwd) {
+            return (NativeOutcome::Unknown(e), None);
+        }
+        if let Err(e) = database.prepare_delete(m) {
+            return (NativeOutcome::Unknown(e), None);
+        }
+        if let Err(e) = writers.validate(m) {
+            return (NativeOutcome::Unknown(e), None);
+        }
+        if let Err(e) = sidecars.validate(m) {
+            return (NativeOutcome::Unknown(e), None);
+        }
+        if let Err(e) = crate::scoped_config::validate(&m.root.path, &cwd) {
+            return (NativeOutcome::Unknown(e), None);
+        }
+        if !not_expired(expires_at) {
+            return (NativeOutcome::Unknown(EffectError::InvalidEvidence), None);
+        }
+        // From this point any error may follow a successful unlink and is unknown.
+        if let Err(e) = scoped_files::validate_and_unlink(m) {
+            return (
+                NativeOutcome::Unknown(e),
+                Some(report(
+                    m,
+                    CleanupOutcome::OutcomeUnknown,
+                    CleanupActionOutcome::Unknown,
+                    false,
+                    false,
+                )),
+            );
+        }
+        if let Err(e) = sidecars.validate(m) {
+            return (
+                NativeOutcome::Unknown(e),
+                Some(report(
+                    m,
+                    CleanupOutcome::OutcomeUnknown,
+                    CleanupActionOutcome::Removed,
+                    false,
+                    false,
+                )),
+            );
+        }
+        #[cfg(test)]
+        if self.fault == Some(TestFault::CrashAfterUnlink) {
+            std::process::exit(86);
+        }
+        #[cfg(test)]
+        if self.fault == Some(TestFault::AfterUnlink) {
+            return (
+                NativeOutcome::Unknown(EffectError::Transport),
+                Some(report(
+                    m,
+                    CleanupOutcome::OutcomeUnknown,
+                    CleanupActionOutcome::Removed,
+                    false,
+                    false,
+                )),
+            );
+        }
+        let database_ok = match database.commit_and_verify(m) {
+            Ok(v) => v,
+            Err(e) => {
+                return (
+                    NativeOutcome::Unknown(e),
+                    Some(report(
+                        m,
+                        CleanupOutcome::OutcomeUnknown,
+                        CleanupActionOutcome::Removed,
+                        false,
+                        false,
+                    )),
+                );
+            }
+        };
+        #[cfg(test)]
+        if self.fault == Some(TestFault::CrashAfterCommit) {
+            std::process::exit(87);
+        }
+        #[cfg(test)]
+        if self.fault == Some(TestFault::AfterCommit) {
+            return (
+                NativeOutcome::Unknown(EffectError::Transport),
+                Some(report(
+                    m,
+                    CleanupOutcome::OutcomeUnknown,
+                    CleanupActionOutcome::Removed,
+                    false,
+                    false,
+                )),
+            );
+        }
+        let files_ok = match scoped_files::verify_retained_and_absence(m) {
+            Ok(v) => v,
+            Err(e) => {
+                return (
+                    NativeOutcome::Unknown(e),
+                    Some(report(
+                        m,
+                        CleanupOutcome::OutcomeUnknown,
+                        CleanupActionOutcome::Removed,
+                        false,
+                        false,
+                    )),
+                );
+            }
+        };
+        if !database_ok
+            || !files_ok
+            || writers.validate(m).is_err()
+            || sidecars.validate(m).is_err()
+        {
+            return (
+                NativeOutcome::Unknown(EffectError::InvalidEvidence),
+                Some(report(
+                    m,
+                    CleanupOutcome::OutcomeUnknown,
+                    CleanupActionOutcome::Removed,
+                    false,
+                    false,
+                )),
+            );
+        }
+        let outcome = if m.residuals.is_empty() && m.optional_index.is_none() {
+            CleanupOutcome::Removed
+        } else {
+            CleanupOutcome::RemovedWithResiduals
+        };
+        let result = report(m, outcome, CleanupActionOutcome::Removed, true, true);
+        if !validate_cleanup_report(m, &result) {
+            return (NativeOutcome::Unknown(EffectError::InvalidEvidence), None);
+        }
+        (NativeOutcome::Accepted, Some(result))
+    }
+}
+
+impl agentmender_provider_api::ScopedCleanupReadPort for CodexScopedCleanupAdapter {
+    fn observe_cleanup(
+        &self,
+        target: &str,
+        scope: &agentmender_domain::DiscoveryScope,
+    ) -> Result<
+        agentmender_provider_api::ScopedCleanupObservation,
+        agentmender_provider_api::ProviderError,
+    > {
+        use agentmender_domain::*;
+        use agentmender_provider_api::{ProviderError, ScopedCleanupObservation, validate_scope};
+        let unavailable = || {
+            ProviderError::CapabilityUnavailable(
+                "scoped cleanup evidence unavailable or incomplete".into(),
+            )
+        };
+        validate_scope(scope)?;
+        if scope.project_path.is_some() || !scope.include_archived || self.reader.fixture.is_some()
+        {
+            return Err(unavailable());
+        }
+        self.validate_executable().map_err(|_| unavailable())?;
+        let db = self.capture_target(target)?;
+        let cwd = db.cwd.as_deref().ok_or_else(unavailable)?;
+        crate::scoped_config::validate(&self.reader.location.state_root, cwd)
+            .map_err(|_| unavailable())?;
+        if db.history_mode.as_deref() != Some("legacy")
+            || db.dependent_rows != 0
+            || db.rows.iter().any(|r| {
+                matches!(
+                    r.table.as_str(),
+                    "thread_attachments" | "guardian_review_feedback" | "thread_spawn_edges"
+                ) && r.count != 0
+            })
+        {
+            return Err(unavailable());
+        }
+        let path = db.target_path.as_ref().ok_or_else(unavailable)?;
+        let files = scoped_files::observe(&self.reader.location.state_root, target, path)
+            .map_err(|_| unavailable())?;
+        let inventory = scoped_files::inspect_rollouts(&self.reader.location.state_root)
+            .map_err(|_| unavailable())?;
+        let inventory_keys: std::collections::BTreeSet<_> = inventory
+            .iter()
+            .map(|(file, id, _, _)| (&file.path, id.as_str()))
+            .collect();
+        if db
+            .known_threads
+            .iter()
+            .any(|thread| !inventory_keys.contains(&(&thread.rollout_path, thread.id.as_str())))
+        {
+            return Err(unavailable());
+        }
+        let native = EntityId::new(target).map_err(|_| unavailable())?;
+        let target_local = crate::scoped_id("session", target)?;
+        let relative = path
+            .strip_prefix(&self.reader.location.state_root)
+            .map_err(|_| unavailable())?;
+        let payload_local = crate::artifact_identity(relative).ok_or_else(unavailable)?;
+        let provider = Provider {
+            kind: ProviderKind::Codex,
+            presence: Presence::Installed,
+            state_root: self.reader.location.state_root.clone(),
+            fingerprint: ProviderFingerprint { executable: self.reader.location.executable.clone(), executable_version: Some(SCOPED_CODEX_VERSION.into()), adapter_version: env!("CARGO_PKG_VERSION").into(), interface_id: Some(SCOPED_ADAPTER.into()), layout_id: Some(format!("codex-state-5:{SCOPED_CODEX_SCHEMA_SHA256}")) },
+            capabilities: ProviderCapabilities::new(),
+            compatibility: CompatibilityProfile { status: CompatibilityStatus::ReadOnlyKnown, interface_stability: InterfaceStability::InternalImplementationDetail, reason: "Exact scoped cleanup evidence only; native lifecycle and general provider compatibility remain separate.".into() },
+            installations: vec![], evidence_status: EvidenceStatus::SnapshotVerified, diagnostics: vec![],
+        };
+        let fingerprint = provider.fingerprint.clone();
+        let mut graph = ArtifactGraph::builder(GraphContext {
+            provider,
+            evidence_status: EvidenceStatus::SnapshotVerified,
+            completeness: Completeness::Partial,
+            coverage: "Exact scoped cleanup evidence; other provider state remains unverified"
+                .into(),
+            diagnostics: vec![],
+        });
+        let rule_id =
+            EntityId::new("codex-scoped-cleanup-exact-evidence").map_err(|_| unavailable())?;
+        graph.add_rule(EvidenceRule {
+            id: rule_id.clone(),
+            provider: ProviderKind::Codex,
+            description: "Fixed schema and bounded rollout metadata observations".into(),
+            admissible_sources: vec![EvidenceSource::ProviderSnapshot],
+            max_confidence: Confidence::Authoritative,
+            adapter_version: fingerprint.adapter_version,
+            interface_id: fingerprint.interface_id,
+            layout_id: fingerprint.layout_id,
+        })?;
+        let evidence = Evidence {
+            source: EvidenceSource::ProviderSnapshot,
+            confidence: Confidence::Authoritative,
+            provider_version: Some(SCOPED_CODEX_VERSION.into()),
+            rule: "scoped exact identity".into(),
+        };
+        let graph_evidence = GraphEvidence {
+            observation: evidence.clone(),
+            rule_id,
+            nature: EvidenceNature::Observation,
+            locator: None,
+            observed_at: None,
+        };
+        let global = graph.observe(NodeObservation::ProviderState);
+        graph.add_root(ProtectedRoot {
+            node: global,
+            kind: RootKind::ProviderGlobal,
+        })?;
+        let session = graph.observe(NodeObservation::Session(Session {
+            id: target_local,
+            provider_session_id: target.into(),
+            project_id: None,
+            state: if db.archived == Some(true) {
+                SessionState::Archived
+            } else {
+                SessionState::Active
+            },
+            last_active: None,
+            evidence: evidence.clone(),
+        }));
+        graph.add_node_evidence(&session, graph_evidence.clone())?;
+        let artifact = graph.observe(NodeObservation::Artifact(Artifact {
+            id: payload_local,
+            kind: ArtifactKind::Transcript,
+            locator: path.clone(),
+            size_bytes: Some(files.payload.size_bytes),
+            evidence,
+        }));
+        graph.add_node_evidence(&artifact, graph_evidence)?;
+        let manifest = CleanupManifest {
+            target: session,
+            native_session_id: native.clone(),
+            root: files.root,
+            profile: CleanupProfile {
+                version: SCOPED_CODEX_VERSION.into(),
+                executable_sha256: SCOPED_CODEX_EXECUTABLE_SHA256.into(),
+                schema_sha256: SCOPED_CODEX_SCHEMA_SHA256.into(),
+                adapter: SCOPED_ADAPTER.into(),
+                platform: "darwin-arm64".into(),
+                journal_mode: "wal".into(),
+                history_layout: "legacy-plain".into(),
+            },
+            database: files.database,
+            rows: db
+                .rows
+                .into_iter()
+                .map(|r| CleanupRows {
+                    table: r.table,
+                    expected_count: r.count,
+                    preimage_sha256: r.sha256,
+                })
+                .collect(),
+            database_payload_paths: vec![CleanupDatabasePath { path: path.clone() }],
+            payloads: vec![CleanupPayload {
+                artifact,
+                identity: files.payload,
+                header_session_id: native,
+                header_sha256: files.header_sha256,
+            }],
+            optional_index: None,
+            retained_database_sha256: db.retained_database_sha256,
+            retained_files: files.retained_files,
+            residuals: vec![CleanupResidual {
+                artifact: ArtifactId {
+                    provider: ProviderKind::Codex,
+                    state_root: self.reader.location.state_root.clone(),
+                    class: GraphNodeKind::Artifact,
+                    local_id: EntityId::new("codex:residual:unscanned-stores")
+                        .map_err(|_| unavailable())?,
+                },
+                kind: CleanupResidualKind::Unknown,
+            }],
+        };
+        if !scoped_profile::validate_manifest_profile(&manifest) {
+            return Err(unavailable());
+        }
+        let context = PlanningContext {
+            scope: scope.clone(),
+            capabilities: vec![],
+            effects: None,
+            cleanup_evidence: Some(ScopedCleanupEvidence {
+                manifest,
+                root_boundary: CleanupBoundaryObservation::CompleteAndUnshared,
+                references: CleanupBoundaryObservation::CompleteAndUnshared,
+                writer_fence: CleanupBoundaryObservation::CompleteAndUnshared,
+                schema: CleanupBoundaryObservation::CompleteAndUnshared,
+            }),
+        };
+        Ok(ScopedCleanupObservation {
+            graph: graph.finish()?,
+            context,
+        })
+    }
+}
+
+#[cfg(test)]
+#[path = "scoped_cleanup_acceptance.rs"]
+mod acceptance;

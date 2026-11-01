@@ -1,0 +1,74 @@
+{
+  "schema_version": 1,
+  "date": "2026-11-01",
+  "profile": "codex-scoped-cleanup-0.166.0-darwin-arm64-v1",
+  "executable_sha256": "39acf979729dd290f9a24ee38b2914e036c91b65952872e28ae2a6b88a7db7c1",
+  "executable_bytes": 268972064,
+  "archive_sha256": "c48824462fc57681eafb0925d97b11b589010475613904f570b42fea53e240d5",
+  "state_schema_sha256": "1b88a3f88c8edb6f742d219835a821d0515b7b811b4342cd650e6ac8069f4647",
+  "acceptance": {
+    "test": "scoped_cleanup::acceptance::exact_binary_and_sandboxed_worker_on_disposable_fixture",
+    "passes": 1,
+    "failures": 0,
+    "seconds": 23.06,
+    "real_binary_identity": true,
+    "real_sandbox_helper": true,
+    "native_provider_started": false,
+    "provider_state": "disposable manually seeded exact-schema fixture",
+    "plan_transaction_recovery_independent_test_approval_durable_intent_production_adapter": true,
+    "planned_logical_bytes": 67108864,
+    "unlinked_logical_bytes": 67108864,
+    "physical_reclaimed_bytes": null,
+    "outcome": "removed_with_residuals",
+    "retained": [
+      "same-cwd similar-UUID child session row and rollout",
+      "unknown cache",
+      "shared and unsupported residual categories"
+    ],
+    "real_user_state_mutated": false
+  },
+  "ordinary_gates": [
+    {
+      "gate": "fmt",
+      "exit": 0,
+      "seconds": 0.36
+    },
+    {
+      "gate": "clippy",
+      "exit": 0,
+      "seconds": 4.45
+    },
+    {
+      "gate": "test",
+      "exit": 0,
+      "seconds": 159.51
+    },
+    {
+      "gate": "build",
+      "exit": 0,
+      "seconds": 4.25
+    },
+    {
+      "gate": "architecture",
+      "exit": 0,
+      "seconds": 10.65
+    },
+    {
+      "gate": "evidence",
+      "exit": 0,
+      "seconds": 0.06
+    },
+    {
+      "gate": "whitespace",
+      "exit": 0,
+      "seconds": 0.05
+    }
+  ],
+  "workspace_tests": {
+    "primary_passes": 379,
+    "nested_child_pass_summaries": 8,
+    "failures": 0,
+    "ignored_opt_in": 4
+  },
+  "remote_final_commit_ci": "required; verify exact final branch commit through Actions; not supplied by local evidence"
+}

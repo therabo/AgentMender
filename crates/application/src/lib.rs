@@ -107,6 +107,67 @@ pub struct ApprovalInputs {
     pub failures: Vec<ProviderFailure>,
 }
 
+/// Fresh scoped provider evidence is interpreted into an immutable plan.
+pub fn cleanup_inputs(
+    port: &dyn agentmender_provider_api::ScopedCleanupReadPort,
+    target: &str,
+    scope: &DiscoveryScope,
+) -> Result<ApprovalInputs, ApplicationError> {
+    validate_scope(scope)?;
+    let id = EntityId::new(target)
+        .map_err(|_| ProviderError::InvalidScope("invalid cleanup target".into()))?;
+    let observed = port.observe_cleanup(target, scope)?;
+    if observed.context.scope != *scope {
+        return Err(ProviderError::InvalidScope(
+            "planning context does not match discovery scope".into(),
+        )
+        .into());
+    }
+    let manifest = observed
+        .context
+        .cleanup_evidence
+        .as_ref()
+        .ok_or_else(|| ApplicationError::InspectionUnavailable(id.clone()))?;
+    if manifest.manifest.native_session_id.as_str() != target {
+        return Err(ApplicationError::InspectionUnavailable(id));
+    }
+    let target_id = manifest.manifest.target.clone();
+    if observed
+        .graph
+        .nodes()
+        .iter()
+        .filter(|n| {
+            n.id == target_id
+                && n.observations.iter().any(
+                    |o| matches!(o, NodeObservation::Session(s) if s.provider_session_id == target),
+                )
+        })
+        .count()
+        != 1
+    {
+        return Err(ApplicationError::InspectionUnavailable(id));
+    }
+    let integrity = evaluate_integrity(&observed.graph, &IntegrityContext::default());
+    let plan = plan_lifecycle(
+        &observed.graph,
+        &integrity,
+        &observed.context,
+        LifecycleRequest {
+            target: target_id,
+            intent: LifecycleIntent::CleanupSession,
+        },
+    );
+    let contexts = vec![observed.graph.context().clone()];
+    Ok(ApprovalInputs {
+        graph: observed.graph,
+        integrity,
+        context: observed.context,
+        plan,
+        contexts,
+        failures: Vec::new(),
+    })
+}
+
 #[derive(Debug, Serialize)]
 pub struct PlanningReport {
     pub plan: LifecyclePlan,
@@ -163,6 +224,9 @@ pub enum ReadOnlyOperation {
         intent: LifecycleIntent,
     },
 }
+// Keep the public response shape stable for read-only consumers; the response
+// is transient and never accumulated in bulk.
+#[allow(clippy::large_enum_variant)]
 pub enum ReadOnlyResponse {
     Providers(ProviderReport),
     Scan(ScanReport),
@@ -1065,6 +1129,7 @@ mod tests {
                         protocol_evidence_digest: format!("sha256:{}", "0".repeat(64)),
                         effect_scope: NativeEffectScope::TargetOnly,
                     }],
+                    cleanup_evidence: None,
                     effects: None,
                 })
             }

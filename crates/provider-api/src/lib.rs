@@ -13,6 +13,19 @@ use agentmender_domain::{
 use std::path::PathBuf;
 use thiserror::Error;
 
+/// Separate, read-only scoped cleanup observations; this port carries no authority.
+pub struct ScopedCleanupObservation {
+    pub graph: ArtifactGraph,
+    pub context: PlanningContext,
+}
+pub trait ScopedCleanupReadPort {
+    fn observe_cleanup(
+        &self,
+        target: &str,
+        scope: &DiscoveryScope,
+    ) -> Result<ScopedCleanupObservation, ProviderError>;
+}
+
 #[derive(Debug, Error)]
 pub enum ProviderError {
     #[error(transparent)]
@@ -59,6 +72,7 @@ pub trait ProviderAdapter {
         Ok(PlanningContext {
             scope: scope.clone(),
             capabilities: Vec::new(),
+            cleanup_evidence: None,
             effects: None,
         })
     }

@@ -105,10 +105,12 @@ dependencies = [
 name = "agentmender-provider-codex"
 version = "0.1.0"
 dependencies = [
+ "agentmender-application",
  "agentmender-domain",
  "agentmender-persistence",
  "agentmender-provider-api",
  "rusqlite",
+ "rustix",
  "serde",
  "serde_json",
  "sha2",

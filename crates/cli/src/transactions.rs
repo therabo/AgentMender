@@ -20,7 +20,7 @@ pub enum TransactionAction {
     Journal {
         id: String,
     },
-    /// Execute the exact independently approved transaction through its native adapter.
+    /// Execute the exact independently approved transaction through its reviewed adapter.
     Execute {
         id: String,
     },

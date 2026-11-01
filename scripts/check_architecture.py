@@ -55,9 +55,11 @@ def mask_literals(source):
 
 def production_source(source):
     """Remove complete test modules, including when production follows them."""
+    if re.match(r'\s*#!\[cfg\(test\)\]', source):
+        return ''
     masked = mask_literals(source)
     result = list(source)
-    pattern = r'#\s*\[\s*cfg\s*\(\s*test\s*\)\s*\]\s*(?:pub\s+)?mod\s+\w+\s*\{'
+    pattern = r'#\s*\[\s*cfg\s*\(\s*(?:test|all\s*\(\s*test\s*,\s*unix\s*\))\s*\)\s*\]\s*(?:pub\s+)?mod\s+\w+\s*\{'
     for match in re.finditer(pattern, masked):
         index = match.end()
         depth = 1
@@ -127,7 +129,7 @@ def approval_boundary_violation(source, crate_name, module_name):
     """ADR-0012: authority cannot enter MCP/providers or an execution CLI."""
     code = mask_literals(production_source(source))
     authority = r'\b(?:ApprovalGrant|ApprovalAction|ApprovalScope|ApprovalId|AuthorizationAuthentication|TransactionStore|RecoveryStore|DurableIntent|grant_approval|revoke_approval|record_intent|authorization_signing_bytes)\b'
-    if crate_name == 'provider-codex' and module_name == 'lifecycle.rs':
+    if crate_name == 'provider-codex' and module_name in {'lifecycle.rs', 'scoped_cleanup.rs', 'scoped_unsupported.rs'}:
         # This adapter may consume handoff gates; it cannot mint authority or write history.
         forbidden = r'\b(?:ApprovalGrant|ApprovalAction|ApprovalScope|ApprovalId|AuthorizationAuthentication|TransactionStore|RecoveryStore|grant_approval|revoke_approval|record_intent|authorization_signing_bytes|AuthorityMac)\b'
         return bool(re.search(forbidden, code))
@@ -263,7 +265,12 @@ for package in metadata["packages"]:
     if name not in allowed:
         errors.append(f"unreviewed crate: {name}")
         continue
-    internal = {d["name"] for d in package["dependencies"] if d["name"].startswith("agentmender-")}
+    internal = {d["name"] for d in package["dependencies"] if d["name"].startswith("agentmender-") and d.get('kind') != 'dev'}
+    # ADR-0017: full-chain disposable acceptance uses application only in tests.
+    for dep in package['dependencies']:
+        if dep.get('kind') == 'dev' and dep['name'].startswith('agentmender-'):
+            if not (name == 'agentmender-provider-codex' and dep['name'] == 'agentmender-application') and dep['name'] not in allowed[name]:
+                errors.append(f"unreviewed development dependency: {name}: {dep['name']}")
     if internal - allowed[name]:
         errors.append(f"dependency direction violation: {name}: {sorted(internal - allowed[name])}")
     for dep in package["dependencies"]:
@@ -277,6 +284,7 @@ patterns = [
     r"\.(?:write|append|create|create_new|truncate)\s*\(\s*true\s*\)",
     r"File::create\s*\(",
     r'"(?:thread/(?:archive|unarchive|delete|start|resume)|turn/start)"',
+    r'\b(?:unlinkat|renameat|renameat2|mkdirat|ftruncate)\s*\(',
     r'"(?:DELETE|UPDATE|INSERT)\s+',
 ]
 for path in (ROOT / "crates").glob("*/src/**/*.rs"):
@@ -284,6 +292,9 @@ for path in (ROOT / "crates").glob("*/src/**/*.rs"):
     code = mask_literals(source)
     reviewed_capture = path == ROOT / "crates/provider-codex/src/capture.rs"
     reviewed_lifecycle = path == ROOT / "crates/provider-codex/src/lifecycle.rs"
+    reviewed_scoped = path in {ROOT / "crates/provider-codex/src/scoped_cleanup.rs", ROOT / "crates/provider-codex/src/scoped_unsupported.rs"}
+    reviewed_scoped_storage = path == ROOT / "crates/provider-codex/src/scoped_storage.rs"
+    reviewed_scoped_files = path == ROOT / "crates/provider-codex/src/scoped_files.rs"
     crate_name = path.relative_to(ROOT / "crates").parts[0]
     if crate_name == 'provider-claude' and claude_lifecycle_violation(source):
         errors.append(f'Claude lifecycle authority before validated project contract: {path.relative_to(ROOT)}')
@@ -301,8 +312,10 @@ for path in (ROOT / "crates").glob("*/src/**/*.rs"):
             if pattern == patterns[3]:
                 inspected = inspected.replace('"thread/unarchive"', '')
         if (re.search(pattern, inspected)
-            and not (reviewed_capture and pattern in patterns[1:])
+            and not (reviewed_capture and pattern in {patterns[1], patterns[2], patterns[-1]})
             and not (reviewed_owned and pattern in patterns[:3])
+            and not (reviewed_scoped_storage and pattern == patterns[-1])
+            and not (reviewed_scoped_files and pattern == patterns[-2])
             and not (crate_name == "persistence" and path.name == "store.rs" and pattern == patterns[-1])):
             errors.append(f"possible provider mutation: {path.relative_to(ROOT)}: {pattern}")
     if path != ROOT / "crates/provider-api/src/macos_sandbox.rs" and (re.search(r"\bunsafe\b", code) or re.search(r"allow\s*\(\s*unsafe_code", code)):
@@ -364,7 +377,7 @@ for path in (ROOT / "crates").glob("*/src/**/*.rs"):
         r"\b(?:TransactionStore|RecoveryStore|DurableIntent|create_transaction|record_intent|record_compensation_intent)\b", code
     ):
         errors.append(f"inbound interface can advance durable transactions: {path.relative_to(ROOT)}")
-    provider_authority = r"\b(?:TransactionStore|RecoveryStore|CleanupTransaction|TransactionEvent|JournalRecord)\b" if reviewed_lifecycle else r"\b(?:TransactionStore|RecoveryStore|DurableIntent|CleanupTransaction|TransactionEvent|JournalRecord)\b"
+    provider_authority = r"\b(?:TransactionStore|RecoveryStore|CleanupTransaction|TransactionEvent|JournalRecord)\b" if (reviewed_lifecycle or reviewed_scoped) else r"\b(?:TransactionStore|RecoveryStore|DurableIntent|CleanupTransaction|TransactionEvent|JournalRecord)\b"
     if crate_name.startswith("provider-") and re.search(provider_authority, code):
         errors.append(f"provider adapter contains transaction authority: {path.relative_to(ROOT)}")
     if crate_name == "mcp-server":
@@ -440,7 +453,7 @@ for marker in ['verify_slice', 'grant_approval', 'revoke_approval', 'ApprovalAct
     if marker not in store:
         raise SystemExit(f'ADR-0012 authenticated persistence contract missing: {marker}')
 handoff = production_source((ROOT / 'crates/persistence/src/handoff.rs').read_text())
-for name in ['EffectError', 'NativeOutcome', 'EffectAttempt', 'NativeObservation', 'EffectObservation']:
+for name in ['EffectError', 'NativeOutcome', 'EffectAttempt', 'NativeObservation', 'EffectObservation', 'CleanupAttempt']:
     if declaration_has_raw_payload(handoff, name):
         raise SystemExit(f'raw provider payload in lifecycle handoff: {name}')
 for name in ['DurableIntent', 'DurableObservation']:
@@ -472,4 +485,43 @@ if len(execution) != 1 or not (0 <= execution[0].find('.record_intent(') < execu
     raise SystemExit('native dispatch does not follow durable intent in the execution workflow')
 if not re.search(r'fn\s+dispatch\s*\([^;{]*\bDurableIntent\b', mask_literals(handoff)):
     raise SystemExit('lifecycle effect port lost its owned durable gate')
+
+# ADR-0017 permits two fixed SQL deletes and one descriptor-relative payload
+# unlink, never a generic local mutation port. Keep these exceptions auditable.
+scoped_base = ROOT / 'crates/provider-codex/src'
+scoped_storage = production_source((scoped_base / 'scoped_storage.rs').read_text())
+scoped_files = production_source((scoped_base / 'scoped_files.rs').read_text())
+scoped_adapter = production_source((scoped_base / 'scoped_cleanup.rs').read_text())
+scoped_profile = production_source((scoped_base / 'scoped_profile.rs').read_text())
+deletes = re.findall(r'"((?:DELETE|UPDATE|INSERT)\s+[^"\n]*)"', scoped_storage)
+if sorted(deletes) != sorted(['DELETE FROM thread_read_receipts WHERE thread_id=?1', 'DELETE FROM threads WHERE id=?1']):
+    raise SystemExit('unreviewed scoped SQL mutation')
+apply = list(method_bodies(scoped_storage, 'apply'))
+if len(apply) != 1 or not all(sql in apply[0] for sql in deletes):
+    raise SystemExit('scoped deletes escaped the private fixed action')
+unlink = list(method_bodies(scoped_files, 'validate_and_unlink'))
+relative_mutation = r'\b(?:unlinkat|renameat|renameat2|mkdirat|ftruncate)\s*\('
+if len(unlink) != 1 or len(re.findall(relative_mutation, mask_literals(scoped_files))) != 1 or 'fs::unlinkat(&parent, &name, AtFlags::empty())' not in unlink[0]:
+    raise SystemExit('scoped file mutation escaped the one frozen relative unlink')
+for module in [scoped_storage, scoped_files]:
+    if re.search(r'\bpub\s+(?:fn|struct|enum|trait)\b', mask_literals(module)):
+        raise SystemExit('provider scoped implementation exposed a public primitive')
+for marker in ['validate_manifest_profile', 'locking_mode=EXCLUSIVE', 'BEGIN EXCLUSIVE', 'retained_digest', 'ROLLBACK TO', 'COMMIT']:
+    if marker not in scoped_storage:
+        raise SystemExit(f'scoped database fence contract missing: {marker}')
+if impure_graph_code(scoped_profile):
+    raise SystemExit('provider profile predicate is not pure')
+for marker in ['validate_manifest_profile', 'validate_executable', 'WriterFence::acquire', 'DatabaseFence::acquire', 'not_expired', 'validate_cleanup_report']:
+    if marker not in scoped_adapter:
+        raise SystemExit(f'scoped adapter contract missing: {marker}')
+for name in ['reconcile_cleanup']:
+    for body in method_bodies(workflow, name):
+        if re.search(r'\.(?:dispatch|record_intent)\s*\(', mask_literals(body)):
+            raise SystemExit('cleanup reconciliation can recreate authority')
+execution = list(method_bodies(workflow, 'execute_scoped_cleanup'))
+if len(execution) != 1 or not (0 <= execution[0].find('.record_intent(') < execution[0].find('.dispatch(')):
+    raise SystemExit('scoped dispatch does not follow durable intent')
+assert approval_boundary_violation('fn bypass() { store.grant_approval(); }', 'provider-codex', 'scoped_cleanup.rs')
+assert approval_boundary_violation('use agentmender_persistence::TransactionStore;', 'provider-codex', 'scoped_unsupported.rs')
+assert production_source('#[cfg(all(test, unix))] mod tests { fs::write("test", b"x"); }\nfn later() {}').strip() == 'fn later() {}'
 print("Architecture, independent approval, gated Codex and read-only Claude checks passed (8 crates).")

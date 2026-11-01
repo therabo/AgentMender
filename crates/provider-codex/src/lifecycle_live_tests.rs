@@ -215,6 +215,7 @@ mod tests {
             let planning = PlanningContext {
                 scope: DiscoveryScope::default(),
                 capabilities: vec![capability.clone()],
+                cleanup_evidence: None,
                 effects: Some(NativeEffectBoundary {
                     contract_id: id(super::CONTRACT),
                     capability,

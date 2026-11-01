@@ -24,8 +24,30 @@ mod capture;
 pub mod graph;
 mod lifecycle;
 mod planning;
+#[cfg_attr(not(target_os = "macos"), allow(dead_code, unused_imports))]
+mod scoped_capture;
+#[cfg(unix)]
+mod scoped_cleanup;
+#[cfg(unix)]
+mod scoped_config;
+#[cfg(unix)]
+#[allow(dead_code)]
+mod scoped_files;
+#[cfg_attr(not(unix), allow(dead_code))]
+mod scoped_profile;
+#[cfg_attr(not(unix), allow(dead_code))]
+mod scoped_storage;
 pub use capture::run_evidence_capture_worker;
 pub use lifecycle::CodexLifecycleAdapter;
+pub use scoped_capture::{
+    ScopedCaptureRequest, ScopedCaptureResult, ScopedRowCommitment, run_scoped_evidence_worker,
+};
+#[cfg(unix)]
+pub use scoped_cleanup::CodexScopedCleanupAdapter;
+#[cfg(not(unix))]
+mod scoped_unsupported;
+#[cfg(not(unix))]
+pub use scoped_unsupported::CodexScopedCleanupAdapter;
 
 const MAX_BYTES: usize = 8 * 1024 * 1024;
 const MAX_LINE: usize = 1024 * 1024;

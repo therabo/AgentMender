@@ -70,6 +70,7 @@ enum PlanIntent {
     SoftDelete,
     Purge,
     Repair,
+    CleanupSession,
 }
 impl From<PlanIntent> for LifecycleIntent {
     fn from(value: PlanIntent) -> Self {
@@ -79,6 +80,7 @@ impl From<PlanIntent> for LifecycleIntent {
             PlanIntent::SoftDelete => Self::SoftDelete,
             PlanIntent::Purge => Self::Purge,
             PlanIntent::Repair => Self::Repair,
+            PlanIntent::CleanupSession => Self::CleanupSession,
         }
     }
 }
@@ -816,7 +818,25 @@ fn run(args: Args) -> Result<bool, CliError> {
             }
             Ok(incomplete)
         }
-        Action::Plan { intent, id } => {
+        Action::Plan { intent, ref id } => {
+            if matches!(intent, PlanIntent::CleanupSession) {
+                let report = agentmender_application::cleanup_inputs(
+                    &lifecycle::scoped_adapter(&args)?,
+                    id,
+                    &scope,
+                )?;
+                let incomplete = report.plan.content().status != PlanStatus::Ready;
+                if args.json {
+                    emit(
+                        "planning_only",
+                        serde_json::json!({"plan":report.plan,"contexts":report.contexts,"failures":report.failures}),
+                    )?;
+                } else {
+                    println!("Mode: {mode}; planning only");
+                    print_plan(&report.plan);
+                }
+                return Ok(incomplete);
+            }
             let id = EntityId::new(id)
                 .map_err(|e| CliError::new(ErrorCode::InvalidIdentity, e.to_string()))?;
             let report = service.plan(&id, intent.into(), &scope)?;
@@ -910,6 +930,15 @@ fn run(args: Args) -> Result<bool, CliError> {
 }
 fn main() -> ExitCode {
     let raw_args: Vec<_> = env::args_os().collect();
+    if raw_args.len() == 2 && raw_args[1] == "--internal-codex-scoped-evidence-capture" {
+        return match agentmender_provider_codex::run_scoped_evidence_worker() {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(_) => {
+                eprintln!("internal scoped evidence capture failed");
+                ExitCode::from(2)
+            }
+        };
+    }
     if raw_args.len() == 2 && raw_args[1] == "--internal-codex-evidence-capture" {
         return match agentmender_provider_codex::run_evidence_capture_worker() {
             Ok(()) => ExitCode::SUCCESS,

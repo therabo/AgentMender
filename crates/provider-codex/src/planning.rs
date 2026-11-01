@@ -60,6 +60,7 @@ pub(super) fn planning_context(
         scope: scope.clone(),
         capabilities,
         effects: None,
+        cleanup_evidence: None,
     })
 }
 

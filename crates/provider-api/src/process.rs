@@ -310,6 +310,31 @@ pub fn spawn_codex_capture(
     }
 }
 
+/// Fixed scoped worker with the same protected capture policy.
+pub fn spawn_codex_scoped_capture(
+    helper: &Path,
+    sandbox: &EvidenceSandbox,
+) -> Result<Child, ProviderError> {
+    #[cfg(target_os = "macos")]
+    {
+        evidence_command(helper, sandbox, true)?
+            .arg("--internal-codex-scoped-evidence-capture")
+            .spawn()
+            .map_err(|_| {
+                ProviderError::CapabilityUnavailable(
+                    "isolated scoped capture could not start".into(),
+                )
+            })
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (helper, sandbox);
+        Err(ProviderError::CapabilityUnavailable(
+            "isolated scoped capture is not verified on this platform".into(),
+        ))
+    }
+}
+
 pub fn spawn_codex_evidence(
     executable: &Path,
     sandbox: &EvidenceSandbox,

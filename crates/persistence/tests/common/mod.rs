@@ -170,6 +170,7 @@ pub fn case(extra: usize) -> Case {
     let planning = PlanningContext {
         scope: DiscoveryScope::default(),
         capabilities: vec![capability.clone()],
+        cleanup_evidence: None,
         effects: Some(NativeEffectBoundary {
             contract_id: id("synthetic-archive-effects-v1"),
             capability,

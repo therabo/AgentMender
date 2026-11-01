@@ -13,6 +13,7 @@ pub enum LifecycleIntent {
     SoftDelete,
     Purge,
     Repair,
+    CleanupSession,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -20,6 +21,7 @@ pub enum NativeLifecycleOperation {
     ArchiveSession,
     UnarchiveSession,
     DeleteSession,
+    ScopedCleanupSession,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -55,6 +57,8 @@ pub struct PlanningContext {
     pub scope: DiscoveryScope,
     pub capabilities: Vec<LifecycleCapability>,
     pub effects: Option<NativeEffectBoundary>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cleanup_evidence: Option<ScopedCleanupEvidence>,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -117,6 +121,8 @@ pub enum ExpectedPostcondition {
     NativeSessionUnarchived,
     NativeSessionDeleted,
     NoIndependentArtifactOperation,
+    ScopedPrimaryAbsent,
+    RetainedPrimaryUnchanged,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -218,6 +224,8 @@ pub struct PlanEffectContract {
 #[serde(deny_unknown_fields)]
 pub struct PlanContent {
     pub schema_version: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cleanup_manifest: Option<CleanupManifest>,
     pub request: LifecycleRequest,
     pub native_target_id: Option<EntityId>,
     pub observation_scope: DiscoveryScope,
@@ -263,109 +271,117 @@ impl<'de> Deserialize<'de> for LifecyclePlan {
             ));
         }
         let c = &wire.content;
-        let valid = c.schema_version == 1
+        let valid = ((c.schema_version == 1
+            && c.cleanup_manifest.is_none()
+            && c.request.intent != LifecycleIntent::CleanupSession
+            && c.operations
+                .iter()
+                .all(|op| op.operation != NativeLifecycleOperation::ScopedCleanupSession))
+            || (c.schema_version == 2 && valid_scoped_plan(c)))
             && c.requires_human_approval
             && c.recovery_required
-            && match c.status {
-                PlanStatus::Ready => {
-                    c.blockers.is_empty()
-                        && c.observation_scope.project_path.is_none()
-                        && c.observation_scope.include_archived
-                        && (1..=100_000).contains(&c.observation_scope.max_entries)
-                        && c.compatibility_status == CompatibilityStatus::ReadOnlyKnown
-                        && !matches!(
-                            c.evidence_status,
-                            EvidenceStatus::Unverified | EvidenceStatus::RealPartial
-                        )
-                        && matches!(
-                            c.integrity.status,
-                            VerificationStatus::Healthy
-                                | VerificationStatus::HealthyWithExpectedResiduals
-                        )
-                        && c.integrity.blockers.is_empty()
-                        && c.integrity.findings.is_empty()
-                        && c.integrity.contract_id.is_some()
-                        && c.effect_contract.as_ref().is_some_and(|e| {
-                            !e.rule_ids.is_empty()
-                                && e.rule_ids.iter().collect::<BTreeSet<_>>().len()
-                                    == e.rule_ids.len()
-                                && c.operations.first().is_some_and(|op| {
-                                    projected(&e.affected, "plan")
-                                        == projected(&op.affected, "plan")
+            && (c.schema_version == 2
+                || match c.status {
+                    PlanStatus::Ready => {
+                        c.blockers.is_empty()
+                            && c.observation_scope.project_path.is_none()
+                            && c.observation_scope.include_archived
+                            && (1..=100_000).contains(&c.observation_scope.max_entries)
+                            && c.compatibility_status == CompatibilityStatus::ReadOnlyKnown
+                            && !matches!(
+                                c.evidence_status,
+                                EvidenceStatus::Unverified | EvidenceStatus::RealPartial
+                            )
+                            && matches!(
+                                c.integrity.status,
+                                VerificationStatus::Healthy
+                                    | VerificationStatus::HealthyWithExpectedResiduals
+                            )
+                            && c.integrity.blockers.is_empty()
+                            && c.integrity.findings.is_empty()
+                            && c.integrity.contract_id.is_some()
+                            && c.effect_contract.as_ref().is_some_and(|e| {
+                                !e.rule_ids.is_empty()
+                                    && e.rule_ids.iter().collect::<BTreeSet<_>>().len()
+                                        == e.rule_ids.len()
+                                    && c.operations.first().is_some_and(|op| {
+                                        projected(&e.affected, "plan")
+                                            == projected(&op.affected, "plan")
+                                    })
+                            })
+                            && c.capability.is_some()
+                            && c.operations.len() == 1
+                            && c.operations[0].target == c.request.target
+                            && c.native_target_id.as_ref() == Some(&c.operations[0].native_id)
+                            && c.request.target.class == GraphNodeKind::Session
+                            && c.capability.as_ref().is_some_and(|cap| {
+                                cap.fingerprint == c.provider
+                                    && valid_scope(cap.operation, cap.effect_scope)
+                                    && valid_digest(&cap.protocol_evidence_digest)
+                                    && cap.provider == c.request.target.provider
+                                    && (cap.effect_scope != NativeEffectScope::TargetOnly
+                                        || c.operations[0].affected.len() == 1)
+                            })
+                            && c.operations[0]
+                                .affected
+                                .iter()
+                                .collect::<BTreeSet<_>>()
+                                .len()
+                                == c.operations[0].affected.len()
+                            && c.artifacts
+                                .iter()
+                                .map(|a| &a.id)
+                                .collect::<BTreeSet<_>>()
+                                .len()
+                                == c.artifacts.len()
+                            && c.artifacts.iter().all(|a| {
+                                let expected_role = if a.id == c.request.target {
+                                    PlannedArtifactRole::Target
+                                } else if c.operations[0].affected.contains(&a.id) {
+                                    PlannedArtifactRole::PotentialEffect
+                                } else {
+                                    PlannedArtifactRole::Retained
+                                };
+                                a.role == expected_role
+                            })
+                            && c.artifacts
+                                .iter()
+                                .filter(|a| {
+                                    a.role == PlannedArtifactRole::Target
+                                        && a.id == c.request.target
                                 })
-                        })
-                        && c.capability.is_some()
-                        && c.operations.len() == 1
-                        && c.operations[0].target == c.request.target
-                        && c.native_target_id.as_ref() == Some(&c.operations[0].native_id)
-                        && c.request.target.class == GraphNodeKind::Session
-                        && c.capability.as_ref().is_some_and(|cap| {
-                            cap.fingerprint == c.provider
-                                && valid_scope(cap.operation, cap.effect_scope)
-                                && valid_digest(&cap.protocol_evidence_digest)
-                                && cap.provider == c.request.target.provider
-                                && (cap.effect_scope != NativeEffectScope::TargetOnly
-                                    || c.operations[0].affected.len() == 1)
-                        })
-                        && c.operations[0]
-                            .affected
-                            .iter()
-                            .collect::<BTreeSet<_>>()
-                            .len()
-                            == c.operations[0].affected.len()
-                        && c.artifacts
-                            .iter()
-                            .map(|a| &a.id)
-                            .collect::<BTreeSet<_>>()
-                            .len()
-                            == c.artifacts.len()
-                        && c.artifacts.iter().all(|a| {
-                            let expected_role = if a.id == c.request.target {
-                                PlannedArtifactRole::Target
-                            } else if c.operations[0].affected.contains(&a.id) {
-                                PlannedArtifactRole::PotentialEffect
-                            } else {
-                                PlannedArtifactRole::Retained
-                            };
-                            a.role == expected_role
-                        })
-                        && c.artifacts
-                            .iter()
-                            .filter(|a| {
-                                a.role == PlannedArtifactRole::Target && a.id == c.request.target
+                                .count()
+                                == 1
+                            && projected(&c.preconditions, "plan")
+                                == projected(&required_preconditions(), "plan")
+                            && projected(&c.postconditions, "plan")
+                                == projected(&required_postconditions(c.request.intent), "plan")
+                            && c.capability
+                                .as_ref()
+                                .is_some_and(|cap| cap.operation == c.operations[0].operation)
+                            && operation(c.request.intent) == Some(c.operations[0].operation)
+                            && c.operations[0].affected.contains(&c.request.target)
+                            && c.operations[0].affected.iter().all(|id| {
+                                c.artifacts.iter().any(|a| {
+                                    &a.id == id
+                                        && !a.explicitly_protected
+                                        && matches!(
+                                            id.class,
+                                            GraphNodeKind::Session | GraphNodeKind::Artifact
+                                        )
+                                        && id.provider == c.request.target.provider
+                                        && id.state_root == c.request.target.state_root
+                                        && (id == &c.request.target
+                                            || a.role == PlannedArtifactRole::PotentialEffect)
+                                        && ((c.request.intent != LifecycleIntent::Purge
+                                            && id.class != GraphNodeKind::Artifact)
+                                            || a.ownership.classification
+                                                == OwnershipClassification::Exclusive)
+                                })
                             })
-                            .count()
-                            == 1
-                        && projected(&c.preconditions, "plan")
-                            == projected(&required_preconditions(), "plan")
-                        && projected(&c.postconditions, "plan")
-                            == projected(&required_postconditions(c.request.intent), "plan")
-                        && c.capability
-                            .as_ref()
-                            .is_some_and(|cap| cap.operation == c.operations[0].operation)
-                        && operation(c.request.intent) == Some(c.operations[0].operation)
-                        && c.operations[0].affected.contains(&c.request.target)
-                        && c.operations[0].affected.iter().all(|id| {
-                            c.artifacts.iter().any(|a| {
-                                &a.id == id
-                                    && !a.explicitly_protected
-                                    && matches!(
-                                        id.class,
-                                        GraphNodeKind::Session | GraphNodeKind::Artifact
-                                    )
-                                    && id.provider == c.request.target.provider
-                                    && id.state_root == c.request.target.state_root
-                                    && (id == &c.request.target
-                                        || a.role == PlannedArtifactRole::PotentialEffect)
-                                    && ((c.request.intent != LifecycleIntent::Purge
-                                        && id.class != GraphNodeKind::Artifact)
-                                        || a.ownership.classification
-                                            == OwnershipClassification::Exclusive)
-                            })
-                        })
-                }
-                _ => !c.blockers.is_empty() && c.operations.is_empty(),
-            };
+                    }
+                    _ => !c.blockers.is_empty() && c.operations.is_empty(),
+                });
         if !valid || plan_hash(c) != wire.digest {
             return Err(serde::de::Error::custom("invalid plan structure or digest"));
         }
@@ -560,8 +576,24 @@ fn hash(domain: &[u8], mut value: Value) -> String {
             .collect::<String>()
     )
 }
+fn ordered_hash<T: Serialize>(domain: &[u8], value: &T) -> String {
+    let mut h = Sha256::new();
+    h.update(domain);
+    h.update(serde_json::to_vec(value).expect("typed value serializes"));
+    format!(
+        "sha256:{}",
+        h.finalize()
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect::<String>()
+    )
+}
 fn plan_hash(c: &PlanContent) -> PlanDigest {
-    PlanDigest(hash(b"agentmender/plan/v1\0", projected(c, "plan")))
+    if c.schema_version == 2 {
+        PlanDigest(ordered_hash(b"agentmender/plan/v2\0", c))
+    } else {
+        PlanDigest(hash(b"agentmender/plan/v1\0", projected(c, "plan")))
+    }
 }
 // Duplicate structural claims are rejected by the effect contract. Preserve that
 // distinction before canonical set deduplication, just like original graph conflicts.
@@ -657,6 +689,7 @@ fn operation(intent: LifecycleIntent) -> Option<NativeLifecycleOperation> {
         LifecycleIntent::Archive => Some(NativeLifecycleOperation::ArchiveSession),
         LifecycleIntent::Unarchive => Some(NativeLifecycleOperation::UnarchiveSession),
         LifecycleIntent::Purge => Some(NativeLifecycleOperation::DeleteSession),
+        LifecycleIntent::CleanupSession => Some(NativeLifecycleOperation::ScopedCleanupSession),
         LifecycleIntent::SoftDelete | LifecycleIntent::Repair => None,
     }
 }
@@ -669,6 +702,9 @@ pub fn plan_lifecycle(
     context: &PlanningContext,
     request: LifecycleRequest,
 ) -> LifecyclePlan {
+    if request.intent == LifecycleIntent::CleanupSession {
+        return plan_scoped_cleanup(g, report, context, request);
+    }
     let recomputed = evaluate_integrity(g, &report.proof_context);
     let fingerprint = StateFingerprint(hash(
         b"agentmender/state/v1\0",
@@ -939,6 +975,7 @@ pub fn plan_lifecycle(
     };
     let content = PlanContent {
         schema_version: 1,
+        cleanup_manifest: None,
         request,
         native_target_id,
         observation_scope: context.scope.clone(),
@@ -1024,15 +1061,265 @@ fn required_preconditions() -> Vec<PlanPrecondition> {
         PlanPrecondition::RecoveryAvailable,
     ]
 }
+fn required_cleanup_preconditions() -> Vec<PlanPrecondition> {
+    vec![
+        PlanPrecondition::BoundStateUnchanged,
+        PlanPrecondition::ProviderProfileUnchanged,
+        PlanPrecondition::NativeIdentityUnchanged,
+        PlanPrecondition::NoAdditionalReferences,
+        PlanPrecondition::ProtectedRootsUnchanged,
+        PlanPrecondition::FreshCoherentObservation,
+        PlanPrecondition::ImmediateRevalidation,
+        PlanPrecondition::IndependentApproval,
+        PlanPrecondition::RecoveryAvailable,
+    ]
+}
 fn required_postconditions(intent: LifecycleIntent) -> Vec<ExpectedPostcondition> {
     let native = match intent {
         LifecycleIntent::Archive => ExpectedPostcondition::NativeSessionArchived,
         LifecycleIntent::Unarchive => ExpectedPostcondition::NativeSessionUnarchived,
         LifecycleIntent::Purge => ExpectedPostcondition::NativeSessionDeleted,
-        LifecycleIntent::SoftDelete | LifecycleIntent::Repair => return vec![],
+        LifecycleIntent::SoftDelete | LifecycleIntent::Repair | LifecycleIntent::CleanupSession => {
+            return vec![];
+        }
     };
     vec![
         native,
         ExpectedPostcondition::NoIndependentArtifactOperation,
     ]
+}
+
+fn cleanup_digest(s: &str) -> bool {
+    s.len() == 64
+        && s.bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+fn cleanup_uuid(s: &str) -> bool {
+    s.len() == 36
+        && s.bytes().enumerate().all(|(i, b)| {
+            if [8, 13, 18, 23].contains(&i) {
+                b == b'-'
+            } else {
+                b.is_ascii_digit() || (b'a'..=b'f').contains(&b)
+            }
+        })
+}
+fn cleanup_file(f: &CleanupFileIdentity, root: &std::path::Path) -> bool {
+    f.path.is_absolute()
+        && f.path.starts_with(root)
+        && !f.path.components().any(|c| {
+            matches!(
+                c,
+                std::path::Component::ParentDir | std::path::Component::CurDir
+            )
+        })
+        && f.links == 1
+        && f.inode != 0
+        && f.mtime_nanoseconds < 1_000_000_000
+}
+pub fn validate_cleanup_manifest(m: &CleanupManifest) -> bool {
+    let root = &m.root.path;
+    let profile = &m.profile;
+    let mut paths = BTreeSet::new();
+    let mut physical = BTreeSet::new();
+    let mut table_names = BTreeSet::new();
+    let mut artifacts = BTreeSet::new();
+    let database_paths: BTreeSet<_> = m.database_payload_paths.iter().map(|p| &p.path).collect();
+    let payload_paths: BTreeSet<_> = m.payloads.iter().map(|p| &p.identity.path).collect();
+    m.target.class == GraphNodeKind::Session
+        && m.target.state_root == *root
+        && root.is_absolute()
+        && m.root.inode != 0
+        && !root.components().any(|c| {
+            matches!(
+                c,
+                std::path::Component::ParentDir | std::path::Component::CurDir
+            )
+        })
+        && cleanup_uuid(m.native_session_id.as_str())
+        && [
+            &profile.version,
+            &profile.adapter,
+            &profile.platform,
+            &profile.journal_mode,
+            &profile.history_layout,
+        ]
+        .iter()
+        .all(|s| !s.is_empty() && s.len() <= 256 && !s.chars().any(char::is_control))
+        && cleanup_digest(&profile.executable_sha256)
+        && cleanup_digest(&profile.schema_sha256)
+        && cleanup_file(&m.database, root)
+        && m.database.device == m.root.device
+        && database_paths.len() == m.database_payload_paths.len()
+        && database_paths == payload_paths
+        && cleanup_digest(&m.retained_database_sha256)
+        && !m.payloads.is_empty()
+        && m.payloads
+            .iter()
+            .try_fold(0u64, |n, p| n.checked_add(p.identity.size_bytes))
+            .is_some()
+        && !m.rows.is_empty()
+        && m.rows.len() <= 100_000
+        && m.rows.iter().all(|r| {
+            !r.table.is_empty()
+                && r.table.len() <= 256
+                && !r.table.chars().any(char::is_control)
+                && table_names.insert(&r.table)
+                && cleanup_digest(&r.preimage_sha256)
+        })
+        && m.payloads.iter().all(|p| {
+            p.artifact.provider == m.target.provider
+                && p.artifact.state_root == *root
+                && p.artifact.class == GraphNodeKind::Artifact
+                && artifacts.insert(&p.artifact)
+                && p.header_session_id == m.native_session_id
+                && cleanup_digest(&p.header_sha256)
+                && cleanup_file(&p.identity, root)
+                && p.identity.device == m.root.device
+                && p.identity.path != m.database.path
+                && (p.identity.device, p.identity.inode) != (m.database.device, m.database.inode)
+                && paths.insert(&p.identity.path)
+                && physical.insert((p.identity.device, p.identity.inode))
+        })
+        && m.optional_index.as_ref().is_none_or(|i| {
+            cleanup_file(&i.identity, root)
+                && i.identity.device == m.root.device
+                && (i.identity.device, i.identity.inode) != (m.database.device, m.database.inode)
+                && paths.insert(&i.identity.path)
+                && physical.insert((i.identity.device, i.identity.inode))
+                && cleanup_digest(&i.preimage_sha256)
+                && cleanup_digest(&i.record_sha256)
+        })
+        && m.retained_files.iter().all(|f| {
+            cleanup_file(f, root)
+                && f.path != m.database.path
+                && !paths.contains(&f.path)
+                && !physical.contains(&(f.device, f.inode))
+        })
+        && m.residuals
+            .iter()
+            .all(|r| r.artifact != m.target && !m.payloads.iter().any(|p| p.artifact == r.artifact))
+}
+fn valid_scoped_plan(c: &PlanContent) -> bool {
+    if c.request.intent != LifecycleIntent::CleanupSession || c.schema_version != 2 {
+        return false;
+    }
+    match c.status {
+        PlanStatus::Ready => c.cleanup_manifest.as_ref().is_some_and(|m| {
+            validate_cleanup_manifest(m)
+                && m.target == c.request.target
+                && c.native_target_id.as_ref() == Some(&m.native_session_id)
+                && c.blockers.is_empty()
+                && c.operations.len() == 1
+                && c.operations[0].target == m.target
+                && c.operations[0].native_id == m.native_session_id
+                && c.operations[0].operation == NativeLifecycleOperation::ScopedCleanupSession
+                && c.operations[0].affected
+                    == std::iter::once(m.target.clone())
+                        .chain(m.payloads.iter().map(|p| p.artifact.clone()))
+                        .collect::<Vec<_>>()
+                && c.observation_scope.project_path.is_none()
+                && c.observation_scope.include_archived
+                && (1..=100_000).contains(&c.observation_scope.max_entries)
+                && c.capability.is_none()
+                && c.effect_contract.is_none()
+                && c.preconditions == required_cleanup_preconditions()
+                && c.postconditions
+                    == vec![
+                        ExpectedPostcondition::ScopedPrimaryAbsent,
+                        ExpectedPostcondition::RetainedPrimaryUnchanged,
+                    ]
+                && c.provider.executable_version.as_deref() == Some(m.profile.version.as_str())
+                && c.space.physical.bytes.is_none()
+                && m.payloads
+                    .iter()
+                    .try_fold(0u64, |n, p| n.checked_add(p.identity.size_bytes))
+                    .is_some_and(|size| {
+                        c.space.logical.known_subtotal_bytes == size
+                            && c.space.logical.total_bytes == Some(size)
+                            && c.space.logical.unknown_reasons.is_empty()
+                    })
+        }),
+        _ => {
+            !c.blockers.is_empty()
+                && c.operations.is_empty()
+                && c.capability.is_none()
+                && c.effect_contract.is_none()
+        }
+    }
+}
+fn plan_scoped_cleanup(
+    g: &ArtifactGraph,
+    report: &IntegrityReport,
+    context: &PlanningContext,
+    request: LifecycleRequest,
+) -> LifecyclePlan {
+    let mut base_request = request.clone();
+    base_request.intent = LifecycleIntent::Repair;
+    let mut c = plan_lifecycle(g, report, context, base_request).content;
+    c.schema_version = 2;
+    c.request = request.clone();
+    c.state_fingerprint = StateFingerprint(ordered_hash(
+        b"agentmender/scoped-state/v2\0",
+        &json!({
+            "graph": projected(g,"graph"), "report": projected(report,"report"),
+            "recomputed": projected(&evaluate_integrity(g, &report.proof_context),"report"),
+            "context": context, "request": request,
+            "original_diagnostics": g.diagnostics()
+        }),
+    ));
+    c.cleanup_manifest = context
+        .cleanup_evidence
+        .as_ref()
+        .map(|e| e.manifest.clone());
+    c.capability = None;
+    c.effect_contract = None;
+    c.preconditions = required_cleanup_preconditions();
+    c.operations.clear();
+    c.blockers.clear();
+    let evidence_ok = context.cleanup_evidence.as_ref().is_some_and(|e| {
+        let m = &e.manifest;
+        let graph_session = native_id(g, &request.target).as_ref() == Some(&m.native_session_id);
+        let graph_payloads = m.payloads.iter().all(|p| g.node(&p.artifact).is_some_and(|n| authoritative(g, &n.evidence) && n.observations.len() == 1 && matches!(&n.observations[0], NodeObservation::Artifact(a) if a.locator == p.identity.path && a.size_bytes == Some(p.identity.size_bytes))));
+        validate_cleanup_manifest(m) && m.target == request.target && graph_session && graph_payloads
+            && projected(report, "report") == projected(&evaluate_integrity(g, &report.proof_context), "report")
+            && [e.root_boundary, e.references, e.writer_fence, e.schema].iter().all(|v| *v == CleanupBoundaryObservation::CompleteAndUnshared)
+            && g.context().provider.state_root == m.root.path
+            && g.context().provider.fingerprint.executable_version.as_deref() == Some(m.profile.version.as_str())
+            && context.scope.project_path.is_none() && context.scope.include_archived && (1..=100_000).contains(&context.scope.max_entries)
+            && !g.context().diagnostics.iter().chain(&g.context().provider.diagnostics).any(|d| matches!(d.code, DiagnosticCode::ConcurrentChange | DiagnosticCode::SnapshotStale))
+    });
+    if evidence_ok {
+        let m = c.cleanup_manifest.as_ref().expect("validated evidence");
+        c.native_target_id = Some(m.native_session_id.clone());
+        c.operations.push(PlanOperation {
+            target: m.target.clone(),
+            native_id: m.native_session_id.clone(),
+            operation: NativeLifecycleOperation::ScopedCleanupSession,
+            affected: std::iter::once(m.target.clone())
+                .chain(m.payloads.iter().map(|p| p.artifact.clone()))
+                .collect(),
+        });
+        c.status = PlanStatus::Ready;
+        c.postconditions = vec![
+            ExpectedPostcondition::ScopedPrimaryAbsent,
+            ExpectedPostcondition::RetainedPrimaryUnchanged,
+        ];
+        let subtotal = m
+            .payloads
+            .iter()
+            .try_fold(0u64, |n, p| n.checked_add(p.identity.size_bytes));
+        c.space.logical.known_subtotal_bytes = subtotal.unwrap_or(0);
+        c.space.logical.total_bytes = subtotal;
+        c.space.logical.unknown_reasons = if subtotal.is_some() {
+            vec![]
+        } else {
+            vec![EstimateUnknownReason::Overflow]
+        };
+    } else {
+        c.status = PlanStatus::Blocked;
+        c.blockers.push(PlanBlocker::EffectBoundaryInvalid);
+    }
+    let digest = plan_hash(&c);
+    LifecyclePlan { content: c, digest }
 }

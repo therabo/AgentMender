@@ -914,6 +914,69 @@ impl TransactionStore {
         let r = self.next(id, expected, TransactionEvent::Observed { observation })?;
         self.append(r)
     }
+    /// Persist only a manifest-bound report associated with the consumed intent.
+    pub fn record_cleanup_observation(
+        &mut self,
+        id: &TransactionId,
+        expected: u64,
+        receipt: &DurableObservation,
+        report: agentmender_domain::CleanupReport,
+    ) -> Result<()> {
+        let snapshot = self.inspect_consumed(id)?;
+        if snapshot.sequence() != expected
+            || receipt.id != *id
+            || receipt.sequence != expected
+            || receipt.digest != *snapshot.last_digest()
+        {
+            return Err(StoreError::Preconditions);
+        }
+        let manifest = snapshot
+            .review_plan()
+            .and_then(|p| p.content().cleanup_manifest.as_ref())
+            .ok_or(StoreError::Preconditions)?;
+        if !agentmender_domain::validate_cleanup_report(manifest, &report) {
+            return Err(StoreError::Preconditions);
+        }
+        let r = self.next(id, expected, TransactionEvent::CleanupObserved { report })?;
+        self.append(r)
+    }
+
+    /// Reconciliation can record fresh evidence, but never issues a new intent.
+    pub fn record_cleanup_reconciliation(
+        &mut self,
+        id: &TransactionId,
+        expected: u64,
+        report: agentmender_domain::CleanupReport,
+    ) -> Result<()> {
+        let snapshot = self.inspect_consumed(id)?;
+        if snapshot.sequence() != expected
+            || !matches!(
+                snapshot.state(),
+                agentmender_domain::TransactionState::OutcomeUnknown
+                    | agentmender_domain::TransactionState::RecoveryRequired
+            )
+        {
+            return Err(StoreError::Preconditions);
+        }
+        let manifest = snapshot
+            .review_plan()
+            .and_then(|p| p.content().cleanup_manifest.as_ref())
+            .ok_or(StoreError::Preconditions)?;
+        if !agentmender_domain::validate_cleanup_report(manifest, &report) {
+            return Err(StoreError::Preconditions);
+        }
+        // A later read cannot reconstruct an unlink receipt or its byte count.
+        if report
+            .actions
+            .iter()
+            .any(|a| a.outcome == agentmender_domain::CleanupActionOutcome::Removed)
+            || report.optional_index == Some(agentmender_domain::CleanupActionOutcome::Removed)
+        {
+            return Err(StoreError::Preconditions);
+        }
+        let r = self.next(id, expected, TransactionEvent::CleanupObserved { report })?;
+        self.append(r)
+    }
     /// Authenticate consumed v2 history and recovery before observation-only work.
     pub fn inspect_consumed(&self, id: &TransactionId) -> Result<TransactionSnapshot> {
         let snapshot = self.inspect(id)?;
@@ -921,6 +984,7 @@ impl TransactionStore {
             || !matches!(
                 snapshot.state(),
                 agentmender_domain::TransactionState::OutcomeUnknown
+                    | agentmender_domain::TransactionState::RecoveryRequired
                     | agentmender_domain::TransactionState::EffectObserved
                     | agentmender_domain::TransactionState::Verifying
             )

@@ -168,6 +168,7 @@ pub fn case(extra: usize) -> Case {
     effect_evidence.rule_id = id("synthetic-native-effects");
     effect_evidence.observation.rule = "synthetic exhaustive native effect proof".into();
     let planning = PlanningContext {
+        cleanup_evidence: None,
         scope: DiscoveryScope::default(),
         capabilities: vec![capability.clone()],
         effects: Some(NativeEffectBoundary {

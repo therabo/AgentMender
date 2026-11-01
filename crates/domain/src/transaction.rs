@@ -1,8 +1,8 @@
 //! Pure transaction knowledge. Records are integrity checks, not authority.
 use crate::{
     ApprovalAction, ApprovalSnapshot, ApprovalState, ApprovalStatus, AuthorizationAuthentication,
-    LifecycleIntent, LifecyclePlan, NativeLifecycleOperation, PlanDigest, PlanStatus, ProviderKind,
-    StateFingerprint,
+    CleanupOutcome, CleanupReport, LifecycleIntent, LifecyclePlan, NativeLifecycleOperation,
+    PlanDigest, PlanStatus, ProviderKind, StateFingerprint, validate_cleanup_report,
 };
 use serde::{Deserialize, Deserializer, Serialize};
 use sha2::{Digest, Sha256};
@@ -107,12 +107,47 @@ impl TransactionBinding {
         let c = plan.content();
         if c.status != PlanStatus::Ready
             || c.operations.len() != 1
-            || c.capability.is_none()
-            || c.effect_contract.is_none()
+            || (c.request.intent != LifecycleIntent::CleanupSession
+                && (c.capability.is_none() || c.effect_contract.is_none()))
         {
             return Err(TransactionError);
         }
         let op = &c.operations[0];
+        if c.request.intent == LifecycleIntent::CleanupSession {
+            let manifest = c.cleanup_manifest.as_ref().ok_or(TransactionError)?;
+            if c.schema_version != 2
+                || !crate::validate_cleanup_manifest(manifest)
+                || op.operation != NativeLifecycleOperation::ScopedCleanupSession
+                || c.capability.is_some()
+                || c.effect_contract.is_some()
+            {
+                return Err(TransactionError);
+            }
+            return Ok(Self {
+                plan_digest: plan.digest().clone(),
+                state_fingerprint: plan.state_fingerprint().clone(),
+                provider: manifest.target.provider,
+                intent: c.request.intent,
+                operation: op.operation,
+                target: commitment("agentmender.target.v1", &c.request.target),
+                native_identity: commitment("agentmender.native-id.v1", &op.native_id),
+                profile: commitment("agentmender.profile.v1", &c.provider),
+                capability_effect: commitment("agentmender.scoped-cleanup-manifest.v2", manifest),
+                conditions: commitment(
+                    "agentmender.conditions.v1",
+                    &(set_value(&c.preconditions), set_value(&c.postconditions)),
+                ),
+                operation_commitment: commitment(
+                    "agentmender.operation.v1",
+                    &(
+                        &op.target,
+                        &op.native_id,
+                        op.operation,
+                        set_value(&op.affected),
+                    ),
+                ),
+            });
+        }
         let capability = c.capability.as_ref().ok_or(TransactionError)?;
         let effect = c.effect_contract.as_ref().ok_or(TransactionError)?;
         let effect_value = (
@@ -173,6 +208,9 @@ impl TransactionBinding {
             ) | (
                 LifecycleIntent::Purge,
                 NativeLifecycleOperation::DeleteSession
+            ) | (
+                LifecycleIntent::CleanupSession,
+                NativeLifecycleOperation::ScopedCleanupSession
             )
         )
     }
@@ -246,6 +284,8 @@ impl RecoveryManifest {
             && self.operation == binding.operation
             && self.target == binding.target
             && self.strategy == RecoveryStrategy::ReconciliationOnly
+            && (binding.intent != LifecycleIntent::CleanupSession
+                || self.compensation == CompensationContract::NotCompensatable)
     }
     pub fn compensation(&self) -> &CompensationContract {
         &self.compensation
@@ -289,6 +329,9 @@ pub enum TransactionEvent {
     },
     Observed {
         observation: Observation,
+    },
+    CleanupObserved {
+        report: CleanupReport,
     },
     VerificationStarted,
     Verified {
@@ -440,11 +483,12 @@ impl TransactionSnapshot {
         let TransactionEvent::Created { binding, plan } = &first.event else {
             return Err(TransactionError);
         };
-        if !(matches!((first.schema_version, plan), (1, None))
-            || (first.schema_version == 2
-                && plan.as_ref().is_some_and(|p| {
-                    TransactionBinding::from_plan(p).is_ok_and(|b| b == *binding)
-                })))
+        if (first.schema_version == 1 && binding.intent == LifecycleIntent::CleanupSession)
+            || !(matches!((first.schema_version, plan), (1, None))
+                || (first.schema_version == 2
+                    && plan.as_ref().is_some_and(|p| {
+                        TransactionBinding::from_plan(p).is_ok_and(|b| b == *binding)
+                    })))
             || first.sequence != 0
             || first.previous_digest.is_some()
             || !binding.valid()
@@ -530,6 +574,35 @@ impl TransactionSnapshot {
             self.sequence = r.sequence;
             self.last_digest = r.digest.clone();
             return Ok(());
+        }
+        if self.binding.intent == LifecycleIntent::CleanupSession {
+            if let E::CleanupObserved { report } = &r.event {
+                let manifest = self
+                    .review_plan
+                    .as_ref()
+                    .and_then(|p| p.content().cleanup_manifest.as_ref())
+                    .ok_or(TransactionError)?;
+                if self.schema_version != 2
+                    || !matches!(self.state, S::OutcomeUnknown | S::RecoveryRequired)
+                    || !validate_cleanup_report(manifest, report)
+                {
+                    return Err(TransactionError);
+                }
+                self.state = match report.outcome {
+                    CleanupOutcome::Removed | CleanupOutcome::RemovedWithResiduals => S::Succeeded,
+                    CleanupOutcome::Blocked | CleanupOutcome::Failed => S::Failed,
+                    CleanupOutcome::OutcomeUnknown => S::RecoveryRequired,
+                };
+                self.sequence = r.sequence;
+                self.last_digest = r.digest.clone();
+                return Ok(());
+            }
+            if matches!(
+                r.event,
+                E::Observed { .. } | E::VerificationStarted | E::Verified { .. }
+            ) {
+                return Err(TransactionError);
+            }
         }
         self.state = match (&self.state, &r.event) {
             (S::Created, E::RecoveryPrepared { manifest })
