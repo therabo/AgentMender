@@ -2,7 +2,7 @@
 
 ## M8.2 scoped transaction integration
 
-M8.2 is **OPEN**, [ADR-0017](adr/0017-scoped-cleanup-residual-preservation-provider-local-mutation.md) **Accepted direction; implementation OPEN**. Existing v1/v2 durable histories,
+M8.2 scoped transactions are implemented under [ADR-0017](adr/0017-scoped-cleanup-residual-preservation-provider-local-mutation.md) **Accepted**. Existing v1/v2 durable histories,
 approval authentication and native M8 execution remain unchanged. Scoped cleanup
 extends the existing semantic-operation binding and
 journal with an immutable exact cleanup manifest and typed per-action knowledge;

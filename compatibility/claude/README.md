@@ -3,7 +3,7 @@
 ## Current roadmap boundary
 
 M9 blocker evidence is integrated; capability stays BLOCKED BY PROVIDER and all
-Claude mutation profiles remain absent. The **OPEN** M8.2 proposal is Codex-only,
+Claude mutation profiles remain absent. The implemented M8.2 scoped path is Codex-only,
 with Accepted ADR-0017, and does not alter Claude metadata compatibility, provenance,
 partial coverage or lifecycle refusal. No transcript-storage deletion fallback or
 session-to-project widening is introduced. See

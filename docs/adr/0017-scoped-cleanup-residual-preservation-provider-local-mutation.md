@@ -1,8 +1,9 @@
 # ADR-0017: Scoped cleanup, residual preservation and provider-local mutation
 
 Status: Accepted semantic/architecture direction for M8.2 (2026-10-31).
-Implementation and capability remain OPEN until reviewed code, isolated positive
-acceptance and all release gates pass. Provider writes require the implemented
+Implementation, independent code review, isolated exact-profile acceptance and
+local gates are complete. Successful exact-head three-OS CI completes the release
+gate; local checks alone do not establish remote release completion. Provider writes require the implemented
 profile and receipt gates; acceptance of this ADR is not execution approval.
 
 Partially supersedes ADR-0001/0003/0005/0007/0009/0013/0016 only where their

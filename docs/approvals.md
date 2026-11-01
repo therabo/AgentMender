@@ -2,7 +2,7 @@
 
 ## M8.2 scoped cleanup approval
 
-[Scoped session cleanup](scoped-session-cleanup.md) is **OPEN** under accepted
+[Scoped session cleanup](scoped-session-cleanup.md) is implemented under accepted
 ADR-0017. The dedicated exact-profile CLI path reuses the existing human
 channel, authenticated history, expiry, exact binding, one-shot consumption and fresh
 validation below remain mandatory. A scoped grant binds the complete immutable

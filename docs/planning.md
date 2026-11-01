@@ -2,9 +2,9 @@
 
 ## M8.2 scoped planning contract
 
-M8.1 is integrated; M8.2 is **OPEN**, under accepted [ADR-0017](adr/0017-scoped-cleanup-residual-preservation-provider-local-mutation.md).
+M8.1 is integrated; M8.2 scoped planning is implemented under accepted [ADR-0017](adr/0017-scoped-cleanup-residual-preservation-provider-local-mutation.md).
 The native v1 planning contract below remains implemented and unchanged. A separately
-versioned scoped plan is accepted in ADR-0017; implementation is in progress.
+versioned scoped plan is accepted in ADR-0017; the exact-head release checks determine completion.
 MCP remains read-only and exposes no cleanup execution authority.
 
 The scoped manifest binds exact session/root/profile and required primary

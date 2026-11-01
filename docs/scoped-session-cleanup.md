@@ -1,8 +1,9 @@
 # Scoped session cleanup and storage reclaim
 
-M8.2 is **OPEN**. [ADR-0017](adr/0017-scoped-cleanup-residual-preservation-provider-local-mutation.md)
-accepts the scoped-cleanup semantics and architecture; implementation, independent
-provider review, positive isolated acceptance and release gates determine capability.
+M8.2 implementation and independent security review are complete. [ADR-0017](adr/0017-scoped-cleanup-residual-preservation-provider-local-mutation.md)
+accepts the scoped-cleanup semantics and architecture. Exact-profile isolated
+acceptance and local gates passed; successful exact-head Linux/macOS/Windows CI
+completes the release gate.
 This document records the contract, not a claim that those gates already passed.
 The [progress receipt](milestones/m8-2-progress.md) records the resumed work.
 

@@ -1,6 +1,6 @@
 # AgentMender engineering constraints
 
-Current development is **M8.2 OPEN** on
+Current implementation scope is **M8.2 complete, release gated by exact-head CI** on
 `milestone/m8-2-scoped-session-cleanup`. M8.1 evidence was formally fast-forward
 integrated at `6f798bcebdfd2f763e31d62ef2695c52396ca709`; integration/base receipt
 commit is `c9dd04d`. Read docs/scoped-session-cleanup.md, the research landscape

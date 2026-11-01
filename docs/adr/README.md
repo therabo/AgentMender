@@ -19,7 +19,7 @@
 | [0015: Current Claude purge provider blockers](0015-current-claude-purge-provider-blockers.md) | Accepted; M9 BLOCKED; preserves 0014 safety boundary |
 
 | [0016: Current Codex cleanup provider-contract gate](0016-current-codex-cleanup-provider-contract-gate.md) | Accepted; M8.1 native full cleanup BLOCKED; integrated |
-| [0017: Scoped cleanup, residual preservation and provider-local mutation](0017-scoped-cleanup-residual-preservation-provider-local-mutation.md) | Accepted direction; M8.2 implementation OPEN |
+| [0017: Scoped cleanup, residual preservation and provider-local mutation](0017-scoped-cleanup-residual-preservation-provider-local-mutation.md) | Accepted; M8.2 implemented, exact-head CI release gate |
 
 M8.1 integration/base is recorded in [the receipt](../milestones/m8-1-integration.md)
 (`c9dd04d` after integrated `6f798bc`). ADR-0017 accepts narrow partial

@@ -2,7 +2,7 @@
 
 ## M8.2 scope clarification — no change to M3
 
-M8.2 is **OPEN** and its [scoped cleanup contract](scoped-session-cleanup.md)
+M8.2 is implemented and its [scoped cleanup contract](scoped-session-cleanup.md)
 does not alter this evaluator or its Healthy/Unknown/negative-proof meanings.
 Accepted ADR-0017 separates exact cleanup verification from whole-provider health.
 Primary cleanup is verified within its explicit complete action boundary

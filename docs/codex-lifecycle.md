@@ -4,8 +4,8 @@
 
 M8.1 was integrated at `6f798bcebdfd2f763e31d62ef2695c52396ca709`
 ([receipt](milestones/m8-1-integration.md), recorded in `c9dd04d`). Its full native
-cleanup remains BLOCKED. M8.2 is **OPEN** on its scoped-cleanup branch;
-[ADR-0017](adr/0017-scoped-cleanup-residual-preservation-provider-local-mutation.md) is **Accepted direction; implementation OPEN**. The separate scoped-local profile is implemented under final release review.
+cleanup remains BLOCKED. M8.2 is implemented on its scoped-cleanup branch;
+[ADR-0017](adr/0017-scoped-cleanup-residual-preservation-provider-local-mutation.md) is **Accepted**. The separate scoped-local profile is implemented under final release review.
 
 The historical exact unarchive contract and command path below remain unchanged.
 The separately reviewed local one-session cleanup reuses durable intent and

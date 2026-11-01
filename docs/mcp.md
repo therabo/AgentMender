@@ -2,7 +2,7 @@
 
 ## M8.2 status: unchanged read-only surface
 
-M8.2 Scoped Session Cleanup is **OPEN**; [ADR-0017](adr/0017-scoped-cleanup-residual-preservation-provider-local-mutation.md) is **Accepted direction; implementation OPEN**.
+M8.2 Scoped Session Cleanup is implemented; [ADR-0017](adr/0017-scoped-cleanup-residual-preservation-provider-local-mutation.md) is **Accepted**.
 The registry below remains exactly eight read-only tools. No scoped-cleanup intent,
 manifest import, persistent preparation, approval/revocation/consumption, writer lock,
 provider-local mutation or execution command has been added to MCP. Future planning

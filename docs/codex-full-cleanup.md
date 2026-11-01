@@ -8,7 +8,7 @@ local cleanup contract. M8.1 is integrated at
 `6f798bcebdfd2f763e31d62ef2695c52396ca709`; see the
 [integration receipt](milestones/m8-1-integration.md), recorded in `c9dd04d`.
 
-M8.2 Scoped Session Cleanup is **OPEN**, under accepted [ADR-0017](adr/0017-scoped-cleanup-residual-preservation-provider-local-mutation.md) and no
+M8.2 Scoped Session Cleanup is implemented under under accepted [ADR-0017](adr/0017-scoped-cleanup-residual-preservation-provider-local-mutation.md) and no
 new enabled capability. It proposes exact primary removal while explicitly retaining
 shared, unknown, global and unsupported residuals. It must prove primary identity,
 dependencies, physical/root/schema safety and a strong writer/WAL boundary before
