@@ -439,32 +439,24 @@ mod tests {
 
     #[test]
     fn worker_known_thread_metadata_rejects_outside_and_duplicate_paths() {
-        let root = std::path::Path::new("/fixture");
-        let row = |id: &str, path: &str| ScopedKnownThread {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        let target_path = root.join("sessions/target.jsonl");
+        let outside = root.parent().unwrap().join("outside-fixture/foreign.jsonl");
+        let traversal = root.join("sessions/../outside");
+        let row = |id: &str, path: &std::path::Path| ScopedKnownThread {
             id: id.into(),
             rollout_path: path.into(),
         };
         let target = "12345678-1234-1234-1234-123456789abc";
         let other = "12345678-1234-1234-1234-123456789abd";
-        assert!(valid_known_threads(
-            &[row(target, "/fixture/sessions/target.jsonl")],
-            root
-        ));
+        assert!(valid_known_threads(&[row(target, &target_path)], &root));
+        assert!(!valid_known_threads(&[row(target, &outside)], &root));
         assert!(!valid_known_threads(
-            &[row(target, "/elsewhere/foreign.jsonl")],
-            root
+            &[row(target, &target_path), row(other, &target_path)],
+            &root
         ));
-        assert!(!valid_known_threads(
-            &[
-                row(target, "/fixture/sessions/target.jsonl"),
-                row(other, "/fixture/sessions/target.jsonl")
-            ],
-            root
-        ));
-        assert!(!valid_known_threads(
-            &[row(target, "/fixture/sessions/../outside")],
-            root
-        ));
+        assert!(!valid_known_threads(&[row(target, &traversal)], &root));
     }
 
     fn fixture() -> (tempfile::TempDir, Connection) {
