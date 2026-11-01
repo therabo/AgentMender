@@ -1104,8 +1104,10 @@ fn cleanup_uuid(s: &str) -> bool {
             }
         })
 }
+// Manifest paths are observations, possibly from another OS; live adapters must
+// independently enforce native absolute paths before filesystem access.
 fn cleanup_file(f: &CleanupFileIdentity, root: &std::path::Path) -> bool {
-    f.path.is_absolute()
+    observed_path_is_absolute(&f.path)
         && f.path.starts_with(root)
         && !f.path.components().any(|c| {
             matches!(
@@ -1128,7 +1130,7 @@ pub fn validate_cleanup_manifest(m: &CleanupManifest) -> bool {
     let payload_paths: BTreeSet<_> = m.payloads.iter().map(|p| &p.identity.path).collect();
     m.target.class == GraphNodeKind::Session
         && m.target.state_root == *root
-        && root.is_absolute()
+        && observed_path_is_absolute(root)
         && m.root.inode != 0
         && !root.components().any(|c| {
             matches!(

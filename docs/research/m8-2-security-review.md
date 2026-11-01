@@ -94,3 +94,11 @@ Audited destructive-boundary source SHA-256 anchors at this conclusion:
 | `scripts/check_architecture.py` | `262343985cff1e150b46cc0e07e9acd10bb89ba44c14d1bd1e52581ad85074a2` |
 
 These anchors identify the reviewed working-tree source rather than a yet-unavailable final commit. Subsequent substantive boundary changes require follow-up review; ordinary release receipts may be added by the root without changing this technical judgment.
+
+## CI portability follow-up (2026-11-01, base `8f0a176`)
+
+**ACCEPTED: minimal two-file portability correction.** Read-only review of the pending diff confirms `planning.rs` replaces only the manifest root/file native-host `Path::is_absolute()` predicates with the existing `observed_path_is_absolute()` observation predicate and adds an explanatory comment. Domain observations already permit metadata from another OS; this keeps pure manifest inspection consistent on Windows. It does not grant native filesystem access: the production Codex adapter still admits only the exact Darwin arm64 executable/profile, `scoped_config` still requires native absolute canonical no-link directories, and descriptor-relative `scoped_files::root` still requires a native absolute path and rejects unsupported components. The non-Unix adapter remains Unsupported.
+
+`scoped_storage.rs` adds `#[cfg(unix)]` only to the `before`/`after` metadata declarations whose corresponding identity checks were already Unix-gated. The Darwin/Unix compiled database fence, physical checks, SQL and lock ordering are unchanged. No new mutation or authority path was introduced. This follow-up supersedes the prior storage source hash only for that reviewed conditional-compilation annotation.
+
+Root reports six scoped domain tests passed and is rerunning the full local gates and real-helper acceptance. This reviewer did not rerun those checks or remote CI for this tiny follow-up; approval does not imply that the new CI run has passed.

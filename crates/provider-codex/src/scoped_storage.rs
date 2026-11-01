@@ -142,6 +142,7 @@ impl DatabaseFence {
         if !crate::scoped_profile::validate_manifest_profile(m) {
             return Err(invalid());
         }
+        #[cfg(unix)]
         let before = std::fs::symlink_metadata(&m.database.path).map_err(|_| invalid())?;
         #[cfg(unix)]
         {
@@ -184,6 +185,7 @@ impl DatabaseFence {
             return Err(invalid());
         }
         capture::verify_schema(&db, ExactProfile::V165).map_err(|_| invalid())?;
+        #[cfg(unix)]
         let after = std::fs::symlink_metadata(&m.database.path).map_err(|_| invalid())?;
         #[cfg(unix)]
         {
