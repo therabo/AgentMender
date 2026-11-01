@@ -1,5 +1,29 @@
 # Immutable lifecycle planning
 
+## M8.2 scoped planning contract
+
+M8.1 is integrated; M8.2 is **OPEN**, under accepted [ADR-0017](adr/0017-scoped-cleanup-residual-preservation-provider-local-mutation.md).
+The native v1 planning contract below remains implemented and unchanged. A separately
+versioned scoped plan is accepted in ADR-0017; implementation is in progress.
+MCP remains read-only and exposes no cleanup execution authority.
+
+The scoped manifest binds exact session/root/profile and required primary
+payload/catalog actions, optional exact index artifacts, retained categories,
+per-action evidence, physical identities, expected row sets/counts and logical
+sizes into PlanDigest and StateFingerprint. Only approved manifest members may be
+mutated; fresh uncertainty can retain optional artifacts but cannot add actions.
+Shared primary history, uncertain identity/root/schema/physical state or an unproved
+writer fence blocks readiness. Unrelated protected residuals may coexist with scoped
+success; this does not weaken M3 or turn graph reachability into ownership.
+
+The first candidate is exact Codex0.166.0 on Darwin arm64, plain legacy history,
+selected root-local WAL DB and no root-local thread-history DB. Native writer/
+maintenance exclusion and actual fresh-connection SQLite main-file EXCLUSIVE
+locking protect the cutoff. BEGIN IMMEDIATE alone is insufficient. The dedicated
+read port can produce Ready only for its verified exact profile; native v1 plans
+retain their previous Blocked/Unsupported behavior. See
+[the scoped profile, outcomes and command status](scoped-session-cleanup.md).
+
 M4 describes future provider-native intentions without invoking them. A plan is
 not authorization. Ready is not approved. `plan <intent> <id>` represents archive,
 unarchive, soft-delete, purge and repair requests. No execute, approval, recovery

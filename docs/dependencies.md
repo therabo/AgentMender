@@ -1,5 +1,17 @@
 # Dependency decisions
 
+## M8.2 proposal status
+
+M8.2 is **OPEN**; [ADR-0017](adr/0017-scoped-cleanup-residual-preservation-provider-local-mutation.md) is **Accepted direction; implementation OPEN**. This documentation pass introduces
+no dependency, feature, MSRV, schema or unsafe exception. Candidate provider-local
+filesystem/locking/SQLite work must reuse reviewed safe boundaries where possible;
+any required dependency or boundary exception needs explicit review before code.
+Third-party cleanup repositories are research references, not runtime dependencies
+or copied implementations. Their transcript/credential backup practices do not
+change AgentMender's bounded reconciliation-metadata privacy contract. See
+[scoped architecture](scoped-session-cleanup.md) and
+[implementation research](research/scoped-session-cleanup-landscape.md).
+
 M9 adds only the already locked `proptest` workspace package as a Claude provider
 development dependency for zero-authority guards. No new registry package/version,
 production dependency, runtime, MSRV or persistence schema is introduced. The opt-in

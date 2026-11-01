@@ -1,5 +1,19 @@
 # Codex compatibility evidence
 
+## M8.2: separate scoped-local compatibility axis
+
+M8.1 is formally integrated at `6f798bcebdfd2f763e31d62ef2695c52396ca709`
+([receipt](../../docs/milestones/m8-1-integration.md), recorded in `c9dd04d`).
+M8.2 Scoped Session Cleanup is **OPEN**; ADR-0017 is **Accepted direction; implementation OPEN**, not a registered
+production compatibility profile. Historical read-only and exact native lifecycle
+profiles below are unchanged; source/schema equality cannot transfer authority.
+
+The candidate local profile is exact0.166.0 Darwin arm64 with a plain legacy rollout,
+root-local exact state schema and no independent primary history DB. Its whole-root
+writer/dependency and strong SQLite/WAL fence still require acceptance. Unknown or
+shared primary identity blocks cleanup; unrelated unknown stores remain protected
+residuals. See [scoped scope/status](../../docs/scoped-session-cleanup.md).
+
 The separate [0.166.0 M8.1 investigation](0.166.0/lifecycle-m8-1/README.md) retains
 exact release/binary/schema/native evidence without enabling a production profile.
 Full cleanup remains BLOCKED BY PROVIDER; changed unarchive cascades do not inherit

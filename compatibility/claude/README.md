@@ -1,5 +1,15 @@
 # Claude installation and metadata evidence
 
+## Current roadmap boundary
+
+M9 blocker evidence is integrated; capability stays BLOCKED BY PROVIDER and all
+Claude mutation profiles remain absent. The **OPEN** M8.2 proposal is Codex-only,
+with Accepted ADR-0017, and does not alter Claude metadata compatibility, provenance,
+partial coverage or lifecycle refusal. No transcript-storage deletion fallback or
+session-to-project widening is introduced. See
+[Claude lifecycle status](../../docs/claude-lifecycle.md) and
+[scoped cleanup architecture](../../docs/scoped-session-cleanup.md).
+
 M9's separate [native lifecycle investigation](lifecycle-m9/README.md) keeps Claude
 read-only. Project purge exists in installed Code 2.1.222, but no lifecycle profile
 is enabled: dry-run startup writes, nonexclusive selector scope and ambiguous

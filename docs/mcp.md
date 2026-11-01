@@ -1,5 +1,15 @@
 # Read-only MCP interface
 
+## M8.2 status: unchanged read-only surface
+
+M8.2 Scoped Session Cleanup is **OPEN**; [ADR-0017](adr/0017-scoped-cleanup-residual-preservation-provider-local-mutation.md) is **Accepted direction; implementation OPEN**.
+The registry below remains exactly eight read-only tools. No scoped-cleanup intent,
+manifest import, persistent preparation, approval/revocation/consumption, writer lock,
+provider-local mutation or execution command has been added to MCP. Future planning
+views require separately reviewed DTO/privacy semantics; they cannot authorize effects.
+The existing lifecycle intent enum and command examples remain the implemented surface.
+See [the scoped architecture and command status](scoped-session-cleanup.md).
+
 Build with `cargo build --locked --workspace`, then configure your MCP client to
 launch the local executable with `mcp`:
 

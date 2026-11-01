@@ -1,5 +1,11 @@
 # ADR-0009: Immutable evidence-bound lifecycle intentions
 
+**M8.2 cross-reference (2026-10-31):** [ADR-0017](0017-scoped-cleanup-residual-preservation-provider-local-mutation.md)
+partially supersedes native-only rules for its exact Codex scoped-local contract.
+Semantic direction is accepted; implementation remains OPEN. The historical
+native/read-only contract and evidence below remain unchanged; see
+[current scoped-cleanup status](../scoped-session-cleanup.md).
+
 ## Status
 
 Accepted, 2026-10-28, after M3 integration and independent Sol/high reviews of

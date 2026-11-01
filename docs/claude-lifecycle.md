@@ -1,5 +1,14 @@
 # Claude project lifecycle investigation: M9 BLOCKED
 
+## M8.2 scope does not enable Claude mutation
+
+The Codex-only [scoped cleanup proposal](scoped-session-cleanup.md) is **OPEN**
+under Accepted ADR-0017. It does not supersede ADR-0015's M9 evidence gate, add
+Claude profiles, widen a session into project purge or permit a JSONL/storage fallback.
+M9 remains BLOCKED BY PROVIDER, investigation CLOSED FOR CURRENT PROVIDER CONTRACT;
+all six Claude lifecycle operations below remain Unsupported. Historical native
+counterexamples retain their exact-version provenance.
+
 M9 capability status: **BLOCKED BY PROVIDER**. Investigation status: **CLOSED FOR
 CURRENT PROVIDER CONTRACT**. Claude lifecycle operations: **Unsupported**.
 Integration preserves blocker evidence and safety guards; it does not make M9 PASS

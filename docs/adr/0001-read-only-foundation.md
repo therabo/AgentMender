@@ -1,5 +1,11 @@
 # ADR-0001: A physically read-only hexagonal foundation
 
+**M8.2 cross-reference (2026-10-31):** [ADR-0017](0017-scoped-cleanup-residual-preservation-provider-local-mutation.md)
+partially supersedes native-only rules for its exact Codex scoped-local contract.
+Semantic direction is accepted; implementation remains OPEN. The historical
+native/read-only contract and evidence below remain unchanged; see
+[current scoped-cleanup status](../scoped-session-cleanup.md).
+
 ## Status
 Accepted foundation, 2026-10-28. Process and evidence policy refined by
 ADR-0002/0003; the narrow OS query boundary is documented in ADR-0004.

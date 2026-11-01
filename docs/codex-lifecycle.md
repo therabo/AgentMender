@@ -1,5 +1,20 @@
 # Codex native lifecycle execution
 
+## Current scope and separate M8.2 contract
+
+M8.1 was integrated at `6f798bcebdfd2f763e31d62ef2695c52396ca709`
+([receipt](milestones/m8-1-integration.md), recorded in `c9dd04d`). Its full native
+cleanup remains BLOCKED. M8.2 is **OPEN** on its scoped-cleanup branch;
+[ADR-0017](adr/0017-scoped-cleanup-residual-preservation-provider-local-mutation.md) is **Accepted direction; implementation OPEN**. No provider-local cleanup operation/profile is enabled.
+
+The historical exact unarchive contract and command path below remain unchanged.
+A separately reviewed local one-session cleanup would reuse durable intent and
+approval while preserving children, shared/unknown state and unrelated data.
+It must select its strategy before approval; never use local mutation as a fallback
+after ambiguous native deletion. Its initial plain-legacy profile, dependency proof
+and strong writer/SQLite-WAL fence are still review gates. See
+[scoped cleanup architecture](scoped-session-cleanup.md).
+
 M8.1 separately investigated stable `0.166.0`; its archive/delete and cascading
 unarchive remain Unsupported. No historical exact profile was changed. See the
 [current cleanup report](codex-full-cleanup.md) and ADR-0016.

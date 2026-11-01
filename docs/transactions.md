@@ -1,5 +1,22 @@
 # Durable transactions and restart recovery
 
+## M8.2 scoped transaction integration
+
+M8.2 is **OPEN**, [ADR-0017](adr/0017-scoped-cleanup-residual-preservation-provider-local-mutation.md) **Accepted direction; implementation OPEN**. Existing v1/v2 durable histories,
+approval authentication and native M8 execution remain unchanged. Scoped cleanup
+is not enabled. The proposal extends the existing semantic-operation binding and
+journal with an immutable exact cleanup manifest and typed per-action knowledge;
+it does not add arbitrary SQL/file payloads or a parallel authority store.
+
+Every provider effect, including necessary lock creation, must follow committed
+intent and authenticated one-shot approval. Planned payload-first ordering can leave
+stale index/metadata after irreversible unlink; a missing outcome stays Unknown.
+Reconciliation must inspect frozen objects without redispatch, expanding the set
+or rebuilding receipts. Recovery remains bounded reconciliation metadata, not a
+multi-GB payload backup, automatic compensation or shared-store restoration.
+The concurrency/WAL fence and exact durable encoding require independent acceptance.
+See [scoped sequencing and cleanup outcomes](scoped-session-cleanup.md).
+
 M6 established persistence without a provider executor or human approval system.
 M7 now adds [independent approval](approvals.md), explicit schema2 migration and
 authenticated one-shot handoff. This document records the M6 foundation; legacy

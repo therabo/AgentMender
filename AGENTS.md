@@ -1,8 +1,43 @@
 # AgentMender engineering constraints
 
+Current development is **M8.2 OPEN** on
+`milestone/m8-2-scoped-session-cleanup`. M8.1 evidence was formally fast-forward
+integrated at `6f798bcebdfd2f763e31d62ef2695c52396ca709`; integration/base receipt
+commit is `c9dd04d`. Read docs/scoped-session-cleanup.md, the research landscape
+and accepted ADR-0017 before changing boundaries. Independent Sol/high reviews
+approved its semantics and domain/application architecture on 2026-10-31. The
+exact provider implementation, SQLite/WAL exclusion and isolated acceptance remain
+release gates. No provider effect is authorized without the existing consumed
+DurableIntent, exact profile, fresh revalidation and independent approval.
+
+The scoped objective is one exact session's required primary removal plus optional
+categorically attributable artifacts, with `actual effects ⊆ approved effects`.
+Shared/Referenced/Global/Unknown, ambiguous, unsupported and unrelated state is
+retained. Unknown primary identity, dependency/sharing, root, physical identity,
+schema or writer boundary blocks the target; unrelated unknown residuals need not
+block a separately proven primary scope. Preserve M3's negative-proof/health meanings;
+never relabel global Unknown as Healthy for cleanup. No arbitrary SQL/file/command
+port, generic executor, imported proof, whole-store restore or automatic retry.
+
+All existing compiled production restrictions remain until a specifically reviewed
+implementation is accepted. M8.1's complete native cleanup remains BLOCKED; exact
+historical M8 unarchive pins and M9's zero Claude mutation profiles remain unchanged.
+MCP keeps exactly eight read-only tools and cannot prepare/grant/revoke/consume or
+execute cleanup. Reuse existing immutable planning, protected persistence,
+independent terminal approval and consumed DurableIntent; do not create parallel
+cleanup authority. Lock creation itself is an effect after durable intent.
+No native provider startup, production test on real user state, NLP, M8.3 or M10
+work is authorized by this documentation. M8.3 is planned only after M8.2.
+
+## Historical milestone constraints
+
+The following records preserve prior milestone decisions. Current status is above;
+ADR-0017 partially supersedes native-only restrictions for its narrowly reviewed
+Codex scoped-local path; historical decisions below retain their original context.
+
 M9 blocker evidence is formally integrated at
 `9daa237ac6eadeb3d74e71b19ba31bcd6eef97ef`; capability stays BLOCKED BY PROVIDER.
-Current scope is M8.1 on `milestone/m8-1-codex-full-cleanup`. Investigate current
+Historical M8.1 scope was on `milestone/m8-1-codex-full-cleanup`. Investigate current
 Codex in private isolated state only. Preserve exact historical M8 pins and
 independent approval/durable-intent/revalidation gates. Archive/delete need complete
 pre-dispatch effects and authoritative postconditions, otherwise Unsupported.
@@ -23,7 +58,7 @@ Do not widen session targets, introduce a fake project executor, or change
 Codex semantics. Evidence/guard tests do not establish M9 lifecycle completion.
 Historical milestone constraints below remain context except where later ADRs apply.
 
-Current development scope is M8 on `milestone/m8-codex-lifecycle`, after M7 was
+Historical M8 development scope was on `milestone/m8-codex-lifecycle`, after M7 was
 formally integrated at `5cf94c01d1d14acf6034d7bb7f5521547ee470dd`.
 ADR-0013 supersedes the historical M7-only execution prohibitions below only for
 its narrow Codex unarchive handoff. Preserve the older milestone boundaries as
@@ -37,7 +72,7 @@ and never reconstructs dispatch authority. Unknown outcomes never trigger retrie
 Only the exact reviewed private executable pin may write fixed files under a fresh
 owned evidence sandbox. Native process startup counts as a possible effect.
 
-Read all docs/adr before changing boundaries. Current scope is M7: independent
+Read all docs/adr before changing boundaries. Historical M7 scope was: independent
 local approval (ADR-0012), following formally integrated M6 at
 f2268d2cdcff961a91e079af79314571fb3752d7. M5 remains a thin
 read-only stdio adapter over queries, integrity and immutable lifecycle intentions.

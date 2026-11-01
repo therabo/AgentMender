@@ -1,5 +1,20 @@
 # M8.1 Codex full cleanup / lifecycle compatibility refresh
 
+## Historical M8.1 verdict and current development
+
+This report preserves M8.1's **BLOCKED** answer for complete provider-native effects,
+deletion and retention proof; it is not a verdict on a separately proven bounded
+local cleanup contract. M8.1 is integrated at
+`6f798bcebdfd2f763e31d62ef2695c52396ca709`; see the
+[integration receipt](milestones/m8-1-integration.md), recorded in `c9dd04d`.
+
+M8.2 Scoped Session Cleanup is **OPEN**, under accepted [ADR-0017](adr/0017-scoped-cleanup-residual-preservation-provider-local-mutation.md) and no
+new enabled capability. It proposes exact primary removal while explicitly retaining
+shared, unknown, global and unsupported residuals. It must prove primary identity,
+dependencies, physical/root/schema safety and a strong writer/WAL boundary before
+implementation can be accepted. The original evidence, pins and conclusions below
+remain unchanged. See [the separate scoped contract](scoped-session-cleanup.md).
+
 Verdict: **BLOCKED**. Can AgentMender now safely implement “remove this Codex
 session”? **NO**. The reviewed current contract does not supply a complete
 preapproved native effect boundary and authoritative complete deletion/retention

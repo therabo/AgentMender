@@ -15,7 +15,14 @@
 | [0011: Durable transaction knowledge before provider execution](0011-durable-transaction-knowledge.md) | Accepted |
 | [0012: Independent local approval and atomic authorization handoff](0012-independent-local-approval.md) | Accepted |
 | [0013: Exact Codex unarchive through a consumed durable handoff](0013-codex-durable-native-handoff.md) | Accepted |
-| [0014: Claude project lifecycle evidence gate](0014-claude-project-lifecycle-evidence-gate.md) | Accepted safety boundary; M9 OPEN |
+| [0014: Claude project lifecycle evidence gate](0014-claude-project-lifecycle-evidence-gate.md) | Accepted historical safety boundary; M9 BLOCKED under 0015 |
 | [0015: Current Claude purge provider blockers](0015-current-claude-purge-provider-blockers.md) | Accepted; M9 BLOCKED; preserves 0014 safety boundary |
 
-- [0016: Current Codex cleanup provider-contract gate](0016-current-codex-cleanup-provider-contract-gate.md)
+| [0016: Current Codex cleanup provider-contract gate](0016-current-codex-cleanup-provider-contract-gate.md) | Accepted; M8.1 native full cleanup BLOCKED; integrated |
+| [0017: Scoped cleanup, residual preservation and provider-local mutation](0017-scoped-cleanup-residual-preservation-provider-local-mutation.md) | Accepted direction; M8.2 implementation OPEN |
+
+M8.1 integration/base is recorded in [the receipt](../milestones/m8-1-integration.md)
+(`c9dd04d` after integrated `6f798bc`). ADR-0017 proposes narrow partial
+supersession only; it is not accepted and enables no provider-local execution.
+M3 integrity, MCP read-only authority, durable knowledge, independent approval and
+Claude refusal retain their existing meanings. See [scoped cleanup status](../scoped-session-cleanup.md).

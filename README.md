@@ -1,5 +1,36 @@
 # AgentMender
 
+Safe, evidence-driven cleanup and storage reclaim for local AI coding-agent state.
+AgentMender removes only state that it can safely attribute to an exact session,
+preserves shared, ambiguous and unrelated artifacts, and reports retained residuals.
+
+M8.2 implements one-session Codex cleanup through a separate exact-profile local
+adapter. The supported boundary is narrow: official 0.166.0 Darwin arm64, a pinned
+binary and full state schema, selected root-local WAL database, one verified Legacy
+plain rollout, no primary sharing and verified writer exclusion. Optional name
+indexes, command history, logs, memories, global caches and unknown files remain
+protected. Normal success can be **RemovedWithResiduals**. Logical unlinked bytes
+are reported; physical allocation and forensic erasure are not claimed.
+
+**Release status: OPEN pending final review and local/remote gates.** Work is on
+`milestone/m8-2-scoped-session-cleanup`, based on integrated M8.1
+`6f798bcebdfd2f763e31d62ef2695c52396ca709` ([receipt](docs/milestones/m8-1-integration.md)).
+See [scoped cleanup, exact constraints and results](docs/scoped-session-cleanup.md),
+[ADR-0017](docs/adr/0017-scoped-cleanup-residual-preservation-provider-local-mutation.md)
+and the [research landscape](docs/research/scoped-session-cleanup-landscape.md).
+
+M8.1's historical complete provider-native cleanup remains **BLOCKED BY PROVIDER**;
+M8.2 uses a different scoped success criterion. M9 Claude lifecycle remains blocked
+with zero mutation profiles. M3 health semantics, independent terminal approval,
+durable intent and exactly eight read-only MCP tools remain intact. M8.3, NLP and
+M10 have not started.
+
+## Existing discovery and native lifecycle foundation
+
+The following describes discovery and the historical native v1 plan/adapter path.
+Its complete native readiness restrictions do not replace the separately proven
+M8.2 scoped-local contract above.
+
 Provider-aware inventory, evidence graph, integrity reports and independently
 approved native lifecycle orchestration
 of AI coding-agent state. M0/M1 and the Codex compatibility refresh retain accurately
@@ -126,7 +157,7 @@ reasons; only Ready returns 0. A plan is not authorization; Ready is not approve
 No operation is executed.
 
 Plans bind exact provider/state/evidence, typed scope, recomputed M3 integrity,
-native capability and exhaustive effects assumptions using SHA-256. All current
+native capability and exhaustive effects assumptions using SHA-256. All native v1
 real/sanitized provider requests remain blocked or unsupported because effects,
 ownership or integrity are unproven. Claude session purge remains unsupported.
 Current physical reclaim estimates are unknown. See [planning semantics](docs/planning.md)
@@ -176,7 +207,7 @@ append-only. Consumption and durable intent form one event, with no provider eff
 Read-only commands inspect approval status/history. M8's separate local execution
 command requires an already independently approved exact transaction.
 
-Current provider contracts cannot produce Ready plans, so real approval attempts
+Existing native v1 provider contracts cannot produce Ready plans, so real approval attempts
 remain blocked. The terminal boundary proves local process access, not personal
 identity against a same-user shell/PTY adversary. See [commands, trust assumptions,
 expiry, migration and handoff](docs/approvals.md) and [ADR-0012](docs/adr/0012-independent-local-approval.md).
@@ -204,8 +235,9 @@ approval, fresh validation, verified recovery and durable intent. Read-only port
 kind/detect/discover, pure snapshot-to-graph construction and pure integrity/planning-context
 interpretation. All artifacts remain
 protected, and paths do not prove ownership.
-No arbitrary SQL, provider command, archive/delete/purge/repair execution or MCP
-approval tool exists. Codex uses a consistent SQLite Backup API snapshot, scrubs content in RAM
+No arbitrary SQL, provider command, native archive/delete/purge/repair execution
+or MCP approval tool exists. M8.2 adds only its fixed receipt-gated local cleanup
+actions; see the scoped contract above. Codex uses a consistent SQLite Backup API snapshot, scrubs content in RAM
 before persisting a private disposable copy, and runs official thread/list there.
 Real state remains write-denied. The native process cannot read real-home file
 contents, but may stat metadata required by this exact build. No credentials,

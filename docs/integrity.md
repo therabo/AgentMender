@@ -1,10 +1,23 @@
 # Integrity verification contract
 
+## M8.2 scope clarification — no change to M3
+
+M8.2 is **OPEN** and its [scoped cleanup proposal](scoped-session-cleanup.md)
+does not alter this evaluator or its Healthy/Unknown/negative-proof meanings.
+Accepted ADR-0017 separates exact cleanup verification from whole-provider health.
+A future primary cleanup may be verified within its explicit complete action boundary
+while unrelated provider state remains Unknown and retained. This is not an M3
+Healthy or complete-erasure claim. Unknown primary identity, shared history,
+root/physical/schema/writer safety or inconclusive retained invariants still blocks
+or protects an attempted cleanup. No graph finding, residual or ownership label
+independently grants deletion authority.
+
 M3 is a read-only interpretation of one ArtifactGraph plus adapter-produced
 IntegrityContext. `DiscoveryService::verify` discovers once, builds that graph,
 calls the pure integrity-context hook and runs `evaluate_integrity`. The core never
 opens files, provider databases or subprocesses. Existing discovery isolation is
-unchanged. No repair, lifecycle port, plan, deletion closure or approval exists.
+unchanged. M3 itself introduces no repair, lifecycle port, plan, deletion closure
+or approval authority.
 
 ## Evidence and results
 

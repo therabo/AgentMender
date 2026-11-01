@@ -1,5 +1,16 @@
 # Independent local approval
 
+## M8.2 scoped cleanup approval
+
+[Scoped session cleanup](scoped-session-cleanup.md) is **OPEN** under accepted
+ADR-0017, with no enabled cleanup command or grantable scoped profile. The human
+channel, authenticated history, expiry, exact binding, one-shot consumption and fresh
+validation below remain mandatory. A future grant must bind the complete immutable
+required/optional/retained manifest and disclose irreversible primary payload
+removal; recovery metadata does not restore that payload. Approval cannot cure
+primary identity, sharing, root, schema, physical identity or writer-fence uncertainty.
+No MCP boolean, imported manifest or direct command may issue authorization.
+
 M7 produces authorization evidence and performs no provider effect. Current real
 and sanitized provider profiles lack complete effects/integrity contracts, remain
 Blocked/Unsupported and cannot obtain grants. Positive tests use synthetic closed
