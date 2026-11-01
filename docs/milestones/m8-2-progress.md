@@ -74,3 +74,29 @@ documentation consistency and every destructive-site audit; full local gates;
 normal branch push; exact-final-commit Linux/macOS/Windows CI verification. No M8.2
 PASS or final YES until these requirements are fulfilled. No destructive real-user
 test, M8.3 implementation, NLP or M10 work is authorized by this receipt.
+
+## Integrated implementation verification — 2026-11-01
+
+All required local gates passed after the final security fixes: fmt, locked
+all-target workspace Clippy with warnings denied, locked workspace tests/build,
+architecture fitness, retained lifecycle-evidence check and whitespace. The
+workspace run reported 379 primary passes including five compile-fail doctests,
+zero failures, four opt-in tests ignored, and eight additional nested child-test
+pass summaries (387 raw). The newly ignored exact-profile acceptance was then
+explicitly run: one pass, zero failures, 23.06 seconds, real pinned 268,972,064-byte
+binary hashed and real OS-denied current CLI worker, no provider-native startup.
+The target was a disposable 64 MiB sparse logical rollout; the same-cwd/similar-ID
+child and unknown cache were preserved. Physical allocation was not claimed.
+See `compatibility/codex/scoped-cleanup-v1/isolated-acceptance.json`.
+
+The independent Sol/high final code/security review is APPROVED for the bounded
+profile, with all identified findings resolved. Added actual child-process abrupt
+exits after unlink and after catalog commit protect interrupted transactions on
+reopen, preserve unrelated data and refuse redispatch. This is not a sudden-power-
+loss certification. Generated suites include 4096 domain model cases (seed
+`0x4d382e3253434f50`) and 128 real-filesystem fixture cases; these counts are distinct.
+The final mutation audit is `docs/research/m8-2-mutation-audit.md`.
+
+Final normal branch push, clean-worktree/remote-SHA verification and exact-final-
+commit three-OS Actions are still the release gate for a final PASS verdict. The
+main branch remains the integrated M8.1 base; M8.2 is not merged automatically.

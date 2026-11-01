@@ -5,10 +5,10 @@
 M8.1 was integrated at `6f798bcebdfd2f763e31d62ef2695c52396ca709`
 ([receipt](milestones/m8-1-integration.md), recorded in `c9dd04d`). Its full native
 cleanup remains BLOCKED. M8.2 is **OPEN** on its scoped-cleanup branch;
-[ADR-0017](adr/0017-scoped-cleanup-residual-preservation-provider-local-mutation.md) is **Accepted direction; implementation OPEN**. No provider-local cleanup operation/profile is enabled.
+[ADR-0017](adr/0017-scoped-cleanup-residual-preservation-provider-local-mutation.md) is **Accepted direction; implementation OPEN**. The separate scoped-local profile is implemented under final release review.
 
 The historical exact unarchive contract and command path below remain unchanged.
-A separately reviewed local one-session cleanup would reuse durable intent and
+The separately reviewed local one-session cleanup reuses durable intent and
 approval while preserving children, shared/unknown state and unrelated data.
 It must select its strategy before approval; never use local mutation as a fallback
 after ambiguous native deletion. Its initial plain-legacy profile, dependency proof
@@ -19,8 +19,8 @@ M8.1 separately investigated stable `0.166.0`; its archive/delete and cascading
 unarchive remain Unsupported. No historical exact profile was changed. See the
 [current cleanup report](codex-full-cleanup.md) and ADR-0016.
 
-M8 adds a typed, independently approved execution path. Only exact-profile native
-unarchive is conditionally supported. Current real plans remain Blocked/Unsupported:
+M8 adds a typed, independently approved execution path. Within this historical native adapter only exact-profile native
+unarchive is conditionally supported. Native v1 real plans remain Blocked/Unsupported:
 their partial discovery, unclosed effects and unknown integrity cannot gain approval.
 This adapter does not make current user sessions executable.
 

@@ -4,15 +4,18 @@
 
 M8.1 is formally integrated at `6f798bcebdfd2f763e31d62ef2695c52396ca709`
 ([receipt](../../docs/milestones/m8-1-integration.md), recorded in `c9dd04d`).
-M8.2 Scoped Session Cleanup is **OPEN**; ADR-0017 is **Accepted direction; implementation OPEN**, not a registered
-production compatibility profile. Historical read-only and exact native lifecycle
-profiles below are unchanged; source/schema equality cannot transfer authority.
+M8.2 local verification and independent code/security review passed; exact-head
+three-OS CI remains the release gate. ADR-0017 accepts a separate registered
+[scoped-cleanup-v1 profile](scoped-cleanup-v1/README.md). Historical read-only and
+exact native lifecycle profiles remain unchanged; source/schema equality cannot
+transfer authority.
 
-The candidate local profile is exact0.166.0 Darwin arm64 with a plain legacy rollout,
-root-local exact state schema and no independent primary history DB. Its whole-root
-writer/dependency and strong SQLite/WAL fence still require acceptance. Unknown or
-shared primary identity blocks cleanup; unrelated unknown stores remain protected
-residuals. See [scoped scope/status](../../docs/scoped-session-cleanup.md).
+The local profile is exact 0.166.0 Darwin arm64 with a plain Legacy rollout,
+selected root-local exact WAL schema, existing safe WAL/SHM and no root-local
+thread-history DB. Native writer/dependency and actual SQLite main-file exclusive
+fences protect the verified cutoff. Unknown primary identity blocks cleanup;
+unrelated unknown stores remain protected residuals. See
+[scoped scope/status](../../docs/scoped-session-cleanup.md).
 
 The separate [0.166.0 M8.1 investigation](0.166.0/lifecycle-m8-1/README.md) retains
 exact release/binary/schema/native evidence without enabling a production profile.

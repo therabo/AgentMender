@@ -22,7 +22,7 @@
 | [0017: Scoped cleanup, residual preservation and provider-local mutation](0017-scoped-cleanup-residual-preservation-provider-local-mutation.md) | Accepted direction; M8.2 implementation OPEN |
 
 M8.1 integration/base is recorded in [the receipt](../milestones/m8-1-integration.md)
-(`c9dd04d` after integrated `6f798bc`). ADR-0017 proposes narrow partial
-supersession only; it is not accepted and enables no provider-local execution.
+(`c9dd04d` after integrated `6f798bc`). ADR-0017 accepts narrow partial
+supersession for the independently reviewed exact-profile local cleanup path.
 M3 integrity, MCP read-only authority, durable knowledge, independent approval and
 Claude refusal retain their existing meanings. See [scoped cleanup status](../scoped-session-cleanup.md).

@@ -1,6 +1,6 @@
 # M8.2 independent security review
 
-Status: IN PROGRESS. Updated 2026-11-01 (Europe/Rome). Review base is `c9dd04d` plus the in-progress M8.2 working tree. This is a read-only implementation review except for this review record; no provider process or real-user mutation has been invoked.
+Status: FINAL INDEPENDENT SECURITY REVIEW APPROVED for the exact bounded profile, 2026-11-01 (Europe/Rome). Milestone/release PASS remains conditional on the root's latest exact-helper acceptance, full local gates and exact-final-commit OS CI. Review base is `c9dd04d` plus the integrated M8.2 working tree. This is a read-only implementation review except for this review record; only disposable tests were executed, with no native provider startup or real-user mutation.
 
 ## Early boundary decision
 
@@ -65,3 +65,32 @@ Two additional concrete final-review findings were communicated immediately:
 - **Known canonical DB paths outside header inventory:** the initial reference proof inspected canonical rollout names in active/archived namespaces but did not account for every other `threads.rollout_path`. A known selected row may point to a custom or external file with a `history_base` dependency on the target. Native source permits DB-selected custom paths (`rollout/src/tests.rs:405`, thread-store selected-path resolver). Ignoring those known rows can damage another session, unlike retaining unobserved historical external copies. Planning and the actual database fence must require every known selected rollout to be covered by the inspected, safe header inventory or conservatively refuse. Resolution pending at this checkpoint.
 
 The updated architecture fitness script retains the domain-storage ban, limits the SQL-string exemption to the fixed private storage module, checks the exact two approved DELETE strings and private `apply` placement, limits descriptor-relative mutation to one fixed `unlinkat` in `validate_and_unlink`, and keeps provider approval minting and eight-tool MCP restrictions. The new test-source filtering matches Rust `cfg(test)` compilation, including whole files and `all(test, unix)` modules. Development dependency relaxation is confined to the Codex provider's application dependency for disposable acceptance. No blanket production mutation or authority waiver was identified. This lexical fitness check supplements source review and compiled tests; it is not a security proof against deliberately obfuscated future code.
+
+## Final independent conclusion
+
+**APPROVED: exact-profile scoped cleanup design and reviewed integrated implementation. No unresolved concrete security blocker remains in the reviewed snapshot.** This is security/code approval for the narrowly admitted selected-root Legacy/plain path, not an assertion that the milestone has passed CI or that every possible provider copy has been erased.
+
+The known-row inventory finding is resolved on both sides of the authority boundary. The protected worker exports bounded native UUID/path metadata for every known selected-database thread; observation requires each pair to match the complete safe header inventory. The private database fence independently checks every current selected row against canonical in-root names and the frozen payload/retained set before its fixed SQL is prepared. The filesystem inventory independently parses each relevant header, checks filename/header UUID consistency and rejects unsupported references. An actual acceptance case now points another canonical row to an external history file referring to the target and verifies planning refuses while both histories survive. The storage negative case updates the retained DB commitment and still refuses the uninventoried known row, so rehashing a forged manifest does not grant authority.
+
+The sidecar alias finding is resolved by the full-adapter descriptor-held guard described above. The first profile consequently requires stable existing WAL and SHM files and no rollback-journal file in addition to its other exact conditions. The adapter checks all necessary guards before unlink, retains native locks and actual SQLite exclusive mode through commit and final observations, and reports success only after required absence and retained-state verification. It exposes no arbitrary SQL, path mutation, native-provider process launch, retry or restore port. Pure domain validation binds categorical evidence and outcome laws while the provider enforces every exact binary/schema/storage rule again.
+
+Independent commands executed by this reviewer on the integrated snapshot:
+
+- `python3 scripts/check_architecture.py`: PASS.
+- `cargo test --locked -p agentmender-provider-codex --lib scoped_ -- --test-threads=1`: 26 passed, 0 failed, 1 deliberately ignored real-binary acceptance. This includes positive durable cleanup/reopen, both post-unlink/post-commit injected failures, both actual child-process termination/reopen cases, physical/link/reference cases, exact SQL preservation, known outside catalogue paths and WAL contention.
+
+Root/owner reports separately include a successful opt-in real exact-binary plus actual sandbox-helper acceptance, ordinary workspace checks, and broader domain/application cases. The root is rerunning the latest exact-helper path after the final inventory and sidecar changes. This reviewer has not independently executed that ignored test or remote OS CI and does not claim their completion. The 4,096 deterministic domain cases exercise report/subset/accounting laws; they are not 4,096 actual filesystem deletions. The actual filesystem generated cases and disposable acceptance are separate finite evidence. Child-process exits exercise SQLite rollback/durable intent recovery; they are not claims of power-loss or hardware-failure certification.
+
+Approval limits remain explicit: official 0.166.0 Darwin arm64 content pin and exact schema; one selected-root canonical row and one plain Legacy primary payload; known dependency/profile/physical/writer uncertainty refuses; protected nonprimary and unsearched external history remains residual; native coordination is cooperative rather than hostile-same-user exclusion; success means a verified fenced cutoff; later reappearance cannot reuse the receipt; interrupted work remains unknown/read-only reconciliation and never redispatches; no transcript backup or payload restore; logical bytes do not prove physical reclaim. Native v1 compatibility, eight read-only MCP tools, historical native cleanup refusal and zero Claude mutation remain preserved.
+
+Audited destructive-boundary source SHA-256 anchors at this conclusion:
+
+| Source | SHA-256 |
+|---|---|
+| `scoped_cleanup.rs` | `4e6f792e9f1a2a75d64327d232f2226bacc052f51e4e878032be74840356ed14` |
+| `scoped_files.rs` | `bce7ea404e4b059037d79ef3878b1a0aff6595c009f15851582c30d78e468ee5` |
+| `scoped_storage.rs` | `a087eb32d8eb20f60fce4e7f20f9e9fe777c1cc080cf75b143cedaac731b769e` |
+| `scoped_capture.rs` | `c0a4fd3d0c899fc8e8e273bf08b185b424acae1332a528047c7b318416b977a3` |
+| `scripts/check_architecture.py` | `262343985cff1e150b46cc0e07e9acd10bb89ba44c14d1bd1e52581ad85074a2` |
+
+These anchors identify the reviewed working-tree source rather than a yet-unavailable final commit. Subsequent substantive boundary changes require follow-up review; ordinary release receipts may be added by the root without changing this technical judgment.

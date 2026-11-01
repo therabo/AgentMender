@@ -6,8 +6,9 @@ integrated at `6f798bcebdfd2f763e31d62ef2695c52396ca709`; integration/base recei
 commit is `c9dd04d`. Read docs/scoped-session-cleanup.md, the research landscape
 and accepted ADR-0017 before changing boundaries. Independent Sol/high reviews
 approved its semantics and domain/application architecture on 2026-10-31. The
-exact provider implementation, SQLite/WAL exclusion and isolated acceptance remain
-release gates. No provider effect is authorized without the existing consumed
+exact provider implementation, SQLite/WAL exclusion and isolated acceptance passed
+independent review and local gates on 2026-11-01. Final-commit three-OS CI remains
+the release gate. No provider effect is authorized without the existing consumed
 DurableIntent, exact profile, fresh revalidation and independent approval.
 
 The scoped objective is one exact session's required primary removal plus optional

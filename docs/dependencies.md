@@ -1,16 +1,17 @@
 # Dependency decisions
 
-## M8.2 proposal status
+## M8.2 scoped cleanup dependencies
 
-M8.2 is **OPEN**; [ADR-0017](adr/0017-scoped-cleanup-residual-preservation-provider-local-mutation.md) is **Accepted direction; implementation OPEN**. This documentation pass introduces
-no dependency, feature, MSRV, schema or unsafe exception. Candidate provider-local
-filesystem/locking/SQLite work must reuse reviewed safe boundaries where possible;
-any required dependency or boundary exception needs explicit review before code.
-Third-party cleanup repositories are research references, not runtime dependencies
-or copied implementations. Their transcript/credential backup practices do not
-change AgentMender's bounded reconciliation-metadata privacy contract. See
-[scoped architecture](scoped-session-cleanup.md) and
-[implementation research](research/scoped-session-cleanup-landscape.md).
+M8.2 reuses the locked `rusqlite`, `sha2` and safe `rustix 1.1.6` packages.
+The Codex adapter enables rustix `std`/`fs` for descriptor-relative no-follow open,
+flock, stat, unlink and directory sync. No new registry package/version, unsafe
+exception or MSRV change is introduced. The `application` dependency in Codex is
+**development-only**, to test the genuine approval/transaction/application chain
+on disposable provider state; runtime dependency direction remains unchanged.
+The SQLite read worker reuses the existing kernel-denial sandbox and bounded RAM
+backup/scrub boundary. Third-party cleaner implementations were researched but
+not copied or introduced as dependencies. Recovery remains bounded typed metadata,
+without transcript or credential backups. See [ADR-0017](adr/0017-scoped-cleanup-residual-preservation-provider-local-mutation.md).
 
 M9 adds only the already locked `proptest` workspace package as a Claude provider
 development dependency for zero-authority guards. No new registry package/version,

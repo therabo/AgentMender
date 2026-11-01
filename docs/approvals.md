@@ -3,18 +3,18 @@
 ## M8.2 scoped cleanup approval
 
 [Scoped session cleanup](scoped-session-cleanup.md) is **OPEN** under accepted
-ADR-0017, with no enabled cleanup command or grantable scoped profile. The human
+ADR-0017. The dedicated exact-profile CLI path reuses the existing human
 channel, authenticated history, expiry, exact binding, one-shot consumption and fresh
-validation below remain mandatory. A future grant must bind the complete immutable
+validation below remain mandatory. A scoped grant binds the complete immutable
 required/optional/retained manifest and disclose irreversible primary payload
 removal; recovery metadata does not restore that payload. Approval cannot cure
 primary identity, sharing, root, schema, physical identity or writer-fence uncertainty.
 No MCP boolean, imported manifest or direct command may issue authorization.
 
-M7 produces authorization evidence and performs no provider effect. Current real
-and sanitized provider profiles lack complete effects/integrity contracts, remain
-Blocked/Unsupported and cannot obtain grants. Positive tests use synthetic closed
-contracts. MCP retains its eight read-only tools and cannot prepare, grant, revoke,
+M7 produces authorization evidence and performs no provider effect. Native v1 real
+and sanitized provider profiles retain their complete effects/integrity blockers.
+The scoped path uses fresh dedicated local evidence; unrelated M3 Unknown does not
+automatically prevent approval. Exact primary, boundary and profile uncertainty does. MCP retains its eight read-only tools and cannot prepare, grant, revoke,
 consume, execute or access the key.
 
 M8 adds the separate [approved Codex execution workflow](codex-lifecycle.md).

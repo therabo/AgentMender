@@ -12,7 +12,8 @@ indexes, command history, logs, memories, global caches and unknown files remain
 protected. Normal success can be **RemovedWithResiduals**. Logical unlinked bytes
 are reported; physical allocation and forensic erasure are not claimed.
 
-**Release status: OPEN pending final review and local/remote gates.** Work is on
+**Local gates, isolated exact-profile acceptance and security review: PASS.**
+Exact-final-commit Linux/macOS/Windows CI remains the release gate. Work is on
 `milestone/m8-2-scoped-session-cleanup`, based on integrated M8.1
 `6f798bcebdfd2f763e31d62ef2695c52396ca709` ([receipt](docs/milestones/m8-1-integration.md)).
 See [scoped cleanup, exact constraints and results](docs/scoped-session-cleanup.md),
@@ -40,7 +41,7 @@ M5 exposes read-only queries and planning over local stdio MCP. M6 adds a durabl
 AgentMender-owned transaction journal, reconciliation manifests and restart knowledge.
 M7 adds independent local approval evidence. M8 adds a consumed-receipt Codex native
 unarchive adapter with independent verification and read-only reconciliation.
-Archive/delete execution and repair remain unsupported; current real plans remain
+Archive/delete execution and repair remain unsupported; native v1 real plans remain
 Blocked/Unsupported. See [the exact lifecycle boundary](docs/codex-lifecycle.md).
 
 M8.1 independently investigated official stable Codex `0.166.0`. Full cleanup is
@@ -184,7 +185,7 @@ and [ADR-0010](docs/adr/0010-readonly-mcp-boundary.md).
 M6 stores immutable plan commitments, ordered hash-chained records in SQLite and
 an independent journal, and typed recovery manifests inside an explicit private
 AgentMender root. An ambiguous crash remains OutcomeUnknown; no provider state is
-guessed, retried or changed. A transaction is not authorization. Current real plans
+guessed, retried or changed. A transaction is not authorization. Native v1 real plans
 remain blocked. The CLI can inspect an existing root read-only:
 
 ```sh
