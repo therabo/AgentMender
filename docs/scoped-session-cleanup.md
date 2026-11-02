@@ -4,46 +4,57 @@ M8.2 primary cleanup is **PASS**, integrated at
 `a284767157ace8769deee85b195b5b70efe374d8`; local, isolated and exact-head
 three-platform gates passed ([integration receipt](milestones/m8-2-integration.md)).
 M8.2.1 is **OPEN**, on `milestone/m8-2-1-complete-session-removal`.
-[ADR-0018](adr/0018-complete-session-removal.md) defines the stronger current
-product claim. ADR-0017 and the historical implementation below retain their
+[ADR-0019](adr/0019-structural-removal-and-profile-acceptance.md) defines the current
+structural product claim. ADR-0017 and the historical implementation below retain their
 primary-cleanup meanings and original immutable encodings.
 
 ## Current product contract
 
-Remove the exact session's primary state and canonical catalog entry; remove it
-from every supported user-visible projection; verify absence immediately, after
-reload, restart and fresh discovery; preserve every unrelated session/record/key;
-and clean every supported safely attributable exclusive artifact. A shared
-container may contain an exclusive exact record. Remove that record, never the
-whole index/history/global-state/database/cache container.
+Production success is established by structural persistent-state verification.
+The currently open graphical sidebar may temporarily be stale and is not the
+authority for cleanup success. An admitted exact compatibility profile must
+independently prove through isolated restart/reload acceptance that structurally
+removed sessions do not reappear. Production never restarts Codex for visual
+verification. Required stores without lifetime writer exclusion block before
+mutation; a process-absence snapshot alone does not fence a later launch.
 
-Any visible or reconstructing residual prevents product Removed and
-RemovedWithResiduals. Only technical residue proven non-projecting and unable to
-restore intact primary state may remain. Unknown risk in either domain prevents
-success. Newly discovered units require replanning; actual effects remain a subset
-of the independently approved frozen set. Coverage is derived from exact units
-and checked known byte sums; unknown sizes remain unknown.
+The existing SessionRemovalAssessment retains categorical coverage and exact
+root/profile/target binding. Required persistent surfaces must be structurally
+absent; unknown reconstruction roles block. Separate non-imported exact-profile
+acceptance covers two reconstruction cycles and collateral preservation. Remaining
+technical residue must not reconstruct primary or persistent projection state.
 
-The new pure assessment separates PrimaryRemoved, ProjectionClean and
-MaximumSafeCleanupComplete. It grants no authority and accepts no imported proof.
-All required surfaces and all four verification phases must match the exact
-root/profile/target inventory. The existing production v1 adapter supplies only
-primary evidence: its product assessment is ProjectionIncomplete, maximum safe
-cleanup Unknown. **No graphical complete-removal profile is admitted.**
+## Expanded primary profile (schema 3)
 
-CLI execute/reconcile output now reserves top-level outcome for product
-assessment. Historical values remain under primary_cleanup_outcome; state remains
-the durable historical transaction state. session_removal and product_complete
-make the distinction explicit. Successful primary v1 cleanup therefore returns
-exit 2 for unverified complete removal. The journal is unchanged; a durable
-Succeeded primary transaction is not a complete-removal receipt.
+`scoped-cleanup-v2` uses the exact stable 0.166.0 binary/schema/WAL/root and legacy
+plain-history boundaries below. It additionally removes target rows from
+thread_attachments and guardian_review_feedback with exact count/preimage checks.
+The retained digest excludes only those target rows; every unrelated record and
+shared asset remains protected. Metadata payload values never become filesystem
+deletion instructions. Guardian BLOB contents are hashed transiently and never
+persisted in review or journal metadata.
 
-Projection/App Server/catalog/global-state/backup/renderer and artifact evidence
-are recorded separately in the research inventories. Desktop coordination and
-restart effects need an exact reviewed composite profile, a new versioned frozen
-manifest and fresh approval. No old grant authorizes such effects. Current
-reconciliation observes only; it never restarts the app, retries deletion or adds
-new targets. M8.3, M10 and natural-language work remain unstarted.
+New plans carry CompleteRemovalManifest and distinct v3 hash/binding domains,
+ordered PrimaryPayload/StateThreadRecords actions and explicit PrimaryOnly profile
+admission. After all fences and preimages validate, the payload is unlinked and
+its progress synced, then the exact main-DB transaction commits and its progress
+syncs. No later effect follows a progress failure. Unknown outcomes and crash gaps
+retain partial knowledge and never authorize retries. Existing journal schema 2,
+independent terminal approval, recovery and one-shot DurableIntent are reused.
+Old v2 plans select v1 throughout review/approval/execution; no grant is upgraded.
+
+All approved expanded primary effects can yield a primary transaction Succeeded,
+but the product assessment remains ProjectionIncomplete and CLI exits 2. No
+complete Desktop removal profile is admitted. Stable worker evidence transfers no
+authority to the different embedded Desktop CLI. The current sidebar is not the
+reason for this incomplete result: persistent closure and profile acceptance are
+missing. Index/history/global/backup/catalog/browser/automation mutations stay
+unadmitted pending exact record, physical and lifetime writer boundaries.
+
+[ADR-0019](adr/0019-structural-removal-and-profile-acceptance.md) partially
+supersedes [ADR-0018](adr/0018-complete-session-removal.md). No production restart,
+shutdown or process termination is added. Reconciliation is read-only. M8.3, M10
+and NLP remain unstarted.
 
 ## Historical M8.2 primary-cleanup contract
 

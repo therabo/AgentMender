@@ -18,11 +18,15 @@ fn witness() -> SessionRemovalEvidence {
         surfaces: vec![ProjectionSurface {
             scope: scope.clone(),
             id: id("catalog"),
-            immediate: RemovalObservation::Absent,
-            reload: RemovalObservation::Absent,
-            restart: RemovalObservation::Absent,
-            fresh_discovery: RemovalObservation::Absent,
+            kind: SurfaceKind::RequiredPersistentProjection,
+            observation: RemovalObservation::Absent,
         }],
+        profile_acceptance: Some(ExactProfileAcceptance {
+            profile: scope.profile.clone(),
+            first_reconstruction: RemovalObservation::Absent,
+            second_reconstruction: RemovalObservation::Absent,
+            collateral: Preservation::Unchanged,
+        }),
         primary_absence: RemovalObservation::Absent,
         canonical_catalog_absence: RemovalObservation::Absent,
         collateral: Preservation::Unchanged,
@@ -62,18 +66,41 @@ fn complete_synthetic_witness_and_exact_record_preserve_collateral() {
 }
 #[test]
 fn projection_phases_and_inventory_fail_closed() {
-    for phase in 0..4 {
-        for observation in [RemovalObservation::Present, RemovalObservation::Unknown] {
-            let mut e = witness();
-            let s = &mut e.surfaces[0];
-            match phase {
-                0 => s.immediate = observation,
-                1 => s.reload = observation,
-                2 => s.restart = observation,
-                _ => s.fresh_discovery = observation,
-            }
-            assert_eq!(outcome(&e), SessionRemovalOutcome::ProjectionIncomplete);
-        }
+    for observation in [RemovalObservation::Present, RemovalObservation::Unknown] {
+        let mut e = witness();
+        e.surfaces[0].observation = observation;
+        assert_eq!(outcome(&e), SessionRemovalOutcome::ProjectionIncomplete);
+    }
+    let mut e = witness();
+    e.profile_acceptance = None;
+    assert_eq!(outcome(&e), SessionRemovalOutcome::ProjectionIncomplete);
+    let mut e = witness();
+    e.profile_acceptance.as_mut().unwrap().profile = id("wrong-profile");
+    assert_eq!(outcome(&e), SessionRemovalOutcome::ProjectionIncomplete);
+    let mut e = witness();
+    e.profile_acceptance.as_mut().unwrap().second_reconstruction = RemovalObservation::Unknown;
+    assert_eq!(outcome(&e), SessionRemovalOutcome::ProjectionIncomplete);
+    let mut e = witness();
+    e.surfaces.push(ProjectionSurface {
+        scope: e.scope.clone(),
+        id: id("unknown"),
+        kind: SurfaceKind::UnknownReconstructionSurface,
+        observation: RemovalObservation::Absent,
+    });
+    assert_eq!(outcome(&e), SessionRemovalOutcome::ProjectionIncomplete);
+    for observation in [
+        RemovalObservation::Absent,
+        RemovalObservation::Present,
+        RemovalObservation::Unknown,
+    ] {
+        let mut e = witness();
+        e.surfaces.push(ProjectionSurface {
+            scope: e.scope.clone(),
+            id: id("live-ui"),
+            kind: SurfaceKind::EphemeralUiProjection,
+            observation,
+        });
+        assert_eq!(outcome(&e), SessionRemovalOutcome::Removed);
     }
     let mut e = witness();
     e.surfaces.clear();
@@ -275,8 +302,8 @@ fn approved_protected_units_and_already_absent_accounting_are_explicit() {
 // Deterministic generation exercises the contract across distinct exact unit IDs and sizes.
 #[test]
 fn fixed_seed_contract_properties() {
-    let mut seed = 0x7a39_48bf_d14c_1923u64;
-    for _ in 0..128 {
+    let mut seed = 0x4d38_3231_5f76_3300u64;
+    for _ in 0..256 {
         seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
         let mut base = witness();
         base.units[0].id = id(&format!("unit-{seed}"));
@@ -286,10 +313,16 @@ fn fixed_seed_contract_properties() {
         for case in 0..13 {
             let mut e = base.clone();
             match case {
-                0 => e.surfaces[0].immediate = RemovalObservation::Present,
-                1 => e.surfaces[0].reload = RemovalObservation::Unknown,
-                2 => e.surfaces[0].restart = RemovalObservation::Present,
-                3 => e.surfaces[0].fresh_discovery = RemovalObservation::Present,
+                0 => e.surfaces[0].observation = RemovalObservation::Present,
+                1 => e.surfaces[0].observation = RemovalObservation::Unknown,
+                2 => {
+                    e.profile_acceptance.as_mut().unwrap().first_reconstruction =
+                        RemovalObservation::Present
+                }
+                3 => {
+                    e.profile_acceptance.as_mut().unwrap().second_reconstruction =
+                        RemovalObservation::Present
+                }
                 4 => e.primary_absence = RemovalObservation::Unknown,
                 5 => e.canonical_catalog_absence = RemovalObservation::Unknown,
                 6 => e.collateral = Preservation::Changed,

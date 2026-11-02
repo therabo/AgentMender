@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "date": "2026-11-03",
+  "profile": "scoped-cleanup-v2",
+  "plan_schema": 3,
+  "journal_schema": 2,
+  "capability": "expanded_primary_only",
+  "product_outcome": "projection_incomplete",
+  "product_complete": false,
+  "platform": "darwin-arm64",
+  "codex_version": "0.166.0",
+  "codex_executable_sha256": "39acf979729dd290f9a24ee38b2914e036c91b65952872e28ae2a6b88a7db7c1",
+  "state_schema_sha256": "1b88a3f88c8edb6f742d219835a821d0515b7b811b4342cd650e6ac8069f4647",
+  "evidence_helper_sha256": "614714c06907d697d1b5ce5c8ee444aee25cd624ff88f5d181cef3e9e24b9a57",
+  "fixture": "disposable manually seeded exact schema; no real user sessions",
+  "native_codex_started": false,
+  "desktop_started": false,
+  "desktop_restart_acceptance": false,
+  "real_user_state_read": false,
+  "real_user_state_mutated": false,
+  "production_path": [
+    "protected_capture",
+    "fresh_discovery",
+    "schema3_plan",
+    "existing_independent_test_approval",
+    "durable_consumption",
+    "native_and_wal_fences",
+    "primary_payload_unlink",
+    "durable_payload_progress",
+    "exact_state_rows_commit",
+    "durable_state_progress",
+    "fenced_postconditions",
+    "journal_reopen"
+  ],
+  "target_metadata_removed": [
+    "thread_attachments",
+    "guardian_review_feedback"
+  ],
+  "foreign_metadata_preserved": true,
+  "shared_attachment_asset_preserved": true,
+  "unknown_file_preserved": true,
+  "logical_unlinked_bytes": 67108864,
+  "physical_reclaimed_bytes": null,
+  "tests": [
+    {
+      "gate": "exact_binary_and_sandboxed_worker_on_disposable_fixture",
+      "exit_code": 0,
+      "seconds": 28.51
+    },
+    {
+      "gate": "exact_binary_and_sandboxed_worker_expanded_metadata_on_disposable_fixture",
+      "exit_code": 0,
+      "seconds": 20.47
+    }
+  ],
+  "faults": [
+    "post_unlink_unknown",
+    "post_commit_unknown",
+    "progress_record_failure_stops_before_database_commit",
+    "process_exit_86_after_unlink",
+    "process_exit_87_after_commit",
+    "read_only_reconciliation_preserves_committed_prefix"
+  ],
+  "restart_scope": "journal/process reopen only; not Desktop reconstruction"
+}

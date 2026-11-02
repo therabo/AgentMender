@@ -59,6 +59,8 @@ pub struct PlanningContext {
     pub effects: Option<NativeEffectBoundary>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cleanup_evidence: Option<ScopedCleanupEvidence>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub complete_removal_evidence: Option<CompleteRemovalEvidence>,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -226,6 +228,8 @@ pub struct PlanContent {
     pub schema_version: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cleanup_manifest: Option<CleanupManifest>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub complete_removal_manifest: Option<CompleteRemovalManifest>,
     pub request: LifecycleRequest,
     pub native_target_id: Option<EntityId>,
     pub observation_scope: DiscoveryScope,
@@ -273,14 +277,18 @@ impl<'de> Deserialize<'de> for LifecyclePlan {
         let c = &wire.content;
         let valid = ((c.schema_version == 1
             && c.cleanup_manifest.is_none()
+            && c.complete_removal_manifest.is_none()
             && c.request.intent != LifecycleIntent::CleanupSession
             && c.operations
                 .iter()
                 .all(|op| op.operation != NativeLifecycleOperation::ScopedCleanupSession))
-            || (c.schema_version == 2 && valid_scoped_plan(c)))
+            || (c.schema_version == 2
+                && c.complete_removal_manifest.is_none()
+                && valid_scoped_plan(c))
+            || (c.schema_version == 3 && valid_complete_plan(c)))
             && c.requires_human_approval
             && c.recovery_required
-            && (c.schema_version == 2
+            && (matches!(c.schema_version, 2 | 3)
                 || match c.status {
                     PlanStatus::Ready => {
                         c.blockers.is_empty()
@@ -589,7 +597,9 @@ fn ordered_hash<T: Serialize>(domain: &[u8], value: &T) -> String {
     )
 }
 fn plan_hash(c: &PlanContent) -> PlanDigest {
-    if c.schema_version == 2 {
+    if c.schema_version == 3 {
+        PlanDigest(ordered_hash(b"agentmender/plan/v3\0", c))
+    } else if c.schema_version == 2 {
         PlanDigest(ordered_hash(b"agentmender/plan/v2\0", c))
     } else {
         PlanDigest(hash(b"agentmender/plan/v1\0", projected(c, "plan")))
@@ -703,7 +713,11 @@ pub fn plan_lifecycle(
     request: LifecycleRequest,
 ) -> LifecyclePlan {
     if request.intent == LifecycleIntent::CleanupSession {
-        return plan_scoped_cleanup(g, report, context, request);
+        return if context.complete_removal_evidence.is_some() {
+            plan_complete_cleanup(g, report, context, request)
+        } else {
+            plan_scoped_cleanup(g, report, context, request)
+        };
     }
     let recomputed = evaluate_integrity(g, &report.proof_context);
     let fingerprint = StateFingerprint(hash(
@@ -975,6 +989,7 @@ pub fn plan_lifecycle(
     };
     let content = PlanContent {
         schema_version: 1,
+        complete_removal_manifest: None,
         cleanup_manifest: None,
         request,
         native_target_id,
@@ -1321,6 +1336,60 @@ fn plan_scoped_cleanup(
     } else {
         c.status = PlanStatus::Blocked;
         c.blockers.push(PlanBlocker::EffectBoundaryInvalid);
+    }
+    let digest = plan_hash(&c);
+    LifecyclePlan { content: c, digest }
+}
+
+fn valid_complete_plan(c: &PlanContent) -> bool {
+    let Some(m) = &c.complete_removal_manifest else {
+        return false;
+    };
+    if c.cleanup_manifest.is_some()
+        || (c.status == PlanStatus::Ready && !validate_complete_removal_manifest(m))
+    {
+        return false;
+    }
+    let mut legacy = c.clone();
+    legacy.schema_version = 2;
+    legacy.cleanup_manifest = Some(m.primary.clone());
+    legacy.complete_removal_manifest = None;
+    valid_scoped_plan(&legacy)
+}
+fn plan_complete_cleanup(
+    g: &ArtifactGraph,
+    report: &IntegrityReport,
+    context: &PlanningContext,
+    request: LifecycleRequest,
+) -> LifecyclePlan {
+    let e = context
+        .complete_removal_evidence
+        .as_ref()
+        .expect("complete evidence");
+    let mut legacy_context = context.clone();
+    legacy_context.complete_removal_evidence = None;
+    legacy_context.cleanup_evidence = Some(e.primary_evidence.clone());
+    let mut c = plan_scoped_cleanup(g, report, &legacy_context, request.clone()).content;
+    c.schema_version = 3;
+    c.state_fingerprint = StateFingerprint(ordered_hash(
+        b"agentmender/complete-state/v3\0",
+        &json!({
+            "graph": projected(g,"graph"), "report": projected(report,"report"),
+            "recomputed": projected(&evaluate_integrity(g, &report.proof_context),"report"),
+            "context": context, "request": request, "original_diagnostics": g.diagnostics()
+        }),
+    ));
+    c.cleanup_manifest = None;
+    c.complete_removal_manifest = Some(e.manifest.clone());
+    if context.cleanup_evidence.is_some()
+        || e.primary_evidence.manifest != e.manifest.primary
+        || !validate_complete_removal_manifest(&e.manifest)
+    {
+        c.status = PlanStatus::Blocked;
+        c.operations.clear();
+        if !c.blockers.contains(&PlanBlocker::EffectBoundaryInvalid) {
+            c.blockers.push(PlanBlocker::EffectBoundaryInvalid);
+        }
     }
     let digest = plan_hash(&c);
     LifecyclePlan { content: c, digest }

@@ -130,6 +130,157 @@ pub fn reconcile_cleanup(
     Ok(store.inspect(id)?.state())
 }
 
+struct RemovalProgressJournal<'a> {
+    store: &'a mut TransactionStore,
+    id: &'a TransactionId,
+}
+impl agentmender_persistence::CompleteRemovalProgress for RemovalProgressJournal<'_> {
+    fn record(
+        &mut self,
+        receipt: &agentmender_persistence::DurableObservation,
+        progress: agentmender_domain::CompleteRemovalActionProgress,
+    ) -> Result<(), EffectError> {
+        let sequence = self
+            .store
+            .inspect_consumed(self.id)
+            .map_err(|_| EffectError::Unavailable)?
+            .sequence();
+        self.store
+            .record_complete_removal_action(self.id, sequence, receipt, progress)
+            .map_err(|_| EffectError::Unavailable)
+    }
+}
+
+/// Separately approved schema-3 path; it never upgrades an existing v2 grant.
+pub fn execute_complete_removal(
+    store: &mut TransactionStore,
+    id: &TransactionId,
+    read: &dyn agentmender_provider_api::ScopedCleanupReadPort,
+    port: &dyn agentmender_persistence::DurableCompleteRemovalPort,
+) -> Result<TransactionState, LifecycleError> {
+    let snapshot = store.inspect(id)?;
+    let plan = snapshot
+        .review_plan()
+        .ok_or(LifecycleError::Preconditions)?
+        .clone();
+    let c = plan.content();
+    if snapshot.schema_version() != 2
+        || snapshot.state() != TransactionState::Prepared
+        || snapshot.approval().state != ApprovalState::Granted
+        || c.schema_version != 3
+        || c.status != PlanStatus::Ready
+        || c.request.intent != LifecycleIntent::CleanupSession
+        || c.cleanup_manifest.is_some()
+    {
+        return Err(LifecycleError::Preconditions);
+    }
+    let manifest = c
+        .complete_removal_manifest
+        .as_ref()
+        .ok_or(LifecycleError::Preconditions)?;
+    port.preflight(&plan).map_err(LifecycleError::Native)?;
+    let inputs = crate::cleanup_inputs(
+        read,
+        manifest.primary.native_session_id.as_str(),
+        &c.observation_scope,
+    )
+    .map_err(|_| LifecycleError::Preconditions)?;
+    if !inputs.failures.is_empty()
+        || !same_serialized(&inputs.plan, &plan)
+        || plan.validate_against(&inputs.graph, &inputs.integrity, &inputs.context)
+            != PlanValidation::Current
+    {
+        return Err(LifecycleError::Preconditions);
+    }
+    let intent = store.record_intent(
+        id,
+        snapshot.sequence(),
+        &plan,
+        &inputs.graph,
+        &inputs.integrity,
+        &inputs.context,
+    )?;
+    let attempt = port.dispatch(intent, &plan, &mut RemovalProgressJournal { store, id });
+    let sequence = store.inspect_consumed(id)?.sequence();
+    match attempt.outcome {
+        NativeOutcome::Unknown(reason) => {
+            if let Some(report) = attempt.report {
+                if report.primary.outcome != agentmender_domain::CleanupOutcome::OutcomeUnknown {
+                    return Err(LifecycleError::Preconditions);
+                }
+                store.record_complete_removal_observation(
+                    id,
+                    sequence,
+                    &attempt.observation,
+                    report,
+                )?;
+            }
+            return Err(LifecycleError::Ambiguous(reason));
+        }
+        NativeOutcome::NeverDispatched(_) => {
+            if let Some(report) = attempt.report {
+                if !matches!(
+                    report.primary.outcome,
+                    agentmender_domain::CleanupOutcome::Blocked
+                        | agentmender_domain::CleanupOutcome::Failed
+                ) {
+                    return Err(LifecycleError::Preconditions);
+                }
+                store.record_complete_removal_observation(
+                    id,
+                    sequence,
+                    &attempt.observation,
+                    report,
+                )?;
+            }
+        }
+        NativeOutcome::Accepted => store.record_complete_removal_observation(
+            id,
+            sequence,
+            &attempt.observation,
+            attempt.report.ok_or(LifecycleError::Preconditions)?,
+        )?,
+    }
+    Ok(store.inspect(id)?.state())
+}
+
+/// Observes only the frozen schema-3 target; never resumes destructive actions.
+pub fn reconcile_complete_removal(
+    store: &mut TransactionStore,
+    id: &TransactionId,
+    port: &dyn agentmender_persistence::DurableCompleteRemovalPort,
+) -> Result<TransactionState, LifecycleError> {
+    let snapshot = store.inspect_consumed(id)?;
+    let plan = snapshot
+        .review_plan()
+        .ok_or(LifecycleError::Preconditions)?;
+    if plan.content().schema_version != 3
+        || !matches!(
+            snapshot.state(),
+            TransactionState::OutcomeUnknown | TransactionState::RecoveryRequired
+        )
+    {
+        return Err(LifecycleError::Preconditions);
+    }
+    let Ok(mut report) = port.observe(plan) else {
+        return Ok(snapshot.state());
+    };
+    // Retain authenticated historical action receipts. Fresh observation never
+    // fills a missing commit record or credits new reclaimed bytes.
+    report.actions = store
+        .records(id)?
+        .iter()
+        .filter_map(|record| match record.event() {
+            agentmender_domain::TransactionEvent::CompleteRemovalActionObserved { progress } => {
+                Some(progress.clone())
+            }
+            _ => None,
+        })
+        .collect();
+    store.record_complete_removal_reconciliation(id, snapshot.sequence(), report)?;
+    Ok(store.inspect(id)?.state())
+}
+
 fn is_unarchive_plan(plan: &LifecyclePlan) -> bool {
     let c = plan.content();
     c.status == PlanStatus::Ready

@@ -942,6 +942,126 @@ impl TransactionStore {
     }
 
     /// Reconciliation can record fresh evidence, but never issues a new intent.
+    fn validate_complete_observation_anchor(
+        &self,
+        id: &TransactionId,
+        expected: u64,
+        receipt: &DurableObservation,
+    ) -> Result<()> {
+        let snapshot = self.inspect_consumed(id)?;
+        if snapshot.sequence() != expected
+            || receipt.id != *id
+            || snapshot
+                .review_plan()
+                .is_none_or(|p| p.content().schema_version != 3)
+        {
+            return Err(StoreError::Preconditions);
+        }
+        let records = self.records(id)?;
+        let anchor = records
+            .iter()
+            .find(|r| r.sequence() == receipt.sequence)
+            .ok_or(StoreError::Preconditions)?;
+        if anchor.digest() != &receipt.digest
+            || !matches!(
+                anchor.event(),
+                TransactionEvent::Authorization {
+                    action: agentmender_domain::ApprovalAction::Consumed { .. },
+                    ..
+                }
+            )
+            || records
+                .iter()
+                .filter(|r| r.sequence() > receipt.sequence)
+                .any(|r| {
+                    !matches!(
+                        r.event(),
+                        TransactionEvent::CompleteRemovalActionObserved { .. }
+                    )
+                })
+        {
+            return Err(StoreError::Preconditions);
+        }
+        Ok(())
+    }
+
+    /// Each committed action is synced before the adapter advances to another
+    /// destructive action. The original consumed intent remains the anchor.
+    pub fn record_complete_removal_action(
+        &mut self,
+        id: &TransactionId,
+        expected: u64,
+        receipt: &DurableObservation,
+        progress: agentmender_domain::CompleteRemovalActionProgress,
+    ) -> Result<()> {
+        self.validate_complete_observation_anchor(id, expected, receipt)?;
+        let record = self.next(
+            id,
+            expected,
+            TransactionEvent::CompleteRemovalActionObserved { progress },
+        )?;
+        self.append(record)
+    }
+
+    pub fn record_complete_removal_observation(
+        &mut self,
+        id: &TransactionId,
+        expected: u64,
+        receipt: &DurableObservation,
+        report: agentmender_domain::CompleteRemovalReport,
+    ) -> Result<()> {
+        self.validate_complete_observation_anchor(id, expected, receipt)?;
+        let record = self.next(
+            id,
+            expected,
+            TransactionEvent::CompleteRemovalObserved { report },
+        )?;
+        self.append(record)
+    }
+
+    /// Reconciliation never creates action receipts or reconstructs authority.
+    pub fn record_complete_removal_reconciliation(
+        &mut self,
+        id: &TransactionId,
+        expected: u64,
+        report: agentmender_domain::CompleteRemovalReport,
+    ) -> Result<()> {
+        let snapshot = self.inspect_consumed(id)?;
+        if snapshot.sequence() != expected
+            || snapshot
+                .review_plan()
+                .is_none_or(|p| p.content().schema_version != 3)
+            || report
+                .primary
+                .actions
+                .iter()
+                .any(|a| a.outcome == agentmender_domain::CleanupActionOutcome::Removed)
+            || report.primary.logical_unlinked_bytes != 0
+        {
+            return Err(StoreError::Preconditions);
+        }
+        let recorded: Vec<_> = self
+            .records(id)?
+            .into_iter()
+            .filter_map(|record| match record.event() {
+                TransactionEvent::CompleteRemovalActionObserved { progress } => {
+                    Some(progress.clone())
+                }
+                _ => None,
+            })
+            .collect();
+        if report.actions != recorded {
+            return Err(StoreError::Preconditions);
+        }
+        let record = self.next(
+            id,
+            expected,
+            TransactionEvent::CompleteRemovalObserved { report },
+        )?;
+        self.append(record)
+    }
+
+    /// Reconciliation can record fresh evidence, but never issues a new intent.
     pub fn record_cleanup_reconciliation(
         &mut self,
         id: &TransactionId,

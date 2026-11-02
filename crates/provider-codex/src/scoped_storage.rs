@@ -83,10 +83,35 @@ const RETAINED: [(&str, &str); 17] = [
 ];
 
 pub(super) fn retained_digest(db: &Connection, target: &str) -> Result<String, EffectError> {
+    retained_digest_for_profile(db, target, false)
+}
+
+pub(super) fn retained_digest_for_profile(
+    db: &Connection,
+    target: &str,
+    expanded: bool,
+) -> Result<String, EffectError> {
     let mut hash = Sha256::new();
-    hash.update(b"agentmender/scoped-retained-db/v1\0");
+    hash.update(if expanded {
+        b"agentmender/scoped-retained-db/v2\0"
+    } else {
+        b"agentmender/scoped-retained-db/v1\0"
+    });
     let mut total = 0usize;
-    for (name, sql) in RETAINED {
+    for (name, original_sql) in RETAINED {
+        let sql = if expanded {
+            match name {
+                "thread_attachments" => {
+                    "SELECT * FROM thread_attachments WHERE thread_id IS NOT ?1"
+                }
+                "guardian_review_feedback" => {
+                    "SELECT * FROM guardian_review_feedback WHERE thread_id IS NOT ?1"
+                }
+                _ => original_sql,
+            }
+        } else {
+            original_sql
+        };
         let mut stmt = db.prepare(sql).map_err(|_| invalid())?;
         let columns = stmt.column_count();
         let mut rows = if sql.contains("?1") {
@@ -259,7 +284,8 @@ impl DatabaseFence {
         if history != "legacy"
             || version != crate::scoped_profile::SCOPED_CODEX_VERSION
             || std::path::Path::new(&path) != m.database_payload_paths[0].path
-            || retained_digest(&self.db, target)? != m.retained_database_sha256
+            || retained_digest_for_profile(&self.db, target, crate::scoped_profile::is_expanded(m))?
+                != m.retained_database_sha256
         {
             return Err(invalid());
         }
@@ -287,11 +313,37 @@ impl DatabaseFence {
         if receipts as u64 != expected {
             return Err(invalid());
         }
+        if crate::scoped_profile::is_expanded(m) {
+            for (table, sql) in [
+                (
+                    "thread_attachments",
+                    "DELETE FROM thread_attachments WHERE thread_id=?1",
+                ),
+                (
+                    "guardian_review_feedback",
+                    "DELETE FROM guardian_review_feedback WHERE thread_id=?1",
+                ),
+            ] {
+                let expected = m
+                    .rows
+                    .iter()
+                    .find(|r| r.table == table)
+                    .ok_or_else(invalid)?
+                    .expected_count;
+                let changed = self.db.execute(sql, [target]).map_err(|_| invalid())?;
+                if changed as u64 != expected {
+                    return Err(invalid());
+                }
+            }
+        }
         let changed = self
             .db
             .execute("DELETE FROM threads WHERE id=?1", [target])
             .map_err(|_| invalid())?;
-        if changed != 1 || retained_digest(&self.db, target)? != m.retained_database_sha256 {
+        if changed != 1
+            || retained_digest_for_profile(&self.db, target, crate::scoped_profile::is_expanded(m))?
+                != m.retained_database_sha256
+        {
             return Err(invalid());
         }
         let tools: i64 = self
@@ -342,9 +394,29 @@ impl DatabaseFence {
                 |r| r.get(0),
             )
             .map_err(|_| invalid())?;
+        let expanded_absent = if crate::scoped_profile::is_expanded(m) {
+            [
+                "SELECT count(*) FROM thread_attachments WHERE thread_id=?1",
+                "SELECT count(*) FROM guardian_review_feedback WHERE thread_id=?1",
+            ]
+            .into_iter()
+            .try_fold(true, |absent, sql| {
+                let count: i64 = self
+                    .db
+                    .query_row(sql, [m.native_session_id.as_str()], |r| r.get(0))
+                    .map_err(|_| invalid())?;
+                Ok::<_, EffectError>(absent && count == 0)
+            })?
+        } else {
+            true
+        };
         Ok(count == 0
-            && retained_digest(&self.db, m.native_session_id.as_str())?
-                == m.retained_database_sha256)
+            && expanded_absent
+            && retained_digest_for_profile(
+                &self.db,
+                m.native_session_id.as_str(),
+                crate::scoped_profile::is_expanded(m),
+            )? == m.retained_database_sha256)
     }
 }
 
@@ -513,6 +585,66 @@ mod tests {
         db.prepare_delete(&m).unwrap();
         assert!(db.commit_and_verify(&m).unwrap());
     }
+    #[test]
+    fn expanded_metadata_delete_preserves_foreign_records_and_payloads() {
+        let (_root, mut m) = fixture();
+        let target = m.native_session_id.as_str();
+        let foreign = "12345678-1234-1234-1234-123456789abd";
+        let db = Connection::open(&m.database.path).unwrap();
+        for (id, thread) in [("target", target), ("foreign", foreign)] {
+            db.execute("INSERT INTO thread_attachments(id,thread_id,attachment_type,identity_key,payload,created_at) VALUES (?1,?2,'fixture',?1,'shared-payload-reference',1)", (id, thread)).unwrap();
+            db.execute(
+                "INSERT INTO guardian_review_feedback(id,thread_id,record) VALUES (?1,?2,?3)",
+                (id, thread, b"sensitive fixture blob".as_slice()),
+            )
+            .unwrap();
+        }
+        m.profile.adapter = crate::scoped_profile::SCOPED_EXPANDED_ADAPTER.into();
+        for (table, sql) in ROWS {
+            let observed = scoped_capture::commitment(&db, target, table, sql).unwrap();
+            let row = m.rows.iter_mut().find(|r| r.table == table).unwrap();
+            row.expected_count = observed.count;
+            row.preimage_sha256 = observed.sha256;
+        }
+        m.retained_database_sha256 = retained_digest_for_profile(&db, target, true).unwrap();
+        drop(db);
+        let metadata = std::fs::metadata(&m.database.path).unwrap();
+        m.database.size_bytes = metadata.len();
+        m.database.mtime_seconds = metadata.mtime();
+        m.database.mtime_nanoseconds = metadata.mtime_nsec() as u32;
+        let mut old = m.clone();
+        old.profile.adapter = SCOPED_ADAPTER.into();
+        assert!(!crate::scoped_profile::validate_manifest_profile(&old));
+        let mut drifted = m.clone();
+        drifted
+            .rows
+            .iter_mut()
+            .find(|row| row.table == "guardian_review_feedback")
+            .unwrap()
+            .preimage_sha256 = "0".repeat(64);
+        let mut rejected = DatabaseFence::acquire(&drifted).unwrap();
+        assert!(rejected.prepare_delete(&drifted).is_err());
+        drop(rejected);
+        let mut fence = DatabaseFence::acquire(&m).unwrap();
+        fence.prepare_delete(&m).unwrap();
+        assert!(fence.commit_and_verify(&m).unwrap());
+        drop(fence);
+        let db = Connection::open(&m.database.path).unwrap();
+        for table in ["thread_attachments", "guardian_review_feedback"] {
+            let sql = format!("SELECT count(*) FROM {table} WHERE thread_id=?1");
+            assert_eq!(
+                db.query_row(&sql, [foreign], |r| r.get::<_, i64>(0))
+                    .unwrap(),
+                1
+            );
+            assert_eq!(
+                db.query_row(&sql, [target], |r| r.get::<_, i64>(0))
+                    .unwrap(),
+                0
+            );
+        }
+    }
+
     #[test]
     fn drift_rejects_without_writes() {
         let (_root, mut m) = fixture();

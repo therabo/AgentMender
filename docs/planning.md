@@ -2,16 +2,24 @@
 
 ## M8.2.1 current planning boundary
 
-M8.2 is historical primary-cleanup PASS and integrated; M8.2.1 is OPEN under
-[ADR-0018](adr/0018-complete-session-removal.md). The pure product assessment
-requires a frozen nonempty required-projection inventory, all four verification
-phases, exact root/profile/target identity, collateral preservation and complete
-safe-unit accounting. Unknown supported reconstruction risk prevents success.
-The existing v2 manifest/digest remains primary-only and gains no extra action.
-A future separately versioned complete-removal manifest must bind exact projection
-records, every additional safe artifact and all app shutdown/restart effects before
-approval. That destructive manifest/profile is not yet implemented or admitted.
-Newly discovered unapproved artifacts remain retained and require a new plan.
+[ADR-0019](adr/0019-structural-removal-and-profile-acceptance.md) partially
+supersedes ADR-0018's runtime GUI/restart requirement. M8.2.1 remains OPEN.
+
+Production success is established by structural persistent-state verification.
+The currently open graphical sidebar may temporarily be stale and is not the
+authority for cleanup success. An admitted exact compatibility profile must
+independently prove through isolated restart/reload acceptance that structurally
+removed sessions do not reappear. Production never restarts Codex for visual
+verification. Required stores without lifetime writer exclusion block before
+mutation; a process-absence snapshot alone does not fence a later launch.
+
+New cleanup plans use schema 3 and `CompleteRemovalManifest`, committing the
+expanded primary profile, exact row preimages/counts, ordered actions, retained
+state and explicitly unverified Desktop reconstruction. This profile removes
+exact target attachment metadata and guardian feedback in addition to the
+historical primary set. It remains PrimaryOnly, not a complete Desktop profile.
+Old v2 plans/hashes/grants remain primary-only and are never upgraded. Both old
+and new evidence supplied together block readiness. New discoveries require replan.
 
 ## M8.2 scoped planning contract
 

@@ -123,15 +123,18 @@ pub fn cleanup_inputs(
         )
         .into());
     }
-    let manifest = observed
-        .context
-        .cleanup_evidence
-        .as_ref()
-        .ok_or_else(|| ApplicationError::InspectionUnavailable(id.clone()))?;
-    if manifest.manifest.native_session_id.as_str() != target {
+    let manifest = match (
+        observed.context.cleanup_evidence.as_ref(),
+        observed.context.complete_removal_evidence.as_ref(),
+    ) {
+        (Some(evidence), None) => &evidence.manifest,
+        (None, Some(evidence)) => &evidence.manifest.primary,
+        _ => return Err(ApplicationError::InspectionUnavailable(id)),
+    };
+    if manifest.native_session_id.as_str() != target {
         return Err(ApplicationError::InspectionUnavailable(id));
     }
-    let target_id = manifest.manifest.target.clone();
+    let target_id = manifest.target.clone();
     if observed
         .graph
         .nodes()
@@ -1129,6 +1132,7 @@ mod tests {
                         protocol_evidence_digest: format!("sha256:{}", "0".repeat(64)),
                         effect_scope: NativeEffectScope::TargetOnly,
                     }],
+                    complete_removal_evidence: None,
                     cleanup_evidence: None,
                     effects: None,
                 })

@@ -4,6 +4,10 @@ use crate::{
     CleanupOutcome, CleanupReport, LifecycleIntent, LifecyclePlan, NativeLifecycleOperation,
     PlanDigest, PlanStatus, ProviderKind, StateFingerprint, validate_cleanup_report,
 };
+use crate::{
+    CleanupActionOutcome, CompleteRemovalActionProgress, CompleteRemovalReport,
+    validate_complete_removal_report,
+};
 use serde::{Deserialize, Deserializer, Serialize};
 use sha2::{Digest, Sha256};
 use std::{fmt, str::FromStr};
@@ -114,8 +118,20 @@ impl TransactionBinding {
         }
         let op = &c.operations[0];
         if c.request.intent == LifecycleIntent::CleanupSession {
-            let manifest = c.cleanup_manifest.as_ref().ok_or(TransactionError)?;
-            if c.schema_version != 2
+            let manifest = if c.schema_version == 3 {
+                &c.complete_removal_manifest
+                    .as_ref()
+                    .ok_or(TransactionError)?
+                    .primary
+            } else {
+                c.cleanup_manifest.as_ref().ok_or(TransactionError)?
+            };
+            if !matches!(c.schema_version, 2 | 3)
+                || (c.schema_version == 3
+                    && !c
+                        .complete_removal_manifest
+                        .as_ref()
+                        .is_some_and(crate::validate_complete_removal_manifest))
                 || !crate::validate_cleanup_manifest(manifest)
                 || op.operation != NativeLifecycleOperation::ScopedCleanupSession
                 || c.capability.is_some()
@@ -132,7 +148,16 @@ impl TransactionBinding {
                 target: commitment("agentmender.target.v1", &c.request.target),
                 native_identity: commitment("agentmender.native-id.v1", &op.native_id),
                 profile: commitment("agentmender.profile.v1", &c.provider),
-                capability_effect: commitment("agentmender.scoped-cleanup-manifest.v2", manifest),
+                capability_effect: if c.schema_version == 3 {
+                    commitment(
+                        "agentmender.complete-removal-manifest.v3",
+                        c.complete_removal_manifest
+                            .as_ref()
+                            .ok_or(TransactionError)?,
+                    )
+                } else {
+                    commitment("agentmender.scoped-cleanup-manifest.v2", manifest)
+                },
                 conditions: commitment(
                     "agentmender.conditions.v1",
                     &(set_value(&c.preconditions), set_value(&c.postconditions)),
@@ -333,6 +358,12 @@ pub enum TransactionEvent {
     CleanupObserved {
         report: CleanupReport,
     },
+    CompleteRemovalActionObserved {
+        progress: CompleteRemovalActionProgress,
+    },
+    CompleteRemovalObserved {
+        report: CompleteRemovalReport,
+    },
     VerificationStarted,
     Verified {
         verification: Verification,
@@ -474,6 +505,7 @@ pub struct TransactionSnapshot {
     schema_version: u32,
     review_plan: Option<LifecyclePlan>,
     approval: ApprovalSnapshot,
+    complete_progress: Vec<CompleteRemovalActionProgress>,
     sequence: u64,
     last_digest: JournalDigest,
 }
@@ -505,6 +537,7 @@ impl TransactionSnapshot {
             schema_version: first.schema_version,
             review_plan: plan.clone(),
             approval: ApprovalSnapshot::default(),
+            complete_progress: Vec::new(),
             sequence: 0,
             last_digest: first.digest.clone(),
         };
@@ -576,6 +609,59 @@ impl TransactionSnapshot {
             return Ok(());
         }
         if self.binding.intent == LifecycleIntent::CleanupSession {
+            let plan_version = self
+                .review_plan
+                .as_ref()
+                .map(|p| p.content().schema_version);
+            if let E::CompleteRemovalActionObserved { progress } = &r.event {
+                let m = self
+                    .review_plan
+                    .as_ref()
+                    .and_then(|p| p.content().complete_removal_manifest.as_ref())
+                    .ok_or(TransactionError)?;
+                if plan_version != Some(3)
+                    || !matches!(
+                        progress.outcome,
+                        CleanupActionOutcome::Removed | CleanupActionOutcome::AlreadyAbsent
+                    )
+                    || !matches!(self.state, S::OutcomeUnknown | S::RecoveryRequired)
+                    || m.actions.get(self.complete_progress.len()) != Some(&progress.action)
+                    || self.complete_progress.last().is_some_and(|p| {
+                        !matches!(
+                            p.outcome,
+                            CleanupActionOutcome::Removed | CleanupActionOutcome::AlreadyAbsent
+                        )
+                    })
+                {
+                    return Err(TransactionError);
+                }
+                self.complete_progress.push(progress.clone());
+                self.sequence = r.sequence;
+                self.last_digest = r.digest.clone();
+                return Ok(());
+            }
+            if let E::CompleteRemovalObserved { report } = &r.event {
+                let m = self
+                    .review_plan
+                    .as_ref()
+                    .and_then(|p| p.content().complete_removal_manifest.as_ref())
+                    .ok_or(TransactionError)?;
+                if plan_version != Some(3)
+                    || !matches!(self.state, S::OutcomeUnknown | S::RecoveryRequired)
+                    || report.actions != self.complete_progress
+                    || !validate_complete_removal_report(m, report)
+                {
+                    return Err(TransactionError);
+                }
+                self.state = match report.primary.outcome {
+                    CleanupOutcome::Removed | CleanupOutcome::RemovedWithResiduals => S::Succeeded,
+                    CleanupOutcome::Blocked | CleanupOutcome::Failed => S::Failed,
+                    CleanupOutcome::OutcomeUnknown => S::RecoveryRequired,
+                };
+                self.sequence = r.sequence;
+                self.last_digest = r.digest.clone();
+                return Ok(());
+            }
             if let E::CleanupObserved { report } = &r.event {
                 let manifest = self
                     .review_plan
@@ -583,6 +669,7 @@ impl TransactionSnapshot {
                     .and_then(|p| p.content().cleanup_manifest.as_ref())
                     .ok_or(TransactionError)?;
                 if self.schema_version != 2
+                    || plan_version != Some(2)
                     || !matches!(self.state, S::OutcomeUnknown | S::RecoveryRequired)
                     || !validate_cleanup_report(manifest, report)
                 {

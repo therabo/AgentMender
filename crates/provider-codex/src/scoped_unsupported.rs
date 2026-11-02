@@ -11,6 +11,9 @@ impl CodexScopedCleanupAdapter {
     pub fn new(_: CodexAdapter) -> Self {
         Self
     }
+    pub fn new_expanded(_: CodexAdapter) -> Self {
+        Self
+    }
 }
 impl ScopedCleanupReadPort for CodexScopedCleanupAdapter {
     fn observe_cleanup(
@@ -35,6 +38,30 @@ impl DurableCleanupPort for CodexScopedCleanupAdapter {
         }
     }
     fn observe(&self, _: &LifecyclePlan) -> Result<CleanupReport, EffectError> {
+        Err(EffectError::UnsupportedVersion)
+    }
+}
+
+impl agentmender_persistence::DurableCompleteRemovalPort for CodexScopedCleanupAdapter {
+    fn preflight(&self, _: &LifecyclePlan) -> Result<(), EffectError> {
+        Err(EffectError::UnsupportedVersion)
+    }
+    fn dispatch(
+        &self,
+        intent: DurableIntent,
+        _: &LifecyclePlan,
+        _: &mut dyn agentmender_persistence::CompleteRemovalProgress,
+    ) -> agentmender_persistence::CompleteRemovalAttempt {
+        agentmender_persistence::CompleteRemovalAttempt {
+            observation: intent.into_observation(),
+            outcome: NativeOutcome::NeverDispatched(EffectError::UnsupportedVersion),
+            report: None,
+        }
+    }
+    fn observe(
+        &self,
+        _: &LifecyclePlan,
+    ) -> Result<agentmender_domain::CompleteRemovalReport, EffectError> {
         Err(EffectError::UnsupportedVersion)
     }
 }

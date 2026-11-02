@@ -11,6 +11,29 @@ use agentmender_provider_codex::{CodexAdapter, CodexLifecycleAdapter, CodexScope
 use std::{env, path::Path};
 
 pub(super) fn scoped_adapter(args: &Args) -> Result<CodexScopedCleanupAdapter, CliError> {
+    scoped_adapter_version(args, true)
+}
+
+pub(super) fn scoped_adapter_for_plan(
+    args: &Args,
+    plan: &agentmender_domain::LifecyclePlan,
+) -> Result<CodexScopedCleanupAdapter, CliError> {
+    match plan.content().schema_version {
+        2 if plan.content().cleanup_manifest.is_some() => scoped_adapter_version(args, false),
+        3 if plan.content().complete_removal_manifest.is_some() => {
+            scoped_adapter_version(args, true)
+        }
+        _ => Err(CliError::new(
+            ErrorCode::InvalidArguments,
+            "unsupported cleanup plan version",
+        )),
+    }
+}
+
+fn scoped_adapter_version(
+    args: &Args,
+    expanded: bool,
+) -> Result<CodexScopedCleanupAdapter, CliError> {
     if args.fixture.is_some()
         || args.desktop_fixture
         || matches!(args.provider, Some(SelectedProvider::Claude))
@@ -39,9 +62,12 @@ pub(super) fn scoped_adapter(args: &Args) -> Result<CodexScopedCleanupAdapter, C
             .clone()
             .or_else(|| find_executable(ProviderKind::Codex)),
     };
-    Ok(CodexScopedCleanupAdapter::new(
-        CodexAdapter::new(location).with_evidence_helper(helper, home),
-    ))
+    let reader = CodexAdapter::new(location).with_evidence_helper(helper, home);
+    Ok(if expanded {
+        CodexScopedCleanupAdapter::new_expanded(reader)
+    } else {
+        CodexScopedCleanupAdapter::new(reader)
+    })
 }
 
 pub fn run(args: &Args, state_root: &Path, action: &TransactionAction) -> Result<bool, CliError> {
@@ -112,8 +138,14 @@ pub fn run(args: &Args, state_root: &Path, action: &TransactionAction) -> Result
         })
         .unwrap_or(false);
     let result = if scoped {
-        let cleanup = scoped_adapter(args)?;
-        if reconcile {
+        let snapshot = store.inspect(&id).map_err(|_| unavailable())?;
+        let plan = snapshot.review_plan().ok_or_else(unavailable)?;
+        let cleanup = scoped_adapter_for_plan(args, plan)?;
+        if plan.content().schema_version == 3 && reconcile {
+            lifecycle::reconcile_complete_removal(&mut store, &id, &cleanup)
+        } else if plan.content().schema_version == 3 {
+            lifecycle::execute_complete_removal(&mut store, &id, &cleanup, &cleanup)
+        } else if reconcile {
             lifecycle::reconcile_cleanup(&mut store, &id, &cleanup)
         } else {
             lifecycle::execute_scoped_cleanup(&mut store, &id, &cleanup, &cleanup)
@@ -180,6 +212,12 @@ fn report_cleanup(
         )
     };
     let snapshot = store.inspect(id).map_err(|_| unavailable())?;
+    if snapshot
+        .review_plan()
+        .is_some_and(|p| p.content().schema_version == 3)
+    {
+        return report_expanded_cleanup(args, store, id, state, reconcile);
+    }
     let manifest = snapshot
         .review_plan()
         .and_then(|p| p.content().cleanup_manifest.as_ref())
@@ -247,5 +285,79 @@ fn report_cleanup(
         println!("Recovery stores reconciliation metadata and cannot restore the payload.");
     }
     // A historical successful primary transaction is not product-level removal.
+    Ok(!product_complete)
+}
+
+fn report_expanded_cleanup(
+    args: &Args,
+    store: &TransactionStore,
+    id: &TransactionId,
+    state: TransactionState,
+    reconcile: bool,
+) -> Result<bool, CliError> {
+    use agentmender_domain::TransactionEvent;
+    let unavailable = || {
+        CliError::new(
+            ErrorCode::TransactionUnavailable,
+            "cleanup report unavailable",
+        )
+    };
+    let snapshot = store.inspect(id).map_err(|_| unavailable())?;
+    let manifest = snapshot
+        .review_plan()
+        .and_then(|p| p.content().complete_removal_manifest.as_ref())
+        .ok_or_else(unavailable)?;
+    let records = store.records(id).map_err(|_| unavailable())?;
+    let report = records
+        .iter()
+        .rev()
+        .find_map(|record| match record.event() {
+            TransactionEvent::CompleteRemovalObserved { report } => Some(report),
+            _ => None,
+        });
+    let committed_actions: Vec<_> = records
+        .iter()
+        .filter_map(|record| match record.event() {
+            TransactionEvent::CompleteRemovalActionObserved { progress } => Some(progress),
+            _ => None,
+        })
+        .collect();
+    let assessment = report.map(|r| agentmender_domain::assess_complete_removal(manifest, r));
+    let product_complete = assessment.as_ref().is_some_and(|a| a.product_complete());
+    if args.json {
+        super::emit(
+            "approved_scoped_cleanup",
+            serde_json::json!({
+                "transaction_id":id,"state":state,"reconciliation_only":reconcile,
+                "outcome_contract":"structural_session_removal_v2",
+                "outcome":assessment.as_ref().map(|a|a.outcome),"session_removal":assessment,
+                "product_complete":product_complete,"primary_cleanup_contract":"scoped_primary_cleanup_v2",
+                "primary_cleanup_outcome":report.map(|r|r.primary.outcome),
+                "actions":committed_actions,"report":report,
+                "metadata_rows_planned":manifest.primary.rows,
+                "profile":manifest.profile,"required_persistent_surfaces":manifest.required_surfaces,
+                "physical_reclaimed_bytes":null,"production_app_restart":false,
+                "recovery":"reconciliation_metadata_only"
+            }),
+        )?;
+    } else {
+        println!(
+            "Expanded primary cleanup: {state:?}. Complete session removal remains unverified."
+        );
+        println!(
+            "Exact target attachment metadata and guardian feedback are included; shared payload assets are retained."
+        );
+        println!(
+            "Persistent Desktop reconstruction and isolated profile restart acceptance remain unverified. The current sidebar is not the success authority."
+        );
+        println!(
+            "Committed actions: {}",
+            super::approvals::safe(&committed_actions)?
+        );
+        println!(
+            "Logical payload bytes unlinked in this observation: {}. Physical reclaim: unknown.",
+            report.map_or(0, |r| r.primary.logical_unlinked_bytes)
+        );
+    }
     Ok(!product_complete)
 }

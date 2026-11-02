@@ -6,6 +6,11 @@ pub(super) const SCOPED_CODEX_EXECUTABLE_SHA256: &str =
 pub(super) const SCOPED_CODEX_SCHEMA_SHA256: &str =
     "1b88a3f88c8edb6f742d219835a821d0515b7b811b4342cd650e6ac8069f4647";
 pub(super) const SCOPED_ADAPTER: &str = "scoped-cleanup-v1";
+pub(super) const SCOPED_EXPANDED_ADAPTER: &str = "scoped-cleanup-v2";
+
+pub(super) fn is_expanded(m: &CleanupManifest) -> bool {
+    m.profile.adapter == SCOPED_EXPANDED_ADAPTER
+}
 
 pub(super) fn validate_manifest_profile(m: &CleanupManifest) -> bool {
     let root = &m.root.path;
@@ -15,7 +20,7 @@ pub(super) fn validate_manifest_profile(m: &CleanupManifest) -> bool {
         && p.version == SCOPED_CODEX_VERSION
         && p.executable_sha256 == SCOPED_CODEX_EXECUTABLE_SHA256
         && p.schema_sha256 == SCOPED_CODEX_SCHEMA_SHA256
-        && p.adapter == SCOPED_ADAPTER
+        && matches!(p.adapter.as_str(), SCOPED_ADAPTER | SCOPED_EXPANDED_ADAPTER)
         && p.platform == "darwin-arm64"
         && p.journal_mode == "wal"
         && p.history_layout == "legacy-plain"
@@ -33,10 +38,13 @@ pub(super) fn validate_manifest_profile(m: &CleanupManifest) -> bool {
                     | "thread_attachments"
                     | "guardian_review_feedback"
                     | "thread_spawn_edges"
-            ) && (!matches!(
-                r.table.as_str(),
-                "thread_attachments" | "guardian_review_feedback" | "thread_spawn_edges"
-            ) || r.expected_count == 0)
+            ) && (r.table != "thread_spawn_edges" || r.expected_count == 0)
+                && (is_expanded(m)
+                    || !matches!(
+                        r.table.as_str(),
+                        "thread_attachments" | "guardian_review_feedback"
+                    )
+                    || r.expected_count == 0)
         })
         && m.payloads.iter().all(|p| {
             (p.identity.path.starts_with(root.join("sessions"))

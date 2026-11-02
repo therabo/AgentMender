@@ -1,0 +1,122 @@
+{
+  "schema_version": 1,
+  "date": "2026-11-03",
+  "evidence_class": "static_exact_bundle_contract_research_only",
+  "verdict": "OPEN",
+  "desktop_profile_admitted": false,
+  "desktop_restart_acceptance": false,
+  "production_app_control": false,
+  "desktop_writer_fence_validated": false,
+  "default_macos_singleton_required": false,
+  "process_absence_is_lifetime_fence": false,
+  "bundle_id": "com.openai.codex",
+  "desktop_version": "26.1027.51404",
+  "desktop_build": "23880",
+  "app_asar_sha256": "52e0a65f9fea51f4287bbd98c63343761f9424517bb793652bb554764bc0bcc8",
+  "offset_unit": "Unicode code points; hash is UTF-8 encoding of selected text",
+  "source_windows": [
+    {
+      "claim": "global-map-writer",
+      "asset": ".vite/build/early-bootstrap-133-a2b781596743bab7.js",
+      "unicode_start": 12500,
+      "unicode_end": 17000,
+      "utf8_sha256": "ffbc0404f0f6174907e26f82d6ca82527bda72b7844888a5d2b2b4b46a3d3e6c"
+    },
+    {
+      "claim": "macos-singleton-selection",
+      "asset": ".vite/build/early-bootstrap-339-9edb60e5d8b0547e.js",
+      "unicode_start": 150650,
+      "unicode_end": 150900,
+      "utf8_sha256": "28d3088c7d2540c7daaf6e11cb589cd8bdef1a3b9c48432c48b4cecaa93f3a0d"
+    },
+    {
+      "claim": "singleton-startup",
+      "asset": ".vite/build/early-bootstrap-339-9edb60e5d8b0547e.js",
+      "unicode_start": 132450,
+      "unicode_end": 132900,
+      "utf8_sha256": "d767ee88e22c372596378f2f70a8ab963e8c651c6eb9ebd836f55d3b6b95d2bc"
+    },
+    {
+      "claim": "catalog-authoritative-removal",
+      "asset": ".vite/build/early-bootstrap-439-a0f25ba32c465de1.js",
+      "unicode_start": 466561,
+      "unicode_end": 467600,
+      "utf8_sha256": "9f5b5284a02d6c106c2eb18851f8260c43664d3ed2b4127a27c307d60f8dd90b"
+    },
+    {
+      "claim": "catalog-checkpoint-shape",
+      "asset": ".vite/build/early-bootstrap-439-a0f25ba32c465de1.js",
+      "unicode_start": 446350,
+      "unicode_end": 447050,
+      "utf8_sha256": "a08af5f94b16ca620b6e8d8258f82e28d24fbcd541fa39809d8540b9ebd02b4a"
+    },
+    {
+      "claim": "catalog-tombstone-suppression",
+      "asset": ".vite/build/early-bootstrap-439-a0f25ba32c465de1.js",
+      "unicode_start": 468100,
+      "unicode_end": 468700,
+      "utf8_sha256": "9fa719bda7798547bd64ba43b7b83619e076c601fe0d13e8ea9d6dafc5ee94fe"
+    },
+    {
+      "claim": "qualified-pinned-tabs",
+      "asset": "webview/assets/app-initial-61c1d0e6137e.js",
+      "unicode_start": 2180400,
+      "unicode_end": 2183900,
+      "utf8_sha256": "cb2e46dd9346f01c787d31b2ec60c4055d32d06126e627c71389c868d802af81"
+    },
+    {
+      "claim": "legacy-browser-import",
+      "asset": "webview/assets/app-initial-61c1d0e6137e.js",
+      "unicode_start": 3875203,
+      "unicode_end": 3876500,
+      "utf8_sha256": "0b1bad7f5df11c09d933dd92c102b929510a8746353ffab78d3ad22773e5dc4f"
+    },
+    {
+      "claim": "local-kind-host-map",
+      "asset": ".vite/build/early-bootstrap-439-a0f25ba32c465de1.js",
+      "unicode_start": 1959500,
+      "unicode_end": 1961700,
+      "utf8_sha256": "f998aa80f0aa149865202e1504657d9a3d4d41a3d8855f47cdd676a57ba1f9d7"
+    }
+  ],
+  "catalog_identity": [
+    "selected_root",
+    "host_id",
+    "thread_id",
+    "exact_schema",
+    "source_kind"
+  ],
+  "catalog_authoritative_removal": [
+    "increment_exact_host_observation_sequence",
+    "retain_shared_checkpoint",
+    "upsert_exact_removed_tombstone_if_scan_checkpoint",
+    "delete_exact_host_thread_catalog_row",
+    "bump_revision_only_if_visible_row_removed"
+  ],
+  "retained_suppression_tombstone": "technical_non_projecting_reconstruction_prevention",
+  "unsupported_bare_uuid_membership": "reject_without_authoritative_host_binding",
+  "legacy_browser_import": "unclosed_required_reconstruction_surface",
+  "production_mutations_admitted": [
+    "expanded_primary_state_5_attachment_metadata",
+    "expanded_primary_state_5_guardian_feedback"
+  ],
+  "unadmitted_mutations": [
+    "desktop_catalog",
+    "session_index",
+    "history",
+    "global_main",
+    "global_backup",
+    "legacy_browser",
+    "automation",
+    "logs_2",
+    "queue_1",
+    "goals_1",
+    "shell_snapshots"
+  ],
+  "remaining_gates": [
+    "stable_lifetime_desktop_writer_and_relaunch_exclusion",
+    "exact_persistent_browser_legacy_closure",
+    "composite_runtime_schema_and_profile_acceptance",
+    "actual_isolated_desktop_restart_and_reappearance"
+  ]
+}

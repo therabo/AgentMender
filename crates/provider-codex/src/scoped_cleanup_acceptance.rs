@@ -9,26 +9,57 @@ use std::fs;
 
 #[test]
 fn approved_adapter_removes_only_frozen_session_and_survives_reopen() {
-    run_acceptance(false, None, None);
+    run_acceptance(false, None, None, false);
 }
 
 #[test]
 fn interrupted_after_unlink_keeps_row_and_never_retries() {
-    run_acceptance(false, Some(TestFault::AfterUnlink), None);
+    run_acceptance(false, Some(TestFault::AfterUnlink), None, false);
 }
 
 #[test]
 fn interrupted_after_commit_reconciles_read_only_without_retry() {
-    run_acceptance(false, Some(TestFault::AfterCommit), None);
+    run_acceptance(false, Some(TestFault::AfterCommit), None, false);
 }
 
 #[test]
 #[ignore = "requires exact Codex 0.166 binary and built CLI evidence helper on macOS arm64"]
 fn exact_binary_and_sandboxed_worker_on_disposable_fixture() {
-    run_acceptance(true, None, None);
+    run_acceptance(true, None, None, false);
 }
 
-fn run_acceptance(live: bool, fault: Option<TestFault>, crash_base: Option<&std::path::Path>) {
+#[test]
+#[ignore = "requires exact Codex 0.166 binary and built CLI evidence helper on macOS arm64"]
+fn exact_binary_and_sandboxed_worker_expanded_metadata_on_disposable_fixture() {
+    run_acceptance(true, None, None, true);
+}
+
+#[test]
+fn expanded_profile_removes_target_metadata_and_preserves_foreign_metadata() {
+    run_acceptance(false, None, None, true);
+}
+
+#[test]
+fn expanded_unlink_interruption_is_unknown_and_reconciliation_is_read_only() {
+    run_acceptance(false, Some(TestFault::AfterUnlink), None, true);
+}
+
+#[test]
+fn expanded_database_interruption_is_unknown_and_reconciliation_is_read_only() {
+    run_acceptance(false, Some(TestFault::AfterCommit), None, true);
+}
+
+#[test]
+fn expanded_progress_failure_stops_before_database_commit() {
+    run_acceptance(false, Some(TestFault::RejectProgress), None, true);
+}
+
+fn run_acceptance(
+    live: bool,
+    fault: Option<TestFault>,
+    crash_base: Option<&std::path::Path>,
+    expanded: bool,
+) {
     let tmp = crash_base.is_none().then(|| tempfile::tempdir().unwrap());
     let base = crash_base
         .unwrap_or_else(|| tmp.as_ref().unwrap().path())
@@ -86,6 +117,19 @@ fn run_acceptance(live: bool, fault: Option<TestFault>, crash_base: Option<&std:
     for (id, path) in [(target, &payload), (child, &other)] {
         db.execute("INSERT INTO threads(id,rollout_path,created_at,updated_at,source,model_provider,cwd,title,sandbox_policy,approval_mode,cli_version) VALUES (?1,?2,1,1,'cli','openai',?3,'same','read-only','never','0.166.0')",(id,path.to_str().unwrap(),base.to_str().unwrap())).unwrap();
     }
+    let shared_asset = base.join("shared-attachment.asset");
+    if expanded {
+        fs::write(&shared_asset, b"shared attachment must survive").unwrap();
+        let attachment = serde_json::json!({"path":shared_asset}).to_string();
+        for (id, thread) in [("target", target), ("foreign", child)] {
+            db.execute("INSERT INTO thread_attachments(id,thread_id,attachment_type,identity_key,payload,created_at) VALUES (?1,?2,'fixture','shared-key',?3,1)", (id, thread, &attachment)).unwrap();
+            db.execute(
+                "INSERT INTO guardian_review_feedback(id,thread_id,record) VALUES (?1,?2,?3)",
+                (id, thread, b"fixture blob".as_slice()),
+            )
+            .unwrap();
+        }
+    }
     let mut persist = 1;
     db.file_control(
         None::<&str>,
@@ -122,6 +166,7 @@ fn run_acceptance(live: bool, fault: Option<TestFault>, crash_base: Option<&std:
         CodexScopedCleanupAdapter::for_owned_test(reader)
     };
     adapter.fault = fault;
+    adapter.expanded = expanded;
     if !live && fault.is_none() && crash_base.is_none() {
         let outside = base.join("foreign-rollout.jsonl");
         let contents = format!(
@@ -194,7 +239,14 @@ fn run_acceptance(live: bool, fault: Option<TestFault>, crash_base: Option<&std:
         .unwrap();
     let root_mtime = fs::metadata(&root).unwrap().modified().unwrap();
     fs::write(root.join("config.toml"), b"sqlite_home = '/elsewhere'\n").unwrap();
-    assert!(execute_scoped_cleanup(&mut store, &id, &adapter, &adapter).is_err());
+    let rejected = if expanded {
+        agentmender_application::lifecycle::execute_complete_removal(
+            &mut store, &id, &adapter, &adapter,
+        )
+    } else {
+        execute_scoped_cleanup(&mut store, &id, &adapter, &adapter)
+    };
+    assert!(rejected.is_err());
     assert_eq!(
         store.inspect(&id).unwrap().state(),
         TransactionState::Prepared
@@ -205,7 +257,19 @@ fn run_acceptance(live: bool, fault: Option<TestFault>, crash_base: Option<&std:
         .unwrap()
         .set_times(fs::FileTimes::new().set_modified(root_mtime))
         .unwrap();
-    let execution = execute_scoped_cleanup(&mut store, &id, &adapter, &adapter);
+    let execution = if expanded {
+        agentmender_application::lifecycle::execute_complete_removal(
+            &mut store, &id, &adapter, &adapter,
+        )
+    } else {
+        execute_scoped_cleanup(&mut store, &id, &adapter, &adapter)
+    };
+    if expanded {
+        assert_eq!(
+            fs::read(&shared_asset).unwrap(),
+            b"shared attachment must survive"
+        );
+    }
     if let Some(fault) = fault {
         assert!(execution.is_err());
         assert_eq!(
@@ -229,18 +293,34 @@ fn run_acceptance(live: bool, fault: Option<TestFault>, crash_base: Option<&std:
                 r.get(0)
             })
             .unwrap();
-        assert_eq!(target_count, i64::from(fault == TestFault::AfterUnlink));
+        assert_eq!(
+            target_count,
+            i64::from(matches!(
+                fault,
+                TestFault::AfterUnlink | TestFault::RejectProgress
+            ))
+        );
         assert_eq!(child_count, 1);
         drop(db);
         drop(store);
         let owned = OwnedStateRoot::open(&base.join("owned"), std::slice::from_ref(&root)).unwrap();
         let mut store = TransactionStore::open(owned).unwrap();
-        assert_eq!(
+        let reconciled = if expanded {
+            agentmender_application::lifecycle::reconcile_complete_removal(
+                &mut store, &id, &adapter,
+            )
+        } else {
             agentmender_application::lifecycle::reconcile_cleanup(&mut store, &id, &adapter)
-                .unwrap(),
-            TransactionState::RecoveryRequired
-        );
-        assert!(execute_scoped_cleanup(&mut store, &id, &adapter, &adapter).is_err());
+        };
+        assert_eq!(reconciled.unwrap(), TransactionState::RecoveryRequired);
+        let retry = if expanded {
+            agentmender_application::lifecycle::execute_complete_removal(
+                &mut store, &id, &adapter, &adapter,
+            )
+        } else {
+            execute_scoped_cleanup(&mut store, &id, &adapter, &adapter)
+        };
+        assert!(retry.is_err());
         assert!(!payload.exists());
         assert!(other.exists());
         return;
@@ -259,6 +339,20 @@ fn run_acceptance(live: bool, fault: Option<TestFault>, crash_base: Option<&std:
         })
         .unwrap();
     assert_eq!(count, 1);
+    if expanded {
+        for table in ["thread_attachments", "guardian_review_feedback"] {
+            let sql = format!("SELECT count(*) FROM {table} WHERE thread_id=?1");
+            assert_eq!(
+                db.query_row(&sql, [target], |r| r.get::<_, i64>(0))
+                    .unwrap(),
+                0
+            );
+            assert_eq!(
+                db.query_row(&sql, [child], |r| r.get::<_, i64>(0)).unwrap(),
+                1
+            );
+        }
+    }
     drop(db);
     drop(store);
     let owned = OwnedStateRoot::open(&base.join("owned"), std::slice::from_ref(&root)).unwrap();
@@ -272,7 +366,7 @@ fn run_acceptance(live: bool, fault: Option<TestFault>, crash_base: Option<&std:
 
 // The child path is accepted only from a fresh private directory with a marker;
 // it is test-only and never influences the executable pin or a production path.
-fn crash_child(fault: TestFault) {
+fn crash_child(fault: TestFault, expanded: bool) {
     use std::os::unix::fs::MetadataExt;
     let Some(raw) = std::env::var_os("AGENTMENDER_TEST_CRASH_DIR") else {
         return;
@@ -297,7 +391,7 @@ fn crash_child(fault: TestFault) {
         b"agentmender disposable crash fixture"
     );
     assert!(!canonical.join("provider").exists() && !canonical.join("owned").exists());
-    run_acceptance(false, Some(fault), Some(&canonical));
+    run_acceptance(false, Some(fault), Some(&canonical), expanded);
     panic!("injected child did not terminate at the expected cut");
 }
 
@@ -311,14 +405,23 @@ fn crash_temp_base() -> std::path::PathBuf {
 
 #[test]
 fn child_terminate_after_unlink() {
-    crash_child(TestFault::CrashAfterUnlink);
+    crash_child(TestFault::CrashAfterUnlink, false);
 }
 #[test]
 fn child_terminate_after_commit() {
-    crash_child(TestFault::CrashAfterCommit);
+    crash_child(TestFault::CrashAfterCommit, false);
 }
 
-fn process_crash_case(child_name: &str, code: i32, target_remains: bool) {
+#[test]
+fn expanded_child_terminate_after_unlink() {
+    crash_child(TestFault::CrashAfterUnlink, true);
+}
+#[test]
+fn expanded_child_terminate_after_commit() {
+    crash_child(TestFault::CrashAfterCommit, true);
+}
+
+fn process_crash_case(child_name: &str, code: i32, target_remains: bool, expanded: bool) {
     use std::os::unix::fs::PermissionsExt;
     let temp = tempfile::Builder::new()
         .prefix("agentmender-m82-crash-")
@@ -374,6 +477,24 @@ fn process_crash_case(child_name: &str, code: i32, target_remains: bool) {
         .unwrap();
     assert_eq!(target_count, i64::from(target_remains));
     assert_eq!(child_count, 1);
+    if expanded {
+        for table in ["thread_attachments", "guardian_review_feedback"] {
+            let sql = format!("SELECT count(*) FROM {table} WHERE thread_id=?1");
+            assert_eq!(
+                db.query_row(&sql, [target], |r| r.get::<_, i64>(0))
+                    .unwrap(),
+                i64::from(target_remains)
+            );
+            assert_eq!(
+                db.query_row(&sql, [child], |r| r.get::<_, i64>(0)).unwrap(),
+                1
+            );
+        }
+        assert_eq!(
+            fs::read(base.join("shared-attachment.asset")).unwrap(),
+            b"shared attachment must survive"
+        );
+    }
     drop(db);
     let owned = OwnedStateRoot::open(&base.join("owned"), std::slice::from_ref(&root)).unwrap();
     let mut store = TransactionStore::open(owned).unwrap();
@@ -384,18 +505,57 @@ fn process_crash_case(child_name: &str, code: i32, target_remains: bool) {
         entries[0].state(),
         TransactionState::OutcomeUnknown | TransactionState::RecoveryRequired
     ));
-    let adapter =
+    let mut adapter =
         CodexScopedCleanupAdapter::for_owned_test(crate::CodexAdapter::new(ProviderLocation {
             state_root: root.clone(),
             executable: None,
         }));
-    let reconciled =
-        agentmender_application::lifecycle::reconcile_cleanup(&mut store, &id, &adapter).unwrap();
+    adapter.expanded = expanded;
+    let committed_before = store
+        .records(&id)
+        .unwrap()
+        .iter()
+        .filter(|r| {
+            matches!(
+                r.event(),
+                agentmender_domain::TransactionEvent::CompleteRemovalActionObserved { .. }
+            )
+        })
+        .count();
+    if expanded {
+        assert_eq!(committed_before, if target_remains { 1 } else { 2 });
+    }
+    let reconciled = if expanded {
+        agentmender_application::lifecycle::reconcile_complete_removal(&mut store, &id, &adapter)
+            .unwrap()
+    } else {
+        agentmender_application::lifecycle::reconcile_cleanup(&mut store, &id, &adapter).unwrap()
+    };
     assert!(matches!(
         reconciled,
         TransactionState::OutcomeUnknown | TransactionState::RecoveryRequired
     ));
     assert!(execute_scoped_cleanup(&mut store, &id, &adapter, &adapter).is_err());
+    if expanded {
+        assert!(
+            agentmender_application::lifecycle::execute_complete_removal(
+                &mut store, &id, &adapter, &adapter
+            )
+            .is_err()
+        );
+        assert_eq!(
+            store
+                .records(&id)
+                .unwrap()
+                .iter()
+                .filter(|r| matches!(
+                    r.event(),
+                    agentmender_domain::TransactionEvent::CompleteRemovalActionObserved { .. }
+                ))
+                .count(),
+            committed_before
+        );
+    }
     assert!(!payload.exists());
     assert!(other.exists());
 }
@@ -406,6 +566,7 @@ fn process_termination_after_unlink_preserves_other_session() {
         "scoped_cleanup::acceptance::child_terminate_after_unlink",
         86,
         true,
+        false,
     );
 }
 #[test]
@@ -414,5 +575,25 @@ fn process_termination_after_commit_preserves_other_session() {
         "scoped_cleanup::acceptance::child_terminate_after_commit",
         87,
         false,
+        false,
+    );
+}
+
+#[test]
+fn expanded_process_termination_after_unlink_preserves_commit_prefix() {
+    process_crash_case(
+        "scoped_cleanup::acceptance::expanded_child_terminate_after_unlink",
+        86,
+        true,
+        true,
+    );
+}
+#[test]
+fn expanded_process_termination_after_commit_preserves_commit_prefix() {
+    process_crash_case(
+        "scoped_cleanup::acceptance::expanded_child_terminate_after_commit",
+        87,
+        false,
+        true,
     );
 }

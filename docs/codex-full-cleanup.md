@@ -12,11 +12,18 @@ M8.2 scoped primary cleanup is PASS and integrated at
 `a284767157ace8769deee85b195b5b70efe374d8`
 ([receipt](milestones/m8-2-integration.md)). It proves its narrow exact local cut;
 it does not invalidate the historical native blockers below.
-M8.2.1 is OPEN under [ADR-0018](adr/0018-complete-session-removal.md): complete
-product removal additionally requires every supported projection clean after
-reload/restart and maximum safe artifact cleanup. The current pure assessment
-refuses that claim for primary-only receipts; no complete Desktop mutation profile
-is enabled. See [the current scoped/product contract](scoped-session-cleanup.md).
+M8.2.1 is OPEN under [ADR-0019](adr/0019-structural-removal-and-profile-acceptance.md).
+Production success is established by structural persistent-state verification.
+The currently open graphical sidebar may temporarily be stale and is not the
+authority for cleanup success. An admitted exact compatibility profile must
+independently prove through isolated restart/reload acceptance that structurally
+removed sessions do not reappear. Production never restarts Codex for visual
+verification. Required stores without lifetime writer exclusion block before
+mutation; a process-absence snapshot alone does not fence a later launch.
+The expanded primary schema-3 profile removes exact attachment/guardian metadata,
+but no complete Desktop profile is admitted. See
+[the current contract](scoped-session-cleanup.md). Historical native verdict below
+retains its original scope.
 
 Verdict: **BLOCKED**. Can AgentMender now safely implement “remove this Codex
 session”? **NO**. The reviewed current contract does not supply a complete

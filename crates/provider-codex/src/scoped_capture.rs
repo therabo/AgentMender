@@ -47,6 +47,7 @@ pub struct ScopedCaptureResult {
     pub rows: Vec<ScopedRowCommitment>,
     pub known_threads: Vec<ScopedKnownThread>,
     pub retained_database_sha256: String,
+    pub expanded_retained_database_sha256: String,
 }
 
 /// Only fixed identity and locator columns cross the protected boundary.
@@ -272,6 +273,9 @@ pub(super) fn snapshot(
     let known_threads = known_threads(&memory)?;
     let retained_database_sha256 =
         crate::scoped_storage::retained_digest(&memory, target).map_err(|_| unavailable())?;
+    let expanded_retained_database_sha256 =
+        crate::scoped_storage::retained_digest_for_profile(&memory, target, true)
+            .map_err(|_| unavailable())?;
     drop(memory);
     let after = capture::fingerprints(source_root)?;
     // SQLite may change SHM read marks while reading. The bounded snapshot is
@@ -290,6 +294,7 @@ pub(super) fn snapshot(
         rows,
         known_threads,
         retained_database_sha256,
+        expanded_retained_database_sha256,
     })
 }
 
@@ -399,6 +404,11 @@ pub(super) fn read_worker_result(
                     && Some(&row.rollout_path) == result.target_path.as_ref()
             }))
         || result.journal_mode != "wal"
+        || result.expanded_retained_database_sha256.len() != 64
+        || !result
+            .expanded_retained_database_sha256
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
         || result.retained_database_sha256.len() != 64
         || !result
             .retained_database_sha256

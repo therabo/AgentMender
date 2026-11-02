@@ -61,6 +61,7 @@ pub(super) fn planning_context(
         capabilities,
         effects: None,
         cleanup_evidence: None,
+        complete_removal_evidence: None,
     })
 }
 

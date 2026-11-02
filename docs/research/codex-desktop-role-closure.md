@@ -53,3 +53,41 @@ Local public SDK `/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/includ
 The exact persisted atom is `electron-persisted-atom-state.update-resume-state-v1` (early-bootstrap.js around224694). It contains accountId/userId/threadIds/expiresAtMs according to main's schema. Main consumes and clears it with a flushed global write; renderer only auto-resumes it for the matching ChatGPT account/user and a nonexpired timestamp. ApiKey-only acceptance cannot establish the ChatGPT update-resume/reminder branch.
 
 Renderer active-chat candidates are validated by kN (app-runtime around99177): actual listThreadTurns must return a latest interrupted turn; old candidates also need recent actual readThread metadata. Promise.allSettled drops failed/missing candidates. This inspected reminder path therefore does not construct a full catalog entry from the activity ID alone. However current-profile absence must still be observed, and exact safely attributable records should be removed when support is established. Account/profile-qualified rows belonging to another principal remain protected.
+
+## 2026-11-03 persistent writer closure
+
+[ADR-0019](../adr/0019-structural-removal-and-profile-acceptance.md) now separates
+persistent runtime verification from isolated profile restart acceptance. Pure
+currently rendered presentation may be stale; a cached Map capable of persisting
+old records is a writer/reconstruction surface and is not harmless ephemeral UI.
+
+The exact static bundle revalidation is retained in
+[persistent-contract-2026-11-03.json](../../compatibility/codex/complete-removal-research/persistent-contract-2026-11-03.json).
+Nine Unicode-window SHA-256 commitments independently matched the installed ASAR.
+Bundle339 characters150650–150900 contains the packaged/isMacOS/explicit-userData
+singleton selector; characters132450–132900 contains its startup use. Default
+packaged macOS launches bypass Electron singleton locking. An external singleton
+holder therefore cannot fence default-root launches. Explicit isolated userData
+uses singleton locking, but no external maintenance-holder protocol is validated.
+
+Bundle133 characters12500–17000 loads the global Map and queues whole-Map writes
+to current and backup without a reviewed cross-process CAS or stable lock. An app
+launched after an absence check can read pre-cleanup data, wait on SQLite, then
+repersist old records after cleanup. Process census plus native rollout/SQLite
+locks is insufficient. No global/catalog/browser production mutation is admitted.
+This is an OPEN implementation/evidence gap, not proof of provider impossibility.
+
+Catalog authoritative removal increments only the exact host observation sequence,
+conditionally records an exact removed scan tombstone if a scan/checkpoint exists,
+deletes the exact host/thread row, and advances catalog revision only for a visible
+removed row. Shared checkpoints store cursors/anchors, not catalog payloads; keep
+them. The exact removed tombstone suppresses scan resurrection and may be required
+non-projecting technical state. Never reset a whole host/catalog.
+
+Pinned-content-tabs records have account/host/thread identity and related exact
+presentation/order entries. A local-kind legacy custom-section item key is not
+execution-host identity: the separate threadHostIds map can designate another
+host. Native legacy pin resolution requires one unique successful host read.
+Legacy localStorage custom sections are imported on startup; cleaning global
+atoms alone does not close that reconstruction route. Unknown or ambiguous target
+legacy/browser memberships block complete-profile admission.

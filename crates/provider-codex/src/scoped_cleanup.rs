@@ -5,7 +5,7 @@ use crate::{
     CodexAdapter, scoped_files,
     scoped_profile::{
         self, SCOPED_ADAPTER, SCOPED_CODEX_EXECUTABLE_SHA256, SCOPED_CODEX_SCHEMA_SHA256,
-        SCOPED_CODEX_VERSION,
+        SCOPED_CODEX_VERSION, SCOPED_EXPANDED_ADAPTER,
     },
     scoped_storage,
 };
@@ -22,6 +22,7 @@ use std::io::Read;
 
 pub struct CodexScopedCleanupAdapter {
     reader: CodexAdapter,
+    expanded: bool,
     #[cfg(test)]
     synthetic_pin: bool,
     #[cfg(test)]
@@ -35,12 +36,14 @@ enum TestFault {
     AfterCommit,
     CrashAfterUnlink,
     CrashAfterCommit,
+    RejectProgress,
 }
 
 impl CodexScopedCleanupAdapter {
     pub fn new(reader: CodexAdapter) -> Self {
         Self {
             reader,
+            expanded: false,
             #[cfg(test)]
             synthetic_pin: false,
             #[cfg(test)]
@@ -48,10 +51,18 @@ impl CodexScopedCleanupAdapter {
         }
     }
 
+    /// Explicitly select the separately versioned expanded primary profile.
+    pub fn new_expanded(reader: CodexAdapter) -> Self {
+        let mut adapter = Self::new(reader);
+        adapter.expanded = true;
+        adapter
+    }
+
     #[cfg(test)]
     pub(super) fn for_owned_test(reader: CodexAdapter) -> Self {
         Self {
             reader,
+            expanded: false,
             synthetic_pin: true,
             fault: None,
         }
@@ -90,12 +101,37 @@ impl CodexScopedCleanupAdapter {
     }
 
     fn manifest<'a>(&self, plan: &'a LifecyclePlan) -> Result<&'a CleanupManifest, EffectError> {
+        self.manifest_for(plan, false)
+    }
+
+    fn manifest_for<'a>(
+        &self,
+        plan: &'a LifecyclePlan,
+        expanded: bool,
+    ) -> Result<&'a CleanupManifest, EffectError> {
         let p = plan.content();
-        let m = p
-            .cleanup_manifest
-            .as_ref()
-            .ok_or(EffectError::InvalidEvidence)?;
-        if p.schema_version != 2
+        let m = if expanded {
+            let outer = p
+                .complete_removal_manifest
+                .as_ref()
+                .ok_or(EffectError::InvalidEvidence)?;
+            if p.schema_version != 3
+                || p.cleanup_manifest.is_some()
+                || !agentmender_domain::validate_complete_removal_manifest(outer)
+            {
+                return Err(EffectError::InvalidEvidence);
+            }
+            &outer.primary
+        } else {
+            if p.schema_version != 2 || p.complete_removal_manifest.is_some() {
+                return Err(EffectError::InvalidEvidence);
+            }
+            p.cleanup_manifest
+                .as_ref()
+                .ok_or(EffectError::InvalidEvidence)?
+        };
+        if scoped_profile::is_expanded(m) != expanded
+            || self.expanded != expanded
             || p.status != PlanStatus::Ready
             || p.request.intent != LifecycleIntent::CleanupSession
             || p.request.target != m.target
@@ -264,7 +300,7 @@ impl DurableCleanupPort for CodexScopedCleanupAdapter {
                 NativeOutcome::NeverDispatched(EffectError::InvalidEvidence),
                 None,
             )
-        } else if let Err(error) = self.preflight(plan) {
+        } else if let Err(error) = DurableCleanupPort::preflight(self, plan) {
             (NativeOutcome::NeverDispatched(error), None)
         } else {
             self.execute(plan, expires_at)
@@ -293,7 +329,12 @@ impl DurableCleanupPort for CodexScopedCleanupAdapter {
             .iter()
             .find(|r| r.table == "threads")
             .is_some_and(|r| r.count == 0);
-        let retained_database = db.retained_database_sha256 == manifest.retained_database_sha256;
+        let observed_retained = if scoped_profile::is_expanded(manifest) {
+            &db.expanded_retained_database_sha256
+        } else {
+            &db.retained_database_sha256
+        };
+        let retained_database = observed_retained == &manifest.retained_database_sha256;
         // Independent read-only observations cannot establish one simultaneous
         // fenced cutoff, so preserve the overall unknown state even if individual
         // frozen actions are observed absent. No destructive authority is recreated.
@@ -309,6 +350,165 @@ impl DurableCleanupPort for CodexScopedCleanupAdapter {
     }
 }
 
+impl agentmender_persistence::DurableCompleteRemovalPort for CodexScopedCleanupAdapter {
+    fn preflight(&self, plan: &LifecyclePlan) -> Result<(), EffectError> {
+        let manifest = self.manifest_for(plan, true)?;
+        self.validate_executable()?;
+        let snapshot = self
+            .capture_target(manifest.native_session_id.as_str())
+            .map_err(|_| EffectError::Unavailable)?;
+        let cwd = snapshot
+            .cwd
+            .as_deref()
+            .ok_or(EffectError::InvalidEvidence)?;
+        crate::scoped_config::validate(&manifest.root.path, cwd)
+    }
+
+    fn dispatch(
+        &self,
+        intent: DurableIntent,
+        plan: &LifecyclePlan,
+        progress: &mut dyn agentmender_persistence::CompleteRemovalProgress,
+    ) -> agentmender_persistence::CompleteRemovalAttempt {
+        use agentmender_domain::{CompleteRemovalAction, CompleteRemovalActionProgress};
+        let matches = intent.plan_digest() == plan.digest()
+            && intent.state_fingerprint() == plan.state_fingerprint()
+            && intent.operation_index() == 0;
+        let expires_at = intent.expires_at();
+        let observation = intent.into_observation();
+        let mut completed = [false; 2];
+        let (outcome, mut primary) = if !matches || !not_expired(expires_at) {
+            (
+                NativeOutcome::NeverDispatched(EffectError::InvalidEvidence),
+                None,
+            )
+        } else if let Err(e) =
+            <Self as agentmender_persistence::DurableCompleteRemovalPort>::preflight(self, plan)
+        {
+            (NativeOutcome::NeverDispatched(e), None)
+        } else if let Ok(m) = self.manifest_for(plan, true) {
+            self.execute_manifest(m, expires_at, &mut |action| {
+                #[cfg(test)]
+                if self.fault == Some(TestFault::RejectProgress) {
+                    return Err(EffectError::Transport);
+                }
+                progress.record(
+                    &observation,
+                    CompleteRemovalActionProgress {
+                        action,
+                        outcome: CleanupActionOutcome::Removed,
+                    },
+                )?;
+                completed[match action {
+                    CompleteRemovalAction::PrimaryPayload => 0,
+                    CompleteRemovalAction::StateThreadRecords => 1,
+                }] = true;
+                Ok(())
+            })
+        } else {
+            (
+                NativeOutcome::NeverDispatched(EffectError::InvalidEvidence),
+                None,
+            )
+        };
+        if matches!(outcome, NativeOutcome::NeverDispatched(_))
+            && primary.is_none()
+            && let Ok(manifest) = self.manifest_for(plan, true)
+        {
+            primary = Some(report_blocked(manifest));
+        }
+        let report = primary.and_then(|primary| {
+            plan.content()
+                .complete_removal_manifest
+                .as_ref()
+                .map(|m| complete_report(m, primary, completed))
+        });
+        agentmender_persistence::CompleteRemovalAttempt {
+            observation,
+            outcome,
+            report,
+        }
+    }
+
+    fn observe(
+        &self,
+        plan: &LifecyclePlan,
+    ) -> Result<agentmender_domain::CompleteRemovalReport, EffectError> {
+        let manifest = self.manifest_for(plan, true)?;
+        let (action, _) = scoped_files::reconcile_files(manifest)?;
+        let db = self
+            .capture_target(manifest.native_session_id.as_str())
+            .map_err(|_| EffectError::Unavailable)?;
+        let row_absent = db
+            .rows
+            .iter()
+            .find(|r| r.table == "threads")
+            .is_some_and(|r| r.count == 0);
+        let primary = report(
+            manifest,
+            CleanupOutcome::OutcomeUnknown,
+            action,
+            row_absent,
+            false,
+        );
+        Ok(complete_report(
+            plan.content()
+                .complete_removal_manifest
+                .as_ref()
+                .ok_or(EffectError::InvalidEvidence)?,
+            primary,
+            [false; 2],
+        ))
+    }
+}
+
+fn complete_report(
+    m: &agentmender_domain::CompleteRemovalManifest,
+    mut primary: CleanupReport,
+    completed: [bool; 2],
+) -> agentmender_domain::CompleteRemovalReport {
+    if !completed[0]
+        && primary
+            .actions
+            .iter()
+            .any(|action| action.outcome == CleanupActionOutcome::Removed)
+    {
+        for action in &mut primary.actions {
+            action.outcome = CleanupActionOutcome::Unknown;
+            action.logical_unlinked_bytes = 0;
+        }
+        primary.logical_unlinked_bytes = 0;
+    }
+    if !completed[1] {
+        primary.canonical_row_absent = false;
+    }
+    use agentmender_domain::{
+        CompleteRemovalActionProgress, CompleteRemovalReport, PersistentObservation,
+        PersistentSurfaceObservation,
+    };
+    CompleteRemovalReport {
+        primary,
+        actions: m
+            .actions
+            .iter()
+            .enumerate()
+            .take_while(|(i, _)| completed[*i])
+            .map(|(_, action)| CompleteRemovalActionProgress {
+                action: *action,
+                outcome: CleanupActionOutcome::Removed,
+            })
+            .collect(),
+        surfaces: m
+            .required_surfaces
+            .iter()
+            .map(|s| PersistentSurfaceObservation {
+                id: s.id.clone(),
+                observation: PersistentObservation::Unknown,
+            })
+            .collect(),
+    }
+}
+
 impl CodexScopedCleanupAdapter {
     fn execute(
         &self,
@@ -319,6 +519,17 @@ impl CodexScopedCleanupAdapter {
             Ok(m) => m,
             Err(e) => return (NativeOutcome::NeverDispatched(e), None),
         };
+        self.execute_manifest(m, expires_at, &mut |_| Ok(()))
+    }
+
+    fn execute_manifest(
+        &self,
+        m: &CleanupManifest,
+        expires_at: u64,
+        progress: &mut dyn FnMut(
+            agentmender_domain::CompleteRemovalAction,
+        ) -> Result<(), EffectError>,
+    ) -> (NativeOutcome, Option<CleanupReport>) {
         let writers = match scoped_files::WriterFence::acquire(m) {
             Ok(v) => v,
             Err(e) => return (NativeOutcome::NeverDispatched(e), None),
@@ -375,6 +586,18 @@ impl CodexScopedCleanupAdapter {
                 )),
             );
         }
+        if let Err(e) = progress(agentmender_domain::CompleteRemovalAction::PrimaryPayload) {
+            return (
+                NativeOutcome::Unknown(e),
+                Some(report(
+                    m,
+                    CleanupOutcome::OutcomeUnknown,
+                    CleanupActionOutcome::Removed,
+                    false,
+                    false,
+                )),
+            );
+        }
         if let Err(e) = sidecars.validate(m) {
             return (
                 NativeOutcome::Unknown(e),
@@ -419,6 +642,20 @@ impl CodexScopedCleanupAdapter {
                 );
             }
         };
+        if database_ok
+            && let Err(e) = progress(agentmender_domain::CompleteRemovalAction::StateThreadRecords)
+        {
+            return (
+                NativeOutcome::Unknown(e),
+                Some(report(
+                    m,
+                    CleanupOutcome::OutcomeUnknown,
+                    CleanupActionOutcome::Removed,
+                    true,
+                    false,
+                )),
+            );
+        }
         #[cfg(test)]
         if self.fault == Some(TestFault::CrashAfterCommit) {
             std::process::exit(87);
@@ -509,10 +746,13 @@ impl agentmender_provider_api::ScopedCleanupReadPort for CodexScopedCleanupAdapt
         if db.history_mode.as_deref() != Some("legacy")
             || db.dependent_rows != 0
             || db.rows.iter().any(|r| {
-                matches!(
-                    r.table.as_str(),
-                    "thread_attachments" | "guardian_review_feedback" | "thread_spawn_edges"
-                ) && r.count != 0
+                matches!(r.table.as_str(), "thread_spawn_edges") && r.count != 0
+                    || (!self.expanded
+                        && matches!(
+                            r.table.as_str(),
+                            "thread_attachments" | "guardian_review_feedback"
+                        )
+                        && r.count != 0)
             })
         {
             return Err(unavailable());
@@ -543,7 +783,7 @@ impl agentmender_provider_api::ScopedCleanupReadPort for CodexScopedCleanupAdapt
             kind: ProviderKind::Codex,
             presence: Presence::Installed,
             state_root: self.reader.location.state_root.clone(),
-            fingerprint: ProviderFingerprint { executable: self.reader.location.executable.clone(), executable_version: Some(SCOPED_CODEX_VERSION.into()), adapter_version: env!("CARGO_PKG_VERSION").into(), interface_id: Some(SCOPED_ADAPTER.into()), layout_id: Some(format!("codex-state-5:{SCOPED_CODEX_SCHEMA_SHA256}")) },
+            fingerprint: ProviderFingerprint { executable: self.reader.location.executable.clone(), executable_version: Some(SCOPED_CODEX_VERSION.into()), adapter_version: env!("CARGO_PKG_VERSION").into(), interface_id: Some(if self.expanded { SCOPED_EXPANDED_ADAPTER } else { SCOPED_ADAPTER }.into()), layout_id: Some(format!("codex-state-5:{SCOPED_CODEX_SCHEMA_SHA256}")) },
             capabilities: ProviderCapabilities::new(),
             compatibility: CompatibilityProfile { status: CompatibilityStatus::ReadOnlyKnown, interface_stability: InterfaceStability::InternalImplementationDetail, reason: "Exact scoped cleanup evidence only; native lifecycle and general provider compatibility remain separate.".into() },
             installations: vec![], evidence_status: EvidenceStatus::SnapshotVerified, diagnostics: vec![],
@@ -616,7 +856,12 @@ impl agentmender_provider_api::ScopedCleanupReadPort for CodexScopedCleanupAdapt
                 version: SCOPED_CODEX_VERSION.into(),
                 executable_sha256: SCOPED_CODEX_EXECUTABLE_SHA256.into(),
                 schema_sha256: SCOPED_CODEX_SCHEMA_SHA256.into(),
-                adapter: SCOPED_ADAPTER.into(),
+                adapter: if self.expanded {
+                    SCOPED_EXPANDED_ADAPTER
+                } else {
+                    SCOPED_ADAPTER
+                }
+                .into(),
                 platform: "darwin-arm64".into(),
                 journal_mode: "wal".into(),
                 history_layout: "legacy-plain".into(),
@@ -639,7 +884,11 @@ impl agentmender_provider_api::ScopedCleanupReadPort for CodexScopedCleanupAdapt
                 header_sha256: files.header_sha256,
             }],
             optional_index: None,
-            retained_database_sha256: db.retained_database_sha256,
+            retained_database_sha256: if self.expanded {
+                db.expanded_retained_database_sha256
+            } else {
+                db.retained_database_sha256
+            },
             retained_files: files.retained_files,
             residuals: vec![CleanupResidual {
                 artifact: ArtifactId {
@@ -655,17 +904,48 @@ impl agentmender_provider_api::ScopedCleanupReadPort for CodexScopedCleanupAdapt
         if !scoped_profile::validate_manifest_profile(&manifest) {
             return Err(unavailable());
         }
+        let primary_evidence = ScopedCleanupEvidence {
+            manifest: manifest.clone(),
+            root_boundary: CleanupBoundaryObservation::CompleteAndUnshared,
+            references: CleanupBoundaryObservation::CompleteAndUnshared,
+            writer_fence: CleanupBoundaryObservation::CompleteAndUnshared,
+            schema: CleanupBoundaryObservation::CompleteAndUnshared,
+        };
+        let complete_removal_evidence = if self.expanded {
+            Some(CompleteRemovalEvidence {
+                manifest: CompleteRemovalManifest {
+                    primary: manifest.clone(),
+                    actions: vec![
+                        CompleteRemovalAction::PrimaryPayload,
+                        CompleteRemovalAction::StateThreadRecords,
+                    ],
+                    profile: CompleteRemovalProfile {
+                        identity: EntityId::new("codex-scoped-cleanup-v2")
+                            .map_err(|_| unavailable())?,
+                        admission: ProfileAdmission::PrimaryOnly,
+                        writer_requirement: WriterRequirement::CompatibleLifetimeFence,
+                    },
+                    required_surfaces: vec![PersistentSurface {
+                        id: EntityId::new("codex-desktop-reconstruction-unverified")
+                            .map_err(|_| unavailable())?,
+                    }],
+                    technical_residuals: manifest.residuals.clone(),
+                },
+                primary_evidence: primary_evidence.clone(),
+            })
+        } else {
+            None
+        };
         let context = PlanningContext {
             scope: scope.clone(),
             capabilities: vec![],
             effects: None,
-            cleanup_evidence: Some(ScopedCleanupEvidence {
-                manifest,
-                root_boundary: CleanupBoundaryObservation::CompleteAndUnshared,
-                references: CleanupBoundaryObservation::CompleteAndUnshared,
-                writer_fence: CleanupBoundaryObservation::CompleteAndUnshared,
-                schema: CleanupBoundaryObservation::CompleteAndUnshared,
-            }),
+            cleanup_evidence: if self.expanded {
+                None
+            } else {
+                Some(primary_evidence)
+            },
+            complete_removal_evidence,
         };
         Ok(ScopedCleanupObservation {
             graph: graph.finish()?,

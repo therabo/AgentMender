@@ -4,13 +4,22 @@
 
 M8.2 primary cleanup is PASS and [integrated](../../docs/milestones/m8-2-integration.md)
 at a284767157ace8769deee85b195b5b70efe374d8. M8.2.1 is OPEN under
-[ADR-0018](../../docs/adr/0018-complete-session-removal.md), with zero admitted
+[ADR-0019](../../docs/adr/0019-structural-removal-and-profile-acceptance.md), with zero admitted
 complete graphical removal profiles. Installed Desktop 26.1027.51404/build23880
 embeds CLI 0.166.0-alpha.5.1, which cannot inherit stable scoped-cleanup-v1 authority.
 A stable CLI override is a research composite candidate, not an enabled profile.
 Exact static projection/source hashes, runtime evidence gaps, app coordination and
 restart acceptance must be considered independently. Historical v1 pins/receipts
 below remain primary-cleanup evidence and do not promise UI disappearance.
+
+## Expanded primary profile
+
+[scoped-cleanup-v2](scoped-cleanup-v2/README.md) is separately reviewed schema-3
+primary cleanup with exact attachment/guardian metadata actions. Old v2 plans and
+grants cannot reach it. It is not a graphical profile. Current removal authority
+is structural persistent state under [ADR-0019](../../docs/adr/0019-structural-removal-and-profile-acceptance.md);
+production never restarts Codex for visual verification. Isolated restart/reappearance
+acceptance remains required before complete-profile admission.
 
 ## M8.2: separate scoped-local compatibility axis
 

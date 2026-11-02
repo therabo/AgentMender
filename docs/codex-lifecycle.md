@@ -2,19 +2,25 @@
 
 ## M8.2.1 graphical removal boundary
 
-M8.2 primary cleanup is PASS and [integrated](milestones/m8-2-integration.md).
-[ADR-0018](adr/0018-complete-session-removal.md) reserves complete Session Removed
-for verified disappearance from every supported projection after reload/restart,
-plus maximum safe artifact cleanup and collateral preservation. No complete
-Desktop mutation profile is admitted; the current legacy product assessment is
-ProjectionIncomplete. Historical native/scoped pins and v2 grants remain unchanged.
+M8.2 is historical primary-cleanup PASS. Schema-3 `scoped-cleanup-v2` extends exact
+stable 0.166.0 primary cleanup to target attachment metadata and guardian feedback;
+it retains shared payloads, spawn edges, unrelated rows and unsupported stores.
+Historical schema-2 `scoped-cleanup-v1` remains separate. Both assess complete
+Desktop removal as ProjectionIncomplete.
 
-Installed Desktop 26.1027.51404/build23880 embeds 0.166.0-alpha.5.1, whereas the
-scoped adapter admits stable 0.166.0. Static source reveals independent catalogs,
-global backup and renderer state; native thread/deleted invalidation is not a
-proven external target-only cleanup API. Native descendant deletion remains
-unsupported. Exact composite GUI coordination and isolated restart acceptance
-are pending; no real application is stopped or restarted by this foundation.
+Production success is established by structural persistent-state verification.
+The currently open graphical sidebar may temporarily be stale and is not the
+authority for cleanup success. An admitted exact compatibility profile must
+independently prove through isolated restart/reload acceptance that structurally
+removed sessions do not reappear. Production never restarts Codex for visual
+verification. Required stores without lifetime writer exclusion block before
+mutation; a process-absence snapshot alone does not fence a later launch.
+
+[ADR-0019](adr/0019-structural-removal-and-profile-acceptance.md) is current.
+Desktop 26.1027.51404/build23880 embeds 0.166.0-alpha.5.1. Static review revalidated
+its identity and found no lifetime global-Map writer fence; default packaged macOS
+launches bypass Electron singleton locking. No complete Desktop profile is admitted.
+Native descendant delete and Claude blockers remain unchanged. M8.2.1 is OPEN.
 
 ## Current scope and separate M8.2 contract
 

@@ -1,5 +1,7 @@
 # ADR-0018: Complete Session Removal, Projection Consistency and Maximum Safe Cleanup
 
+Current structural/runtime distinction is partially superseded by [ADR-0019](0019-structural-removal-and-profile-acceptance.md). The historical decision below is preserved.
+
 Status: Accepted product contract and fail-closed assessment direction (2026-11-02).
 M8.2.1 is OPEN. No complete-removal Desktop mutation profile is admitted.
 Independent Sol/high `context_review` accepted this assessment boundary and its

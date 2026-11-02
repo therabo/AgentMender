@@ -7,6 +7,7 @@ import json
 import pathlib
 import plistlib
 import re
+import struct
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 EVIDENCE = ROOT / "compatibility/codex/complete-removal-research"
@@ -139,6 +140,55 @@ def verify_installed(bundle, provenance):
         require(actual == expected, "static installed identity changed: " + str(path))
 
 
+def validate_persistent_contract(contract, provenance):
+    require(contract["schema_version"] == 1
+            and contract["evidence_class"] == "static_exact_bundle_contract_research_only"
+            and contract["verdict"] == "OPEN", "different persistent research contract")
+    for field in ("desktop_profile_admitted", "desktop_restart_acceptance", "production_app_control",
+                  "desktop_writer_fence_validated", "default_macos_singleton_required",
+                  "process_absence_is_lifetime_fence"):
+        require(contract[field] is False, "static evidence cannot establish: " + field)
+    require(contract["app_asar_sha256"] == provenance["desktop"]["app_asar_sha256"],
+            "persistent contract belongs to a different bundle")
+    require(contract["catalog_identity"] == ["selected_root", "host_id", "thread_id", "exact_schema", "source_kind"],
+            "catalog identity lost host/root qualification")
+    require(contract["production_mutations_admitted"] == ["expanded_primary_state_5_attachment_metadata",
+                                                          "expanded_primary_state_5_guardian_feedback"],
+            "unreviewed production mutation admission")
+    windows = contract["source_windows"]
+    require({w["claim"] for w in windows} == {
+        "global-map-writer", "macos-singleton-selection", "singleton-startup",
+        "catalog-authoritative-removal", "catalog-checkpoint-shape", "catalog-tombstone-suppression",
+        "qualified-pinned-tabs", "legacy-browser-import", "local-kind-host-map"}, "missing persistent source window")
+    require(len({w["claim"] for w in windows}) == len(windows), "duplicate persistent source window")
+    assets = {a["path"] for a in provenance["desktop"]["assets"]}
+    for window in windows:
+        require(window["asset"] in assets and sha(window["utf8_sha256"])
+                and 0 <= window["unicode_start"] < window["unicode_end"] <= 20_000_000,
+                "invalid persistent source window")
+
+
+def verify_persistent_windows(bundle, contract):
+    # Exact static ASAR bytes only; no provider process or user state is opened.
+    with (bundle / "Contents/Resources/app.asar").open("rb") as archive:
+        sizes = struct.unpack("<4I", archive.read(16))
+        require(sizes[3] <= 16 * 1024 * 1024, "unbounded ASAR header")
+        header = json.loads(archive.read(sizes[3]), object_pairs_hook=unique_object)
+        cache = {}
+        for window in contract["source_windows"]:
+            asset = window["asset"]
+            if asset not in cache:
+                entry = header
+                for component in asset.split("/"):
+                    entry = entry["files"][component]
+                require(entry["size"] <= 20 * 1024 * 1024, "unbounded ASAR asset")
+                archive.seek(8 + sizes[1] + int(entry["offset"]))
+                cache[asset] = archive.read(entry["size"]).decode("utf-8")
+            selected = cache[asset][window["unicode_start"]:window["unicode_end"]]
+            require(hashlib.sha256(selected.encode("utf-8")).hexdigest() == window["utf8_sha256"],
+                    "persistent source window changed: " + window["claim"])
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--installed-bundle", type=pathlib.Path)
@@ -146,7 +196,19 @@ def main():
     inventory = read("projection-inventory.json")
     provenance = read("projection-provenance.json")
     schema = read("desktop-catalog-schema-static.json")
+    persistent = read("persistent-contract-2026-11-03.json")
     validate(inventory, provenance, schema)
+    validate_persistent_contract(persistent, provenance)
+    for field in ("desktop_writer_fence_validated", "process_absence_is_lifetime_fence",
+                  "desktop_profile_admitted", "desktop_restart_acceptance", "production_app_control"):
+        changed = copy.deepcopy(persistent)
+        changed[field] = True
+        try:
+            validate_persistent_contract(changed, provenance)
+        except ValueError:
+            pass
+        else:
+            raise ValueError("persistent admission rejection canary failed")
     canaries(inventory, provenance, schema)
     isolation = read("isolation-result.json")
     require(isolation["verdict"] == "OPEN" and isolation["app_startup_attempt"] is True
@@ -162,6 +224,7 @@ def main():
             "isolation result changed without reviewed evidence")
     if args.installed_bundle:
         verify_installed(args.installed_bundle, provenance)
+        verify_persistent_windows(args.installed_bundle, persistent)
     print(f"Complete-removal research checks passed: {len(inventory['surfaces'])} surfaces; static-only evidence; zero admitted graphical profiles; verdict OPEN.")
 
 

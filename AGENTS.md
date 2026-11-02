@@ -9,13 +9,17 @@ before changing boundaries. Sol/high accepted the pure product-assessment
 direction before implementation. No complete Desktop removal profile is admitted.
 Native M8.1 and Claude M9 blockers remain unchanged.
 
-Session Removed now requires primary/catalog removal, every required supported
-projection absent immediately and after reload/restart/fresh discovery, collateral
-preservation and maximum safe cleanup. Any user-visible or reconstructing residual
-prevents product success. Unknown supported projection/primary reconstruction
-risk prevents success. Only proven non-projecting/non-primary technical residuals
-may permit RemovedWithResiduals. M8.2 v2 plan/report/digest/replay meanings remain
-historical primary cleanup; never relabel those receipts as complete GUI removal.
+Read ADR-0019 for the current structural contract. Product Removed requires
+primary/canonical absence, every required persistent projection/reconstruction
+source structurally absent, collateral preservation, maximum-safe approved actions
+completed and independently validated exact-profile isolated restart/reappearance
+acceptance. The current rendered sidebar is not authority; proven ephemeral UI
+may stay stale. Unknown reconstruction risk blocks profile promotion. Production
+must not start/stop/kill/reload/restart Codex for visual verification. If any required
+store lacks a compatible lifetime writer fence, block before destructive effects
+and require Codex closed; process absence alone is not a relaunch fence. Historical
+M8.2 v2 plan/report/digest/replay stays primary-only and cannot authorize new effects.
+No complete Desktop removal profile is currently admitted.
 
 Remove every supported safe exclusive unit, including exact records inside shared
 containers. Preserve all unrelated records/keys and every shared/ambiguous/unknown

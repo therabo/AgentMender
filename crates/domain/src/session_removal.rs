@@ -27,15 +27,29 @@ pub enum Preservation {
     Unknown,
 }
 
-/// An inventory entry covers one required surface and all four independent phases.
+/// Reconstruction role is established by the inventory, not inferred from UI visibility.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SurfaceKind {
+    RequiredPersistentProjection,
+    EphemeralUiProjection,
+    UnknownReconstructionSurface,
+}
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProjectionSurface {
     pub scope: RemovalScope,
     pub id: EntityId,
-    pub immediate: RemovalObservation,
-    pub reload: RemovalObservation,
-    pub restart: RemovalObservation,
-    pub fresh_discovery: RemovalObservation,
+    pub kind: SurfaceKind,
+    /// Current structural observation; ephemeral UI is not an authority.
+    pub observation: RemovalObservation,
+}
+/// Adapter-owned isolated compatibility evidence; deliberately not deserializable.
+/// Both reconstruction cycles and collateral preservation must have been observed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExactProfileAcceptance {
+    pub profile: EntityId,
+    pub first_reconstruction: RemovalObservation,
+    pub second_reconstruction: RemovalObservation,
+    pub collateral: Preservation,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -99,6 +113,7 @@ pub struct SessionRemovalEvidence {
     pub inventory_completeness: Completeness,
     pub required_surfaces: Vec<EntityId>,
     pub surfaces: Vec<ProjectionSurface>,
+    pub profile_acceptance: Option<ExactProfileAcceptance>,
     pub primary_absence: RemovalObservation,
     pub canonical_catalog_absence: RemovalObservation,
     /// Covers unrelated records, keys, ordering/bytes, and projection state.
@@ -328,14 +343,29 @@ pub fn assess_session_removal(e: &SessionRemovalEvidence) -> SessionRemovalAsses
     let primary_complete = e.primary_absence == RemovalObservation::Absent
         && e.canonical_catalog_absence == RemovalObservation::Absent
         && !primary_risk;
+    let observed_required: BTreeSet<_> = e
+        .surfaces
+        .iter()
+        .filter(|s| s.kind == SurfaceKind::RequiredPersistentProjection)
+        .map(|s| &s.id)
+        .collect();
+    let accepted = e.profile_acceptance.as_ref().is_some_and(|a| {
+        a.profile == e.scope.profile
+            && a.first_reconstruction == RemovalObservation::Absent
+            && a.second_reconstruction == RemovalObservation::Absent
+            && a.collateral == Preservation::Unchanged
+    });
     let projection_complete = !projection_risk
         && e.inventory_completeness == Completeness::Complete
         && !required.is_empty()
-        && required == surfaces
-        && e.surfaces.iter().all(|s| {
-            [s.immediate, s.reload, s.restart, s.fresh_discovery]
-                .iter()
-                .all(|o| *o == RemovalObservation::Absent)
+        && required == observed_required
+        && accepted
+        && e.surfaces.iter().all(|s| match s.kind {
+            SurfaceKind::RequiredPersistentProjection => {
+                s.observation == RemovalObservation::Absent
+            }
+            SurfaceKind::EphemeralUiProjection => true,
+            SurfaceKind::UnknownReconstructionSurface => false,
         });
     let outcome = if !projection_complete {
         SessionRemovalOutcome::ProjectionIncomplete

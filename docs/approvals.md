@@ -2,14 +2,28 @@
 
 ## M8.2.1 current approval boundary
 
-[ADR-0018](adr/0018-complete-session-removal.md) strengthens the product result;
-it grants no new authority. M8.2 primary-cleanup PASS and its v2 approval encoding
-are preserved. Existing grants cannot authorize index/history/global-state edits,
-Desktop catalog mutation, cache invalidation or app shutdown/restart. Such effects
-must be frozen in a separately versioned exact manifest and disclosed in the same
-independent terminal review, then freshly validated before consumed DurableIntent.
-No complete Desktop removal profile or restart approval workflow is admitted.
-Pure assessments and coverage percentages never grant permission. M8.2.1 is OPEN.
+[ADR-0019](adr/0019-structural-removal-and-profile-acceptance.md) adds separately
+versioned expanded primary review. Fresh schema-3 plans bind exact attachment and
+guardian rows, ordered primary actions, retained commitments, writer requirements
+and unverified persistent reconstruction. Existing terminal challenge, short-lived
+MAC grant, recovery binding and consumed DurableIntent remain mandatory.
+
+Old v2 grants cannot authorize schema-3 effects. Preparation uses the expanded
+profile; inspection, approval, execution and reconciliation of an existing plan
+select its original version. No fallback or silent upgrade occurs. Neither grant
+authorizes index/history/global/backup/catalog mutation or application control.
+
+Production success is established by structural persistent-state verification.
+The currently open graphical sidebar may temporarily be stale and is not the
+authority for cleanup success. An admitted exact compatibility profile must
+independently prove through isolated restart/reload acceptance that structurally
+removed sessions do not reappear. Production never restarts Codex for visual
+verification. Required stores without lifetime writer exclusion block before
+mutation; a process-absence snapshot alone does not fence a later launch.
+
+No complete Desktop profile is admitted. Review discloses primary-only status and
+unknown maximum-safe closure. Coverage, a pure assessment and static source evidence
+never grant authority. M8.2.1 remains OPEN.
 
 ## M8.2 scoped cleanup approval
 

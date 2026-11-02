@@ -64,3 +64,36 @@ pub trait DurableCleanupPort {
     /// Read-only reconciliation of the frozen manifest; never dispatches.
     fn observe(&self, plan: &LifecyclePlan) -> Result<CleanupReport, EffectError>;
 }
+
+/// Observation-only progress in the existing durable journal. Failure stops
+/// subsequent effects; this interface cannot issue another execution intent.
+pub trait CompleteRemovalProgress {
+    fn record(
+        &mut self,
+        receipt: &DurableObservation,
+        progress: agentmender_domain::CompleteRemovalActionProgress,
+    ) -> Result<(), EffectError>;
+}
+
+#[derive(Debug)]
+pub struct CompleteRemovalAttempt {
+    pub observation: DurableObservation,
+    pub outcome: NativeOutcome,
+    pub report: Option<agentmender_domain::CompleteRemovalReport>,
+}
+
+/// Schema-3 effects never fall back to the historical primary-only dispatcher.
+pub trait DurableCompleteRemovalPort {
+    fn preflight(&self, plan: &LifecyclePlan) -> Result<(), EffectError>;
+    fn dispatch(
+        &self,
+        intent: DurableIntent,
+        plan: &LifecyclePlan,
+        progress: &mut dyn CompleteRemovalProgress,
+    ) -> CompleteRemovalAttempt;
+    /// Fresh observations only. Missing commit receipts never authorize retries.
+    fn observe(
+        &self,
+        plan: &LifecyclePlan,
+    ) -> Result<agentmender_domain::CompleteRemovalReport, EffectError>;
+}

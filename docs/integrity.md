@@ -2,14 +2,26 @@
 
 ## M8.2.1 product verification
 
-M3 integrity remains unchanged. [ADR-0018](adr/0018-complete-session-removal.md)
-adds a separate pure product assessment: primary/catalog absence, exact required
-projection checks immediately and after reload/restart/fresh discovery, collateral
-preservation and maximum safe cleanup. Any projecting or potentially reconstructing
-residue prevents product success. UnknownTechnicalResidual may remain only with
-explicit no-projection and no-primary-reconstruction evidence. Graph ownership,
-M3 Healthy, a provider return code or a single missing-thread signal is insufficient.
-M8.2 primary cleanup remains historical PASS; complete graphical M8.2.1 is OPEN.
+M3 integrity is unchanged. [ADR-0019](adr/0019-structural-removal-and-profile-acceptance.md)
+separates RequiredPersistentProjection, EphemeralUiProjection and
+UnknownReconstructionSurface. Runtime persistent absence and independent exact
+profile acceptance are distinct inputs to the existing pure removal assessment.
+Only proven ephemeral state incapable of repersisting target data is nonblocking.
+Unknown roles, required persistent residue, incomplete inventory, missing profile
+acceptance or collateral changes cannot produce product success.
+
+Production success is established by structural persistent-state verification.
+The currently open graphical sidebar may temporarily be stale and is not the
+authority for cleanup success. An admitted exact compatibility profile must
+independently prove through isolated restart/reload acceptance that structurally
+removed sessions do not reappear. Production never restarts Codex for visual
+verification. Required stores without lifetime writer exclusion block before
+mutation; a process-absence snapshot alone does not fence a later launch.
+
+Expanded primary schema-3 receipts remain ProjectionIncomplete. No compiled
+complete Desktop profile or isolated Desktop restart acceptance exists. Technical
+residual success requires no primary or persistent reconstruction risk. M3 Healthy,
+a provider return code or a visually hidden item supplies no cleanup authority.
 
 ## M8.2 scope clarification — no change to M3
 

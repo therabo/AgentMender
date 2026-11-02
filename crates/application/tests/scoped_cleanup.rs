@@ -159,6 +159,7 @@ fn ready_cleanup() -> (
         scope: DiscoveryScope::default(),
         capabilities: vec![],
         effects: None,
+        complete_removal_evidence: None,
         cleanup_evidence: Some(ScopedCleanupEvidence {
             manifest: m,
             root_boundary: CleanupBoundaryObservation::CompleteAndUnshared,

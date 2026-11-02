@@ -299,6 +299,7 @@ fn ready_cleanup() -> (
     let graph = builder.finish().unwrap();
     let proof = IntegrityContext::default();
     let planning = PlanningContext {
+        complete_removal_evidence: None,
         scope: DiscoveryScope::default(),
         capabilities: vec![],
         effects: None,
@@ -343,6 +344,31 @@ fn ready_v2_plan_binds_manifest_and_revalidates() {
         plan.validate_against(&graph, &evaluate_integrity(&graph, &proof), &planning),
         PlanValidation::Stale
     );
+}
+
+/// Frozen by executing the pre-continuation d299ccb tests in a separate checkout.
+/// This oracle is independent of the new schema-3 implementation.
+#[test]
+fn historical_v2_plan_binding_and_journal_retain_their_exact_encoding() {
+    let fixture: serde_json::Value =
+        serde_json::from_str(include_str!("fixtures/historical-cleanup-v2.json")).unwrap();
+    let historical: LifecyclePlan = serde_json::from_value(fixture["plan"].clone()).unwrap();
+    let (current, _, _, _) = ready_cleanup();
+    assert_eq!(current, historical);
+    assert_eq!(
+        serde_json::to_value(TransactionBinding::from_plan(&historical).unwrap()).unwrap(),
+        fixture["binding"]
+    );
+    assert_eq!(
+        serde_json::to_value(report(&manifest())).unwrap(),
+        fixture["report"]
+    );
+    let wire = include_str!("fixtures/historical-cleanup-v2-journal.json").trim_end();
+    let records: Vec<JournalRecord> = serde_json::from_str(wire).unwrap();
+    assert_eq!(serde_json::to_string(&records).unwrap(), wire);
+    let replay = TransactionSnapshot::replay(&records).unwrap();
+    assert_eq!(replay.state(), TransactionState::Succeeded);
+    assert_eq!(replay.review_plan(), Some(&historical));
 }
 
 #[test]
@@ -442,4 +468,278 @@ fn consumed_cleanup_replay_requires_approved_observations_and_allows_reconciliat
         TransactionSnapshot::replay(&records).unwrap().state(),
         TransactionState::Succeeded
     );
+}
+
+#[test]
+fn schema_three_binds_expanded_scope_and_never_claims_desktop_acceptance() {
+    let (_, graph, proof, mut context) = ready_cleanup();
+    let mut primary_evidence = context.cleanup_evidence.clone().unwrap();
+    primary_evidence.manifest.profile.adapter = "scoped-cleanup-v2".into();
+    let primary = primary_evidence.manifest.clone();
+    let manifest = CompleteRemovalManifest {
+        primary: primary.clone(),
+        actions: vec![
+            CompleteRemovalAction::PrimaryPayload,
+            CompleteRemovalAction::StateThreadRecords,
+        ],
+        profile: CompleteRemovalProfile {
+            identity: id("codex-scoped-cleanup-v2"),
+            admission: ProfileAdmission::PrimaryOnly,
+            writer_requirement: WriterRequirement::CompatibleLifetimeFence,
+        },
+        required_surfaces: vec![PersistentSurface {
+            id: id("codex-desktop-reconstruction-unverified"),
+        }],
+        technical_residuals: primary.residuals.clone(),
+    };
+    context.complete_removal_evidence = Some(CompleteRemovalEvidence {
+        manifest: manifest.clone(),
+        primary_evidence,
+    });
+    let conflicting = plan_lifecycle(
+        &graph,
+        &evaluate_integrity(&graph, &proof),
+        &context,
+        LifecycleRequest {
+            target: primary.target.clone(),
+            intent: LifecycleIntent::CleanupSession,
+        },
+    );
+    assert_eq!(conflicting.content().status, PlanStatus::Blocked);
+    assert!(
+        conflicting
+            .content()
+            .blockers
+            .contains(&PlanBlocker::EffectBoundaryInvalid)
+    );
+    context.cleanup_evidence = None;
+    let plan = plan_lifecycle(
+        &graph,
+        &evaluate_integrity(&graph, &proof),
+        &context,
+        LifecycleRequest {
+            target: primary.target.clone(),
+            intent: LifecycleIntent::CleanupSession,
+        },
+    );
+    assert_ne!(conflicting.state_fingerprint(), plan.state_fingerprint());
+    assert_eq!(plan.content().schema_version, 3);
+    assert_eq!(plan.content().status, PlanStatus::Ready);
+    assert!(TransactionBinding::from_plan(&plan).is_ok());
+    assert_ne!(
+        TransactionBinding::from_plan(&plan).unwrap(),
+        TransactionBinding::from_plan(&ready_cleanup().0).unwrap()
+    );
+    assert_eq!(
+        serde_json::from_slice::<LifecyclePlan>(&serde_json::to_vec(&plan).unwrap()).unwrap(),
+        plan
+    );
+    let actions: Vec<_> = manifest
+        .actions
+        .iter()
+        .map(|action| CompleteRemovalActionProgress {
+            action: *action,
+            outcome: CleanupActionOutcome::Removed,
+        })
+        .collect();
+    for i in 0..256 {
+        let result = CompleteRemovalReport {
+            primary: report(&primary),
+            actions: actions.clone(),
+            surfaces: vec![PersistentSurfaceObservation {
+                id: manifest.required_surfaces[0].id.clone(),
+                observation: if i % 3 == 0 {
+                    PersistentObservation::Absent
+                } else if i % 3 == 1 {
+                    PersistentObservation::Present
+                } else {
+                    PersistentObservation::Unknown
+                },
+            }],
+        };
+        assert_eq!(
+            assess_complete_removal(&manifest, &result).outcome,
+            SessionRemovalOutcome::ProjectionIncomplete
+        );
+        let mut mismatch = result.clone();
+        mismatch.actions[0].outcome = CleanupActionOutcome::AlreadyAbsent;
+        assert!(!validate_complete_removal_report(&manifest, &mismatch));
+        let mut bad = result.clone();
+        bad.actions.reverse();
+        assert!(!validate_complete_removal_report(&manifest, &bad));
+        let mut bad = result;
+        bad.surfaces.clear();
+        assert!(!validate_complete_removal_report(&manifest, &bad));
+    }
+    for terminal in [CleanupOutcome::Blocked, CleanupOutcome::Failed] {
+        let mut primary_report = report(&primary);
+        primary_report.outcome = terminal;
+        primary_report.canonical_row_absent = false;
+        let mut observed = CompleteRemovalReport {
+            primary: primary_report,
+            actions: actions[..1].to_vec(),
+            surfaces: vec![PersistentSurfaceObservation {
+                id: manifest.required_surfaces[0].id.clone(),
+                observation: PersistentObservation::Unknown,
+            }],
+        };
+        assert!(validate_cleanup_report(&primary, &observed.primary));
+        assert!(!validate_complete_removal_report(&manifest, &observed));
+        observed.actions = actions.clone();
+        assert!(!validate_complete_removal_report(&manifest, &observed));
+        observed.actions.clear();
+        assert!(!validate_complete_removal_report(&manifest, &observed));
+        observed.primary.actions[0].outcome = CleanupActionOutcome::Unknown;
+        observed.primary.actions[0].logical_unlinked_bytes = 0;
+        observed.primary.logical_unlinked_bytes = 0;
+        observed.actions.push(actions[0].clone());
+        assert!(!validate_complete_removal_report(&manifest, &observed));
+        observed.actions.clear();
+        assert!(!validate_complete_removal_report(&manifest, &observed));
+        observed.primary.actions[0].outcome = CleanupActionOutcome::Retained;
+        observed.actions.push(CompleteRemovalActionProgress {
+            action: CompleteRemovalAction::PrimaryPayload,
+            outcome: CleanupActionOutcome::Unknown,
+        });
+        assert!(!validate_complete_removal_report(&manifest, &observed));
+        observed.actions.clear();
+        assert!(validate_complete_removal_report(&manifest, &observed));
+    }
+    let binding = TransactionBinding::from_plan(&plan).unwrap();
+    let tx = TransactionId::from_bytes([41; 32]);
+    let mut records = vec![JournalRecord::new_v2(
+        tx.clone(),
+        0,
+        binding.digest(),
+        None,
+        TransactionEvent::Created {
+            binding: binding.clone(),
+            plan: Some(plan),
+        },
+    )];
+    common::prepare(&mut records, &binding);
+    let recovery_digest = TransactionSnapshot::replay(&records)
+        .unwrap()
+        .recovery()
+        .unwrap()
+        .digest();
+    let grant = ApprovalGrant {
+        id: ApprovalId::from_bytes([42; 32]),
+        nonce: ApprovalNonce::from_bytes([43; 32]),
+        scope: ApprovalScope {
+            transaction_id: tx,
+            binding: binding.clone(),
+            recovery_digest,
+            operation_index: 0,
+            direction: ApprovalDirection::ForwardOnly,
+        },
+        principal: ApprovalPrincipal::LocalInteractiveUser,
+        issued_at: 100,
+        expires_at: 200,
+    };
+    let authentication = AuthorizationAuthentication {
+        key_id: ApprovalKeyId::from_bytes([44; 32]),
+        tag: AuthenticationTag::from_bytes([45; 32]),
+    };
+    common::push(
+        &mut records,
+        TransactionEvent::Authorization {
+            action: ApprovalAction::Granted {
+                grant: grant.clone(),
+            },
+            authentication: authentication.clone(),
+        },
+    );
+    common::push(
+        &mut records,
+        TransactionEvent::Authorization {
+            action: ApprovalAction::Consumed {
+                approval_id: grant.id,
+                at: 101,
+                plan: binding.plan_digest().clone(),
+                state: binding.state_fingerprint().clone(),
+                operation_index: 0,
+            },
+            authentication,
+        },
+    );
+    let snapshot = TransactionSnapshot::replay(&records).unwrap();
+    assert!(
+        snapshot
+            .next_record(TransactionEvent::CompleteRemovalActionObserved {
+                progress: CompleteRemovalActionProgress {
+                    action: CompleteRemovalAction::PrimaryPayload,
+                    outcome: CleanupActionOutcome::Unknown
+                }
+            })
+            .is_err()
+    );
+    assert!(
+        snapshot
+            .next_record(TransactionEvent::CompleteRemovalActionObserved {
+                progress: actions[1].clone()
+            })
+            .is_err()
+    );
+    common::push(
+        &mut records,
+        TransactionEvent::CompleteRemovalActionObserved {
+            progress: actions[0].clone(),
+        },
+    );
+    common::push(
+        &mut records,
+        TransactionEvent::CompleteRemovalActionObserved {
+            progress: actions[1].clone(),
+        },
+    );
+    let snapshot = TransactionSnapshot::replay(&records).unwrap();
+    let mut final_report = CompleteRemovalReport {
+        primary: report(&primary),
+        actions: actions.clone(),
+        surfaces: vec![PersistentSurfaceObservation {
+            id: manifest.required_surfaces[0].id.clone(),
+            observation: PersistentObservation::Unknown,
+        }],
+    };
+    for terminal in [CleanupOutcome::Blocked, CleanupOutcome::Failed] {
+        let mut contradicted = final_report.clone();
+        contradicted.primary.outcome = terminal;
+        contradicted.primary.canonical_row_absent = false;
+        assert!(
+            snapshot
+                .next_record(TransactionEvent::CompleteRemovalObserved {
+                    report: contradicted
+                })
+                .is_err()
+        );
+    }
+    let mut omitted = final_report.clone();
+    omitted.actions.pop();
+    assert!(
+        snapshot
+            .next_record(TransactionEvent::CompleteRemovalObserved { report: omitted })
+            .is_err()
+    );
+    final_report.actions[0].outcome = CleanupActionOutcome::AlreadyAbsent;
+    assert!(
+        snapshot
+            .next_record(TransactionEvent::CompleteRemovalObserved {
+                report: final_report
+            })
+            .is_err()
+    );
+    assert!(
+        snapshot
+            .next_record(TransactionEvent::CleanupObserved {
+                report: report(&primary)
+            })
+            .is_err()
+    );
+    let mut wrong = manifest.clone();
+    wrong.profile.identity = id("uncompiled");
+    assert!(!validate_complete_removal_manifest(&wrong));
+    let mut wrong = manifest;
+    wrong.profile.admission = ProfileAdmission::CompleteAccepted;
+    assert!(!validate_complete_removal_manifest(&wrong));
 }

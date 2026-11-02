@@ -2,19 +2,31 @@
 
 ## M8.2.1 current outcome boundary
 
-M8.2 is historical primary-cleanup PASS; its v2 plan/report/journal bytes, digests,
-replay and Succeeded meaning are preserved. A successful historical primary
-transaction does not establish product Session Removed. The separate pure
-assessment and CLI reporting mark missing projections/restart evidence incomplete;
-CLI returns exit 2 even when the primary transaction itself Succeeded.
+Plan schema 3 uses the existing authenticated journal schema 2, approval MAC and
+recovery architecture. `CompleteRemovalActionObserved` durably records the frozen
+PrimaryPayload and StateThreadRecords commit boundaries in order. The final
+`CompleteRemovalObserved` must agree with the recorded prefix. The original
+consumed intent is the authenticated anchor even as progress advances the journal.
+An append failure stops subsequent effects; a crash gap stays unknown. Blocked or
+Failed cannot conceal Removed/Unknown destructive evidence. Reconciliation remains
+read-only and preserves existing commit records without inventing unlinks/bytes.
 
-[ADR-0018](adr/0018-complete-session-removal.md) requires any future destructive
-projection/app coordination scope to use the existing approval/recovery/DurableIntent
-path with a separately versioned exact manifest. No new journal authority or effect
-retry is introduced. Current reconciliation remains read-only; an interrupted
-restart/projection mutation cannot be inferred complete, automatically retried or
-completed using a historical primary-only grant. Those new effects and their crash
-acceptance are still unimplemented. M8.2.1 remains OPEN.
+All approved expanded primary effects may yield transaction Succeeded while the
+separate product assessment remains ProjectionIncomplete and CLI exits 2. This is
+explicitly primary-operation success, not a complete-removal receipt. Old v2 plan,
+report, hash and replay meanings are unchanged. There is no second authority store.
+
+Production success is established by structural persistent-state verification.
+The currently open graphical sidebar may temporarily be stale and is not the
+authority for cleanup success. An admitted exact compatibility profile must
+independently prove through isolated restart/reload acceptance that structurally
+removed sessions do not reappear. Production never restarts Codex for visual
+verification. Required stores without lifetime writer exclusion block before
+mutation; a process-absence snapshot alone does not fence a later launch.
+
+See [ADR-0019](adr/0019-structural-removal-and-profile-acceptance.md).
+M8.2.1 remains OPEN; Desktop projection effects and their restart acceptance remain
+unadmitted. No automatic retry, restoration or application-control path is added.
 
 ## M8.2 scoped transaction integration
 

@@ -124,13 +124,15 @@ fn review_value(
         .as_secs();
     let cleanup_scope = snapshot
         .review_plan()
-        .filter(|plan| plan.content().cleanup_manifest.is_some())
-        .map(|_| {
+        .filter(|plan| plan.content().request.intent == agentmender_domain::LifecycleIntent::CleanupSession)
+        .map(|plan| {
             serde_json::json!({
-                "contract":"scoped_primary_cleanup_v1",
+                "contract":if plan.content().schema_version == 3 {"scoped_primary_cleanup_v2"} else {"scoped_primary_cleanup_v1"},
                 "complete_session_removal_supported":false,
                 "provider_ui_may_remain_visible":true,
-                "reload_restart_verification":"unavailable",
+                "success_authority":"persistent_structural_state",
+                "isolated_profile_restart_acceptance":"unavailable",
+                "expanded_target_metadata":plan.content().schema_version == 3,
                 "maximum_safe_cleanup":"unknown",
                 "app_shutdown_restart_authorized":false
             })
@@ -195,7 +197,7 @@ pub fn prepare(
     println!("{}", safe(&inputs.plan)?);
     if matches!(intent, PlanIntent::CleanupSession) {
         println!(
-            "This profile plans primary cleanup only. Complete provider/UI removal, restart verification and maximum safe cleanup are unverified."
+            "This profile plans expanded primary cleanup, including exact target attachment metadata and guardian feedback. Complete persistent Desktop removal and isolated restart acceptance remain unverified. Codex is never restarted for visual verification."
         );
     }
     if inputs.plan.content().status != PlanStatus::Ready || !inputs.failures.is_empty() {
@@ -318,14 +320,17 @@ fn fresh_inputs(
 ) -> Result<agentmender_application::ApprovalInputs, CliError> {
     let content = plan.content();
     if content.request.intent == agentmender_domain::LifecycleIntent::CleanupSession {
-        let native = content
-            .cleanup_manifest
-            .as_ref()
-            .ok_or_else(unavailable)?
-            .native_session_id
-            .as_str();
+        let primary = match (
+            &content.cleanup_manifest,
+            &content.complete_removal_manifest,
+        ) {
+            (Some(primary), None) => primary,
+            (None, Some(manifest)) => &manifest.primary,
+            _ => return Err(unavailable()),
+        };
+        let native = primary.native_session_id.as_str();
         Ok(agentmender_application::cleanup_inputs(
-            &super::lifecycle::scoped_adapter(args)?,
+            &super::lifecycle::scoped_adapter_for_plan(args, plan)?,
             native,
             &content.observation_scope,
         )?)

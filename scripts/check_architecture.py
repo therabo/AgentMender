@@ -486,7 +486,8 @@ if len(execution) != 1 or not (0 <= execution[0].find('.record_intent(') < execu
 if not re.search(r'fn\s+dispatch\s*\([^;{]*\bDurableIntent\b', mask_literals(handoff)):
     raise SystemExit('lifecycle effect port lost its owned durable gate')
 
-# ADR-0017 permits two fixed SQL deletes and one descriptor-relative payload
+# ADR-0017 permits two fixed SQL deletes; ADR-0019 adds two exact metadata
+# deletes behind a separately approved schema-3 profile. One relative payload
 # unlink, never a generic local mutation port. Keep these exceptions auditable.
 scoped_base = ROOT / 'crates/provider-codex/src'
 scoped_storage = production_source((scoped_base / 'scoped_storage.rs').read_text())
@@ -494,11 +495,15 @@ scoped_files = production_source((scoped_base / 'scoped_files.rs').read_text())
 scoped_adapter = production_source((scoped_base / 'scoped_cleanup.rs').read_text())
 scoped_profile = production_source((scoped_base / 'scoped_profile.rs').read_text())
 deletes = re.findall(r'"((?:DELETE|UPDATE|INSERT)\s+[^"\n]*)"', scoped_storage)
-if sorted(deletes) != sorted(['DELETE FROM thread_read_receipts WHERE thread_id=?1', 'DELETE FROM threads WHERE id=?1']):
+if sorted(deletes) != sorted(['DELETE FROM thread_read_receipts WHERE thread_id=?1', 'DELETE FROM threads WHERE id=?1',
+                             'DELETE FROM thread_attachments WHERE thread_id=?1',
+                             'DELETE FROM guardian_review_feedback WHERE thread_id=?1']):
     raise SystemExit('unreviewed scoped SQL mutation')
 apply = list(method_bodies(scoped_storage, 'apply'))
 if len(apply) != 1 or not all(sql in apply[0] for sql in deletes):
     raise SystemExit('scoped deletes escaped the private fixed action')
+if 'if crate::scoped_profile::is_expanded(m)' not in apply[0]:
+    raise SystemExit('expanded metadata effects lost their distinct profile gate')
 unlink = list(method_bodies(scoped_files, 'validate_and_unlink'))
 relative_mutation = r'\b(?:unlinkat|renameat|renameat2|mkdirat|ftruncate)\s*\('
 if len(unlink) != 1 or len(re.findall(relative_mutation, mask_literals(scoped_files))) != 1 or 'fs::unlinkat(&parent, &name, AtFlags::empty())' not in unlink[0]:
@@ -514,13 +519,19 @@ if impure_graph_code(scoped_profile):
 for marker in ['validate_manifest_profile', 'validate_executable', 'WriterFence::acquire', 'DatabaseFence::acquire', 'not_expired', 'validate_cleanup_report']:
     if marker not in scoped_adapter:
         raise SystemExit(f'scoped adapter contract missing: {marker}')
-for name in ['reconcile_cleanup']:
+for marker in ['complete_removal_manifest', 'schema_version != 3', 'self.expanded',
+               'progress.record', 'CompleteRemovalAction::PrimaryPayload',
+               'CompleteRemovalAction::StateThreadRecords']:
+    if marker not in scoped_adapter:
+        raise SystemExit(f'expanded cleanup contract missing: {marker}')
+for name in ['reconcile_cleanup', 'reconcile_complete_removal']:
     for body in method_bodies(workflow, name):
         if re.search(r'\.(?:dispatch|record_intent)\s*\(', mask_literals(body)):
             raise SystemExit('cleanup reconciliation can recreate authority')
-execution = list(method_bodies(workflow, 'execute_scoped_cleanup'))
-if len(execution) != 1 or not (0 <= execution[0].find('.record_intent(') < execution[0].find('.dispatch(')):
-    raise SystemExit('scoped dispatch does not follow durable intent')
+for name in ['execute_scoped_cleanup', 'execute_complete_removal']:
+    execution = list(method_bodies(workflow, name))
+    if len(execution) != 1 or not (0 <= execution[0].find('.record_intent(') < execution[0].find('.dispatch(')):
+        raise SystemExit('scoped dispatch does not follow durable intent')
 assert approval_boundary_violation('fn bypass() { store.grant_approval(); }', 'provider-codex', 'scoped_cleanup.rs')
 assert approval_boundary_violation('use agentmender_persistence::TransactionStore;', 'provider-codex', 'scoped_unsupported.rs')
 assert production_source('#[cfg(all(test, unix))] mod tests { fs::write("test", b"x"); }\nfn later() {}').strip() == 'fn later() {}'
@@ -540,9 +551,11 @@ def projection_mutation_violation(source):
     broad_cache = r'\bremove_dir_all\s*\([^;]*"[^"\n]*(?:Cache|IndexedDB|Local Storage)[^"\n]*"'
     broad_map = r'\.remove\s*\(\s*"(?:electron-persisted-atom-state|pinned-thread-ids|thread-projects)"'
     broad_process = r'Command\s*::\s*new\s*\(\s*"(?:killall|pkill)"'
+    visual_restart = r'\bfn\s+(?:restart_codex|reload_codex|terminate_codex|restart_for_visual_verification)\s*\('
     return bool(re.search(generic, code) or re.search(substring, code)
                 or re.search(whole_container, source) or re.search(broad_cache, source)
-                or re.search(broad_map, source) or re.search(broad_process, source))
+                or re.search(broad_map, source) or re.search(broad_process, source)
+                or re.search(visual_restart, code))
 
 
 for canary in [
@@ -559,6 +572,10 @@ for canary in [
     'fn bad() { map.remove("electron-persisted-atom-state"); }',
     'fn bad() { Command::new("killall"); }',
     'fn bad() { Command::new("pkill"); }',
+    'fn restart_for_visual_verification(app: App) {}',
+    'fn restart_codex() {}',
+    'fn reload_codex() {}',
+    'fn terminate_codex() {}',
 ]:
     assert projection_mutation_violation(canary), 'projection mutation canary failed'
 assert not projection_mutation_violation('fn exact() { record.id == target; }')
@@ -573,7 +590,16 @@ if impure_graph_code(assessment) or re.search(r'\bDeserialize\b', mask_literals(
 legacy_assessment = list(method_bodies(assessment, 'assess_legacy_session_removal'))
 if len(legacy_assessment) != 1 or 'SessionRemovalOutcome::Removed' in legacy_assessment[0]:
     raise SystemExit('historical primary receipt can claim complete removal')
-for marker in ['required_surfaces', 'immediate', 'reload', 'restart', 'fresh_discovery',
+complete_contract = production_source((ROOT / 'crates/domain/src/complete_removal.rs').read_text())
+if impure_graph_code(complete_contract):
+    raise SystemExit('complete removal contract gained I/O')
+for marker in ['ProfileAdmission::PrimaryOnly', 'WriterRequirement::CompatibleLifetimeFence',
+               'codex-scoped-cleanup-v2', 'validate_complete_removal_report']:
+    if marker not in complete_contract:
+        raise SystemExit(f'complete profile admission contract missing: {marker}')
+for marker in ['required_surfaces', 'RequiredPersistentProjection', 'EphemeralUiProjection',
+               'UnknownReconstructionSurface', 'ExactProfileAcceptance',
+               'first_reconstruction', 'second_reconstruction', 'profile_acceptance',
                'ReconstructionRisk::None', 'Preservation::Unchanged',
                'MaximumSafeCleanup::Complete', 'checked_add']:
     if marker not in assessment:

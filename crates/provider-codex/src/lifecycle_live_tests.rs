@@ -216,6 +216,7 @@ mod tests {
                 scope: DiscoveryScope::default(),
                 capabilities: vec![capability.clone()],
                 cleanup_evidence: None,
+                complete_removal_evidence: None,
                 effects: Some(NativeEffectBoundary {
                     contract_id: id(super::CONTRACT),
                     capability,

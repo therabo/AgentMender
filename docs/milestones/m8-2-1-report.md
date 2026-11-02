@@ -1,5 +1,10 @@
 # M8.2 integration and M8.2.1 complete-session-removal report
 
+Current continuation: [2026-11-03 implementation/evidence report](m8-2-1-continuation-2026-11-03.md).
+ADR-0019 is the current structural/visual contract; this previous-cycle receipt
+preserves historical facts.
+
+
 Date: 2026-11-02. **Verdict: OPEN.**
 
 M8.2 was formally verified and integrated. M8.2.1 now has a reviewed pure product

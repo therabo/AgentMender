@@ -72,6 +72,7 @@ pub trait ProviderAdapter {
         Ok(PlanningContext {
             scope: scope.clone(),
             capabilities: Vec::new(),
+            complete_removal_evidence: None,
             cleanup_evidence: None,
             effects: None,
         })

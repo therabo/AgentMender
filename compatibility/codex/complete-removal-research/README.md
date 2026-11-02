@@ -34,3 +34,14 @@ See [ADR-0018](../../../docs/adr/0018-complete-session-removal.md),
 [role closure and probe details](../../../docs/research/codex-desktop-role-closure.md),
 [artifact inventory](../../../docs/research/complete-session-removal-artifacts.md)
 and [isolation design](../../../docs/research/codex-desktop-isolation-design.md).
+
+## Persistent continuation contract (2026-11-03)
+
+[ADR-0019](../../../docs/adr/0019-structural-removal-and-profile-acceptance.md)
+partially supersedes ADR-0018's runtime GUI/restart distinction. The historical
+static packet above is unchanged. New
+[persistent contract evidence](persistent-contract-2026-11-03.json) pins nine
+source windows for catalog tombstone semantics, global Map writer behavior,
+macOS singleton bypass and legacy browser/host ownership. Its validator and
+optional installed-bundle rehash cannot admit a complete profile. Process absence
+is not lifetime exclusion; Desktop mutation and restart acceptance remain OPEN.

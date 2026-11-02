@@ -22,6 +22,8 @@
 | [0017: Scoped cleanup, residual preservation and provider-local mutation](0017-scoped-cleanup-residual-preservation-provider-local-mutation.md) | Accepted; M8.2 historical primary-cleanup PASS, integrated |
 | [0018: Complete Session Removal, Projection Consistency and Maximum Safe Cleanup](0018-complete-session-removal.md) | Accepted product/assessment contract; M8.2.1 OPEN, no complete Desktop mutation profile |
 
+| [0019: Structural removal authority and isolated profile acceptance](0019-structural-removal-and-profile-acceptance.md) | Accepted structural contract; partially supersedes 0018; new profiles gated |
+
 M8.1 integration/base is recorded in [the receipt](../milestones/m8-1-integration.md)
 (`c9dd04d` after integrated `6f798bc`). ADR-0017 accepts narrow partial
 supersession for the independently reviewed exact-profile local cleanup path.
