@@ -1,0 +1,162 @@
+{
+  "schema_version": 1,
+  "date": "2026-11-02",
+  "evidence": "static installed bundle plus exact official source; no native process or graphical app launched",
+  "safety": {
+    "provider_started": false,
+    "real_user_state_read": false,
+    "real_user_state_mutated": false,
+    "app_restarted": false,
+    "repository_modified": false
+  },
+  "desktop": {
+    "bundle": "/Applications/ChatGPT.app",
+    "bundle_id": "com.openai.codex",
+    "version": "26.1027.51404",
+    "build": "23880",
+    "app_asar_sha256": "52e0a65f9fea51f4287bbd98c63343761f9424517bb793652bb554764bc0bcc8",
+    "header_integrity": {
+      "Resources/app.asar": {
+        "algorithm": "SHA256",
+        "hash": "7de02d2b8d9d1e77a96889f61d973c51339dde4ab6573c98c714214d6d58ff36"
+      }
+    },
+    "embedded_cli_package": {
+      "layoutVersion": 1,
+      "version": "0.166.0-alpha.5.1",
+      "target": "aarch64-apple-darwin",
+      "variant": "codex",
+      "entrypoint": "bin/codex",
+      "resourcesDir": "codex-resources",
+      "pathDir": "codex-path"
+    },
+    "binaries": [
+      {
+        "path": "/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex",
+        "sha256": "50ab38ba21d0d9f8346f32f41848382f15b556190f3c7a07e885a4fb73e379c8"
+      },
+      {
+        "path": "/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex",
+        "sha256": "58a91f6ea19bea477ae3a2ec48d619f0039afe75d3476260747e11d201fa7cea"
+      }
+    ],
+    "assets": [
+      {
+        "path": ".vite/build/preload.js",
+        "bytes": 7027,
+        "sha256": "aa8be920fd14a9b98eca16c91d97a55105b196698fda36d5063e966620a0c54a"
+      },
+      {
+        "path": ".vite/build/early-bootstrap-133-a2b781596743bab7.js",
+        "bytes": 116010,
+        "sha256": "35629d1aabe19b3ebb2833d126f70f858778eb5252c29778b1aa93dee2167855"
+      },
+      {
+        "path": ".vite/build/early-bootstrap-339-9edb60e5d8b0547e.js",
+        "bytes": 1444333,
+        "sha256": "480cf9c01ab1794c1b788aaf1bc159e96972f341e7f7ec03a53a8769e7b0d175"
+      },
+      {
+        "path": ".vite/build/early-bootstrap-439-a0f25ba32c465de1.js",
+        "bytes": 5269629,
+        "sha256": "c23f63f8ff156b2a92a81ee2870d80ab959ced6ce6232d6fe7e54bbefe11d333"
+      },
+      {
+        "path": ".vite/build/early-bootstrap-824-3c24dda6dba622ec.js",
+        "bytes": 289705,
+        "sha256": "c387296475ca0729e4be35c4831b512d39316e0f7e24fe4d631ad0d96ec8e13f"
+      },
+      {
+        "path": ".vite/build/early-bootstrap.js",
+        "bytes": 605616,
+        "sha256": "bb8f2f467b40c583d889a52c1048865d3fa11ee123c6147606fc3087470b4c46"
+      },
+      {
+        "path": "webview/assets/app-initial-61c1d0e6137e.js",
+        "bytes": 10859750,
+        "sha256": "7a8d8b711bf2eb1adbfab04818a63bf6517935d11bb4d0d4c9d6602d1e3fe6f2"
+      },
+      {
+        "path": "webview/assets/app-shared-e711d01481fb.js",
+        "bytes": 6213809,
+        "sha256": "b57a5332480b033f54945bfa155cf5b152e0b8486a812192b0913f1d0753a580"
+      },
+      {
+        "path": "package.json",
+        "bytes": 12574,
+        "sha256": "ec87acfe7453cfeb72adce3ac59a150fcd51cdad33305a4d85a139a4ce182230"
+      },
+      {
+        "path": "webview/assets/app-runtime-aa2c0a69096f.js",
+        "bytes": 380875,
+        "sha256": "04271940700acd0620e15968f7df0f02326e03c15b4b9d7de87ec228a10712ed"
+      },
+      {
+        "path": "webview/assets/initialize-app-host-services-ee382d2e875a.js",
+        "bytes": 207739,
+        "sha256": "2b90c77b09a77f6ff266fe2e87772d0b1f90769fa12d18efe8604eeea954a171"
+      },
+      {
+        "path": "webview/assets/connect-app-host-38c2a2481282.js",
+        "bytes": 383,
+        "sha256": "d0978a58ef662c1581e6da861b8e458839562cda04bdb9e8a804a45640968eed"
+      }
+    ]
+  },
+  "official_source": {
+    "commit": "6ff1e1ca3b30fc8b914720681fcf5fe62e95f856",
+    "release": "rust-v0.166.0",
+    "source_to_binary_identity": "official release association only; reproducible build identity not established",
+    "files": [
+      {
+        "path": "codex-rs/rollout/src/session_index.rs",
+        "sha256": "c3516e232c525a58453444d42714060a0c1f57ffdd7b1946beb12d1e30691e40"
+      },
+      {
+        "path": "codex-rs/thread-store/src/local/helpers.rs",
+        "sha256": "d48fb3deef0282949008a360b728ffbb521e7f765f0238c77707085fcff87e3c"
+      },
+      {
+        "path": "codex-rs/thread-store/src/local/list_threads.rs",
+        "sha256": "6c0e51b81c12a68f965b03633df6911cf90edf7b09ca8533db35e4d39c5afade"
+      },
+      {
+        "path": "codex-rs/thread-store/src/local/search_threads.rs",
+        "sha256": "d09554c4837d84bb402778badf286c9fc11978db38ac67ebda37753082dde945"
+      },
+      {
+        "path": "codex-rs/app-server/src/request_processors/thread_delete.rs",
+        "sha256": "5090073a863a47189dba2ff697b3a0cfd39de9d1797cd3a6e1b84039753b1275"
+      },
+      {
+        "path": "codex-rs/state/src/runtime/threads.rs",
+        "sha256": "6d0e170a3180e51188ac08397a37649f6abbe91a44e2a574f1e133323d253b75"
+      },
+      {
+        "path": "codex-rs/thread-store/src/local/thread_sections.rs",
+        "sha256": "7941c5e82b14fdf8f147be9075f7944dae7720b871c2c7c2c511e18d1ca52678"
+      },
+      {
+        "path": "codex-rs/thread-store/src/thread_sections.rs",
+        "sha256": "20ec1e8891ed4ee244c9b0a0629bc8f5a02114c2e152a13f9698668afddcdbce"
+      },
+      {
+        "path": "codex-rs/message-history/src/lib.rs",
+        "sha256": "5de6c701fcf793b261958da119bc0d54e5045d9752f33f65aeb6311fca4d7cd0"
+      },
+      {
+        "path": "codex-rs/login/src/auth/storage.rs",
+        "sha256": "0b6c51f6a74f87134b11f24617968ce4871c84799f9aaceaeea05dec00dd2831"
+      },
+      {
+        "path": "codex-rs/login/src/auth/manager.rs",
+        "sha256": "786ca243ef10931573ba6e2fc37bf83c1ca9e9cced158152d1706d6950c2f53a"
+      },
+      {
+        "path": "codex-rs/app-server/src/request_processors/account_processor.rs",
+        "sha256": "76d7f41221f74291f03bda83dba9cd0166c943245cdde66cd44b01f63c497915"
+      }
+    ]
+  },
+  "offset_convention": "The bundle evidence offsets below are Unicode character offsets in UTF-8-decoded asset, not raw byte offsets. Asset hashes bind exact bytes."
+}

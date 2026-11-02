@@ -1,0 +1,437 @@
+{
+  "schema_version": 1,
+  "date": "2026-11-02",
+  "evidence_class": "static research, not execution authority",
+  "verdict": "OPEN",
+  "provider_impossibility_proven": false,
+  "graphical_profile_enabled": false,
+  "restart_reappearance_tested": false,
+  "classification_rule": "RequiredProjection names prospective GUI obligation, not supported production capability. UnknownProjection never treated as NotRelevant.",
+  "surfaces": [
+    {
+      "identity": "canonical-active-and-archived-lists",
+      "provider_component": "App Server/thread-store",
+      "storage": "state_5.sqlite and active/archived rollouts",
+      "classification": "RequiredProjection",
+      "session_reference": "canonical UUID; selected rollout; archive/project/section/source filters",
+      "user_visible_effect": "thread/list and archived/all views, metadata-only entries can survive missing rollout",
+      "proposed_mutation": "M8.2 exact row+Legacy/plain payload cut; new GUI contract separately gated",
+      "refresh_behavior": "DB-only route or filesystem fallback; names enriched separately",
+      "restart_behavior": "surviving rollouts may be discovered/backfilled",
+      "verification": "complete active+archived listings and exact read classification after restart; retained positive sentinels",
+      "status": "primary cut supported M8.2; GUI profile not validated",
+      "evidence": [
+        "official local/list_threads.rs:25-335",
+        "official app-server thread_processor.rs:2730-2960"
+      ],
+      "persistence": "persistent",
+      "authority": "canonical provider catalog; rollout fallback",
+      "reconstruction_risk": "unclosed_for_complete_removal"
+    },
+    {
+      "identity": "title-index",
+      "provider_component": "rollout/session_index",
+      "storage": "session_index.jsonl and permanent session_index.jsonl.lock",
+      "classification": "DerivedProjection",
+      "session_reference": "SessionIndexEntry.id exact ThreadId; latest usable name wins",
+      "user_visible_effect": "name enrichment and name-to-loadable-rollout lookup",
+      "proposed_mutation": "exact structured-ID record removal; preserve malformed/unrelated bytes/order; stable lock; synced atomic replacement",
+      "refresh_behavior": "reverse scan on lookup; DB-only list still reads index for names",
+      "restart_behavior": "index persists but name lookup requires readable existing rollout",
+      "verification": "all target records absent, non-target bytes/order unchanged, locks and similar IDs preserved",
+      "status": "M8.2 retains; candidate for maximum-safe exact record cleanup",
+      "evidence": [
+        "official rollout/session_index.rs:24-165,223-305",
+        "official local/helpers.rs:228-280"
+      ],
+      "persistence": "persistent",
+      "authority": "derived title enrichment and name lookup",
+      "reconstruction_risk": "unclosed_for_complete_removal"
+    },
+    {
+      "identity": "command-history",
+      "provider_component": "message-history",
+      "storage": "history.jsonl",
+      "classification": "UnknownProjection",
+      "session_reference": "HistoryEntry.session_id string; ts/text",
+      "user_visible_effect": "global command recall; inspected Desktop catalog source does not read it directly; complete GUI role not proven",
+      "proposed_mutation": "typed lossless exact-session record rewrite only after applicable writers stopped; data-inode locking differs from index lock",
+      "refresh_behavior": "append/trim under exclusive data-file lock; inode+offset readers",
+      "restart_behavior": "persists; replacing inode while live writers hold old file unsafe",
+      "verification": "exact target absence and unrelated byte preservation if admitted; otherwise prove no supported reconstruction role",
+      "status": "strong ID field exists; safe mutation/profile/UI role not validated",
+      "evidence": [
+        "official message-history/src/lib.rs:1-205,270-445"
+      ],
+      "persistence": "persistent",
+      "authority": "authoritative command recall; GUI role unknown",
+      "reconstruction_risk": "unclosed_for_complete_removal"
+    },
+    {
+      "identity": "desktop-thread-catalog",
+      "provider_component": "main process mU/ewY",
+      "storage": "CODEX_HOME/sqlite/codex.db or codex-dev.db; local_thread_catalog",
+      "classification": "RequiredProjection",
+      "session_reference": "composite host_id/thread_id; missing_candidate flag",
+      "user_visible_effect": "independent sidebar/history paging, count, exact entries and project/manual paging",
+      "proposed_mutation": "prefer reviewed exact native invalidation; stopped-app fixed exact row/scan/revision operation only after schema closure",
+      "refresh_behavior": "native thread/deleted/archive notifications authoritative-remove; scan upserts; incremental scan does not close deletion",
+      "restart_behavior": "full scan only when incomplete or last_full_reconciled_at null; ordinary restart can preserve ghosts",
+      "verification": "fresh actual GUI preload bootstrap + catalog readEntries/readPage after launch, all relevant pages and collateral checks",
+      "status": "statically established, no enabled AgentMender Desktop profile",
+      "evidence": [
+        "bundle339 chars1192700-1194900",
+        "bundle439 chars452000-471500",
+        "bundle439 chars3594500-3615000",
+        "bundle439 chars4147290-4151000",
+        "issue53175 older-build observation supplementary"
+      ],
+      "persistence": "persistent",
+      "authority": "independent Desktop UI catalog",
+      "reconstruction_risk": "unclosed_for_complete_removal"
+    },
+    {
+      "identity": "desktop-catalog-scan-records",
+      "provider_component": "mU/ewY",
+      "storage": "local_thread_catalog_scan_entries/checkpoints/sync_state/metadata",
+      "classification": "SharedProjection",
+      "session_reference": "host and exact thread scan-entry; host counters/checkpoint shared",
+      "user_visible_effect": "pending/resumed scan can reinsert stale thread",
+      "proposed_mutation": "freeze exact target record preimage plus reviewed observation sequence/revision/tombstone effects; no whole host reset",
+      "refresh_behavior": "authoritative removal tombstones active/checkpoint scan and increments sequence/revision",
+      "restart_behavior": "checkpoint persists; stale page reconstruction risk",
+      "verification": "target cannot upsert from scan after removal; unrelated checkpoints/rows preserved",
+      "status": "source model established; destructive profile absent",
+      "evidence": [
+        "bundle439 chars461000-470800"
+      ],
+      "persistence": "persistent",
+      "authority": "derived scan and reconstruction coordination",
+      "reconstruction_risk": "unclosed_for_complete_removal"
+    },
+    {
+      "identity": "desktop-global-state-and-backup",
+      "provider_component": "global-state RL",
+      "storage": "CODEX_HOME/.codex-global-state.json and .bak",
+      "classification": "RequiredProjection",
+      "session_reference": "many distinct typed keys, bare UUIDs and host-qualified records coexist",
+      "user_visible_effect": "legacy pins/project/order/state + renderer atoms",
+      "proposed_mutation": "stopped-app exact typed record edits in relevant main+fallback backup; preserve every unknown/non-target key",
+      "refresh_behavior": "loads once into Map, queues whole-Map main+bak writes, no external watch/lock in class",
+      "restart_behavior": "fallback .bak loads if main invalid/unreadable; remaining backup can restore stale state",
+      "verification": "valid main+bak target record role absence, fresh launch projection checks, collateral baseline",
+      "status": "risk proven statically; complete per-key closure absent",
+      "evidence": [
+        "bundle133 chars7700-17000",
+        "bundle439 chars2726961-2729000"
+      ],
+      "persistence": "persistent_and_in_memory",
+      "authority": "UI preferences/migration authority; fallback copy",
+      "reconstruction_risk": "unclosed_for_complete_removal"
+    },
+    {
+      "identity": "desktop-recents",
+      "provider_component": "thread-store/catalog/renderer",
+      "storage": "memory arrays/summaries; catalog source_recency_at; provider recency_at_ms; renderer ordering",
+      "classification": "RequiredProjection",
+      "session_reference": "host/thread identity",
+      "user_visible_effect": "Recent sidebar and thread list",
+      "proposed_mutation": "native invalidation if scoped-safe; otherwise exact cleanup under cooperative stop and fresh restart",
+      "refresh_behavior": "thread/deleted discards discovery, cache evicts reason delete, list invalidates and deleted event emits",
+      "restart_behavior": "persistent catalog/atoms can hydrate; restart alone insufficient",
+      "verification": "fresh recent structured view after reload/restart; same-cwd and similar UUID sentinels remain",
+      "status": "surface exists; acceptance absent",
+      "evidence": [
+        "bundle439 chars1301986-1302300",
+        "bundle439 chars753000-754000",
+        "official state threads.rs recency fields"
+      ],
+      "persistence": "persistent_and_in_memory",
+      "authority": "derived recency projection",
+      "reconstruction_risk": "unclosed_for_complete_removal"
+    },
+    {
+      "identity": "desktop-title-and-content-search",
+      "provider_component": "thread-store search",
+      "storage": "App Server thread/list(title) and thread/search(content); renderer query state",
+      "classification": "RequiredProjection",
+      "session_reference": "returned exact host/thread id; selected rollout path",
+      "user_visible_effect": "search results",
+      "proposed_mutation": "primary/catalog cleanup and exact live invalidation or coordinated restart",
+      "refresh_behavior": "title uses thread/list(useStateDbOnly); content uses thread/search joining rollout matches to list",
+      "restart_behavior": "fresh query can find surviving source; GUI path not runtime tested",
+      "verification": "fresh title/content queries after reload/restart; exact target absent and positive unrelated results",
+      "status": "source routes established; GUI acceptance absent",
+      "evidence": [
+        "official local/search_threads.rs:35-201",
+        "bundle439 chars789000-791000"
+      ],
+      "persistence": "persistent_and_in_memory",
+      "authority": "derived queries over provider/catalog/history",
+      "reconstruction_risk": "unclosed_for_complete_removal"
+    },
+    {
+      "identity": "desktop-pinned-and-custom-sections",
+      "provider_component": "pinned service U0 and App Server",
+      "storage": "legacy pinned-thread-ids; app-server-migrated-pinned-thread-ids-by-host; threads.thread_section_id; renderer order",
+      "classification": "RequiredProjection",
+      "session_reference": "legacy bare threadId; migration identity host:codexHome; native section membership",
+      "user_visible_effect": "pinned/custom sidebar entries",
+      "proposed_mutation": "exact host/thread native semantics preferred; primary row removal cuts native membership, legacy/atom proof separate; retain shared section",
+      "refresh_behavior": "listPinnedThreads may migrate legacy pin via thread/section/move and persist marker",
+      "restart_behavior": "legacy/renderer records can hydrate; multi-host ownership ambiguous",
+      "verification": "fresh pin+section views after restart; unrelated pin same-project and other-host retained",
+      "status": "source established; safe per-record closure/runtime missing",
+      "evidence": [
+        "bundle439 chars1946800-1958900",
+        "official state threads.rs:45-58",
+        "official local/thread_sections.rs"
+      ],
+      "persistence": "persistent_and_in_memory",
+      "authority": "native membership plus legacy migration/renderer order",
+      "reconstruction_risk": "unclosed_for_complete_removal"
+    },
+    {
+      "identity": "desktop-archived-all",
+      "provider_component": "archive service and thread-store",
+      "storage": "provider archived flag/payload plus suppression/catalog state",
+      "classification": "RequiredProjection",
+      "session_reference": "host/thread id",
+      "user_visible_effect": "archived/all lists",
+      "proposed_mutation": "primary+catalog exact cleanup; native delete/archive cascading remains historical blocker",
+      "refresh_behavior": "archive/deleted event invalidates catalog/memory; special missing entry pathway",
+      "restart_behavior": "surviving archived payload/row/renderer can persist",
+      "verification": "fresh archived/all actual structured GUI views; unrelated archive remains",
+      "status": "surface exists; no GUI acceptance",
+      "evidence": [
+        "bundle439 chars3593983-3596000",
+        "official local/list_threads.rs:267-330"
+      ],
+      "persistence": "persistent_and_in_memory",
+      "authority": "canonical archive state plus independent suppression/catalog",
+      "reconstruction_risk": "unclosed_for_complete_removal"
+    },
+    {
+      "identity": "desktop-project-workspace-lists",
+      "provider_component": "project services + catalog",
+      "storage": "provider threads.project_id/projects/roots; legacy assignments/workspace hints/projectless/order globals",
+      "classification": "RequiredProjection",
+      "session_reference": "exact session records with host membership; cwd not authority",
+      "user_visible_effect": "project/sidebar lists and ordering",
+      "proposed_mutation": "record-only cleanup after determining current native-versus-legacy/migration precedence; preserve project/roots/shared order",
+      "refresh_behavior": "services can use provider-backed records; globals remain migration inputs",
+      "restart_behavior": "global/catalog/renderer hydrate independent sets",
+      "verification": "all supported project views target absent, same-project same-cwd unrelated visible",
+      "status": "exact precedence/record closure unresolved",
+      "evidence": [
+        "bundle439 chars2017177+",
+        "bundle439 chars3221424+",
+        "bundle439 chars455555-461000",
+        "bundle initial chars2225400+"
+      ],
+      "persistence": "persistent_and_in_memory",
+      "authority": "mixed provider/legacy/catalog authority; precedence unresolved",
+      "reconstruction_risk": "unclosed_for_complete_removal"
+    },
+    {
+      "identity": "desktop-renderer-atoms-and-caches",
+      "provider_component": "renderer persisted atom Map + main host",
+      "storage": "electron-persisted-atom-state in global main+bak; legacy localStorage codex:persisted-atom:*",
+      "classification": "UnknownProjection",
+      "session_reference": "typed keys; some host-qualified IDs; not generic UUID substring",
+      "user_visible_effect": "pin/chat/custom-section order, customization snapshots; caches may activate summaries",
+      "proposed_mutation": "exact reviewed atom records only or supported invalidation; never whole renderer cache/global subtree",
+      "refresh_behavior": "main sync/update messages; renderer Map and delayed writes; primary window controls some keys",
+      "restart_behavior": "persisted atoms hydrate, legacy migration can survive",
+      "verification": "actual structured renderer state after restart; cache target cannot restore; unrelated atom records intact",
+      "status": "not NotRelevant; reconstruction role closure missing",
+      "evidence": [
+        "bundle439 chars2726961-2729000",
+        "bundle initial chars1844000-1852000",
+        "bundle initial sidebar keys2064069,2180580,3883504,5443853,5475049",
+        "early-bootstrap.js chars224694 update-resume-state-v1 constant",
+        "bundle439 chars1503830 takeResumeState",
+        "app-runtime chars98423+ and145273+ mode/expiry validation"
+      ],
+      "specific_reconstruction_risk": "electron-persisted-atom-state.update-resume-state-v1 contains account/user/threadIds/expiry; matching ChatGPT startup can invoke startEmptyTurn for retained IDs; current source does not create missing canonical thread merely from this atom, but runtime absence proof and safe exact cleanup remain required",
+      "persistence": "persistent_and_in_memory",
+      "authority": "UI atom authority and derived cache; closure unresolved",
+      "reconstruction_risk": "unclosed_for_complete_removal"
+    },
+    {
+      "identity": "loaded-transcript-runtime",
+      "provider_component": "thread-discovery/cache",
+      "storage": "in-memory conversations/summaries/runtime ownership",
+      "classification": "RequiredProjection",
+      "session_reference": "exact host/thread identity",
+      "user_visible_effect": "loaded/open thread and stale summaries",
+      "proposed_mutation": "native delete handler if exact safe command; otherwise stop exact app+descendants with all writers fenced, restart",
+      "refresh_behavior": "delete handler discard+evict+event; cached summaries can reactivate",
+      "restart_behavior": "requires complete old process termination plus persistent-cache proof",
+      "verification": "fresh loaded-state query, actual GUI catalog and retained thread checks",
+      "status": "handler exists; no reviewed external invalidate-only port",
+      "evidence": [
+        "bundle439 chars623341+",
+        "bundle439 chars1301986+"
+      ],
+      "persistence": "in_memory",
+      "authority": "live discovery and runtime catalog",
+      "reconstruction_risk": "unclosed_for_complete_removal"
+    },
+    {
+      "identity": "electron-userData-browser-storage",
+      "provider_component": "Electron/Owl",
+      "storage": "explicit CODEX_ELECTRON_USER_DATA_PATH else appData/Codex; browser/LevelDB/IndexedDB/cache roles not closed",
+      "classification": "UnknownProjection",
+      "session_reference": "unknown exact records; never inspect live user data for this research",
+      "user_visible_effect": "potential cache/session hydration",
+      "proposed_mutation": "native invalidate preferred; no rm-rf or whole DB clear",
+      "refresh_behavior": "no complete external refresh contract found",
+      "restart_behavior": "independent userData persists",
+      "verification": "owned isolated userData experiment, structured source-role proof",
+      "status": "not tested; not NotRelevant",
+      "evidence": [
+        "bundle339 chars131900-132600",
+        "bundle initial legacy localStorage migration"
+      ],
+      "persistence": "persistent_and_in_memory",
+      "authority": "unknown reconstruction role",
+      "reconstruction_risk": "unclosed_for_complete_removal"
+    },
+    {
+      "identity": "remote-cloud-hosts",
+      "provider_component": "Desktop multi-host manager",
+      "storage": "remote/cloud authority and host catalogs",
+      "classification": "UnknownProjection",
+      "session_reference": "host_id+thread_id+account identity; identical UUID across hosts possible",
+      "user_visible_effect": "remote/cloud lists,pins,projects",
+      "proposed_mutation": "outside stable local destructive authority; protect; bare UUID deletion unsafe",
+      "refresh_behavior": "remote/cloud resync independent",
+      "restart_behavior": "may repopulate separately",
+      "verification": "local scope bound to exact root/host; preserve same UUID another host",
+      "status": "unsupported as local mutation, not assumed absent",
+      "evidence": [
+        "bundle439 mU composite key and U0 host ownership"
+      ],
+      "persistence": "persistent_and_in_memory",
+      "authority": "separate remote/cloud authority; local scope unsupported",
+      "reconstruction_risk": "unclosed_for_complete_removal"
+    },
+    {
+      "identity": "desktop-other-thread-records",
+      "provider_component": "Desktop app DB and voice/automation/visualization services",
+      "storage": "codex.db thread_timeline_ledger,live_visualization_suggestions,active_chat_turns",
+      "classification": "UnknownProjection",
+      "session_reference": "thread_id with host/account/profile keys where schema requires; exact row/subtree is mutation unit, not whole DB",
+      "user_visible_effect": "voice timeline content, visualization suggestions and activity metadata; exact standalone catalog reconstruction role not completely closed",
+      "proposed_mutation": "record-level candidate only after exact role/sharing/host identity and full schema/writer proof; current status retain Unsupported",
+      "verification": "prove all required UI roles absent and all unrelated exact logical rows preserved under actual restart",
+      "status": "Retain Unsupported pending exact record authority and actual relevant-mode verification; these rows are not labeled harmless technical residuals",
+      "evidence": [
+        "bundle339 migration SQL in desktop-catalog-schema-static.json",
+        "bundle439 chars1344500-1346000 voice timeline list/read",
+        "bundle439 chars1502371-1504200 active launch persistence",
+        "app-runtime chars99177+ actual interrupted-turn validation",
+        "app-runtime chars145273+ ChatGPT-only prior-launch activity branch"
+      ],
+      "activity_mode_limit": "active_chat_turns prior-launch reminder consumed only in matching ChatGPT account/user branch; candidate requires actual latest interrupted turn; API-key fixture does not exercise this branch",
+      "persistence": "persistent",
+      "authority": "role unresolved; not proof of harmless residue",
+      "reconstruction_risk": "unclosed_for_complete_removal",
+      "refresh_behavior": "Unresolved; no runtime verification",
+      "restart_behavior": "Unresolved; potential reconstruction must remain protected"
+    },
+    {
+      "identity": "desktop-automation-inbox-history",
+      "provider_component": "Desktop automation runs and inbox service",
+      "storage": "codex.db automation_runs JOIN automations",
+      "classification": "RequiredProjection",
+      "applicability": "when exact target has an eligible automation run under the current owner filter",
+      "session_reference": "automation_runs.thread_id; ownership/account/user/installation filter comes from joined automations",
+      "user_visible_effect": "run/inbox titles and descriptions can include archived user/assistant messages independently of state_5/thread catalog",
+      "proposed_mutation": "exact approved target run record; heartbeat automation effects are distinct frozen targets and must not be triggered implicitly",
+      "refresh_behavior": "native UI deletion wrapper deletes target run; actual thread/deleted handler additionally deletes heartbeat automations and other worktree/host resources",
+      "verification": "actual inbox/history structured view absence, collateral automation/run records preserved, target run cannot persist as standalone visible record",
+      "status": "source role established; profile/runtime mutation still unvalidated",
+      "evidence": [
+        "bundle339 chars739759-744405 automation DB operations/native wrapper",
+        "bundle339 chars1110187-1112000 inbox independent query",
+        "bundle339 chars811309+ deletion side effects",
+        "bundle339 chars917792+ notification handler"
+      ],
+      "persistence": "persistent_and_in_memory",
+      "authority": "independent automation inbox and history authority",
+      "reconstruction_risk": "unclosed_for_complete_removal",
+      "restart_behavior": "Unresolved; potential reconstruction must remain protected"
+    }
+  ],
+  "native_invalidation": {
+    "stable_delete": "Official App Server computes spawn subtree, prepares each member, deletes descendants before root; notifications follow successful result only. Not a target-only invalidation API.",
+    "catalog": "Desktop coordinator thread/deleted or thread/archived -> exact applyAuthoritativeRemoval, scan tombstone, sequence/revision, listener publish.",
+    "renderer": "deleted handler discards discovery, evicts cache, emits thread-list invalidation + thread-deleted.",
+    "missing_entry": "Private manager removeMissingEntry calls archived handler; local archive wrapper validates loaded/persisted/missing status. No reviewed public external invalidate-only contract established.",
+    "global": "No single native delete handler proved to clear every exact target main/bak/pin/renderer key.",
+    "forbidden_shortcut": "Do not fake native notifications as authority or switch to native cascade after local effect.",
+    "dedicated_catalog_service": "Internal appHost localThreadCatalog.notifyThread({hostId,threadId},remove) at bundle439 chars2836110 calls only catalog coordinator archived handler. It is narrower than general native thread/deleted, but external production transport/approval/collateral closure must still be reviewed and runtime-tested."
+  },
+  "coordination": {
+    "live": "CLI writer locks and state SQLite exclusive fence do not fence Desktop whole-Map global state or independent catalog. Live direct mutation unsafe absent reviewed provider protocol.",
+    "stopped_candidate": "Exact bundle/version/root/host+writer control; stop/restart are frozen approved effects; no generic process name kills; initially closed app not automatically launched outside designed policy.",
+    "profile_gap": "Installed embedded CLI 0.166.0-alpha.5.1 differs stable exact 0.166.0 M8.2. Override resolver supports explicit stable candidate, but new composite profile must be tested."
+  },
+  "structured_gui_probe": {
+    "preload": "window.electronBridge.getInitialSidebarBootstrap() returns main-process actual catalogEntries/catalogHostIds/globalStateEntries plus workspace state. Preload caches snapshot once per renderer; must recreate renderer to get fresh bootstrap.",
+    "read_api": "appHost exposes localThreadCatalog.readPage/readEntries/readStatus and thread services; private RPC requires exact bundled interface. No external generic port added to production.",
+    "source": [
+      "bundle preload.js",
+      "bundle439 chars4147290-4151000 getInitialSidebarBootstrap",
+      "bundle439 chars4128553 localThreadCatalog appHost",
+      "bundle439 chars4405095 trusted IPC binding"
+    ],
+    "limits": "Bootstrap is capped and samples top10 plus selected/pinned/project keys. Use small baseline fixtures and complete appHost paging; bootstrap alone is not all-surface proof.",
+    "existing_service_binding": "Exact app-shared export Vct is live services binding KQ, populated by Kwt. The real runtime and initializer both import it. Read existing Vct.localThreadCatalog to avoid registering a new app-host connection."
+  },
+  "architectural_recommendations": [
+    "Pure product assessment separate historical M8.2 PrimaryRemoved from CompleteSessionRemoval.",
+    "Domain owns categorical projection/reconstruction/coverage laws; adapter owns exact paths/schema/keys and admission.",
+    "Freeze required projection records, preimages, physical identities, host/root/app identity, shutdown/restart effects, retained baselines in existing immutable manifest and approval digest.",
+    "Unknown or visible projection risk prevents Removed and successful RemovedWithResiduals.",
+    "Every approved supported exact artifact attempted unless fresh safety revalidation fails; new discoveries replan.",
+    "No retry after uncertain effects, no generic SQL/JSON/cache ports, no whole shared-store restore.",
+    "Do not promote Desktop mutation until exact composite schema/coordination/real GUI restart and collateral acceptance pass."
+  ],
+  "issues": [
+    {
+      "url": "https://github.com/openai/codex/issues/53175",
+      "kind": "reporter observation on older Desktop26.1007.21159, supplementary; exact installed source checked independently"
+    },
+    {
+      "url": "https://learn.chatgpt.com/docs/app-server",
+      "kind": "current docs, not exact effect closure"
+    }
+  ],
+  "auth_ui_feasibility": {
+    "default_empty_home": "normal OpenAI-provider missing-auth route selects login; catalog bootstrap/local service can still be queried but login-hidden target is not normal GUI visibility acceptance",
+    "configured_api_key_candidate": "Owned synthetic auth.json selects actual ApiKey mode using deliberately invalid fixture string; no real secret/account claim/source mock/network authentication. Actual normal app routing and baseline visible views remain to be observed.",
+    "exact_sources": [
+      "official login/src/auth/storage.rs:47-73",
+      "official login/src/auth/manager.rs:355-360,893-896",
+      "official account_processor.rs:1107-1166",
+      "app-runtime chars38200-43800 RA/UA auth routing"
+    ],
+    "limits": [
+      "API-key local fixture does not establish authenticated ChatGPT/cloud views or ChatGPT-only update-resume/active-chat branches",
+      "do not assume OPENAI_API_KEY environment is honored; use exact source-backed configured fixture path and verify method without returning tokens",
+      "alternative custom no-auth provider requires configuration profile changes refused by historical M8.2 admission"
+    ]
+  },
+  "report_files": [
+    "projection-inventory.json",
+    "projection-provenance.json",
+    "desktop-catalog-schema-static.json",
+    "desktop-harness-design.md",
+    "projection-role-closure.md",
+    "asar_readonly.py"
+  ],
+  "admitted_complete_removal_profiles": []
+}

@@ -1,18 +1,51 @@
-# Scoped session cleanup and storage reclaim
+# Scoped session cleanup and complete session removal
 
-M8.2 implementation and independent security review are complete. [ADR-0017](adr/0017-scoped-cleanup-residual-preservation-provider-local-mutation.md)
-accepts the scoped-cleanup semantics and architecture. Exact-profile isolated
-acceptance and local gates passed; successful exact-head Linux/macOS/Windows CI
-completes the release gate.
-This document records the contract, not a claim that those gates already passed.
-The [progress receipt](milestones/m8-2-progress.md) records the resumed work.
+M8.2 primary cleanup is **PASS**, integrated at
+`a284767157ace8769deee85b195b5b70efe374d8`; local, isolated and exact-head
+three-platform gates passed ([integration receipt](milestones/m8-2-integration.md)).
+M8.2.1 is **OPEN**, on `milestone/m8-2-1-complete-session-removal`.
+[ADR-0018](adr/0018-complete-session-removal.md) defines the stronger current
+product claim. ADR-0017 and the historical implementation below retain their
+primary-cleanup meanings and original immutable encodings.
 
-AgentMender's practical goal is safe, evidence-driven cleanup of local AI coding-
-agent state. Remove only what can be attributed safely; preserve shared, ambiguous,
-unknown and unrelated data. False positive deletion is the dominant safety failure.
-A false negative residual is acceptable and visible.
+## Current product contract
 
-## Historical finding and new success criterion
+Remove the exact session's primary state and canonical catalog entry; remove it
+from every supported user-visible projection; verify absence immediately, after
+reload, restart and fresh discovery; preserve every unrelated session/record/key;
+and clean every supported safely attributable exclusive artifact. A shared
+container may contain an exclusive exact record. Remove that record, never the
+whole index/history/global-state/database/cache container.
+
+Any visible or reconstructing residual prevents product Removed and
+RemovedWithResiduals. Only technical residue proven non-projecting and unable to
+restore intact primary state may remain. Unknown risk in either domain prevents
+success. Newly discovered units require replanning; actual effects remain a subset
+of the independently approved frozen set. Coverage is derived from exact units
+and checked known byte sums; unknown sizes remain unknown.
+
+The new pure assessment separates PrimaryRemoved, ProjectionClean and
+MaximumSafeCleanupComplete. It grants no authority and accepts no imported proof.
+All required surfaces and all four verification phases must match the exact
+root/profile/target inventory. The existing production v1 adapter supplies only
+primary evidence: its product assessment is ProjectionIncomplete, maximum safe
+cleanup Unknown. **No graphical complete-removal profile is admitted.**
+
+CLI execute/reconcile output now reserves top-level outcome for product
+assessment. Historical values remain under primary_cleanup_outcome; state remains
+the durable historical transaction state. session_removal and product_complete
+make the distinction explicit. Successful primary v1 cleanup therefore returns
+exit 2 for unverified complete removal. The journal is unchanged; a durable
+Succeeded primary transaction is not a complete-removal receipt.
+
+Projection/App Server/catalog/global-state/backup/renderer and artifact evidence
+are recorded separately in the research inventories. Desktop coordination and
+restart effects need an exact reviewed composite profile, a new versioned frozen
+manifest and fresh approval. No old grant authorizes such effects. Current
+reconciliation observes only; it never restarts the app, retries deletion or adds
+new targets. M8.3, M10 and natural-language work remain unstarted.
+
+## Historical M8.2 primary-cleanup contract
 
 M8.1's complete provider-native Codex cleanup remains **BLOCKED BY PROVIDER**.
 Its answer to complete native effect/deletion/retention proof remains **NO**.
@@ -169,8 +202,9 @@ transaction, recovery, independent test approval and DurableIntent. Destructive
 acceptance never uses real user sessions. All standard local gates and exact-final-
 commit Linux/macOS/Windows Actions remain mandatory.
 
-M8.3 may later compose frozen exact session sets and sum independently verified
-results. It is not a recursive project-path deletion. M8.3, NLP, M10, Claude local
+After M8.2.1 PASS, M8.3 may compose frozen exact session sets using its stronger
+projection/restart contract and sum independently verified results. It is not a
+recursive project-path deletion. M8.3, NLP, M10, Claude local
 mutation, M11 recovery redesign and M12 repair are not implemented in M8.2.
 
 ## Local CLI workflow

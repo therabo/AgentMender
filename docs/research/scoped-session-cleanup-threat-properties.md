@@ -1,5 +1,19 @@
 # Scoped local one-session threat review and generated-property proposal
 
+## M8.2.1 threat extension
+
+[ADR-0018](../adr/0018-complete-session-removal.md) adds Desktop catalogs,
+whole-Map global-state rewrites, fallback .bak, renderer persisted atoms, host
+identity, stale scans, live memory and restart/reappearance to the safety boundary.
+Primary absence cannot prove these projections clean. Unknown supported
+reconstruction risk prevents successful product removal. Exact shared-container
+records require preserved unrelated bytes/keys/semantics, verified writer exclusion,
+durable publication and frozen approval. Never clear an entire catalog/cache/map
+or terminate processes by generic name. Every safe supported exclusive artifact
+must be attempted; uncertain/foreign state remains protected. Current implementation
+adds pure assessment only; new mutation/app/restart crash proofs are pending.
+The historical M8.2 research below is preserved as its primary-cleanup context.
+
 Research/review only, 2026-10-31. Basis: exact Codex0.166.0 source commit6ff1e1ca3b30fc8b914720681fcf5fe62e95f856 at `/tmp/agentmender-research/openai-codex`, current-stable external verification, and companion `/tmp/agentmender-reconstruction/codex-storage-research.md`. No repository edit, provider execution, real-user effect, production capability or final design is introduced.
 
 ## Review conclusion

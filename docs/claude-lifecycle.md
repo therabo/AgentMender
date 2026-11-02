@@ -1,5 +1,13 @@
 # Claude project lifecycle investigation: M9 BLOCKED
 
+## M8.2.1 scope
+
+Complete session removal now requires supported UI projection disappearance,
+restart verification and maximum safe artifact cleanup under
+[ADR-0018](adr/0018-complete-session-removal.md). This Codex investigation enables
+no Claude mutation/profile or raw-storage fallback. Claude M9 remains historical
+BLOCKED BY PROVIDER CONTRACT; its zero mutation profiles and all guards remain.
+
 ## M8.2 scope does not enable Claude mutation
 
 The Codex-only [scoped cleanup proposal](scoped-session-cleanup.md) is **OPEN**

@@ -1,5 +1,12 @@
 # ADR-0017: Scoped cleanup, residual preservation and provider-local mutation
 
+Integration note, 2026-11-02: M8.2 is historical primary-cleanup PASS, exact-head
+three-OS CI verified, and integrated at `a284767157ace8769deee85b195b5b70efe374d8`.
+The original decision below retains its primary/cutoff meanings.
+[ADR-0018](0018-complete-session-removal.md) supersedes using that weaker receipt
+as a current product-level complete graphical removal claim; it does not widen
+this adapter or rewrite its immutable history.
+
 Status: Accepted semantic/architecture direction for M8.2 (2026-10-31).
 Implementation, independent code review, isolated exact-profile acceptance and
 local gates are complete. Successful exact-head three-OS CI completes the release

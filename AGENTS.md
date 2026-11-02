@@ -1,15 +1,28 @@
 # AgentMender engineering constraints
 
-Current implementation scope is **M8.2 complete, release gated by exact-head CI** on
-`milestone/m8-2-scoped-session-cleanup`. M8.1 evidence was formally fast-forward
-integrated at `6f798bcebdfd2f763e31d62ef2695c52396ca709`; integration/base receipt
-commit is `c9dd04d`. Read docs/scoped-session-cleanup.md, the research landscape
-and accepted ADR-0017 before changing boundaries. Independent Sol/high reviews
-approved its semantics and domain/application architecture on 2026-10-31. The
-exact provider implementation, SQLite/WAL exclusion and isolated acceptance passed
-independent review and local gates on 2026-11-01. Final-commit three-OS CI remains
-the release gate. No provider effect is authorized without the existing consumed
-DurableIntent, exact profile, fresh revalidation and independent approval.
+Current scope is **M8.2.1 complete session removal, OPEN** on
+`milestone/m8-2-1-complete-session-removal`. M8.2 primary cleanup is historical
+PASS, exact-head three-OS CI verified and fast-forward integrated at
+`a284767157ace8769deee85b195b5b70efe374d8`; see docs/milestones/m8-2-integration.md.
+Read ADR-0018, scoped-session-cleanup and both projection/artifact inventories
+before changing boundaries. Sol/high accepted the pure product-assessment
+direction before implementation. No complete Desktop removal profile is admitted.
+Native M8.1 and Claude M9 blockers remain unchanged.
+
+Session Removed now requires primary/catalog removal, every required supported
+projection absent immediately and after reload/restart/fresh discovery, collateral
+preservation and maximum safe cleanup. Any user-visible or reconstructing residual
+prevents product success. Unknown supported projection/primary reconstruction
+risk prevents success. Only proven non-projecting/non-primary technical residuals
+may permit RemovedWithResiduals. M8.2 v2 plan/report/digest/replay meanings remain
+historical primary cleanup; never relabel those receipts as complete GUI removal.
+
+Remove every supported safe exclusive unit, including exact records inside shared
+containers. Preserve all unrelated records/keys and every shared/ambiguous/unknown
+unit. New candidates require replan, not dispatch expansion. New projection and
+app coordination effects require a separately versioned manifest, exact reviewed
+profile, independent approval and consumed DurableIntent. An old grant authorizes
+no new effect. No provider effect precedes intent, including lock creation/startup.
 
 The scoped objective is one exact session's required primary removal plus optional
 categorically attributable artifacts, with `actual effects ⊆ approved effects`.
@@ -28,7 +41,7 @@ execute cleanup. Reuse existing immutable planning, protected persistence,
 independent terminal approval and consumed DurableIntent; do not create parallel
 cleanup authority. Lock creation itself is an effect after durable intent.
 No native provider startup, production test on real user state, NLP, M8.3 or M10
-work is authorized by this documentation. M8.3 is planned only after M8.2.
+work is authorized by this documentation. M8.3 is planned only after M8.2.1 PASS.
 
 ## Historical milestone constraints
 

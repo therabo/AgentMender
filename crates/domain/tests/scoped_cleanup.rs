@@ -150,6 +150,38 @@ fn required_absence_and_optional_failure_are_truthful() {
     r.actions[0].artifact = artifact("unknown-cache", GraphNodeKind::Artifact);
     assert!(!validate_cleanup_report(&m, &r));
 }
+
+#[test]
+fn historical_primary_reports_never_prove_complete_session_removal() {
+    let mut m = manifest();
+    let original_manifest = serde_json::to_vec(&m).unwrap();
+    let r = report(&m);
+    let original_report = serde_json::to_vec(&r).unwrap();
+    let assessment = assess_legacy_session_removal(&m, &r);
+    assert!(assessment.primary_removed);
+    assert!(!assessment.projection_clean);
+    assert!(!assessment.product_complete());
+    assert_eq!(
+        assessment.outcome,
+        SessionRemovalOutcome::ProjectionIncomplete
+    );
+    assert_eq!(assessment.maximum_safe_cleanup, MaximumSafeCleanup::Unknown);
+    assert!(assessment.coverage.is_none());
+    assert_eq!(serde_json::to_vec(&m).unwrap(), original_manifest);
+    assert_eq!(serde_json::to_vec(&r).unwrap(), original_report);
+
+    // Even a residue-free historical receipt lacks GUI and restart evidence.
+    m.residuals.clear();
+    let mut r = report(&m);
+    r.outcome = CleanupOutcome::Removed;
+    assert!(validate_cleanup_report(&m, &r));
+    assert!(!assess_legacy_session_removal(&m, &r).product_complete());
+
+    r.canonical_row_absent = false;
+    let assessment = assess_legacy_session_removal(&m, &r);
+    assert!(!assessment.primary_removed);
+    assert!(!assessment.product_complete());
+}
 #[test]
 fn deterministic_model_4096_cases() {
     let mut seed = 0x4d382e3253434f50u64;

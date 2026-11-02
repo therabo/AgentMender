@@ -1,5 +1,16 @@
 # Independent local approval
 
+## M8.2.1 current approval boundary
+
+[ADR-0018](adr/0018-complete-session-removal.md) strengthens the product result;
+it grants no new authority. M8.2 primary-cleanup PASS and its v2 approval encoding
+are preserved. Existing grants cannot authorize index/history/global-state edits,
+Desktop catalog mutation, cache invalidation or app shutdown/restart. Such effects
+must be frozen in a separately versioned exact manifest and disclosed in the same
+independent terminal review, then freshly validated before consumed DurableIntent.
+No complete Desktop removal profile or restart approval workflow is admitted.
+Pure assessments and coverage percentages never grant permission. M8.2.1 is OPEN.
+
 ## M8.2 scoped cleanup approval
 
 [Scoped session cleanup](scoped-session-cleanup.md) is implemented under accepted

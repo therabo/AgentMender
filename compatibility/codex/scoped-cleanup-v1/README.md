@@ -1,5 +1,14 @@
 # Codex scoped-cleanup-v1 profile evidence
 
+## Current interpretation
+
+This is the historical M8.2 primary-cleanup profile, PASS and integrated at
+`a284767157ace8769deee85b195b5b70efe374d8`. Pins, production effects, v2 wire
+identity and replay are unchanged. Under
+[ADR-0018](../../../docs/adr/0018-complete-session-removal.md), its successful
+primary receipt maps to product ProjectionIncomplete, with maximum-safe cleanup
+unknown. This is not an admitted graphical complete-removal/restart profile.
+
 This is a separately reviewed provider-local cleanup profile. It does not change
 M8.1's blocked native delete verdict or the historical native unarchive pins.
 The implementation and release remain subject to the M8.2 review and gates in

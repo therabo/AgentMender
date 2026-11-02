@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Provider observation, independent approval and gated lifecycle fitness (ADRs 0001-0014)."""
+"""Provider observation, approval and exact lifecycle fitness (ADRs 0001-0018)."""
 import json
 import pathlib
 import re
@@ -524,4 +524,63 @@ if len(execution) != 1 or not (0 <= execution[0].find('.record_intent(') < execu
 assert approval_boundary_violation('fn bypass() { store.grant_approval(); }', 'provider-codex', 'scoped_cleanup.rs')
 assert approval_boundary_violation('use agentmender_persistence::TransactionStore;', 'provider-codex', 'scoped_unsupported.rs')
 assert production_source('#[cfg(all(test, unix))] mod tests { fs::write("test", b"x"); }\nfn later() {}').strip() == 'fn later() {}'
+
+# ADR-0018 adds product assessment, not a general projection mutation port.
+# These structural canaries supplement the exact SQL/unlink allowlist above and
+# the behavioral assessment properties; they are not an ownership proof.
+def projection_mutation_violation(source):
+    source = production_source(source)
+    code = mask_literals(source)
+    generic = r'\bfn\s+(?:edit_json|delete_jsonl_where|delete_cache|execute_sql)\s*\('
+    substring = r'\.contains\s*\(\s*(?:target|thread_id|session_id|native_id)(?:\b|\.)'
+    whole_container = (
+        r'\b(?:remove_file|unlink|unlinkat)\s*\([^;]*'
+        r'"(?:[^"\n]*/)?(?:session_index\.jsonl|history\.jsonl|\.codex-global-state\.json(?:\.bak)?|codex\.db)"'
+    )
+    broad_cache = r'\bremove_dir_all\s*\([^;]*"[^"\n]*(?:Cache|IndexedDB|Local Storage)[^"\n]*"'
+    broad_map = r'\.remove\s*\(\s*"(?:electron-persisted-atom-state|pinned-thread-ids|thread-projects)"'
+    broad_process = r'Command\s*::\s*new\s*\(\s*"(?:killall|pkill)"'
+    return bool(re.search(generic, code) or re.search(substring, code)
+                or re.search(whole_container, source) or re.search(broad_cache, source)
+                or re.search(broad_map, source) or re.search(broad_process, source))
+
+
+for canary in [
+    'fn edit_json(path: Path, pointer: String) {}',
+    'fn delete_jsonl_where(predicate: Predicate) {}',
+    'fn delete_cache(path: Path) {}',
+    'fn execute_sql(sql: String) {}',
+    'fn bad() { line.contains(thread_id.as_str()); }',
+    'fn bad() { fs::remove_file(root.join("session_index.jsonl")); }',
+    'fn bad() { fs::remove_file(root.join("history.jsonl")); }',
+    'fn bad() { fs::remove_file(root.join(".codex-global-state.json.bak")); }',
+    'fn bad() { fs::remove_file(root.join("codex.db")); }',
+    'fn bad() { fs::remove_dir_all(root.join("Cache")); }',
+    'fn bad() { map.remove("electron-persisted-atom-state"); }',
+    'fn bad() { Command::new("killall"); }',
+    'fn bad() { Command::new("pkill"); }',
+]:
+    assert projection_mutation_violation(canary), 'projection mutation canary failed'
+assert not projection_mutation_violation('fn exact() { record.id == target; }')
+for crate in ['provider-codex', 'provider-api', 'application', 'cli']:
+    for path in (ROOT / 'crates' / crate / 'src').glob('*.rs'):
+        if projection_mutation_violation(path.read_text()):
+            raise SystemExit(f'unreviewed broad/generic projection mutation: {path}')
+
+assessment = production_source((ROOT / 'crates/domain/src/session_removal.rs').read_text())
+if impure_graph_code(assessment) or re.search(r'\bDeserialize\b', mask_literals(assessment)):
+    raise SystemExit('product assessment gained I/O or imported proof')
+legacy_assessment = list(method_bodies(assessment, 'assess_legacy_session_removal'))
+if len(legacy_assessment) != 1 or 'SessionRemovalOutcome::Removed' in legacy_assessment[0]:
+    raise SystemExit('historical primary receipt can claim complete removal')
+for marker in ['required_surfaces', 'immediate', 'reload', 'restart', 'fresh_discovery',
+               'ReconstructionRisk::None', 'Preservation::Unchanged',
+               'MaximumSafeCleanup::Complete', 'checked_add']:
+    if marker not in assessment:
+        raise SystemExit(f'product verification contract missing: {marker}')
+cli_cleanup = list(method_bodies((ROOT / 'crates/cli/src/lifecycle.rs').read_text(), 'report_cleanup'))
+if len(cli_cleanup) != 1 or any(marker not in cli_cleanup[0] for marker in [
+    'assess_legacy_session_removal', 'primary_cleanup_outcome', 'product_complete', 'Ok(!product_complete)',
+]):
+    raise SystemExit('CLI cleanup lost primary/product separation')
 print("Architecture, independent approval, gated Codex and read-only Claude checks passed (8 crates).")

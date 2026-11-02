@@ -1,5 +1,21 @@
 # Durable transactions and restart recovery
 
+## M8.2.1 current outcome boundary
+
+M8.2 is historical primary-cleanup PASS; its v2 plan/report/journal bytes, digests,
+replay and Succeeded meaning are preserved. A successful historical primary
+transaction does not establish product Session Removed. The separate pure
+assessment and CLI reporting mark missing projections/restart evidence incomplete;
+CLI returns exit 2 even when the primary transaction itself Succeeded.
+
+[ADR-0018](adr/0018-complete-session-removal.md) requires any future destructive
+projection/app coordination scope to use the existing approval/recovery/DurableIntent
+path with a separately versioned exact manifest. No new journal authority or effect
+retry is introduced. Current reconciliation remains read-only; an interrupted
+restart/projection mutation cannot be inferred complete, automatically retried or
+completed using a historical primary-only grant. Those new effects and their crash
+acceptance are still unimplemented. M8.2.1 remains OPEN.
+
 ## M8.2 scoped transaction integration
 
 M8.2 scoped transactions are implemented under [ADR-0017](adr/0017-scoped-cleanup-residual-preservation-provider-local-mutation.md) **Accepted**. Existing v1/v2 durable histories,

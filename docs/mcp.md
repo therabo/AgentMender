@@ -1,5 +1,13 @@
 # Read-only MCP interface
 
+## M8.2.1 scope
+
+The new pure product assessment is not an authorization or mutation tool. MCP
+still exposes exactly the eight read-only tools below, with no additional input,
+proof import, persistent preparation, approval or app coordination port.
+[ADR-0018](adr/0018-complete-session-removal.md) changes no MCP wire schema.
+M8.2 primary-cleanup PASS does not supply complete graphical removal; M8.2.1 is OPEN.
+
 ## M8.2 status: unchanged read-only surface
 
 M8.2 Scoped Session Cleanup is implemented; [ADR-0017](adr/0017-scoped-cleanup-residual-preservation-provider-local-mutation.md) is **Accepted**.

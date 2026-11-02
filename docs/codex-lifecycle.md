@@ -1,5 +1,21 @@
 # Codex native lifecycle execution
 
+## M8.2.1 graphical removal boundary
+
+M8.2 primary cleanup is PASS and [integrated](milestones/m8-2-integration.md).
+[ADR-0018](adr/0018-complete-session-removal.md) reserves complete Session Removed
+for verified disappearance from every supported projection after reload/restart,
+plus maximum safe artifact cleanup and collateral preservation. No complete
+Desktop mutation profile is admitted; the current legacy product assessment is
+ProjectionIncomplete. Historical native/scoped pins and v2 grants remain unchanged.
+
+Installed Desktop 26.1027.51404/build23880 embeds 0.166.0-alpha.5.1, whereas the
+scoped adapter admits stable 0.166.0. Static source reveals independent catalogs,
+global backup and renderer state; native thread/deleted invalidation is not a
+proven external target-only cleanup API. Native descendant deletion remains
+unsupported. Exact composite GUI coordination and isolated restart acceptance
+are pending; no real application is stopped or restarted by this foundation.
+
 ## Current scope and separate M8.2 contract
 
 M8.1 was integrated at `6f798bcebdfd2f763e31d62ef2695c52396ca709`

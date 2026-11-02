@@ -1,5 +1,13 @@
 # Dependency decisions
 
+## M8.2.1 assessment boundary
+
+The pure product assessment uses existing domain/serde dependencies and introduces
+no executor, new runtime, generic mutation library or parallel persistence store.
+Provider-specific projection schemas and GUI coordination remain in adapters and
+need separate exact-profile review before any new destructive dependency is added.
+See [ADR-0018](adr/0018-complete-session-removal.md).
+
 ## M8.2 scoped cleanup dependencies
 
 M8.2 reuses the locked `rusqlite`, `sha2` and safe `rustix 1.1.6` packages.

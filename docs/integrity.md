@@ -1,5 +1,16 @@
 # Integrity verification contract
 
+## M8.2.1 product verification
+
+M3 integrity remains unchanged. [ADR-0018](adr/0018-complete-session-removal.md)
+adds a separate pure product assessment: primary/catalog absence, exact required
+projection checks immediately and after reload/restart/fresh discovery, collateral
+preservation and maximum safe cleanup. Any projecting or potentially reconstructing
+residue prevents product success. UnknownTechnicalResidual may remain only with
+explicit no-projection and no-primary-reconstruction evidence. Graph ownership,
+M3 Healthy, a provider return code or a single missing-thread signal is insufficient.
+M8.2 primary cleanup remains historical PASS; complete graphical M8.2.1 is OPEN.
+
 ## M8.2 scope clarification — no change to M3
 
 M8.2 is implemented and its [scoped cleanup contract](scoped-session-cleanup.md)

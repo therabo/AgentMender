@@ -1,11 +1,23 @@
 # Codex compatibility evidence
 
+## M8.2.1 complete-removal compatibility
+
+M8.2 primary cleanup is PASS and [integrated](../../docs/milestones/m8-2-integration.md)
+at a284767157ace8769deee85b195b5b70efe374d8. M8.2.1 is OPEN under
+[ADR-0018](../../docs/adr/0018-complete-session-removal.md), with zero admitted
+complete graphical removal profiles. Installed Desktop 26.1027.51404/build23880
+embeds CLI 0.166.0-alpha.5.1, which cannot inherit stable scoped-cleanup-v1 authority.
+A stable CLI override is a research composite candidate, not an enabled profile.
+Exact static projection/source hashes, runtime evidence gaps, app coordination and
+restart acceptance must be considered independently. Historical v1 pins/receipts
+below remain primary-cleanup evidence and do not promise UI disappearance.
+
 ## M8.2: separate scoped-local compatibility axis
 
 M8.1 is formally integrated at `6f798bcebdfd2f763e31d62ef2695c52396ca709`
 ([receipt](../../docs/milestones/m8-1-integration.md), recorded in `c9dd04d`).
-M8.2 local verification and independent code/security review passed; exact-head
-three-OS CI remains the release gate. ADR-0017 accepts a separate registered
+M8.2 local verification, independent code/security review and exact-head three-OS
+CI passed before formal integration. ADR-0017 accepts a separate registered
 [scoped-cleanup-v1 profile](scoped-cleanup-v1/README.md). Historical read-only and
 exact native lifecycle profiles remain unchanged; source/schema equality cannot
 transfer authority.

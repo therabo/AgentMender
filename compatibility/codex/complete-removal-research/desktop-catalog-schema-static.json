@@ -1,0 +1,270 @@
+{
+  "schema_version": 1,
+  "date": "2026-11-02",
+  "evidence_class": "STATIC bundle SQL, derived disposable in-memory schema; NOT opened user DB, NOT runtime-captured app schema",
+  "source_asset": ".vite/build/early-bootstrap-339-9edb60e5d8b0547e.js",
+  "source_sha256": "480cf9c01ab1794c1b788aaf1bc159e96972f341e7f7ec03a53a8769e7b0d175",
+  "offset_unit": "Unicode character offset",
+  "catalog_current_columns_derived": [
+    {
+      "cid": 0,
+      "name": "host_id",
+      "type": "TEXT",
+      "notnull": true,
+      "default": null,
+      "pk_ordinal": 1
+    },
+    {
+      "cid": 1,
+      "name": "thread_id",
+      "type": "TEXT",
+      "notnull": true,
+      "default": null,
+      "pk_ordinal": 2
+    },
+    {
+      "cid": 2,
+      "name": "display_title",
+      "type": "TEXT",
+      "notnull": true,
+      "default": null,
+      "pk_ordinal": 0
+    },
+    {
+      "cid": 3,
+      "name": "source_created_at",
+      "type": "REAL",
+      "notnull": true,
+      "default": null,
+      "pk_ordinal": 0
+    },
+    {
+      "cid": 4,
+      "name": "source_updated_at",
+      "type": "REAL",
+      "notnull": true,
+      "default": null,
+      "pk_ordinal": 0
+    },
+    {
+      "cid": 5,
+      "name": "cwd",
+      "type": "TEXT",
+      "notnull": false,
+      "default": null,
+      "pk_ordinal": 0
+    },
+    {
+      "cid": 6,
+      "name": "source_kind",
+      "type": "TEXT",
+      "notnull": true,
+      "default": null,
+      "pk_ordinal": 0
+    },
+    {
+      "cid": 7,
+      "name": "source_detail",
+      "type": "TEXT",
+      "notnull": false,
+      "default": null,
+      "pk_ordinal": 0
+    },
+    {
+      "cid": 8,
+      "name": "model_provider",
+      "type": "TEXT",
+      "notnull": false,
+      "default": null,
+      "pk_ordinal": 0
+    },
+    {
+      "cid": 9,
+      "name": "git_branch",
+      "type": "TEXT",
+      "notnull": false,
+      "default": null,
+      "pk_ordinal": 0
+    },
+    {
+      "cid": 10,
+      "name": "observation_sequence",
+      "type": "INTEGER",
+      "notnull": true,
+      "default": null,
+      "pk_ordinal": 0
+    },
+    {
+      "cid": 11,
+      "name": "missing_candidate",
+      "type": "INTEGER",
+      "notnull": true,
+      "default": "0",
+      "pk_ordinal": 0
+    },
+    {
+      "cid": 12,
+      "name": "thread_source",
+      "type": "TEXT",
+      "notnull": false,
+      "default": null,
+      "pk_ordinal": 0
+    },
+    {
+      "cid": 13,
+      "name": "source_recency_at",
+      "type": "REAL",
+      "notnull": true,
+      "default": "0",
+      "pk_ordinal": 0
+    },
+    {
+      "cid": 14,
+      "name": "pending_observed_title",
+      "type": "INTEGER",
+      "notnull": true,
+      "default": "0",
+      "pk_ordinal": 0
+    },
+    {
+      "cid": 15,
+      "name": "project_id",
+      "type": "TEXT",
+      "notnull": false,
+      "default": null,
+      "pk_ordinal": 0
+    },
+    {
+      "cid": 16,
+      "name": "conversation_origin",
+      "type": "TEXT",
+      "notnull": false,
+      "default": null,
+      "pk_ordinal": 0
+    },
+    {
+      "cid": 17,
+      "name": "chatgpt_async_status",
+      "type": "INTEGER",
+      "notnull": false,
+      "default": null,
+      "pk_ordinal": 0
+    },
+    {
+      "cid": 18,
+      "name": "trial_conversation_type",
+      "type": "TEXT",
+      "notnull": false,
+      "default": null,
+      "pk_ordinal": 0
+    }
+  ],
+  "catalog_primary_key": [
+    "host_id",
+    "thread_id"
+  ],
+  "catalog_visibility_filter": "missing_candidate = 0",
+  "static_create_statements": [
+    {
+      "offset": 1185688,
+      "sql": "CREATE TABLE local_thread_catalog_new (\n            host_id TEXT NOT NULL,\n            thread_id TEXT NOT NULL,\n            display_title TEXT NOT NULL,\n            source_created_at REAL NOT NULL,\n            source_updated_at REAL NOT NULL,\n            cwd TEXT,\n            source_kind TEXT NOT NULL,\n            source_detail TEXT,\n            model_provider TEXT,\n            git_branch TEXT,\n            observation_sequence INTEGER NOT NULL,\n            missing_candidate INTEGER NOT NULL DEFAULT 0\n              CHECK (missing_candidate IN (0, 1)),\n            thread_source TEXT,\n            source_recency_at REAL NOT NULL DEFAULT 0,\n            pending_observed_title INTEGER NOT NULL DEFAULT 0,\n            project_id TEXT,\n            conversation_origin TEXT,\n            PRIMARY KEY (host_id, thread_id)\n          );",
+      "table": "local_thread_catalog_new"
+    },
+    {
+      "offset": 1180678,
+      "sql": "CREATE TABLE IF NOT EXISTS local_thread_catalog_sync_state (\n            host_id TEXT PRIMARY KEY,\n            watermark_updated_at REAL,\n            initial_build_complete INTEGER NOT NULL DEFAULT 0,\n            observation_sequence INTEGER NOT NULL DEFAULT 0\n          );",
+      "table": "local_thread_catalog_sync_state"
+    },
+    {
+      "offset": 1181206,
+      "sql": "CREATE TABLE IF NOT EXISTS local_thread_catalog_metadata (\n            id INTEGER PRIMARY KEY CHECK (id = 1),\n            catalog_revision INTEGER NOT NULL DEFAULT 0\n          );",
+      "table": "local_thread_catalog_metadata"
+    },
+    {
+      "offset": 1190924,
+      "sql": "CREATE TABLE IF NOT EXISTS local_thread_catalog_scan_checkpoints (\n          host_id TEXT PRIMARY KEY,\n          checkpoint TEXT NOT NULL,\n          failed_at INTEGER\n        );",
+      "table": "local_thread_catalog_scan_checkpoints"
+    },
+    {
+      "offset": 1191110,
+      "sql": "CREATE TABLE IF NOT EXISTS local_thread_catalog_scan_entries (\n          host_id TEXT NOT NULL,\n          thread_id TEXT NOT NULL,\n          removed INTEGER NOT NULL DEFAULT 0,\n          PRIMARY KEY (host_id, thread_id)\n        ) WITHOUT ROWID",
+      "table": "local_thread_catalog_scan_entries"
+    },
+    {
+      "offset": 1183044,
+      "sql": "CREATE TABLE IF NOT EXISTS thread_timeline_ledger (\n            host_id TEXT NOT NULL,\n            thread_id TEXT NOT NULL,\n            sequence INTEGER NOT NULL,\n            record_id TEXT NOT NULL,\n            payload_json TEXT NOT NULL,\n            PRIMARY KEY (host_id, thread_id, sequence),\n            UNIQUE (host_id, thread_id, record_id)\n          ) WITHOUT ROWID;",
+      "table": "thread_timeline_ledger"
+    },
+    {
+      "offset": 1177866,
+      "sql": "CREATE TABLE IF NOT EXISTS automation_runs (\n          thread_id TEXT PRIMARY KEY,\n          automation_id TEXT NOT NULL,\n          status TEXT NOT NULL,\n          read_at INTEGER,\n          thread_title TEXT,\n          source_cwd TEXT,\n          inbox_title TEXT,\n          inbox_summary TEXT,\n          created_at INTEGER NOT NULL,\n          updated_at INTEGER NOT NULL\n        )",
+      "table": "automation_runs"
+    },
+    {
+      "offset": 1173522,
+      "sql": "CREATE TABLE IF NOT EXISTS live_visualization_suggestions (\n          account_id TEXT NOT NULL,\n          user_id TEXT NOT NULL,\n          host_id TEXT NOT NULL,\n          thread_id TEXT NOT NULL,\n          id TEXT NOT NULL,\n          title TEXT NOT NULL,\n          description TEXT NOT NULL,\n          status TEXT NOT NULL CHECK (status IN ('pending', 'accepted', 'dismissed')),\n          submission TEXT CHECK (submission IN ('submitted', 'accepted')),\n          PRIMARY KEY (account_id, user_id, host_id, thread_id)\n        ) WITHOUT ROWID",
+      "table": "live_visualization_suggestions"
+    },
+    {
+      "offset": 1176044,
+      "sql": "CREATE TABLE IF NOT EXISTS active_chat_turns (\n      profile TEXT NOT NULL,\n      account_id TEXT NOT NULL,\n      user_id TEXT NOT NULL,\n      thread_id TEXT NOT NULL,\n      launch_id TEXT NOT NULL,\n      observed_at_ms INTEGER NOT NULL,\n      PRIMARY KEY (profile, account_id, user_id, thread_id)\n    ) WITHOUT ROWID",
+      "table": "active_chat_turns"
+    },
+    {
+      "table": "local_thread_catalog_hosts_new",
+      "offset": 1189071,
+      "sql": "CREATE TABLE local_thread_catalog_hosts_new (\n            host_id TEXT PRIMARY KEY,\n            host_kind TEXT NOT NULL CHECK (\n              host_kind IN ('local', 'ssh', 'wsl', 'remote-control', 'chatgpt')\n            )\n          );"
+    }
+  ],
+  "static_column_additions": [
+    {
+      "offset": 1174232,
+      "table": "local_thread_catalog",
+      "column": "chatgpt_async_status",
+      "definition": "INTEGER"
+    },
+    {
+      "offset": 1174822,
+      "table": "local_thread_catalog",
+      "column": "trial_conversation_type",
+      "definition": "TEXT"
+    },
+    {
+      "offset": 1181913,
+      "table": "local_thread_catalog_sync_state",
+      "column": "last_full_reconciled_at",
+      "definition": "INTEGER"
+    },
+    {
+      "offset": 1183502,
+      "table": "local_thread_catalog",
+      "column": "thread_source",
+      "definition": "TEXT"
+    },
+    {
+      "offset": 1183945,
+      "table": "local_thread_catalog",
+      "column": "source_recency_at",
+      "definition": "REAL NOT NULL DEFAULT 0"
+    },
+    {
+      "offset": 1185058,
+      "table": "local_thread_catalog",
+      "column": "pending_observed_title",
+      "definition": "INTEGER NOT NULL DEFAULT 0"
+    },
+    {
+      "offset": 1185558,
+      "table": "local_thread_catalog",
+      "column": "project_id",
+      "definition": "TEXT"
+    },
+    {
+      "offset": 1185604,
+      "table": "local_thread_catalog",
+      "column": "conversation_origin",
+      "definition": "TEXT"
+    }
+  ],
+  "scope_warning": "This is not complete whole codex.db schema or destructive authority. Triggers/FKs/indexes and migration checksums/full current runtime schema must be closed under exact profile before any DB writer. Additional per-session Desktop tables are UnknownProjection until their UI role and exact row scope are established."
+}

@@ -1,10 +1,24 @@
 # Immutable lifecycle planning
 
+## M8.2.1 current planning boundary
+
+M8.2 is historical primary-cleanup PASS and integrated; M8.2.1 is OPEN under
+[ADR-0018](adr/0018-complete-session-removal.md). The pure product assessment
+requires a frozen nonempty required-projection inventory, all four verification
+phases, exact root/profile/target identity, collateral preservation and complete
+safe-unit accounting. Unknown supported reconstruction risk prevents success.
+The existing v2 manifest/digest remains primary-only and gains no extra action.
+A future separately versioned complete-removal manifest must bind exact projection
+records, every additional safe artifact and all app shutdown/restart effects before
+approval. That destructive manifest/profile is not yet implemented or admitted.
+Newly discovered unapproved artifacts remain retained and require a new plan.
+
 ## M8.2 scoped planning contract
 
 M8.1 is integrated; M8.2 scoped planning is implemented under accepted [ADR-0017](adr/0017-scoped-cleanup-residual-preservation-provider-local-mutation.md).
 The native v1 planning contract below remains implemented and unchanged. A separately
-versioned scoped plan is accepted in ADR-0017; the exact-head release checks determine completion.
+versioned scoped plan was accepted in ADR-0017; M8.2's exact-head release checks
+passed and its primary contract is now integrated.
 MCP remains read-only and exposes no cleanup execution authority.
 
 The scoped manifest binds exact session/root/profile and required primary

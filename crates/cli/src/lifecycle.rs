@@ -192,6 +192,11 @@ fn report_cleanup(
             TransactionEvent::CleanupObserved { report } => Some(report),
             _ => None,
         });
+    let assessment =
+        report.map(|report| agentmender_domain::assess_legacy_session_removal(manifest, report));
+    let product_complete = assessment
+        .as_ref()
+        .is_some_and(|assessment| assessment.product_complete());
     let retained_known_bytes = manifest
         .retained_files
         .iter()
@@ -206,12 +211,12 @@ fn report_cleanup(
     if args.json {
         super::emit(
             "approved_scoped_cleanup",
-            serde_json::json!({"transaction_id":id,"state":state,"reconciliation_only":reconcile,"outcome":report.map(|r|r.outcome),"required_actions":required,"optional_index_planned":manifest.optional_index.is_some(),"optional_index":report.and_then(|r|r.optional_index),"residual_count":manifest.residuals.len(),"canonical_row_absent":report.map(|r|r.canonical_row_absent),"retained_primary_unchanged":report.map(|r|r.retained_primary_unchanged),"logical_planned_bytes":planned_bytes,"logical_unlinked_bytes":report.map(|r|r.logical_unlinked_bytes),"retained_known_logical_bytes":retained_known_bytes,"physical_reclaimed_bytes":null,"residuals":manifest.residuals,"post_cutoff_residue":report.map(|r|r.post_cutoff_residue),"recovery":"reconciliation_metadata_only"}),
+            serde_json::json!({"transaction_id":id,"state":state,"reconciliation_only":reconcile,"outcome":assessment.as_ref().map(|a|a.outcome),"outcome_contract":"complete_session_removal_v1","primary_cleanup_outcome":report.map(|r|r.outcome),"primary_cleanup_contract":"scoped_primary_cleanup_v1","session_removal":assessment,"product_complete":product_complete,"required_actions":required,"optional_index_planned":manifest.optional_index.is_some(),"optional_index":report.and_then(|r|r.optional_index),"residual_count":manifest.residuals.len(),"canonical_row_absent":report.map(|r|r.canonical_row_absent),"retained_primary_unchanged":report.map(|r|r.retained_primary_unchanged),"logical_planned_bytes":planned_bytes,"logical_unlinked_bytes":report.map(|r|r.logical_unlinked_bytes),"retained_known_logical_bytes":retained_known_bytes,"physical_reclaimed_bytes":null,"residuals":manifest.residuals,"post_cutoff_residue":report.map(|r|r.post_cutoff_residue),"recovery":"reconciliation_metadata_only"}),
         )?;
     } else {
         if state == TransactionState::Succeeded {
             println!(
-                "Session {} removed at the fenced cutoff; logical payload bytes unlinked: {} of {} planned.",
+                "Primary state for session {} removed at the fenced cutoff; logical payload bytes unlinked: {} of {} planned.",
                 manifest.native_session_id,
                 report.map_or(0, |r| r.logical_unlinked_bytes),
                 planned_bytes
@@ -219,6 +224,9 @@ fn report_cleanup(
         } else {
             println!("Transaction {id}: {state:?}. Cleanup completion is not established.");
         }
+        println!(
+            "Complete session removal: unverified. Supported provider/UI projections, restart and maximum safe cleanup are not established by this primary-cleanup profile."
+        );
         println!(
             "Known retained rollout bytes: {}. Physical allocation reclaimed: unknown.",
             retained_known_bytes.map_or_else(|| "unknown (sum overflow)".into(), |n| n.to_string())
@@ -238,8 +246,6 @@ fn report_cleanup(
         );
         println!("Recovery stores reconciliation metadata and cannot restore the payload.");
     }
-    Ok(!matches!(
-        state,
-        TransactionState::Succeeded | TransactionState::Failed
-    ))
+    // A historical successful primary transaction is not product-level removal.
+    Ok(!product_complete)
 }

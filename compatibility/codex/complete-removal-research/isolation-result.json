@@ -1,0 +1,48 @@
+{
+  "date": "2026-11-02",
+  "scope": "owned synthetic kernel canaries and one fork-denied signed-main startup attempt",
+  "independent_reviewer": "context_review / gpt-6.1-sol high",
+  "approved_launcher_sha256": "905fc99be8f55fd7a144904e724f73cc79eab9d2e05603a3049ba451449818fb",
+  "approved_policy_sha256": "711dbcdffafb893d00f6e9ae320d0d28b6389af130ccbdc73b2d6489f9c3ca34",
+  "app_startup_attempt": true,
+  "app_ready": false,
+  "structured_gui_observation": false,
+  "native_cli_started": false,
+  "real_user_state_read": false,
+  "real_user_state_mutated": false,
+  "real_app_restarted": false,
+  "result": {
+    "reason": "exited",
+    "pid": 41581,
+    "initial_identity": [
+      41581,
+      41568,
+      501,
+      41581,
+      1793629275,
+      597335,
+      "/usr/bin/sandbox-exec"
+    ],
+    "exit_code": -5,
+    "captured_bytes": {
+      "stdout": 0,
+      "stderr": 0
+    },
+    "limit": 131072,
+    "startup_deadline_seconds": 11,
+    "total_deadline_seconds": 15,
+    "failure": null
+  },
+  "interpretation": "SIGTRAP before verified readiness; no diagnostic output; no GUI acceptance or provider-impossibility claim",
+  "verdict": "OPEN",
+  "parent_child_canary": {
+    "exit_code": 0,
+    "policy_sha256": "97b83cc040b4e5d6181bef6d1e8d367f99733d9b1591ab21f7a18c1cf436044a",
+    "source_sha256": "dc56345862fcdbab8739cef6b76794179419e8860b487fea0f7cf52be94b2000",
+    "helper_sha256": "21f7bf88f6816e99cb887c2c4306568eb0b0d2e0e20309d61e1719815505a91d",
+    "runner_sha256": "939b35945677c2a3247ff1a6023dd197c669dca4d57cffa74317e0d52ecc4d8d",
+    "checks": "actual owned file read/write positive, protected owned files and loopback/Unix sockets denied in parent and exec child; selected kernel permission queries denied; no actual sensitive broker IPC"
+  },
+  "test_fixture_binary_copies_removed": 5,
+  "reproduction": "Historical research receipt; prepare fresh canonical owned roots and re-review exact policy/launcher before rerunning; executable copies were reclaimed after the experiment."
+}

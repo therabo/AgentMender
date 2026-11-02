@@ -16,6 +16,8 @@ pub mod integrity;
 pub use integrity::*;
 pub mod cleanup;
 pub use cleanup::*;
+pub mod session_removal;
+pub use session_removal::*;
 pub mod planning;
 pub use planning::*;
 pub mod approval;

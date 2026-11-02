@@ -122,8 +122,21 @@ fn review_value(
         .duration_since(std::time::UNIX_EPOCH)
         .map_err(|_| unavailable())?
         .as_secs();
+    let cleanup_scope = snapshot
+        .review_plan()
+        .filter(|plan| plan.content().cleanup_manifest.is_some())
+        .map(|_| {
+            serde_json::json!({
+                "contract":"scoped_primary_cleanup_v1",
+                "complete_session_removal_supported":false,
+                "provider_ui_may_remain_visible":true,
+                "reload_restart_verification":"unavailable",
+                "maximum_safe_cleanup":"unknown",
+                "app_shutdown_restart_authorized":false
+            })
+        });
     Ok(
-        serde_json::json!({"transaction_id":snapshot.id(),"sequence":snapshot.sequence(),"schema_version":snapshot.schema_version(),"state":snapshot.state(),"binding":snapshot.binding(),"plan":snapshot.review_plan(),"approval_state":format!("{:?}", snapshot.approval_status_at(now)),"grant":snapshot.approval().grant,"recovery":snapshot.recovery(),"recovery_limitations":"ReconciliationOnly: recovery records do not restore provider state or authorize execution","terminal_scope":"This interaction proves only a current-user process used a local terminal; it does not establish human identity against a same-user shell or PTY"}),
+        serde_json::json!({"transaction_id":snapshot.id(),"sequence":snapshot.sequence(),"schema_version":snapshot.schema_version(),"state":snapshot.state(),"binding":snapshot.binding(),"plan":snapshot.review_plan(),"cleanup_scope":cleanup_scope,"approval_state":format!("{:?}", snapshot.approval_status_at(now)),"grant":snapshot.approval().grant,"recovery":snapshot.recovery(),"recovery_limitations":"ReconciliationOnly: recovery records do not restore provider state or authorize execution","terminal_scope":"This interaction proves only a current-user process used a local terminal; it does not establish human identity against a same-user shell or PTY"}),
     )
 }
 fn print_review(
@@ -180,6 +193,11 @@ pub fn prepare(
         service.approval_inputs(&|target| target.local_id == id, intent.into(), scope)?
     };
     println!("{}", safe(&inputs.plan)?);
+    if matches!(intent, PlanIntent::CleanupSession) {
+        println!(
+            "This profile plans primary cleanup only. Complete provider/UI removal, restart verification and maximum safe cleanup are unverified."
+        );
+    }
     if inputs.plan.content().status != PlanStatus::Ready || !inputs.failures.is_empty() {
         return Ok(true);
     }
@@ -252,6 +270,9 @@ pub fn approve(
                 "none"
             },
             safe(&manifest.residuals)?
+        );
+        println!(
+            "This approval covers primary cleanup only. The session may remain visible in provider/Desktop views. Complete removal after reload/restart and maximum safe artifact cleanup are unverified. No app shutdown or restart is authorized."
         );
     }
     let target = content.request.target.clone();

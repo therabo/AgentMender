@@ -1,30 +1,39 @@
 # AgentMender
 
 Safe, evidence-driven cleanup and storage reclaim for local AI coding-agent state.
-AgentMender removes only state that it can safely attribute to an exact session,
-preserves shared, ambiguous and unrelated artifacts, and reports retained residuals.
+The product objective is to remove an exact session from persistent storage and
+every supported provider view, remove all safely attributable exclusive state,
+and preserve shared, ambiguous and unrelated technical state.
 
-M8.2 implements one-session Codex cleanup through a separate exact-profile local
-adapter. The supported boundary is narrow: official 0.166.0 Darwin arm64, a pinned
-binary and full state schema, selected root-local WAL database, one verified Legacy
-plain rollout, no primary sharing and verified writer exclusion. Optional name
-indexes, command history, logs, memories, global caches and unknown files remain
-protected. Normal success can be **RemovedWithResiduals**. Logical unlinked bytes
-are reported; physical allocation and forensic erasure are not claimed.
+**M8.2 primary cleanup: PASS and integrated. M8.2.1 complete removal: OPEN.**
+The exact M8.2 commit `a284767157ace8769deee85b195b5b70efe374d8` passed local,
+isolated and Linux/macOS/Windows gates and was fast-forward integrated into main
+([receipt](docs/milestones/m8-2-integration.md)). Work continues on
+`milestone/m8-2-1-complete-session-removal`.
 
-**Local gates, isolated exact-profile acceptance and security review: PASS.**
-Exact-final-commit Linux/macOS/Windows CI remains the release gate. Work is on
-`milestone/m8-2-scoped-session-cleanup`, based on integrated M8.1
-`6f798bcebdfd2f763e31d62ef2695c52396ca709` ([receipt](docs/milestones/m8-1-integration.md)).
-See [scoped cleanup, exact constraints and results](docs/scoped-session-cleanup.md),
-[ADR-0017](docs/adr/0017-scoped-cleanup-residual-preservation-provider-local-mutation.md)
-and the [research landscape](docs/research/scoped-session-cleanup-landscape.md).
+The existing `scoped-cleanup-v1` adapter supports pinned Codex 0.166.0 Darwin arm64,
+an exact root-local WAL schema and one unshared Legacy plain rollout. It proves
+primary removal and logical reclaim at a fenced cutoff. Its historical
+RemovedWithResiduals result does not prove disappearance from Desktop views or
+absence after restart. Current product reporting distinguishes those facts;
+complete graphical removal has no admitted production profile yet.
 
-M8.1's historical complete provider-native cleanup remains **BLOCKED BY PROVIDER**;
-M8.2 uses a different scoped success criterion. M9 Claude lifecycle remains blocked
-with zero mutation profiles. M3 health semantics, independent terminal approval,
-durable intent and exactly eight read-only MCP tools remain intact. M8.3, NLP and
-M10 have not started.
+M8.2.1 requires primary and canonical catalog absence, every required projection
+clean after cleanup/reload/restart/fresh discovery, collateral preservation and
+maximum safe artifact cleanup. Any visible or reconstructing residue prevents
+product success. Technical residue is acceptable only when proven non-projecting
+and unable to restore intact primary state. Physical allocation reclaim and
+forensic erasure remain separate claims. See
+[the complete-removal contract](docs/adr/0018-complete-session-removal.md),
+[scoped behavior](docs/scoped-session-cleanup.md) and
+[artifact evidence](docs/research/complete-session-removal-artifacts.md).
+The [current milestone report](docs/milestones/m8-2-1-report.md) separates completed
+foundation work from the unimplemented graphical removal and restart gates.
+
+M8.1 native complete cleanup and M9 Claude mutation retain their historical
+provider blockers. M3 health meanings, independent terminal approval, durable
+intent and exactly eight read-only MCP tools remain intact. M8.3 follows only
+after M8.2.1 PASS; M8.3, NLP and M10 have not started.
 
 ## Existing discovery and native lifecycle foundation
 
