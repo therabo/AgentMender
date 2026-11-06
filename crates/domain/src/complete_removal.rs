@@ -453,10 +453,20 @@ pub fn assess_complete_removal(
 #[cfg(test)]
 mod desktop_contract_tests {
     use super::*;
+    use std::path::{Path, PathBuf};
 
-    fn identity(path: &str, inode: u64) -> CleanupFileIdentity {
+    fn fixture_path(relative: &str) -> PathBuf {
+        let root = if cfg!(windows) {
+            Path::new(r"C:\fixture")
+        } else {
+            Path::new("/fixture")
+        };
+        root.join(relative)
+    }
+
+    fn identity(path: PathBuf, inode: u64) -> CleanupFileIdentity {
         CleanupFileIdentity {
-            path: path.into(),
+            path,
             device: 7,
             inode,
             links: 1,
@@ -468,16 +478,19 @@ mod desktop_contract_tests {
 
     #[test]
     fn legacy_inventory_rejects_unfrozen_or_ambiguous_sources() {
-        let user_data = identity("/owned/user-data", 1);
+        let user_data = identity(fixture_path("owned/user-data"), 1);
         let mut seed = 0x4d3832315f763431_u64;
         for _ in 0..256 {
             seed ^= seed << 13;
             seed ^= seed >> 7;
             seed ^= seed << 17;
-            let path = format!("/owned/user-data/Local Storage/leveldb/{seed:016x}.ldb");
+            let path = user_data
+                .path
+                .join("Local Storage/leveldb")
+                .join(format!("{seed:016x}.ldb"));
             let valid = DesktopLegacyCommitment {
                 files: vec![DesktopLegacyFile {
-                    identity: identity(&path, seed | 1),
+                    identity: identity(path, seed | 1),
                     sha256: "a".repeat(64),
                 }],
                 layout_id: "chromium-local-storage-leveldb-v1".into(),
@@ -492,7 +505,7 @@ mod desktop_contract_tests {
             bad.origin = "https://example.invalid".into();
             assert!(!desktop_legacy(&user_data, &bad));
             let mut bad = valid.clone();
-            bad.files[0].identity.path = "/other/000001.ldb".into();
+            bad.files[0].identity.path = fixture_path("other/000001.ldb");
             assert!(!desktop_legacy(&user_data, &bad));
             let mut bad = valid.clone();
             bad.files[0].identity.links = 2;
@@ -515,7 +528,7 @@ mod desktop_contract_tests {
 
     #[test]
     fn frozen_file_presence_and_absence_are_not_interchangeable() {
-        let path = std::path::Path::new("/owned/index");
+        let path = fixture_path("owned/index");
         let mut f = DesktopFileCommitment {
             identity: None,
             preimage_sha256: None,
@@ -523,16 +536,16 @@ mod desktop_contract_tests {
             metadata_sha256: None,
             target_units: 0,
         };
-        assert!(desktop_file(&f, path, 7));
+        assert!(desktop_file(&f, &path, 7));
         f.target_units = 1;
-        assert!(!desktop_file(&f, path, 7));
-        f.identity = Some(identity("/owned/index", 2));
+        assert!(!desktop_file(&f, &path, 7));
+        f.identity = Some(identity(path.clone(), 2));
         f.preimage_sha256 = Some("b".repeat(64));
         f.retained_sha256 = Some("c".repeat(64));
         f.metadata_sha256 = Some("d".repeat(64));
-        assert!(desktop_file(&f, path, 7));
-        assert!(!desktop_file(&f, std::path::Path::new("/owned/other"), 7));
+        assert!(desktop_file(&f, &path, 7));
+        assert!(!desktop_file(&f, &fixture_path("owned/other"), 7));
         f.identity.as_mut().unwrap().links = 2;
-        assert!(!desktop_file(&f, path, 7));
+        assert!(!desktop_file(&f, &path, 7));
     }
 }
