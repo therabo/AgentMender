@@ -124,15 +124,25 @@ impl DurableIntent {
 
 pub struct TransactionStore {
     root: OwnedStateRoot,
-    _lock: File,
     db: Connection,
     journal: File,
     poisoned: bool,
+    _lock: HeldStoreLock,
 }
 pub struct TransactionReader {
     root: OwnedStateRoot,
-    _lock: File,
     db: Connection,
+    _lock: HeldStoreLock,
+}
+
+// Struct fields drop in declaration order. Close the database and journal
+// before unlocking. A duplicate Unix descriptor can otherwise keep the lock
+// alive after the owning store closes its descriptor.
+struct HeldStoreLock(File);
+impl Drop for HeldStoreLock {
+    fn drop(&mut self) {
+        let _ = self.0.unlock();
+    }
 }
 
 fn database_path(root: &OwnedStateRoot) -> Result<std::path::PathBuf> {
@@ -522,6 +532,7 @@ impl TransactionStore {
         root.revalidate()?;
         let lock = root.open_fixed(FixedFile::Lock)?;
         lock.try_lock().map_err(|_| StoreError::Locked)?;
+        let lock = HeldStoreLock(lock);
         let journal = root.open_fixed(FixedFile::Journal)?;
         let db_file = root.open_fixed(FixedFile::Database)?;
         let new_database = db_file.metadata()?.len() == 0;
@@ -1176,6 +1187,7 @@ impl TransactionReader {
         root.revalidate()?;
         let lock = root.open_existing_fixed(FixedFile::Lock, false)?;
         lock.try_lock_shared().map_err(|_| StoreError::Locked)?;
+        let lock = HeldStoreLock(lock);
         let journal = root.open_existing_fixed(FixedFile::Journal, false)?;
         let _db_file = root.open_existing_fixed(FixedFile::Database, false)?;
         root.validate_sqlite_sidecars()?;
@@ -1226,6 +1238,7 @@ impl TransactionReader {
         root.revalidate()?;
         let lock = root.open_existing_fixed(FixedFile::Lock, false)?;
         lock.try_lock_shared().map_err(|_| StoreError::Locked)?;
+        let _lock = HeldStoreLock(lock);
         let mut file = root.open_existing_fixed(FixedFile::Journal, false)?;
         if file.metadata()?.len() > 67_108_864 {
             return Err(StoreError::Invalid);
@@ -2467,6 +2480,30 @@ mod tests {
         assert!(child("locked").success());
         drop(store);
         assert!(child("available").success());
+    }
+    #[cfg(unix)]
+    #[test]
+    fn duplicate_descriptors_do_not_extend_the_store_lock_lifetime() {
+        let dir = tempfile::tempdir().unwrap();
+        let root =
+            OwnedStateRoot::create(&dir.path().join("owned"), &[dir.path().join("provider")])
+                .unwrap();
+        let store = TransactionStore::open(root.clone()).unwrap();
+        let inherited_writer = store._lock.0.try_clone().unwrap();
+        assert!(matches!(
+            TransactionReader::open(root.clone()),
+            Err(StoreError::Locked)
+        ));
+        drop(store);
+        let reader = TransactionReader::open(root.clone()).unwrap();
+        let inherited_reader = reader._lock.0.try_clone().unwrap();
+        assert!(matches!(
+            TransactionStore::open(root.clone()),
+            Err(StoreError::Locked)
+        ));
+        drop(reader);
+        let reopened = TransactionStore::open(root).unwrap();
+        drop((reopened, inherited_writer, inherited_reader));
     }
     #[test]
     fn synthetic_effect_requires_durable_intent_and_crashes_remain_unknown() {
