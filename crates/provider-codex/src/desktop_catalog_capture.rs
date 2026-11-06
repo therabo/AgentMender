@@ -23,7 +23,7 @@ fn dir(parent: &impl std::os::fd::AsFd, name: &std::ffi::OsStr) -> Result<OwnedF
     fs::openat(
         parent,
         name,
-        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        crate::capture::directory_search_flags(),
         Mode::empty(),
     )
     .map_err(|_| bad())
@@ -32,12 +32,8 @@ fn root(path: &Path) -> Result<OwnedFd, EffectError> {
     if !path.is_absolute() {
         return Err(bad());
     }
-    let mut fd = fs::open(
-        "/",
-        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC,
-        Mode::empty(),
-    )
-    .map_err(|_| bad())?;
+    let mut fd = fs::open("/", crate::capture::directory_search_flags(), Mode::empty())
+        .map_err(|_| bad())?;
     for part in path.components() {
         match part {
             Component::RootDir => (),

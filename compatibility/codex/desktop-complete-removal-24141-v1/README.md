@@ -52,6 +52,9 @@ AGENTMENDER_RECOVERED_DESKTOP_BUNDLE=/absolute/owned/path/ChatGPT.app \
 ```
 
 Static compatibility supports reusing the typed catalog candidate on 24141.
+The protected primary and catalog workers returned a schema-4 candidate on
+owned closed SQLite fixtures. The observed writer prerequisite blocked the plan
+before any operations were available.
 Effective roots, coherent runtime identity, historical schema paths, renderer and
 embedded-worker behavior, writer exclusion and both isolated graphical cycles
 remain separate prerequisites. See the [admission checkpoint](../../../docs/milestones/m8-2-1-desktop-admission-2026-11-06.md).

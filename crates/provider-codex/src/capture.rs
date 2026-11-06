@@ -12,6 +12,18 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[cfg(unix)]
+pub(super) fn directory_search_flags() -> rustix::fs::OFlags {
+    use rustix::fs::OFlags;
+    // Darwin's search-only descriptor permits fixed relative lookups without
+    // needing file-read-data permission to enumerate a protected directory.
+    #[cfg(target_os = "macos")]
+    let access = OFlags::from_bits_retain(libc::O_SEARCH as u32);
+    #[cfg(not(target_os = "macos"))]
+    let access = OFlags::RDONLY;
+    access | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC
+}
+
 pub(super) const DB_NAME: &str = "state_5.sqlite";
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub(super) enum ExactProfile {

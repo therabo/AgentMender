@@ -110,6 +110,7 @@ dependencies = [
  "agentmender-domain",
  "agentmender-persistence",
  "agentmender-provider-api",
+ "libc",
  "rusqlite",
  "rustix",
  "rusty-leveldb",

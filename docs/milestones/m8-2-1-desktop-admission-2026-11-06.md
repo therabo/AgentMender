@@ -87,6 +87,17 @@ staged file in the owned root.
 
 ## Graphical test and release evidence
 
+An owned CLI smoke first reached primary evidence capture and refused the
+fixture. The existing read sandbox denied ordinary directory opens needed by
+the closed SQLite paths. The primary and catalog workers now use Darwin
+`O_SEARCH` for descriptor-relative lookups. The sandbox policy still denies
+directory enumeration, unrelated reads and writes. An independent owned canary
+confirmed the distinction. With the fix, the production read-only `plan` command
+produced the 24141 schema-4 manifest with one target unit in the main, backup
+and index. It returned `RequiresProviderClosed` with zero executable operations.
+All ten fixture files kept their SHA-256 digests. This exercised the protected
+workers and candidate planning only.
+
 The available macOS arm64 host has only the current interactive user. A second
 local test account requires administrator authentication. There is no usable
 disposable VM or separate GUI session available. A prior same-UID helper
@@ -118,6 +129,7 @@ Local format, strict Clippy, workspace tests, build, architecture and both
 compatibility checks passed. The workspace run passed 449 top-level tests
 and skipped six explicit opt-ins. The read-only exact-bundle opt-in passed
 separately against both the installed and recovered signed bundles.
+Both exact stable-worker opt-ins passed on owned primary fixtures.
 Existing deterministic fixtures include
 the 4,096-case scoped model (seed `0x4d382e3253434f50`) and the catalog/index
 preservation models (seed `0x4d3832315f763431`). The workspace journal and

@@ -195,20 +195,11 @@ fn desktop_closed_state(
     if !root.is_absolute() || root.canonicalize().map_err(|_| unavailable())? != root {
         return Err(unavailable());
     }
-    let fd = fs::open(
-        root,
-        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
-        Mode::empty(),
-    )
-    .map_err(|_| unavailable())?;
+    let fd = fs::open(root, capture::directory_search_flags(), Mode::empty())
+        .map_err(|_| unavailable())?;
     let root_meta = std::fs::File::from(
-        fs::openat(
-            &fd,
-            ".",
-            OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
-            Mode::empty(),
-        )
-        .map_err(|_| unavailable())?,
+        fs::openat(&fd, ".", capture::directory_search_flags(), Mode::empty())
+            .map_err(|_| unavailable())?,
     )
     .metadata()
     .map_err(|_| unavailable())?;
