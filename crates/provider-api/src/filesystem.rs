@@ -19,7 +19,7 @@ pub fn plain_replacement_provenance(
     {
         use std::os::unix::fs::MetadataExt;
         let m = file.metadata().map_err(|_| unavailable())?;
-        if !m.is_file() || m.nlink() != 1 || m.mode() & 0o7000 != 0 {
+        if !m.is_file() || m.nlink() != 1 || m.mode() & 0o7022 != 0 {
             return Err(unavailable());
         }
         let mut names = [0; 128];

@@ -195,6 +195,71 @@ fn local_array(
     Ok(count)
 }
 
+fn foreign_reference(
+    bytes: &[u8],
+    target: &str,
+    migration_scope: &str,
+) -> Result<bool, SharedReductionError> {
+    let root = parse(bytes).map_err(|_| SharedReductionError::UnsafeTargetRow)?;
+    let atoms = field(&root, "electron-persisted-atom-state")?;
+    let unread = match atoms {
+        Some(atoms) => field(atoms, "unread-thread-ids-by-host-v1")?,
+        None => None,
+    };
+    let migrated = field(&root, "app-server-migrated-pinned-thread-ids-by-host")?;
+    for (map, local) in [(migrated, migration_scope), (unread, "local")] {
+        let Some(map) = map else { continue };
+        for (host, _, ids) in map
+            .object()
+            .map_err(|_| SharedReductionError::UnsafeTargetRow)?
+        {
+            if host != local
+                && ids
+                    .array()
+                    .map_err(|_| SharedReductionError::UnsafeTargetRow)?
+                    .iter()
+                    .any(|id| id.string(bytes).as_deref() == Some(target))
+            {
+                return Ok(true);
+            }
+        }
+    }
+    if let Some(atoms) = atoms {
+        if let Some(tabs) = field(atoms, "pinned-content-tabs-v1")? {
+            for (_, _, tab) in tabs
+                .object()
+                .map_err(|_| SharedReductionError::UnsafeTargetRow)?
+            {
+                if field(tab, "threadId")?
+                    .and_then(|n| n.string(bytes))
+                    .as_deref()
+                    == Some(target)
+                    && field(tab, "hostId")?
+                        .and_then(|n| n.string(bytes))
+                        .as_deref()
+                        != Some("local")
+                {
+                    return Ok(true);
+                }
+            }
+        }
+        if let Some(accounts) = field(atoms, "sidebar-custom-sections-v3")? {
+            for (_, _, account) in accounts
+                .object()
+                .map_err(|_| SharedReductionError::UnsafeTargetRow)?
+            {
+                if let Some(hosts) = field(account, "threadHostIds")?
+                    && let Some(host) = field(hosts, target)?
+                    && host.string(bytes).as_deref() != Some("local")
+                {
+                    return Ok(true);
+                }
+            }
+        }
+    }
+    Ok(false)
+}
+
 /// Fixed reducer for the local Desktop global-state contract. Unknown values
 /// are retained verbatim. Some complex atom variants remain explicitly
 /// unsupported, so a caller cannot mistake an unreviewed shape for absence.
@@ -224,7 +289,7 @@ pub(crate) fn reduce_global(
     }
     if let Some(hosts) = field(&root, "thread-project-membership-host-ids")?
         && let Some(n) = field(hosts, target)?
-        && n.string(bytes).as_deref() != Some(local_host)
+        && n.string(bytes).as_deref() != Some("local")
     {
         return Err(SharedReductionError::UnsafeTargetRow);
     }
@@ -435,7 +500,7 @@ pub(crate) fn reduce_global(
 
 #[cfg(unix)]
 mod files {
-    use super::{reduce_global, reduce_index};
+    use super::{foreign_reference, reduce_global, reduce_index};
     use agentmender_domain::{CleanupFileIdentity, DesktopFileCommitment};
     use agentmender_persistence::EffectError;
     use rustix::fs::{self, AtFlags, FlockOperation, Mode, OFlags};
@@ -625,7 +690,13 @@ mod files {
         name: &str,
         reducer: &Reducer<'_>,
     ) -> Result<(DesktopFileCommitment, Option<Vec<u8>>), EffectError> {
-        let Some((identity, bytes, metadata, _)) = read(fd, rootpath, name)? else {
+        commitment(read(fd, rootpath, name)?, reducer)
+    }
+    fn commitment(
+        file: Option<FileRead>,
+        reducer: &Reducer<'_>,
+    ) -> Result<(DesktopFileCommitment, Option<Vec<u8>>), EffectError> {
+        let Some((identity, bytes, metadata, _)) = file else {
             return Ok((
                 DesktopFileCommitment {
                     identity: None,
@@ -649,18 +720,26 @@ mod files {
             Some(retained),
         ))
     }
-    pub(crate) fn observe_global(
+    pub(crate) fn observe_globals(
         root_id: &CleanupFileIdentity,
-        kind: GlobalKind,
         target: &str,
         host: &str,
         ownership: bool,
-    ) -> Result<DesktopFileCommitment, EffectError> {
+    ) -> Result<[DesktopFileCommitment; 2], EffectError> {
         let fd = root(root_id)?;
-        observation(&fd, &root_id.path, kind.name(), &|b| {
-            reduce_global(b, target, host, ownership)
-        })
-        .map(|v| v.0)
+        let backup = read(&fd, &root_id.path, GlobalKind::Backup.name())?;
+        let main = read(&fd, &root_id.path, GlobalKind::Main.name())?;
+        let mut bare_owned = ownership;
+        for (_, bytes, _, _) in [&backup, &main].into_iter().flatten() {
+            if foreign_reference(bytes, target, host).map_err(|_| EffectError::InvalidEvidence)? {
+                bare_owned = false;
+            }
+        }
+        let reducer = |bytes: &[u8]| reduce_global(bytes, target, host, bare_owned);
+        Ok([
+            commitment(backup, &reducer)?.0,
+            commitment(main, &reducer)?.0,
+        ])
     }
     pub(crate) fn observe_index(
         root_id: &CleanupFileIdentity,
@@ -791,6 +870,7 @@ mod files {
                 .map_err(|_| EffectError::Transport)?;
             metadata.preserve_provenance(&stage, &stage_metadata)?;
             stage.sync_all().map_err(|_| EffectError::Transport)?;
+            let staged = stage.metadata().map_err(|_| EffectError::InvalidEvidence)?;
             stage
                 .seek(SeekFrom::Start(0))
                 .map_err(|_| EffectError::Transport)?;
@@ -828,6 +908,10 @@ mod files {
                 || stage_meta.dev() != stage_path.st_dev as u64
                 || stage_meta.ino() != stage_path.st_ino as u64
                 || stage_meta.len() != retained.len() as u64
+                || (stage_meta.ctime(), stage_meta.ctime_nsec())
+                    != (staged.ctime(), staged.ctime_nsec())
+                || (stage_path.st_ctime as i64, stage_path.st_ctime_nsec as i64)
+                    != (staged.ctime(), staged.ctime_nsec())
                 || FileMetadata::observe(&stage, &stage_meta)? != metadata
             {
                 return bad();
@@ -1069,6 +1153,41 @@ mod files {
             assert_eq!(std::fs::read(path).unwrap(), b"concurrent update\n");
         }
         #[test]
+        fn same_length_stage_edit_cannot_replace_destination() {
+            let (dir, fence) = fixture();
+            let path = dir.path().join("session_index.jsonl");
+            let original = b"{\"id\":\"T\",\"thread_name\":\"a\",\"updated_at\":\"b\"}\nkeep\n";
+            std::fs::write(&path, original).unwrap();
+            let expected = observation(&fence.fd, &fence.root.path, "session_index.jsonl", &|b| {
+                reduce_index(b, "T")
+            })
+            .unwrap()
+            .0;
+            let root = dir.path().to_owned();
+            BEFORE_FINAL_COMPARE.with(|hook| {
+                *hook.borrow_mut() = Some(Box::new(move || {
+                    let stage = std::fs::read_dir(root)
+                        .unwrap()
+                        .map(Result::unwrap)
+                        .find(|entry| {
+                            entry
+                                .file_name()
+                                .to_string_lossy()
+                                .starts_with(".agentmender-stage-")
+                        })
+                        .unwrap();
+                    std::fs::write(stage.path(), b"edit\n").unwrap();
+                }));
+            });
+            assert!(
+                publish(&fence, "session_index.jsonl", &expected, &|b| reduce_index(
+                    b, "T"
+                ))
+                .is_err()
+            );
+            assert_eq!(std::fs::read(path).unwrap(), original);
+        }
+        #[test]
         fn independent_global_main_and_backup_publication() {
             let (dir, fence) = fixture();
             let input = br#"{"pinned-thread-ids":["T","U"],"unknown":{"n":1e+09}}"#;
@@ -1088,6 +1207,38 @@ mod files {
                     br#"{"pinned-thread-ids":["U"],"unknown":{"n":1e+09}}"#
                 );
             }
+        }
+        #[test]
+        fn foreign_reference_in_either_global_copy_blocks_bare_pin_removal() {
+            let (dir, fence) = fixture();
+            let main = dir.path().join(GlobalKind::Main.name());
+            let backup = dir.path().join(GlobalKind::Backup.name());
+            let bare = br#"{"pinned-thread-ids":["T","U"]}"#;
+            for foreign in [
+                br#"{"app-server-migrated-pinned-thread-ids-by-host":{"remote:/x":["T"]}}"#.as_slice(),
+                br#"{"electron-persisted-atom-state":{"unread-thread-ids-by-host-v1":{"remote":["T"]}}}"#,
+                br#"{"electron-persisted-atom-state":{"pinned-content-tabs-v1":{"a":{"threadId":"T","hostId":"remote"}}}}"#,
+            ] {
+                for (main_data, backup_data) in [(bare.as_slice(), foreign), (foreign, bare.as_slice())] {
+                    std::fs::write(&main, main_data).unwrap();
+                    std::fs::write(&backup, backup_data).unwrap();
+                    assert!(observe_globals(&fence.root, "T", "local:/x", true).is_err());
+                    assert_eq!(std::fs::read(&main).unwrap(), main_data);
+                    assert_eq!(std::fs::read(&backup).unwrap(), backup_data);
+                }
+            }
+            std::fs::write(
+                &backup,
+                br#"{"app-server-migrated-pinned-thread-ids-by-host":{"local:/x":["T"]}}"#,
+            )
+            .unwrap();
+            std::fs::write(&main, bare).unwrap();
+            assert_eq!(
+                observe_globals(&fence.root, "T", "local:/x", true)
+                    .unwrap()
+                    .map(|file| file.target_units),
+                [1, 1]
+            );
         }
         #[test]
         fn publication_preserves_other_lines_and_lock_inode() {
@@ -1120,7 +1271,7 @@ mod files {
 }
 #[cfg(unix)]
 pub(crate) use files::{
-    GlobalKind, SharedFence, local_host_scope, observe_global, observe_index, publish_global,
+    GlobalKind, SharedFence, local_host_scope, observe_globals, observe_index, publish_global,
     publish_index,
 };
 
@@ -1132,7 +1283,7 @@ mod global_tests {
     fn preserves_unknown_lexemes_and_unrelated_records() {
         let input = br#"{
   "pinned-thread-ids" : [ "T", "U" ],
-  "thread-project-membership-host-ids":{"T":"local:/x","U":"remote"},
+  "thread-project-membership-host-ids":{"T":"local","U":"remote"},
   "thread-project-assignments":{"T":{"projectKind":"local","projectId":"/p"},"U":{"projectKind":"local","projectId":"/p"}},
   "sidebar-thread-metadata":{"T":{"labelColor":"red","other":1e+09}},
   "unknown":{"n":1.000,"s":"T"}

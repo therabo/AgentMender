@@ -88,6 +88,11 @@ Pinned-content-tabs records have account/host/thread identity and related exact
 presentation/order entries. A local-kind legacy custom-section item key is not
 execution-host identity: the separate threadHostIds map can designate another
 host. Native legacy pin resolution requires one unique successful host read.
+The exact build 23880 bootstrap asset `.vite/build/early-bootstrap-439-a0f25ba32c465de1.js`
+stores the supplied host ID verbatim in the project membership map (Unicode
+offset 3634798). The pinned-thread migration identity combines that host ID
+with its Codex home (offset 1956068). The local profile therefore binds the
+membership map to `local` and the migration map to `local:<CODEX_HOME>`.
 Legacy localStorage custom sections are imported on startup; cleaning global
 atoms alone does not close that reconstruction route. Unknown or ambiguous target
 legacy/browser memberships block complete-profile admission.

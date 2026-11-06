@@ -34,7 +34,8 @@ The catalog operation binds local host, thread and source kind, and commits its
 exact target row and conditional scan suppression/revision changes together;
 retained commitments protect unrelated rows and checkpoints. Global main and
 backup are separate lossless, exact-membership publications; ambiguous bare-ID
-ownership is refused. The index removes exact structured target records while
+ownership is refused. A qualified foreign reference in either copy prevents
+bare-ID removal across both copies. The index removes exact structured target records while
 preserving unrelated and malformed bytes. Missing stores are frozen as absence;
 new units or changed preimages require refusal/replanning. Legacy browser import
 has a bounded observation/admission check, not a browser-store wipe. History is
@@ -44,7 +45,8 @@ All boundaries and preimages precede destructive work; each effect is followed b
 durable progress before the next. Drift before publication is refused; uncertainty
 following an effect is unknown and reconciliation is read-only, with no automatic
 retry or reclaimed-byte credit. A final destination re-stat closes a reviewed
-publication race; catalog and primary clean no-sidecar WAL handling were fixed.
+publication race; the staged inode's ctime is checked across the byte reread and
+publication boundary. Catalog and primary clean no-sidecar WAL handling were fixed.
 These are independent review findings and fixes, not a claim that all remaining
 races or reconstruction roles have passed acceptance. Compare-and-rename is not
 an atomic compare-and-swap.

@@ -254,11 +254,8 @@ fn shared_images(
     ownership: bool,
 ) -> Result<[DesktopFileCommitment; 3], EffectError> {
     let host = shared::local_host_scope(desktop_root, LOCAL)?;
-    Ok([
-        shared::observe_global(desktop_root, GlobalKind::Backup, target, &host, ownership)?,
-        shared::observe_global(desktop_root, GlobalKind::Main, target, &host, ownership)?,
-        shared::observe_index(desktop_root, target)?,
-    ])
+    let [backup, main] = shared::observe_globals(desktop_root, target, &host, ownership)?;
+    Ok([backup, main, shared::observe_index(desktop_root, target)?])
 }
 
 pub(super) fn observe(
