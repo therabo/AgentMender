@@ -689,6 +689,7 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[test]
     fn desktop_closed_wal_capture_requires_clean_stable_fixed_files() {
         let (root, db) = fixture();
