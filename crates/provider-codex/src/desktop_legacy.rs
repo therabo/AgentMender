@@ -574,14 +574,16 @@ fn atom(key: &[u8]) -> Result<bool, EffectError> {
     match encoding {
         1 => Ok(body.starts_with(prefix)),
         0 => {
-            if body.len() % 2 != 0 {
+            let (units, trailing) = body.as_chunks::<2>();
+            if !trailing.is_empty() {
                 return bad();
             }
-            let utf: Vec<u16> = body
-                .chunks_exact(2)
-                .map(|b| u16::from_le_bytes([b[0], b[1]]))
-                .collect();
-            Ok(utf.starts_with(&prefix.iter().map(|&b| b as u16).collect::<Vec<_>>()))
+            Ok(units.get(..prefix.len()).is_some_and(|start| {
+                start
+                    .iter()
+                    .zip(prefix)
+                    .all(|(unit, byte)| u16::from_le_bytes(*unit) == u16::from(*byte))
+            }))
         }
         _ => bad(),
     }

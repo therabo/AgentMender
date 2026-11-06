@@ -1041,8 +1041,9 @@ mod tests {
         assert!(guard.validate_before_database(&m).is_err());
         guard.bind_created(&m).unwrap();
         guard.validate(&m).unwrap();
-        fs::remove_file(m.root.path.join("state_5.sqlite-wal")).unwrap();
-        fs::write(m.root.path.join("state_5.sqlite-wal"), b"replacement").unwrap();
+        let wal = m.root.path.join("state_5.sqlite-wal");
+        fs::rename(&wal, m.root.path.join("fixture-old-wal")).unwrap();
+        fs::write(wal, b"replacement").unwrap();
         assert!(guard.validate(&m).is_err());
     }
 

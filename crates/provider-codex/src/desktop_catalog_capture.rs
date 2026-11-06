@@ -127,6 +127,7 @@ fn layout(
 // with both sidecars absent and the unchanged physical layout checked after
 // backup; a WAL-format header is required because immutable mode reports
 // journal_mode=delete regardless of the underlying header.
+#[cfg(any(target_os = "macos", test))]
 fn open_source(
     root_id: &CleanupFileIdentity,
     before: &[Option<CleanupFileIdentity>],
@@ -183,6 +184,7 @@ fn open_source(
         .map(|db| (db, true))
         .map_err(|_| bad())
 }
+#[cfg(target_os = "macos")]
 fn snapshot(
     desktop_root: &CleanupFileIdentity,
     target: &CatalogTarget,

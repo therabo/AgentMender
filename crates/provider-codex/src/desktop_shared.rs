@@ -412,10 +412,8 @@ pub(crate) fn reduce_global(
         }
         // Do not silently ignore reconstruction-capable composite atoms whose
         // exact target semantics are not yet established.
-        for unsupported in ["update-resume-v1"] {
-            if field(atoms, unsupported)?.is_some() {
-                return Err(SharedReductionError::UnsafeTargetRow);
-            }
+        if field(atoms, "update-resume-v1")?.is_some() {
+            return Err(SharedReductionError::UnsafeTargetRow);
         }
     }
     edits.sort_unstable();
@@ -786,15 +784,8 @@ mod files {
             {
                 return bad();
             }
-            fs::fchmod(
-                &stage,
-                Mode::from_raw_mode(
-                    (metadata.mode & 0o7777)
-                        .try_into()
-                        .map_err(|_| EffectError::InvalidEvidence)?,
-                ),
-            )
-            .map_err(|_| EffectError::Transport)?;
+            fs::fchmod(&stage, Mode::from_raw_mode((metadata.mode & 0o7777) as _))
+                .map_err(|_| EffectError::Transport)?;
             stage
                 .write_all(&retained)
                 .map_err(|_| EffectError::Transport)?;

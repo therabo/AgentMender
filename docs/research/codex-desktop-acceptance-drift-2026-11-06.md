@@ -22,10 +22,15 @@ replaced. Requalifying the new build requires a new exact source/schema and
 safety review; version similarity does not import acceptance.
 
 Follow-up located the [official versioned arm64 archive](https://persistent.oaistatic.com/codex-app-prod/ChatGPT-darwin-arm64-26.1027.51404.zip).
-The exact URL returned HTTP 200 and a content length of 764974997 bytes.
-An isolated archive can supply the reviewed bundle for a separate graphical
-test environment. Retrieving it does not change the installed profile or
-establish reconstruction acceptance.
+The 764974997-byte archive was recovered into private scratch space. Its SHA-256
+is `93993beed5ee52a61147ca973290e2052bb0fa3da117634d571267071720bb5d`.
+The extracted bundle passed strict recursive code-signature verification with
+the Apple anchor, team `2DC432GLL2` and identifier `com.openai.codex`. The
+plist, executable, ASAR and both embedded CLI hashes matched the historical
+pins. The separately pinned stable CLI was also recovered and verified. Catalog
+schema, ordered migrations and the scan suppression excerpt reproduced byte
+for byte from the recovered bundle. These checks were static. The installed
+profile remains build 24141 and graphical reconstruction acceptance is pending.
 
 A fresh run of the existing synthetic `isolation/run.py` canary succeeded in
 parent and exec child under a newly generated default-deny profile, including
