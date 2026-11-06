@@ -477,6 +477,7 @@ fn schema_three_binds_expanded_scope_and_never_claims_desktop_acceptance() {
     primary_evidence.manifest.profile.adapter = "scoped-cleanup-v2".into();
     let primary = primary_evidence.manifest.clone();
     let manifest = CompleteRemovalManifest {
+        desktop: None,
         primary: primary.clone(),
         actions: vec![
             CompleteRemovalAction::PrimaryPayload,
@@ -493,6 +494,7 @@ fn schema_three_binds_expanded_scope_and_never_claims_desktop_acceptance() {
         technical_residuals: primary.residuals.clone(),
     };
     context.complete_removal_evidence = Some(CompleteRemovalEvidence {
+        desktop_boundary: None,
         manifest: manifest.clone(),
         primary_evidence,
     });
@@ -523,6 +525,87 @@ fn schema_three_binds_expanded_scope_and_never_claims_desktop_acceptance() {
         },
     );
     assert_ne!(conflicting.state_fingerprint(), plan.state_fingerprint());
+    // Historical schema 3 wire content omits the new optional field entirely.
+    let wire = serde_json::to_value(&plan).unwrap();
+    assert!(
+        wire["content"]["complete_removal_manifest"]
+            .get("desktop")
+            .is_none()
+    );
+    let absent = DesktopFileCommitment {
+        identity: None,
+        preimage_sha256: None,
+        retained_sha256: None,
+        metadata_sha256: None,
+        target_units: 0,
+    };
+    let digest = "0".repeat(64);
+    let mut unadmitted = manifest.clone();
+    unadmitted.desktop = Some(DesktopRemovalManifest {
+        desktop_root: primary.root.clone(),
+        user_data: primary.root.clone(),
+        bundle_path: "/Applications/Codex.app".into(),
+        bundle_id: "com.openai.codex".into(),
+        bundle_version: "26.1027.51404".into(),
+        bundle_build: "23880".into(),
+        asar_sha256: digest.clone(),
+        stable_worker_sha256: digest.clone(),
+        bundle_sha256: digest.clone(),
+        cli_sha256: digest.clone(),
+        local_host: "local".into(),
+        source_kind: "local".into(),
+        target_title: "target".into(),
+        legacy: DesktopLegacyCommitment {
+            files: vec![],
+            layout_id: "absent".into(),
+            origin: "app://-".into(),
+            logical_legacy_entries: 0,
+        },
+        catalog: DesktopCatalogCommitment {
+            identity: primary.database.clone(),
+            schema_sha256: digest.clone(),
+            migration_sha256: digest.clone(),
+            preimage_sha256: digest.clone(),
+            retained_sha256: digest.clone(),
+            target_rows: 1,
+            target_sequence_sha256: digest.clone(),
+            revision_sha256: digest,
+        },
+        global_backup: absent.clone(),
+        global_main: absent.clone(),
+        session_index: absent,
+    });
+    unadmitted.profile.identity = id("codex-desktop-complete-removal-v1");
+    unadmitted.profile.admission = ProfileAdmission::DesktopUnaccepted;
+    unadmitted.profile.writer_requirement = WriterRequirement::RequiresProviderClosed;
+    unadmitted.actions = vec![
+        CompleteRemovalAction::DesktopCatalog,
+        CompleteRemovalAction::GlobalBackup,
+        CompleteRemovalAction::GlobalMain,
+        CompleteRemovalAction::SessionIndex,
+        CompleteRemovalAction::PrimaryPayload,
+        CompleteRemovalAction::StateThreadRecords,
+    ];
+    assert!(!validate_complete_removal_manifest(&unadmitted));
+    let mut desktop_context = context.clone();
+    desktop_context
+        .complete_removal_evidence
+        .as_mut()
+        .unwrap()
+        .manifest = unadmitted;
+    let desktop_plan = plan_lifecycle(
+        &graph,
+        &evaluate_integrity(&graph, &proof),
+        &desktop_context,
+        LifecycleRequest {
+            target: primary.target.clone(),
+            intent: LifecycleIntent::CleanupSession,
+        },
+    );
+    assert_eq!(desktop_plan.content().schema_version, 4);
+    assert_eq!(desktop_plan.content().status, PlanStatus::Blocked);
+    assert!(TransactionBinding::from_plan(&desktop_plan).is_err());
+    assert_ne!(desktop_plan.digest(), plan.digest());
     assert_eq!(plan.content().schema_version, 3);
     assert_eq!(plan.content().status, PlanStatus::Ready);
     assert!(TransactionBinding::from_plan(&plan).is_ok());
@@ -544,6 +627,7 @@ fn schema_three_binds_expanded_scope_and_never_claims_desktop_acceptance() {
         .collect();
     for i in 0..256 {
         let result = CompleteRemovalReport {
+            desktop_collateral_unchanged: None,
             primary: report(&primary),
             actions: actions.clone(),
             surfaces: vec![PersistentSurfaceObservation {
@@ -576,6 +660,7 @@ fn schema_three_binds_expanded_scope_and_never_claims_desktop_acceptance() {
         primary_report.outcome = terminal;
         primary_report.canonical_row_absent = false;
         let mut observed = CompleteRemovalReport {
+            desktop_collateral_unchanged: None,
             primary: primary_report,
             actions: actions[..1].to_vec(),
             surfaces: vec![PersistentSurfaceObservation {
@@ -695,6 +780,7 @@ fn schema_three_binds_expanded_scope_and_never_claims_desktop_acceptance() {
     );
     let snapshot = TransactionSnapshot::replay(&records).unwrap();
     let mut final_report = CompleteRemovalReport {
+        desktop_collateral_unchanged: None,
         primary: report(&primary),
         actions: actions.clone(),
         surfaces: vec![PersistentSurfaceObservation {

@@ -23,6 +23,8 @@ use std::io::Read;
 pub struct CodexScopedCleanupAdapter {
     reader: CodexAdapter,
     expanded: bool,
+    #[cfg(unix)]
+    desktop_user_data: Option<std::path::PathBuf>,
     #[cfg(test)]
     synthetic_pin: bool,
     #[cfg(test)]
@@ -44,6 +46,8 @@ impl CodexScopedCleanupAdapter {
         Self {
             reader,
             expanded: false,
+            #[cfg(unix)]
+            desktop_user_data: None,
             #[cfg(test)]
             synthetic_pin: false,
             #[cfg(test)]
@@ -63,18 +67,35 @@ impl CodexScopedCleanupAdapter {
         Self {
             reader,
             expanded: false,
+            #[cfg(unix)]
+            desktop_user_data: None,
             synthetic_pin: true,
             fault: None,
         }
     }
 
-    fn capture_target(
+    #[cfg(unix)]
+    pub fn new_desktop(reader: CodexAdapter, user_data: std::path::PathBuf) -> Self {
+        let mut adapter = Self::new_expanded(reader);
+        adapter.desktop_user_data = Some(user_data);
+        adapter
+    }
+
+    pub(super) fn reader(&self) -> &CodexAdapter {
+        &self.reader
+    }
+
+    pub(super) fn capture_target(
         &self,
         target: &str,
     ) -> Result<crate::ScopedCaptureResult, agentmender_provider_api::ProviderError> {
         #[cfg(test)]
         if self.synthetic_pin {
-            return crate::scoped_capture::snapshot(&self.reader.location.state_root, target);
+            return if self.desktop_user_data.is_some() {
+                crate::scoped_capture::desktop_snapshot(&self.reader.location.state_root, target)
+            } else {
+                crate::scoped_capture::snapshot(&self.reader.location.state_root, target)
+            };
         }
         use agentmender_provider_api::{ProviderError, evidence::EvidenceSandbox, process};
         let (helper, real_home) = self.reader.evidence_helper.as_ref().ok_or_else(|| {
@@ -93,6 +114,7 @@ impl CodexScopedCleanupAdapter {
             mirror_root: sandbox.path().into(),
             probe_path: sandbox.probe_path().into(),
             target_id: target.into(),
+            desktop_closed_snapshot: self.desktop_user_data.is_some(),
         };
         crate::scoped_capture::read_worker_result(
             process::spawn_codex_scoped_capture(helper, &sandbox)?,
@@ -159,7 +181,7 @@ impl CodexScopedCleanupAdapter {
         Ok(m)
     }
 
-    fn validate_executable(&self) -> Result<(), EffectError> {
+    pub(super) fn validate_executable(&self) -> Result<(), EffectError> {
         #[cfg(test)]
         if self.synthetic_pin {
             return Ok(());
@@ -228,7 +250,7 @@ fn not_expired(expires_at: u64) -> bool {
         .is_ok_and(|now| now.as_secs() < expires_at)
 }
 
-fn report(
+pub(super) fn report(
     manifest: &CleanupManifest,
     outcome: CleanupOutcome,
     action: CleanupActionOutcome,
@@ -264,7 +286,7 @@ fn report(
     }
 }
 
-fn report_blocked(manifest: &CleanupManifest) -> CleanupReport {
+pub(super) fn report_blocked(manifest: &CleanupManifest) -> CleanupReport {
     report(
         manifest,
         CleanupOutcome::Blocked,
@@ -352,6 +374,10 @@ impl DurableCleanupPort for CodexScopedCleanupAdapter {
 
 impl agentmender_persistence::DurableCompleteRemovalPort for CodexScopedCleanupAdapter {
     fn preflight(&self, plan: &LifecyclePlan) -> Result<(), EffectError> {
+        #[cfg(unix)]
+        if let Some(path) = &self.desktop_user_data {
+            return crate::desktop_cleanup::preflight(self, path, plan);
+        }
         let manifest = self.manifest_for(plan, true)?;
         self.validate_executable()?;
         let snapshot = self
@@ -370,6 +396,10 @@ impl agentmender_persistence::DurableCompleteRemovalPort for CodexScopedCleanupA
         plan: &LifecyclePlan,
         progress: &mut dyn agentmender_persistence::CompleteRemovalProgress,
     ) -> agentmender_persistence::CompleteRemovalAttempt {
+        #[cfg(unix)]
+        if let Some(path) = &self.desktop_user_data {
+            return crate::desktop_cleanup::dispatch(self, path, intent, plan, progress);
+        }
         use agentmender_domain::{CompleteRemovalAction, CompleteRemovalActionProgress};
         let matches = intent.plan_digest() == plan.digest()
             && intent.state_fingerprint() == plan.state_fingerprint()
@@ -402,6 +432,7 @@ impl agentmender_persistence::DurableCompleteRemovalPort for CodexScopedCleanupA
                 completed[match action {
                     CompleteRemovalAction::PrimaryPayload => 0,
                     CompleteRemovalAction::StateThreadRecords => 1,
+                    _ => return Err(EffectError::InvalidEvidence),
                 }] = true;
                 Ok(())
             })
@@ -434,6 +465,10 @@ impl agentmender_persistence::DurableCompleteRemovalPort for CodexScopedCleanupA
         &self,
         plan: &LifecyclePlan,
     ) -> Result<agentmender_domain::CompleteRemovalReport, EffectError> {
+        #[cfg(unix)]
+        if let Some(path) = &self.desktop_user_data {
+            return crate::desktop_cleanup::reconcile(self, path, plan);
+        }
         let manifest = self.manifest_for(plan, true)?;
         let (action, _) = scoped_files::reconcile_files(manifest)?;
         let db = self
@@ -487,6 +522,7 @@ fn complete_report(
         PersistentSurfaceObservation,
     };
     CompleteRemovalReport {
+        desktop_collateral_unchanged: None,
         primary,
         actions: m
             .actions
@@ -506,6 +542,105 @@ fn complete_report(
                 observation: PersistentObservation::Unknown,
             })
             .collect(),
+    }
+}
+
+/// Holds all primary writer and database boundaries across the complete transaction.
+/// The Desktop entry is sealed by the consumed, validated execution context.
+pub(super) struct PreparedPrimaryFence<'a> {
+    manifest: &'a CleanupManifest,
+    cwd: std::path::PathBuf,
+    // Fields drop in declaration order: SQLite must close before sidecars.
+    database: scoped_storage::DatabaseFence,
+    postimage_held: bool,
+    sidecars: scoped_files::DatabaseSidecars,
+    writers: scoped_files::WriterFence,
+}
+
+impl<'a> PreparedPrimaryFence<'a> {
+    pub(super) fn acquire(
+        execution: &'a crate::desktop_cleanup::DesktopExecution<'_>,
+        expires_at: u64,
+    ) -> Result<Self, NativeOutcome> {
+        Self::prepare_inner(&execution.manifest().primary, expires_at, true)
+    }
+
+    fn prepare(m: &'a CleanupManifest, expires_at: u64) -> Result<Self, NativeOutcome> {
+        Self::prepare_inner(m, expires_at, false)
+    }
+
+    fn prepare_inner(
+        m: &'a CleanupManifest,
+        expires_at: u64,
+        desktop: bool,
+    ) -> Result<Self, NativeOutcome> {
+        let writers =
+            scoped_files::WriterFence::acquire(m).map_err(NativeOutcome::NeverDispatched)?;
+        scoped_files::validate_before_unlink(m).map_err(NativeOutcome::NeverDispatched)?;
+        // Sidecars precede SQLite and outlive it to preserve POSIX locks.
+        let mut sidecars = if desktop {
+            scoped_files::DatabaseSidecars::acquire_desktop(m)
+        } else {
+            scoped_files::DatabaseSidecars::acquire(m)
+        }
+        .map_err(NativeOutcome::NeverDispatched)?;
+        if desktop {
+            sidecars
+                .validate_before_database(m)
+                .map_err(NativeOutcome::NeverDispatched)?;
+        }
+        let mut database =
+            scoped_storage::DatabaseFence::acquire(m).map_err(NativeOutcome::Unknown)?;
+        sidecars.bind_created(m).map_err(NativeOutcome::Unknown)?;
+        let cwd = database.target_cwd(m).map_err(NativeOutcome::Unknown)?;
+        crate::scoped_config::validate(&m.root.path, &cwd).map_err(NativeOutcome::Unknown)?;
+        database.prepare_delete(m).map_err(NativeOutcome::Unknown)?;
+        writers.validate(m).map_err(NativeOutcome::Unknown)?;
+        sidecars.validate(m).map_err(NativeOutcome::Unknown)?;
+        crate::scoped_config::validate(&m.root.path, &cwd).map_err(NativeOutcome::Unknown)?;
+        if !not_expired(expires_at) {
+            return Err(NativeOutcome::Unknown(EffectError::InvalidEvidence));
+        }
+        Ok(Self {
+            manifest: m,
+            cwd,
+            postimage_held: false,
+            writers,
+            sidecars,
+            database,
+        })
+    }
+
+    pub(super) fn unlink_and_verify(&self) -> Result<(), EffectError> {
+        self.writers.validate(self.manifest)?;
+        self.sidecars.validate(self.manifest)?;
+        crate::scoped_config::validate(&self.manifest.root.path, &self.cwd)?;
+        scoped_files::validate_and_unlink(self.manifest)?;
+        if !scoped_files::verify_retained_and_absence(self.manifest)? {
+            return Err(EffectError::InvalidEvidence);
+        }
+        self.sidecars.validate(self.manifest)
+    }
+
+    pub(super) fn commit_and_verify(&mut self) -> Result<bool, EffectError> {
+        self.sidecars.validate(self.manifest)?;
+        if !self.database.commit_and_verify(self.manifest)? {
+            return Ok(false);
+        }
+        let verified = self.database.hold_postimage(self.manifest)?;
+        self.postimage_held = true;
+        Ok(verified)
+    }
+
+    pub(super) fn verify_retained(&self) -> Result<bool, EffectError> {
+        if !self.postimage_held {
+            return Err(EffectError::InvalidEvidence);
+        }
+        Ok(self.database.verify_postimage(self.manifest)?
+            && crate::scoped_config::validate(&self.manifest.root.path, &self.cwd).is_ok()
+            && scoped_files::verify_retained_and_absence(self.manifest)?
+            && self.writers.validate(self.manifest).is_ok()
+            && self.sidecars.validate(self.manifest).is_ok())
     }
 }
 
@@ -530,49 +665,10 @@ impl CodexScopedCleanupAdapter {
             agentmender_domain::CompleteRemovalAction,
         ) -> Result<(), EffectError>,
     ) -> (NativeOutcome, Option<CleanupReport>) {
-        let writers = match scoped_files::WriterFence::acquire(m) {
+        let mut fence = match PreparedPrimaryFence::prepare(m, expires_at) {
             Ok(v) => v,
-            Err(e) => return (NativeOutcome::NeverDispatched(e), None),
+            Err(outcome) => return (outcome, None),
         };
-        if let Err(e) = scoped_files::validate_before_unlink(m) {
-            return (NativeOutcome::NeverDispatched(e), None);
-        }
-        // Sidecar descriptors are acquired before SQLite and dropped after it,
-        // so closing them cannot discard SQLite's process-scoped POSIX locks.
-        let sidecars = match scoped_files::DatabaseSidecars::acquire(m) {
-            Ok(v) => v,
-            Err(e) => return (NativeOutcome::NeverDispatched(e), None),
-        };
-        let mut database = match scoped_storage::DatabaseFence::acquire(m) {
-            Ok(v) => v,
-            // SQLite may have opened or changed its own WAL coordination files.
-            Err(e) => return (NativeOutcome::Unknown(e), None),
-        };
-        if let Err(e) = sidecars.validate(m) {
-            return (NativeOutcome::Unknown(e), None);
-        }
-        let cwd = match database.target_cwd(m) {
-            Ok(cwd) => cwd,
-            Err(e) => return (NativeOutcome::Unknown(e), None),
-        };
-        if let Err(e) = crate::scoped_config::validate(&m.root.path, &cwd) {
-            return (NativeOutcome::Unknown(e), None);
-        }
-        if let Err(e) = database.prepare_delete(m) {
-            return (NativeOutcome::Unknown(e), None);
-        }
-        if let Err(e) = writers.validate(m) {
-            return (NativeOutcome::Unknown(e), None);
-        }
-        if let Err(e) = sidecars.validate(m) {
-            return (NativeOutcome::Unknown(e), None);
-        }
-        if let Err(e) = crate::scoped_config::validate(&m.root.path, &cwd) {
-            return (NativeOutcome::Unknown(e), None);
-        }
-        if !not_expired(expires_at) {
-            return (NativeOutcome::Unknown(EffectError::InvalidEvidence), None);
-        }
         // From this point any error may follow a successful unlink and is unknown.
         if let Err(e) = scoped_files::validate_and_unlink(m) {
             return (
@@ -598,7 +694,7 @@ impl CodexScopedCleanupAdapter {
                 )),
             );
         }
-        if let Err(e) = sidecars.validate(m) {
+        if let Err(e) = fence.sidecars.validate(m) {
             return (
                 NativeOutcome::Unknown(e),
                 Some(report(
@@ -627,7 +723,7 @@ impl CodexScopedCleanupAdapter {
                 )),
             );
         }
-        let database_ok = match database.commit_and_verify(m) {
+        let database_ok = match fence.database.commit_and_verify(m) {
             Ok(v) => v,
             Err(e) => {
                 return (
@@ -690,8 +786,8 @@ impl CodexScopedCleanupAdapter {
         };
         if !database_ok
             || !files_ok
-            || writers.validate(m).is_err()
-            || sidecars.validate(m).is_err()
+            || fence.writers.validate(m).is_err()
+            || fence.sidecars.validate(m).is_err()
         {
             return (
                 NativeOutcome::Unknown(EffectError::InvalidEvidence),
@@ -738,6 +834,9 @@ impl agentmender_provider_api::ScopedCleanupReadPort for CodexScopedCleanupAdapt
         {
             return Err(unavailable());
         }
+        if let Some(user_data) = &self.desktop_user_data {
+            crate::desktop_cleanup::validate_read_profile(self, user_data)?;
+        }
         self.validate_executable().map_err(|_| unavailable())?;
         let db = self.capture_target(target)?;
         let cwd = db.cwd.as_deref().ok_or_else(unavailable)?;
@@ -758,8 +857,12 @@ impl agentmender_provider_api::ScopedCleanupReadPort for CodexScopedCleanupAdapt
             return Err(unavailable());
         }
         let path = db.target_path.as_ref().ok_or_else(unavailable)?;
-        let files = scoped_files::observe(&self.reader.location.state_root, target, path)
-            .map_err(|_| unavailable())?;
+        let files = if self.desktop_user_data.is_some() {
+            scoped_files::observe_desktop(&self.reader.location.state_root, target, path)
+        } else {
+            scoped_files::observe(&self.reader.location.state_root, target, path)
+        }
+        .map_err(|_| unavailable())?;
         let inventory = scoped_files::inspect_rollouts(&self.reader.location.state_root)
             .map_err(|_| unavailable())?;
         let inventory_keys: std::collections::BTreeSet<_> = inventory
@@ -913,7 +1016,9 @@ impl agentmender_provider_api::ScopedCleanupReadPort for CodexScopedCleanupAdapt
         };
         let complete_removal_evidence = if self.expanded {
             Some(CompleteRemovalEvidence {
+                desktop_boundary: None,
                 manifest: CompleteRemovalManifest {
+                    desktop: None,
                     primary: manifest.clone(),
                     actions: vec![
                         CompleteRemovalAction::PrimaryPayload,
@@ -947,10 +1052,16 @@ impl agentmender_provider_api::ScopedCleanupReadPort for CodexScopedCleanupAdapt
             },
             complete_removal_evidence,
         };
-        Ok(ScopedCleanupObservation {
+        #[allow(unused_mut)] // Desktop augmentation is Unix-only.
+        let mut observation = ScopedCleanupObservation {
             graph: graph.finish()?,
             context,
-        })
+        };
+        #[cfg(unix)]
+        if let Some(path) = &self.desktop_user_data {
+            crate::desktop_cleanup::observe(self, path, target, &mut observation)?;
+        }
+        Ok(observation)
     }
 }
 

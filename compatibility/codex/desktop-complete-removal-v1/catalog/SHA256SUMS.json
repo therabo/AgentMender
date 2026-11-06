@@ -1,0 +1,17 @@
+{
+  "README.md": "9d76673c765d0ce1164aeb062518f2ee6973571c28cbb47994ad3ff6a7ae167f",
+  "catalog-authoritative-removal.extracted.js": "9f5b5284a02d6c106c2eb18851f8260c43664d3ed2b4127a27c307d60f8dd90b",
+  "catalog-checkpoint-shape.extracted.js": "a08af5f94b16ca620b6e8d8258f82e28d24fbcd541fa39809d8540b9ebd02b4a",
+  "catalog-class.extracted.js": "c4efffe86015a00e95883853ef1c2e6adb7445a38f50c22fbac427f5cabd506d",
+  "catalog-tombstone-suppression.extracted.js": "9fa719bda7798547bd64ba43b7b83619e076c601fe0d13e8ea9d6dafc5ee94fe",
+  "complete-schema-projection.json": "e170799908f81a8f3c31c91a19ede3395950b23194f33670dfb022e04db6a1c1",
+  "complete-schema.canonical.json": "66a01687d255c0e898468b81548b50f960f92cbbe0a4bb60e171d8151a84455f",
+  "complete-schema.sql": "870be9090bf24abcaa2699403b5f322e05090e078101fede3dae54dc08742ac9",
+  "evaluate-declarations.js": "452f5c4c944cbc25962c8b3ea59d716522f13091a03d9ba9ea263c477d3c4941",
+  "extract_catalog_evidence.py": "04272145e74491da84604daa21ee5112acb4649faf97515b8fbfd599e728a822",
+  "migration-declarations.extracted.js": "4ef47db35f65ba86167d5aaf0c46a6c03b96fbe5be324b335373d6ab202e6fa3",
+  "migration-ledger-create.sql": "f6f89a542cc42f7a5fdc4d0dd03a2418375f2725996b34b99f7c6b7bf594f7ac",
+  "ordered-migrations.json": "9da2f50d9fb665776ac7c1775c14ea891ac12ec339283bc72252646b3cb7ba50",
+  "ordered-migrations.native.json": "2258ccc030b8d74c32b52cc352416691934bc5801113757f3200269afe925e8e",
+  "provenance.json": "d440201dda339952d39933c64deedbb901d56c1856e0aeb80d71184496d8dd61"
+}

@@ -7,6 +7,53 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 
+/// Replacement is supported only for plain files whose metadata can be kept
+/// exactly by the reviewed same-directory publication operation. Querying a
+/// descriptor neither edits permissions nor follows a replacement path.
+pub fn plain_replacement_provenance(
+    file: &std::fs::File,
+) -> Result<Option<Vec<u8>>, ProviderError> {
+    let unavailable =
+        || ProviderError::CapabilityUnavailable("replacement metadata is unsupported".into());
+    #[cfg(any(target_os = "macos", target_os = "linux", target_os = "hurd"))]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let m = file.metadata().map_err(|_| unavailable())?;
+        if !m.is_file() || m.nlink() != 1 || m.mode() & 0o7000 != 0 {
+            return Err(unavailable());
+        }
+        let mut names = [0; 128];
+        let count = rustix::fs::flistxattr(file, &mut names[..]).map_err(|_| unavailable())?;
+        #[cfg(target_os = "macos")]
+        {
+            use std::os::macos::fs::MetadataExt as _;
+            if m.st_flags() != 0 {
+                return Err(unavailable());
+            }
+            crate::macos_sandbox::verify_no_descriptor_acl(file)?;
+            if &names[..count] == b"com.apple.provenance\0" {
+                let mut value = [0; 64];
+                let count = rustix::fs::fgetxattr(file, "com.apple.provenance", &mut value[..])
+                    .map_err(|_| unavailable())?;
+                if count == 0 {
+                    return Err(unavailable());
+                }
+                return Ok(Some(value[..count].to_vec()));
+            }
+        }
+        if count == 0 {
+            Ok(None)
+        } else {
+            Err(unavailable())
+        }
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "hurd")))]
+    {
+        let _ = file;
+        Err(unavailable())
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct ObservedFile {
     pub path: PathBuf,
@@ -320,5 +367,49 @@ mod tests {
         );
         assert!(read_bounded(dir.path(), &path, 100).is_err());
         assert!(read_prefix(dir.path(), &path, 100).is_err());
+    }
+}
+
+#[cfg(test)]
+mod replacement_metadata_tests {
+    #[cfg(target_os = "macos")]
+    use super::*;
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn descriptor_admission_accepts_plain_file_and_rejects_acl() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("plain");
+        fs::write(&path, b"untouched").unwrap();
+        let file = fs::File::open(&path).unwrap();
+        plain_replacement_provenance(&file).unwrap();
+        assert!(
+            std::process::Command::new("/bin/chmod")
+                .args(["+a", "everyone allow read"])
+                .arg(&path)
+                .status()
+                .unwrap()
+                .success()
+        );
+        assert!(plain_replacement_provenance(&file).is_err());
+        assert_eq!(fs::read(&path).unwrap(), b"untouched");
+    }
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn descriptor_admission_rejects_xattr_without_touching_contents() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("plain");
+        fs::write(&path, b"untouched").unwrap();
+        let file = fs::File::open(&path).unwrap();
+        plain_replacement_provenance(&file).unwrap();
+        assert!(
+            std::process::Command::new("/usr/bin/xattr")
+                .args(["-w", "com.agentmender.fixture", "fixture"])
+                .arg(&path)
+                .status()
+                .unwrap()
+                .success()
+        );
+        assert!(plain_replacement_provenance(&file).is_err());
+        assert_eq!(fs::read(&path).unwrap(), b"untouched");
     }
 }

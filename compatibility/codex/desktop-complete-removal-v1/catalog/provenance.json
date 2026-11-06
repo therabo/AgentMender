@@ -1,0 +1,70 @@
+{
+  "schema_version": 1,
+  "date": "2026-11-03",
+  "evidence_class": "static_exact_installed_source_derived_schema_only",
+  "runtime_schema_captured": false,
+  "provider_started": false,
+  "real_user_state_read": false,
+  "production_mutation_admitted": false,
+  "app_path": "/Applications/ChatGPT.app",
+  "bundle_id": "com.openai.codex",
+  "desktop_version": "26.1027.51404",
+  "desktop_build": "23880",
+  "main_executable_sha256": "0c1cb804f8858c8ab059a26a1640b9a66c9a5071c48f39d6618e8698da370b56",
+  "app_asar_sha256": "52e0a65f9fea51f4287bbd98c63343761f9424517bb793652bb554764bc0bcc8",
+  "migration_asset": ".vite/build/early-bootstrap-339-9edb60e5d8b0547e.js",
+  "migration_asset_sha256": "480cf9c01ab1794c1b788aaf1bc159e96972f341e7f7ec03a53a8769e7b0d175",
+  "migration_declarations_unicode_start": 1173427,
+  "migration_declarations_unicode_end": 1193008,
+  "migration_declarations_utf8_sha256": "4ef47db35f65ba86167d5aaf0c46a6c03b96fbe5be324b335373d6ab202e6fa3",
+  "migration_schema_unicode_start": 1193803,
+  "migration_schema_unicode_end": 1194037,
+  "migration_count": 36,
+  "catalog_asset": ".vite/build/early-bootstrap-439-a0f25ba32c465de1.js",
+  "catalog_asset_sha256": "c23f63f8ff156b2a92a81ee2870d80ab959ced6ce6232d6fe7e54bbefe11d333",
+  "catalog_class_unicode_start": 452851,
+  "catalog_class_unicode_end": 472007,
+  "catalog_class_utf8_sha256": "c4efffe86015a00e95883853ef1c2e6adb7445a38f50c22fbac427f5cabd506d",
+  "source_windows": [
+    {
+      "claim": "catalog-checkpoint-shape",
+      "asset": ".vite/build/early-bootstrap-439-a0f25ba32c465de1.js",
+      "unicode_start": 446350,
+      "unicode_end": 447050,
+      "utf8_sha256": "a08af5f94b16ca620b6e8d8258f82e28d24fbcd541fa39809d8540b9ebd02b4a",
+      "artifact": "catalog-checkpoint-shape.extracted.js"
+    },
+    {
+      "claim": "catalog-authoritative-removal",
+      "asset": ".vite/build/early-bootstrap-439-a0f25ba32c465de1.js",
+      "unicode_start": 466561,
+      "unicode_end": 467600,
+      "utf8_sha256": "9f5b5284a02d6c106c2eb18851f8260c43664d3ed2b4127a27c307d60f8dd90b",
+      "artifact": "catalog-authoritative-removal.extracted.js"
+    },
+    {
+      "claim": "catalog-tombstone-suppression",
+      "asset": ".vite/build/early-bootstrap-439-a0f25ba32c465de1.js",
+      "unicode_start": 468100,
+      "unicode_end": 468700,
+      "utf8_sha256": "9fa719bda7798547bd64ba43b7b83619e076c601fe0d13e8ea9d6dafc5ee94fe",
+      "artifact": "catalog-tombstone-suppression.extracted.js"
+    }
+  ],
+  "schema_semantic_canonical_sha256": "a275a36b59fa4895e0793eb1011d7c2b2b7ee25691c2f2bf206ff2f4342cc40a",
+  "superseded_evidence": {
+    "path": "compatibility/codex/complete-removal-research/desktop-catalog-schema-static.json",
+    "scope": "last two local_thread_catalog column order and incomplete whole-schema inventory only",
+    "reason": "Native migration manifest applies trial_conversation_type before chatgpt_async_status, despite declaration order. Prior file lists chatgpt_async_status first. Prior file unchanged.",
+    "correct_last_columns": [
+      "trial_conversation_type",
+      "chatgpt_async_status"
+    ]
+  },
+  "runtime_admission_requirements": [
+    "validate actual complete schema and migration predecessors/checksums under locked exact physical/root identity",
+    "reject unrecognized tables/indexes/triggers/FKs or migration records",
+    "source-derived fresh schema does not independently prove every historical schema route",
+    "exact-profile actual two-cycle isolated reconstruction acceptance remains required"
+  ]
+}

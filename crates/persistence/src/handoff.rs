@@ -4,6 +4,8 @@ use agentmender_domain::{ArtifactGraph, CleanupReport, IntegrityReport, Lifecycl
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EffectError {
+    RequiresProviderClosed,
+    WriterInventoryUnknown,
     UnsupportedVersion,
     UnsupportedOperation,
     ProfileMismatch,

@@ -1,0 +1,3480 @@
+{
+  "evidence_class": "all_exact_installed_source_migrations_applied_to_disposable_in_memory_sqlite_NOT_runtime_schema",
+  "sqlite_version": "3.53.4",
+  "table_count": 14,
+  "explicit_index_count": 8,
+  "trigger_count": 0,
+  "foreign_key_count": 0,
+  "semantic_canonical_sha256": "a275a36b59fa4895e0793eb1011d7c2b2b7ee25691c2f2bf206ff2f4342cc40a",
+  "canonicalization": "UTF-8 JSON, sort_keys=true, ensure_ascii=false, separators comma/colon; digest excludes trailing LF; excludes rootpage only; source-derived fresh database schema, not every historical migration path",
+  "semantic_projection": {
+    "sqlite_master": [
+      {
+        "type": "index",
+        "name": "automations_owner_idx",
+        "tbl_name": "automations",
+        "sql": "CREATE INDEX automations_owner_idx\n        ON automations (account_id, user_id, installation_id)"
+      },
+      {
+        "type": "index",
+        "name": "local_thread_catalog_created_idx",
+        "tbl_name": "local_thread_catalog",
+        "sql": "CREATE INDEX local_thread_catalog_created_idx\n            ON local_thread_catalog (\n              host_id, source_created_at DESC, source_updated_at DESC, thread_id\n            ) WHERE missing_candidate = 0"
+      },
+      {
+        "type": "index",
+        "name": "local_thread_catalog_cwd_created_idx",
+        "tbl_name": "local_thread_catalog",
+        "sql": "CREATE INDEX local_thread_catalog_cwd_created_idx\n            ON local_thread_catalog (\n              host_id, cwd, source_created_at DESC, source_updated_at DESC,\n              thread_id\n            ) WHERE missing_candidate = 0"
+      },
+      {
+        "type": "index",
+        "name": "local_thread_catalog_cwd_updated_idx",
+        "tbl_name": "local_thread_catalog",
+        "sql": "CREATE INDEX local_thread_catalog_cwd_updated_idx\n            ON local_thread_catalog (\n              host_id, cwd, source_recency_at DESC, source_created_at DESC,\n              thread_id\n            ) WHERE missing_candidate = 0"
+      },
+      {
+        "type": "index",
+        "name": "local_thread_catalog_origin_updated_idx",
+        "tbl_name": "local_thread_catalog",
+        "sql": "CREATE INDEX local_thread_catalog_origin_updated_idx\n            ON local_thread_catalog (\n              host_id, conversation_origin, source_recency_at DESC,\n              source_created_at DESC, thread_id\n            ) WHERE missing_candidate = 0"
+      },
+      {
+        "type": "index",
+        "name": "local_thread_catalog_project_updated_idx",
+        "tbl_name": "local_thread_catalog",
+        "sql": "CREATE INDEX local_thread_catalog_project_updated_idx\n            ON local_thread_catalog (\n              host_id, project_id, source_recency_at DESC,\n              source_created_at DESC, thread_id\n            ) WHERE missing_candidate = 0"
+      },
+      {
+        "type": "index",
+        "name": "local_thread_catalog_thread_lookup_idx",
+        "tbl_name": "local_thread_catalog",
+        "sql": "CREATE INDEX local_thread_catalog_thread_lookup_idx\n            ON local_thread_catalog (\n              thread_id, source_recency_at DESC, source_created_at DESC, host_id\n            ) WHERE missing_candidate = 0"
+      },
+      {
+        "type": "index",
+        "name": "local_thread_catalog_updated_idx",
+        "tbl_name": "local_thread_catalog",
+        "sql": "CREATE INDEX local_thread_catalog_updated_idx\n            ON local_thread_catalog (\n              host_id, source_recency_at DESC, source_created_at DESC, thread_id\n            ) WHERE missing_candidate = 0"
+      },
+      {
+        "type": "index",
+        "name": "sqlite_autoindex_automation_runs_1",
+        "tbl_name": "automation_runs",
+        "sql": null
+      },
+      {
+        "type": "index",
+        "name": "sqlite_autoindex_automations_1",
+        "tbl_name": "automations",
+        "sql": null
+      },
+      {
+        "type": "index",
+        "name": "sqlite_autoindex_codex_schema_migrations_1",
+        "tbl_name": "codex_schema_migrations",
+        "sql": null
+      },
+      {
+        "type": "index",
+        "name": "sqlite_autoindex_inbox_items_1",
+        "tbl_name": "inbox_items",
+        "sql": null
+      },
+      {
+        "type": "index",
+        "name": "sqlite_autoindex_local_app_server_feature_enablement_1",
+        "tbl_name": "local_app_server_feature_enablement",
+        "sql": null
+      },
+      {
+        "type": "index",
+        "name": "sqlite_autoindex_local_thread_catalog_1",
+        "tbl_name": "local_thread_catalog",
+        "sql": null
+      },
+      {
+        "type": "index",
+        "name": "sqlite_autoindex_local_thread_catalog_hosts_1",
+        "tbl_name": "local_thread_catalog_hosts",
+        "sql": null
+      },
+      {
+        "type": "index",
+        "name": "sqlite_autoindex_local_thread_catalog_scan_checkpoints_1",
+        "tbl_name": "local_thread_catalog_scan_checkpoints",
+        "sql": null
+      },
+      {
+        "type": "index",
+        "name": "sqlite_autoindex_local_thread_catalog_sync_state_1",
+        "tbl_name": "local_thread_catalog_sync_state",
+        "sql": null
+      },
+      {
+        "type": "index",
+        "name": "sqlite_autoindex_thread_timeline_ledger_2",
+        "tbl_name": "thread_timeline_ledger",
+        "sql": null
+      },
+      {
+        "type": "table",
+        "name": "active_chat_turns",
+        "tbl_name": "active_chat_turns",
+        "sql": "CREATE TABLE active_chat_turns (\n      profile TEXT NOT NULL,\n      account_id TEXT NOT NULL,\n      user_id TEXT NOT NULL,\n      thread_id TEXT NOT NULL,\n      launch_id TEXT NOT NULL,\n      observed_at_ms INTEGER NOT NULL,\n      PRIMARY KEY (profile, account_id, user_id, thread_id)\n    ) WITHOUT ROWID"
+      },
+      {
+        "type": "table",
+        "name": "automation_runs",
+        "tbl_name": "automation_runs",
+        "sql": "CREATE TABLE automation_runs (\n          thread_id TEXT PRIMARY KEY,\n          automation_id TEXT NOT NULL,\n          status TEXT NOT NULL,\n          read_at INTEGER,\n          thread_title TEXT,\n          source_cwd TEXT,\n          inbox_title TEXT,\n          inbox_summary TEXT,\n          created_at INTEGER NOT NULL,\n          updated_at INTEGER NOT NULL\n        , archived_user_message TEXT, archived_assistant_message TEXT, archived_reason TEXT)"
+      },
+      {
+        "type": "table",
+        "name": "automations",
+        "tbl_name": "automations",
+        "sql": "CREATE TABLE automations (\n          id TEXT PRIMARY KEY,\n          name TEXT NOT NULL,\n          prompt TEXT NOT NULL,\n          status TEXT NOT NULL DEFAULT 'ACTIVE',\n          next_run_at INTEGER,\n          last_run_at INTEGER,\n          cwds TEXT NOT NULL DEFAULT '[]',\n          rrule TEXT NOT NULL DEFAULT 'FREQ=HOURLY;INTERVAL=24;BYMINUTE=0',\n          model TEXT,\n          reasoning_effort TEXT,\n          created_at INTEGER NOT NULL,\n          updated_at INTEGER NOT NULL\n        , target_type TEXT, project_id TEXT, kind TEXT NOT NULL DEFAULT 'cron', target_thread_id TEXT, execution_environment TEXT, local_environment_config_path TEXT, plugin_template_id TEXT, notification_policy TEXT, account_id TEXT, user_id TEXT, installation_id TEXT, legacy_automation_id TEXT, auto_archive INTEGER NOT NULL DEFAULT 0, next_run_nominal_at INTEGER)"
+      },
+      {
+        "type": "table",
+        "name": "codex_schema_migrations",
+        "tbl_name": "codex_schema_migrations",
+        "sql": "CREATE TABLE codex_schema_migrations (\n      id TEXT PRIMARY KEY,\n      predecessor_id TEXT,\n      checksum TEXT NOT NULL,\n      applied_at INTEGER NOT NULL,\n      app_version TEXT,\n      build_flavor TEXT,\n      build_commit TEXT\n    )"
+      },
+      {
+        "type": "table",
+        "name": "inbox_items",
+        "tbl_name": "inbox_items",
+        "sql": "CREATE TABLE inbox_items (\n          id TEXT PRIMARY KEY,\n          title TEXT\n        , description TEXT, thread_id TEXT, read_at INTEGER, created_at INTEGER)"
+      },
+      {
+        "type": "table",
+        "name": "live_visualization_suggestions",
+        "tbl_name": "live_visualization_suggestions",
+        "sql": "CREATE TABLE live_visualization_suggestions (\n          account_id TEXT NOT NULL,\n          user_id TEXT NOT NULL,\n          host_id TEXT NOT NULL,\n          thread_id TEXT NOT NULL,\n          id TEXT NOT NULL,\n          title TEXT NOT NULL,\n          description TEXT NOT NULL,\n          status TEXT NOT NULL CHECK (status IN ('pending', 'accepted', 'dismissed')),\n          submission TEXT CHECK (submission IN ('submitted', 'accepted')), turn_id TEXT, creation_turn_id TEXT,\n          PRIMARY KEY (account_id, user_id, host_id, thread_id)\n        ) WITHOUT ROWID"
+      },
+      {
+        "type": "table",
+        "name": "local_app_server_feature_enablement",
+        "tbl_name": "local_app_server_feature_enablement",
+        "sql": "CREATE TABLE local_app_server_feature_enablement (\n          feature_name TEXT PRIMARY KEY,\n          enabled INTEGER NOT NULL,\n          updated_at INTEGER NOT NULL\n        )"
+      },
+      {
+        "type": "table",
+        "name": "local_thread_catalog",
+        "tbl_name": "local_thread_catalog",
+        "sql": "CREATE TABLE \"local_thread_catalog\" (\n            host_id TEXT NOT NULL,\n            thread_id TEXT NOT NULL,\n            display_title TEXT NOT NULL,\n            source_created_at REAL NOT NULL,\n            source_updated_at REAL NOT NULL,\n            cwd TEXT,\n            source_kind TEXT NOT NULL,\n            source_detail TEXT,\n            model_provider TEXT,\n            git_branch TEXT,\n            observation_sequence INTEGER NOT NULL,\n            missing_candidate INTEGER NOT NULL DEFAULT 0\n              CHECK (missing_candidate IN (0, 1)),\n            thread_source TEXT,\n            source_recency_at REAL NOT NULL DEFAULT 0,\n            pending_observed_title INTEGER NOT NULL DEFAULT 0,\n            project_id TEXT,\n            conversation_origin TEXT, trial_conversation_type TEXT, chatgpt_async_status INTEGER,\n            PRIMARY KEY (host_id, thread_id)\n          )"
+      },
+      {
+        "type": "table",
+        "name": "local_thread_catalog_hosts",
+        "tbl_name": "local_thread_catalog_hosts",
+        "sql": "CREATE TABLE \"local_thread_catalog_hosts\" (\n            host_id TEXT PRIMARY KEY,\n            host_kind TEXT NOT NULL CHECK (\n              host_kind IN ('local', 'ssh', 'wsl', 'remote-control', 'chatgpt')\n            )\n          )"
+      },
+      {
+        "type": "table",
+        "name": "local_thread_catalog_metadata",
+        "tbl_name": "local_thread_catalog_metadata",
+        "sql": "CREATE TABLE local_thread_catalog_metadata (\n            id INTEGER PRIMARY KEY CHECK (id = 1),\n            catalog_revision INTEGER NOT NULL DEFAULT 0\n          )"
+      },
+      {
+        "type": "table",
+        "name": "local_thread_catalog_scan_checkpoints",
+        "tbl_name": "local_thread_catalog_scan_checkpoints",
+        "sql": "CREATE TABLE local_thread_catalog_scan_checkpoints (\n          host_id TEXT PRIMARY KEY,\n          checkpoint TEXT NOT NULL,\n          failed_at INTEGER\n        )"
+      },
+      {
+        "type": "table",
+        "name": "local_thread_catalog_scan_entries",
+        "tbl_name": "local_thread_catalog_scan_entries",
+        "sql": "CREATE TABLE local_thread_catalog_scan_entries (\n          host_id TEXT NOT NULL,\n          thread_id TEXT NOT NULL,\n          removed INTEGER NOT NULL DEFAULT 0,\n          PRIMARY KEY (host_id, thread_id)\n        ) WITHOUT ROWID"
+      },
+      {
+        "type": "table",
+        "name": "local_thread_catalog_sync_state",
+        "tbl_name": "local_thread_catalog_sync_state",
+        "sql": "CREATE TABLE local_thread_catalog_sync_state (\n            host_id TEXT PRIMARY KEY,\n            watermark_updated_at REAL,\n            initial_build_complete INTEGER NOT NULL DEFAULT 0,\n            observation_sequence INTEGER NOT NULL DEFAULT 0\n          , last_full_reconciled_at INTEGER)"
+      },
+      {
+        "type": "table",
+        "name": "thread_timeline_ledger",
+        "tbl_name": "thread_timeline_ledger",
+        "sql": "CREATE TABLE thread_timeline_ledger (\n            host_id TEXT NOT NULL,\n            thread_id TEXT NOT NULL,\n            sequence INTEGER NOT NULL,\n            record_id TEXT NOT NULL,\n            payload_json TEXT NOT NULL,\n            PRIMARY KEY (host_id, thread_id, sequence),\n            UNIQUE (host_id, thread_id, record_id)\n          ) WITHOUT ROWID"
+      }
+    ],
+    "tables": {
+      "active_chat_turns": {
+        "table_info": [
+          {
+            "cid": 0,
+            "name": "profile",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 1
+          },
+          {
+            "cid": 1,
+            "name": "account_id",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 2
+          },
+          {
+            "cid": 2,
+            "name": "user_id",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 3
+          },
+          {
+            "cid": 3,
+            "name": "thread_id",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 4
+          },
+          {
+            "cid": 4,
+            "name": "launch_id",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 0
+          },
+          {
+            "cid": 5,
+            "name": "observed_at_ms",
+            "type": "INTEGER",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 0
+          }
+        ],
+        "table_xinfo": [
+          {
+            "cid": 0,
+            "name": "profile",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 1,
+            "hidden": 0
+          },
+          {
+            "cid": 1,
+            "name": "account_id",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 2,
+            "hidden": 0
+          },
+          {
+            "cid": 2,
+            "name": "user_id",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 3,
+            "hidden": 0
+          },
+          {
+            "cid": 3,
+            "name": "thread_id",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 4,
+            "hidden": 0
+          },
+          {
+            "cid": 4,
+            "name": "launch_id",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 5,
+            "name": "observed_at_ms",
+            "type": "INTEGER",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 0,
+            "hidden": 0
+          }
+        ],
+        "foreign_key_list": [],
+        "index_list": [
+          {
+            "seq": 0,
+            "name": "sqlite_autoindex_active_chat_turns_1",
+            "unique": 1,
+            "origin": "pk",
+            "partial": 0
+          }
+        ]
+      },
+      "automation_runs": {
+        "table_info": [
+          {
+            "cid": 0,
+            "name": "thread_id",
+            "type": "TEXT",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 1
+          },
+          {
+            "cid": 1,
+            "name": "automation_id",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 0
+          },
+          {
+            "cid": 2,
+            "name": "status",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 0
+          },
+          {
+            "cid": 3,
+            "name": "read_at",
+            "type": "INTEGER",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 0
+          },
+          {
+            "cid": 4,
+            "name": "thread_title",
+            "type": "TEXT",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 0
+          },
+          {
+            "cid": 5,
+            "name": "source_cwd",
+            "type": "TEXT",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 0
+          },
+          {
+            "cid": 6,
+            "name": "inbox_title",
+            "type": "TEXT",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 0
+          },
+          {
+            "cid": 7,
+            "name": "inbox_summary",
+            "type": "TEXT",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 0
+          },
+          {
+            "cid": 8,
+            "name": "created_at",
+            "type": "INTEGER",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 0
+          },
+          {
+            "cid": 9,
+            "name": "updated_at",
+            "type": "INTEGER",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 0
+          },
+          {
+            "cid": 10,
+            "name": "archived_user_message",
+            "type": "TEXT",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 0
+          },
+          {
+            "cid": 11,
+            "name": "archived_assistant_message",
+            "type": "TEXT",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 0
+          },
+          {
+            "cid": 12,
+            "name": "archived_reason",
+            "type": "TEXT",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 0
+          }
+        ],
+        "table_xinfo": [
+          {
+            "cid": 0,
+            "name": "thread_id",
+            "type": "TEXT",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 1,
+            "hidden": 0
+          },
+          {
+            "cid": 1,
+            "name": "automation_id",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 2,
+            "name": "status",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 3,
+            "name": "read_at",
+            "type": "INTEGER",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 4,
+            "name": "thread_title",
+            "type": "TEXT",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 5,
+            "name": "source_cwd",
+            "type": "TEXT",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 6,
+            "name": "inbox_title",
+            "type": "TEXT",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 7,
+            "name": "inbox_summary",
+            "type": "TEXT",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 8,
+            "name": "created_at",
+            "type": "INTEGER",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 9,
+            "name": "updated_at",
+            "type": "INTEGER",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 10,
+            "name": "archived_user_message",
+            "type": "TEXT",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 11,
+            "name": "archived_assistant_message",
+            "type": "TEXT",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 12,
+            "name": "archived_reason",
+            "type": "TEXT",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 0,
+            "hidden": 0
+          }
+        ],
+        "foreign_key_list": [],
+        "index_list": [
+          {
+            "seq": 0,
+            "name": "sqlite_autoindex_automation_runs_1",
+            "unique": 1,
+            "origin": "pk",
+            "partial": 0
+          }
+        ]
+      },
+      "automations": {
+        "table_info": [
+          {
+            "cid": 0,
+            "name": "id",
+            "type": "TEXT",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 1
+          },
+          {
+            "cid": 1,
+            "name": "name",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 0
+          },
+          {
+            "cid": 2,
+            "name": "prompt",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 0
+          },
+          {
+            "cid": 3,
+            "name": "status",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "'ACTIVE'",
+            "pk": 0
+          },
+          {
+            "cid": 4,
+            "name": "next_run_at",
+            "type": "INTEGER",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 0
+          },
+          {
+            "cid": 5,
+            "name": "last_run_at",
+            "type": "INTEGER",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 0
+          },
+          {
+            "cid": 6,
+            "name": "cwds",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "'[]'",
+            "pk": 0
+          },
+          {
+            "cid": 7,
+            "name": "rrule",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "'FREQ=HOURLY;INTERVAL=24;BYMINUTE=0'",
+            "pk": 0
+          },
+          {
+            "cid": 8,
+            "name": "model",
+            "type": "TEXT",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 0
+          },
+          {
+            "cid": 9,
+            "name": "reasoning_effort",
+            "type": "TEXT",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 0
+          },
+          {
+            "cid": 10,
+            "name": "created_at",
+            "type": "INTEGER",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 0
+          },
+          {
+            "cid": 11,
+            "name": "updated_at",
+            "type": "INTEGER",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 0
+          },
+          {
+            "cid": 12,
+            "name": "target_type",
+            "type": "TEXT",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 0
+          },
+          {
+            "cid": 13,
+            "name": "project_id",
+            "type": "TEXT",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 0
+          },
+          {
+            "cid": 14,
+            "name": "kind",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "'cron'",
+            "pk": 0
+          },
+          {
+            "cid": 15,
+            "name": "target_thread_id",
+            "type": "TEXT",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 0
+          },
+          {
+            "cid": 16,
+            "name": "execution_environment",
+            "type": "TEXT",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 0
+          },
+          {
+            "cid": 17,
+            "name": "local_environment_config_path",
+            "type": "TEXT",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 0
+          },
+          {
+            "cid": 18,
+            "name": "plugin_template_id",
+            "type": "TEXT",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 0
+          },
+          {
+            "cid": 19,
+            "name": "notification_policy",
+            "type": "TEXT",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 0
+          },
+          {
+            "cid": 20,
+            "name": "account_id",
+            "type": "TEXT",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 0
+          },
+          {
+            "cid": 21,
+            "name": "user_id",
+            "type": "TEXT",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 0
+          },
+          {
+            "cid": 22,
+            "name": "installation_id",
+            "type": "TEXT",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 0
+          },
+          {
+            "cid": 23,
+            "name": "legacy_automation_id",
+            "type": "TEXT",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 0
+          },
+          {
+            "cid": 24,
+            "name": "auto_archive",
+            "type": "INTEGER",
+            "notnull": 1,
+            "dflt_value": "0",
+            "pk": 0
+          },
+          {
+            "cid": 25,
+            "name": "next_run_nominal_at",
+            "type": "INTEGER",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 0
+          }
+        ],
+        "table_xinfo": [
+          {
+            "cid": 0,
+            "name": "id",
+            "type": "TEXT",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 1,
+            "hidden": 0
+          },
+          {
+            "cid": 1,
+            "name": "name",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 2,
+            "name": "prompt",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 3,
+            "name": "status",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "'ACTIVE'",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 4,
+            "name": "next_run_at",
+            "type": "INTEGER",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 5,
+            "name": "last_run_at",
+            "type": "INTEGER",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 6,
+            "name": "cwds",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "'[]'",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 7,
+            "name": "rrule",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "'FREQ=HOURLY;INTERVAL=24;BYMINUTE=0'",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 8,
+            "name": "model",
+            "type": "TEXT",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 9,
+            "name": "reasoning_effort",
+            "type": "TEXT",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 10,
+            "name": "created_at",
+            "type": "INTEGER",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 11,
+            "name": "updated_at",
+            "type": "INTEGER",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 12,
+            "name": "target_type",
+            "type": "TEXT",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 13,
+            "name": "project_id",
+            "type": "TEXT",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 14,
+            "name": "kind",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "'cron'",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 15,
+            "name": "target_thread_id",
+            "type": "TEXT",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 16,
+            "name": "execution_environment",
+            "type": "TEXT",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 17,
+            "name": "local_environment_config_path",
+            "type": "TEXT",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 18,
+            "name": "plugin_template_id",
+            "type": "TEXT",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 19,
+            "name": "notification_policy",
+            "type": "TEXT",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 20,
+            "name": "account_id",
+            "type": "TEXT",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 21,
+            "name": "user_id",
+            "type": "TEXT",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 22,
+            "name": "installation_id",
+            "type": "TEXT",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 23,
+            "name": "legacy_automation_id",
+            "type": "TEXT",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 24,
+            "name": "auto_archive",
+            "type": "INTEGER",
+            "notnull": 1,
+            "dflt_value": "0",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 25,
+            "name": "next_run_nominal_at",
+            "type": "INTEGER",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 0,
+            "hidden": 0
+          }
+        ],
+        "foreign_key_list": [],
+        "index_list": [
+          {
+            "seq": 0,
+            "name": "automations_owner_idx",
+            "unique": 0,
+            "origin": "c",
+            "partial": 0
+          },
+          {
+            "seq": 1,
+            "name": "sqlite_autoindex_automations_1",
+            "unique": 1,
+            "origin": "pk",
+            "partial": 0
+          }
+        ]
+      },
+      "codex_schema_migrations": {
+        "table_info": [
+          {
+            "cid": 0,
+            "name": "id",
+            "type": "TEXT",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 1
+          },
+          {
+            "cid": 1,
+            "name": "predecessor_id",
+            "type": "TEXT",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 0
+          },
+          {
+            "cid": 2,
+            "name": "checksum",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 0
+          },
+          {
+            "cid": 3,
+            "name": "applied_at",
+            "type": "INTEGER",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 0
+          },
+          {
+            "cid": 4,
+            "name": "app_version",
+            "type": "TEXT",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 0
+          },
+          {
+            "cid": 5,
+            "name": "build_flavor",
+            "type": "TEXT",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 0
+          },
+          {
+            "cid": 6,
+            "name": "build_commit",
+            "type": "TEXT",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 0
+          }
+        ],
+        "table_xinfo": [
+          {
+            "cid": 0,
+            "name": "id",
+            "type": "TEXT",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 1,
+            "hidden": 0
+          },
+          {
+            "cid": 1,
+            "name": "predecessor_id",
+            "type": "TEXT",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 2,
+            "name": "checksum",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 3,
+            "name": "applied_at",
+            "type": "INTEGER",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 4,
+            "name": "app_version",
+            "type": "TEXT",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 5,
+            "name": "build_flavor",
+            "type": "TEXT",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 6,
+            "name": "build_commit",
+            "type": "TEXT",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 0,
+            "hidden": 0
+          }
+        ],
+        "foreign_key_list": [],
+        "index_list": [
+          {
+            "seq": 0,
+            "name": "sqlite_autoindex_codex_schema_migrations_1",
+            "unique": 1,
+            "origin": "pk",
+            "partial": 0
+          }
+        ]
+      },
+      "inbox_items": {
+        "table_info": [
+          {
+            "cid": 0,
+            "name": "id",
+            "type": "TEXT",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 1
+          },
+          {
+            "cid": 1,
+            "name": "title",
+            "type": "TEXT",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 0
+          },
+          {
+            "cid": 2,
+            "name": "description",
+            "type": "TEXT",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 0
+          },
+          {
+            "cid": 3,
+            "name": "thread_id",
+            "type": "TEXT",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 0
+          },
+          {
+            "cid": 4,
+            "name": "read_at",
+            "type": "INTEGER",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 0
+          },
+          {
+            "cid": 5,
+            "name": "created_at",
+            "type": "INTEGER",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 0
+          }
+        ],
+        "table_xinfo": [
+          {
+            "cid": 0,
+            "name": "id",
+            "type": "TEXT",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 1,
+            "hidden": 0
+          },
+          {
+            "cid": 1,
+            "name": "title",
+            "type": "TEXT",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 2,
+            "name": "description",
+            "type": "TEXT",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 3,
+            "name": "thread_id",
+            "type": "TEXT",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 4,
+            "name": "read_at",
+            "type": "INTEGER",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 5,
+            "name": "created_at",
+            "type": "INTEGER",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 0,
+            "hidden": 0
+          }
+        ],
+        "foreign_key_list": [],
+        "index_list": [
+          {
+            "seq": 0,
+            "name": "sqlite_autoindex_inbox_items_1",
+            "unique": 1,
+            "origin": "pk",
+            "partial": 0
+          }
+        ]
+      },
+      "live_visualization_suggestions": {
+        "table_info": [
+          {
+            "cid": 0,
+            "name": "account_id",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 1
+          },
+          {
+            "cid": 1,
+            "name": "user_id",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 2
+          },
+          {
+            "cid": 2,
+            "name": "host_id",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 3
+          },
+          {
+            "cid": 3,
+            "name": "thread_id",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 4
+          },
+          {
+            "cid": 4,
+            "name": "id",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 0
+          },
+          {
+            "cid": 5,
+            "name": "title",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 0
+          },
+          {
+            "cid": 6,
+            "name": "description",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 0
+          },
+          {
+            "cid": 7,
+            "name": "status",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 0
+          },
+          {
+            "cid": 8,
+            "name": "submission",
+            "type": "TEXT",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 0
+          },
+          {
+            "cid": 9,
+            "name": "turn_id",
+            "type": "TEXT",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 0
+          },
+          {
+            "cid": 10,
+            "name": "creation_turn_id",
+            "type": "TEXT",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 0
+          }
+        ],
+        "table_xinfo": [
+          {
+            "cid": 0,
+            "name": "account_id",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 1,
+            "hidden": 0
+          },
+          {
+            "cid": 1,
+            "name": "user_id",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 2,
+            "hidden": 0
+          },
+          {
+            "cid": 2,
+            "name": "host_id",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 3,
+            "hidden": 0
+          },
+          {
+            "cid": 3,
+            "name": "thread_id",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 4,
+            "hidden": 0
+          },
+          {
+            "cid": 4,
+            "name": "id",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 5,
+            "name": "title",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 6,
+            "name": "description",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 7,
+            "name": "status",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 8,
+            "name": "submission",
+            "type": "TEXT",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 9,
+            "name": "turn_id",
+            "type": "TEXT",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 10,
+            "name": "creation_turn_id",
+            "type": "TEXT",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 0,
+            "hidden": 0
+          }
+        ],
+        "foreign_key_list": [],
+        "index_list": [
+          {
+            "seq": 0,
+            "name": "sqlite_autoindex_live_visualization_suggestions_1",
+            "unique": 1,
+            "origin": "pk",
+            "partial": 0
+          }
+        ]
+      },
+      "local_app_server_feature_enablement": {
+        "table_info": [
+          {
+            "cid": 0,
+            "name": "feature_name",
+            "type": "TEXT",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 1
+          },
+          {
+            "cid": 1,
+            "name": "enabled",
+            "type": "INTEGER",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 0
+          },
+          {
+            "cid": 2,
+            "name": "updated_at",
+            "type": "INTEGER",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 0
+          }
+        ],
+        "table_xinfo": [
+          {
+            "cid": 0,
+            "name": "feature_name",
+            "type": "TEXT",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 1,
+            "hidden": 0
+          },
+          {
+            "cid": 1,
+            "name": "enabled",
+            "type": "INTEGER",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 2,
+            "name": "updated_at",
+            "type": "INTEGER",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 0,
+            "hidden": 0
+          }
+        ],
+        "foreign_key_list": [],
+        "index_list": [
+          {
+            "seq": 0,
+            "name": "sqlite_autoindex_local_app_server_feature_enablement_1",
+            "unique": 1,
+            "origin": "pk",
+            "partial": 0
+          }
+        ]
+      },
+      "local_thread_catalog": {
+        "table_info": [
+          {
+            "cid": 0,
+            "name": "host_id",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 1
+          },
+          {
+            "cid": 1,
+            "name": "thread_id",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 2
+          },
+          {
+            "cid": 2,
+            "name": "display_title",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 0
+          },
+          {
+            "cid": 3,
+            "name": "source_created_at",
+            "type": "REAL",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 0
+          },
+          {
+            "cid": 4,
+            "name": "source_updated_at",
+            "type": "REAL",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 0
+          },
+          {
+            "cid": 5,
+            "name": "cwd",
+            "type": "TEXT",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 0
+          },
+          {
+            "cid": 6,
+            "name": "source_kind",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 0
+          },
+          {
+            "cid": 7,
+            "name": "source_detail",
+            "type": "TEXT",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 0
+          },
+          {
+            "cid": 8,
+            "name": "model_provider",
+            "type": "TEXT",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 0
+          },
+          {
+            "cid": 9,
+            "name": "git_branch",
+            "type": "TEXT",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 0
+          },
+          {
+            "cid": 10,
+            "name": "observation_sequence",
+            "type": "INTEGER",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 0
+          },
+          {
+            "cid": 11,
+            "name": "missing_candidate",
+            "type": "INTEGER",
+            "notnull": 1,
+            "dflt_value": "0",
+            "pk": 0
+          },
+          {
+            "cid": 12,
+            "name": "thread_source",
+            "type": "TEXT",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 0
+          },
+          {
+            "cid": 13,
+            "name": "source_recency_at",
+            "type": "REAL",
+            "notnull": 1,
+            "dflt_value": "0",
+            "pk": 0
+          },
+          {
+            "cid": 14,
+            "name": "pending_observed_title",
+            "type": "INTEGER",
+            "notnull": 1,
+            "dflt_value": "0",
+            "pk": 0
+          },
+          {
+            "cid": 15,
+            "name": "project_id",
+            "type": "TEXT",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 0
+          },
+          {
+            "cid": 16,
+            "name": "conversation_origin",
+            "type": "TEXT",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 0
+          },
+          {
+            "cid": 17,
+            "name": "trial_conversation_type",
+            "type": "TEXT",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 0
+          },
+          {
+            "cid": 18,
+            "name": "chatgpt_async_status",
+            "type": "INTEGER",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 0
+          }
+        ],
+        "table_xinfo": [
+          {
+            "cid": 0,
+            "name": "host_id",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 1,
+            "hidden": 0
+          },
+          {
+            "cid": 1,
+            "name": "thread_id",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 2,
+            "hidden": 0
+          },
+          {
+            "cid": 2,
+            "name": "display_title",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 3,
+            "name": "source_created_at",
+            "type": "REAL",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 4,
+            "name": "source_updated_at",
+            "type": "REAL",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 5,
+            "name": "cwd",
+            "type": "TEXT",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 6,
+            "name": "source_kind",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 7,
+            "name": "source_detail",
+            "type": "TEXT",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 8,
+            "name": "model_provider",
+            "type": "TEXT",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 9,
+            "name": "git_branch",
+            "type": "TEXT",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 10,
+            "name": "observation_sequence",
+            "type": "INTEGER",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 11,
+            "name": "missing_candidate",
+            "type": "INTEGER",
+            "notnull": 1,
+            "dflt_value": "0",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 12,
+            "name": "thread_source",
+            "type": "TEXT",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 13,
+            "name": "source_recency_at",
+            "type": "REAL",
+            "notnull": 1,
+            "dflt_value": "0",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 14,
+            "name": "pending_observed_title",
+            "type": "INTEGER",
+            "notnull": 1,
+            "dflt_value": "0",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 15,
+            "name": "project_id",
+            "type": "TEXT",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 16,
+            "name": "conversation_origin",
+            "type": "TEXT",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 17,
+            "name": "trial_conversation_type",
+            "type": "TEXT",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 18,
+            "name": "chatgpt_async_status",
+            "type": "INTEGER",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 0,
+            "hidden": 0
+          }
+        ],
+        "foreign_key_list": [],
+        "index_list": [
+          {
+            "seq": 0,
+            "name": "local_thread_catalog_origin_updated_idx",
+            "unique": 0,
+            "origin": "c",
+            "partial": 1
+          },
+          {
+            "seq": 1,
+            "name": "local_thread_catalog_project_updated_idx",
+            "unique": 0,
+            "origin": "c",
+            "partial": 1
+          },
+          {
+            "seq": 2,
+            "name": "local_thread_catalog_thread_lookup_idx",
+            "unique": 0,
+            "origin": "c",
+            "partial": 1
+          },
+          {
+            "seq": 3,
+            "name": "local_thread_catalog_cwd_created_idx",
+            "unique": 0,
+            "origin": "c",
+            "partial": 1
+          },
+          {
+            "seq": 4,
+            "name": "local_thread_catalog_cwd_updated_idx",
+            "unique": 0,
+            "origin": "c",
+            "partial": 1
+          },
+          {
+            "seq": 5,
+            "name": "local_thread_catalog_created_idx",
+            "unique": 0,
+            "origin": "c",
+            "partial": 1
+          },
+          {
+            "seq": 6,
+            "name": "local_thread_catalog_updated_idx",
+            "unique": 0,
+            "origin": "c",
+            "partial": 1
+          },
+          {
+            "seq": 7,
+            "name": "sqlite_autoindex_local_thread_catalog_1",
+            "unique": 1,
+            "origin": "pk",
+            "partial": 0
+          }
+        ]
+      },
+      "local_thread_catalog_hosts": {
+        "table_info": [
+          {
+            "cid": 0,
+            "name": "host_id",
+            "type": "TEXT",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 1
+          },
+          {
+            "cid": 1,
+            "name": "host_kind",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 0
+          }
+        ],
+        "table_xinfo": [
+          {
+            "cid": 0,
+            "name": "host_id",
+            "type": "TEXT",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 1,
+            "hidden": 0
+          },
+          {
+            "cid": 1,
+            "name": "host_kind",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 0,
+            "hidden": 0
+          }
+        ],
+        "foreign_key_list": [],
+        "index_list": [
+          {
+            "seq": 0,
+            "name": "sqlite_autoindex_local_thread_catalog_hosts_1",
+            "unique": 1,
+            "origin": "pk",
+            "partial": 0
+          }
+        ]
+      },
+      "local_thread_catalog_metadata": {
+        "table_info": [
+          {
+            "cid": 0,
+            "name": "id",
+            "type": "INTEGER",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 1
+          },
+          {
+            "cid": 1,
+            "name": "catalog_revision",
+            "type": "INTEGER",
+            "notnull": 1,
+            "dflt_value": "0",
+            "pk": 0
+          }
+        ],
+        "table_xinfo": [
+          {
+            "cid": 0,
+            "name": "id",
+            "type": "INTEGER",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 1,
+            "hidden": 0
+          },
+          {
+            "cid": 1,
+            "name": "catalog_revision",
+            "type": "INTEGER",
+            "notnull": 1,
+            "dflt_value": "0",
+            "pk": 0,
+            "hidden": 0
+          }
+        ],
+        "foreign_key_list": [],
+        "index_list": []
+      },
+      "local_thread_catalog_scan_checkpoints": {
+        "table_info": [
+          {
+            "cid": 0,
+            "name": "host_id",
+            "type": "TEXT",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 1
+          },
+          {
+            "cid": 1,
+            "name": "checkpoint",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 0
+          },
+          {
+            "cid": 2,
+            "name": "failed_at",
+            "type": "INTEGER",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 0
+          }
+        ],
+        "table_xinfo": [
+          {
+            "cid": 0,
+            "name": "host_id",
+            "type": "TEXT",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 1,
+            "hidden": 0
+          },
+          {
+            "cid": 1,
+            "name": "checkpoint",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 2,
+            "name": "failed_at",
+            "type": "INTEGER",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 0,
+            "hidden": 0
+          }
+        ],
+        "foreign_key_list": [],
+        "index_list": [
+          {
+            "seq": 0,
+            "name": "sqlite_autoindex_local_thread_catalog_scan_checkpoints_1",
+            "unique": 1,
+            "origin": "pk",
+            "partial": 0
+          }
+        ]
+      },
+      "local_thread_catalog_scan_entries": {
+        "table_info": [
+          {
+            "cid": 0,
+            "name": "host_id",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 1
+          },
+          {
+            "cid": 1,
+            "name": "thread_id",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 2
+          },
+          {
+            "cid": 2,
+            "name": "removed",
+            "type": "INTEGER",
+            "notnull": 1,
+            "dflt_value": "0",
+            "pk": 0
+          }
+        ],
+        "table_xinfo": [
+          {
+            "cid": 0,
+            "name": "host_id",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 1,
+            "hidden": 0
+          },
+          {
+            "cid": 1,
+            "name": "thread_id",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 2,
+            "hidden": 0
+          },
+          {
+            "cid": 2,
+            "name": "removed",
+            "type": "INTEGER",
+            "notnull": 1,
+            "dflt_value": "0",
+            "pk": 0,
+            "hidden": 0
+          }
+        ],
+        "foreign_key_list": [],
+        "index_list": [
+          {
+            "seq": 0,
+            "name": "sqlite_autoindex_local_thread_catalog_scan_entries_1",
+            "unique": 1,
+            "origin": "pk",
+            "partial": 0
+          }
+        ]
+      },
+      "local_thread_catalog_sync_state": {
+        "table_info": [
+          {
+            "cid": 0,
+            "name": "host_id",
+            "type": "TEXT",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 1
+          },
+          {
+            "cid": 1,
+            "name": "watermark_updated_at",
+            "type": "REAL",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 0
+          },
+          {
+            "cid": 2,
+            "name": "initial_build_complete",
+            "type": "INTEGER",
+            "notnull": 1,
+            "dflt_value": "0",
+            "pk": 0
+          },
+          {
+            "cid": 3,
+            "name": "observation_sequence",
+            "type": "INTEGER",
+            "notnull": 1,
+            "dflt_value": "0",
+            "pk": 0
+          },
+          {
+            "cid": 4,
+            "name": "last_full_reconciled_at",
+            "type": "INTEGER",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 0
+          }
+        ],
+        "table_xinfo": [
+          {
+            "cid": 0,
+            "name": "host_id",
+            "type": "TEXT",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 1,
+            "hidden": 0
+          },
+          {
+            "cid": 1,
+            "name": "watermark_updated_at",
+            "type": "REAL",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 2,
+            "name": "initial_build_complete",
+            "type": "INTEGER",
+            "notnull": 1,
+            "dflt_value": "0",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 3,
+            "name": "observation_sequence",
+            "type": "INTEGER",
+            "notnull": 1,
+            "dflt_value": "0",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 4,
+            "name": "last_full_reconciled_at",
+            "type": "INTEGER",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 0,
+            "hidden": 0
+          }
+        ],
+        "foreign_key_list": [],
+        "index_list": [
+          {
+            "seq": 0,
+            "name": "sqlite_autoindex_local_thread_catalog_sync_state_1",
+            "unique": 1,
+            "origin": "pk",
+            "partial": 0
+          }
+        ]
+      },
+      "thread_timeline_ledger": {
+        "table_info": [
+          {
+            "cid": 0,
+            "name": "host_id",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 1
+          },
+          {
+            "cid": 1,
+            "name": "thread_id",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 2
+          },
+          {
+            "cid": 2,
+            "name": "sequence",
+            "type": "INTEGER",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 3
+          },
+          {
+            "cid": 3,
+            "name": "record_id",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 0
+          },
+          {
+            "cid": 4,
+            "name": "payload_json",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 0
+          }
+        ],
+        "table_xinfo": [
+          {
+            "cid": 0,
+            "name": "host_id",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 1,
+            "hidden": 0
+          },
+          {
+            "cid": 1,
+            "name": "thread_id",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 2,
+            "hidden": 0
+          },
+          {
+            "cid": 2,
+            "name": "sequence",
+            "type": "INTEGER",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 3,
+            "hidden": 0
+          },
+          {
+            "cid": 3,
+            "name": "record_id",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 4,
+            "name": "payload_json",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 0,
+            "hidden": 0
+          }
+        ],
+        "foreign_key_list": [],
+        "index_list": [
+          {
+            "seq": 0,
+            "name": "sqlite_autoindex_thread_timeline_ledger_2",
+            "unique": 1,
+            "origin": "u",
+            "partial": 0
+          },
+          {
+            "seq": 1,
+            "name": "sqlite_autoindex_thread_timeline_ledger_1",
+            "unique": 1,
+            "origin": "pk",
+            "partial": 0
+          }
+        ]
+      }
+    },
+    "indexes": {
+      "automations_owner_idx": {
+        "index_info": [
+          {
+            "seqno": 0,
+            "cid": 20,
+            "name": "account_id"
+          },
+          {
+            "seqno": 1,
+            "cid": 21,
+            "name": "user_id"
+          },
+          {
+            "seqno": 2,
+            "cid": 22,
+            "name": "installation_id"
+          }
+        ],
+        "index_xinfo": [
+          {
+            "seqno": 0,
+            "cid": 20,
+            "name": "account_id",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 1,
+            "cid": 21,
+            "name": "user_id",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 2,
+            "cid": 22,
+            "name": "installation_id",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 3,
+            "cid": -1,
+            "name": null,
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 0
+          }
+        ]
+      },
+      "local_thread_catalog_created_idx": {
+        "index_info": [
+          {
+            "seqno": 0,
+            "cid": 0,
+            "name": "host_id"
+          },
+          {
+            "seqno": 1,
+            "cid": 3,
+            "name": "source_created_at"
+          },
+          {
+            "seqno": 2,
+            "cid": 4,
+            "name": "source_updated_at"
+          },
+          {
+            "seqno": 3,
+            "cid": 1,
+            "name": "thread_id"
+          }
+        ],
+        "index_xinfo": [
+          {
+            "seqno": 0,
+            "cid": 0,
+            "name": "host_id",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 1,
+            "cid": 3,
+            "name": "source_created_at",
+            "desc": 1,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 2,
+            "cid": 4,
+            "name": "source_updated_at",
+            "desc": 1,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 3,
+            "cid": 1,
+            "name": "thread_id",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 4,
+            "cid": -1,
+            "name": null,
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 0
+          }
+        ]
+      },
+      "local_thread_catalog_cwd_created_idx": {
+        "index_info": [
+          {
+            "seqno": 0,
+            "cid": 0,
+            "name": "host_id"
+          },
+          {
+            "seqno": 1,
+            "cid": 5,
+            "name": "cwd"
+          },
+          {
+            "seqno": 2,
+            "cid": 3,
+            "name": "source_created_at"
+          },
+          {
+            "seqno": 3,
+            "cid": 4,
+            "name": "source_updated_at"
+          },
+          {
+            "seqno": 4,
+            "cid": 1,
+            "name": "thread_id"
+          }
+        ],
+        "index_xinfo": [
+          {
+            "seqno": 0,
+            "cid": 0,
+            "name": "host_id",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 1,
+            "cid": 5,
+            "name": "cwd",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 2,
+            "cid": 3,
+            "name": "source_created_at",
+            "desc": 1,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 3,
+            "cid": 4,
+            "name": "source_updated_at",
+            "desc": 1,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 4,
+            "cid": 1,
+            "name": "thread_id",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 5,
+            "cid": -1,
+            "name": null,
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 0
+          }
+        ]
+      },
+      "local_thread_catalog_cwd_updated_idx": {
+        "index_info": [
+          {
+            "seqno": 0,
+            "cid": 0,
+            "name": "host_id"
+          },
+          {
+            "seqno": 1,
+            "cid": 5,
+            "name": "cwd"
+          },
+          {
+            "seqno": 2,
+            "cid": 13,
+            "name": "source_recency_at"
+          },
+          {
+            "seqno": 3,
+            "cid": 3,
+            "name": "source_created_at"
+          },
+          {
+            "seqno": 4,
+            "cid": 1,
+            "name": "thread_id"
+          }
+        ],
+        "index_xinfo": [
+          {
+            "seqno": 0,
+            "cid": 0,
+            "name": "host_id",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 1,
+            "cid": 5,
+            "name": "cwd",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 2,
+            "cid": 13,
+            "name": "source_recency_at",
+            "desc": 1,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 3,
+            "cid": 3,
+            "name": "source_created_at",
+            "desc": 1,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 4,
+            "cid": 1,
+            "name": "thread_id",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 5,
+            "cid": -1,
+            "name": null,
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 0
+          }
+        ]
+      },
+      "local_thread_catalog_origin_updated_idx": {
+        "index_info": [
+          {
+            "seqno": 0,
+            "cid": 0,
+            "name": "host_id"
+          },
+          {
+            "seqno": 1,
+            "cid": 16,
+            "name": "conversation_origin"
+          },
+          {
+            "seqno": 2,
+            "cid": 13,
+            "name": "source_recency_at"
+          },
+          {
+            "seqno": 3,
+            "cid": 3,
+            "name": "source_created_at"
+          },
+          {
+            "seqno": 4,
+            "cid": 1,
+            "name": "thread_id"
+          }
+        ],
+        "index_xinfo": [
+          {
+            "seqno": 0,
+            "cid": 0,
+            "name": "host_id",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 1,
+            "cid": 16,
+            "name": "conversation_origin",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 2,
+            "cid": 13,
+            "name": "source_recency_at",
+            "desc": 1,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 3,
+            "cid": 3,
+            "name": "source_created_at",
+            "desc": 1,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 4,
+            "cid": 1,
+            "name": "thread_id",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 5,
+            "cid": -1,
+            "name": null,
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 0
+          }
+        ]
+      },
+      "local_thread_catalog_project_updated_idx": {
+        "index_info": [
+          {
+            "seqno": 0,
+            "cid": 0,
+            "name": "host_id"
+          },
+          {
+            "seqno": 1,
+            "cid": 15,
+            "name": "project_id"
+          },
+          {
+            "seqno": 2,
+            "cid": 13,
+            "name": "source_recency_at"
+          },
+          {
+            "seqno": 3,
+            "cid": 3,
+            "name": "source_created_at"
+          },
+          {
+            "seqno": 4,
+            "cid": 1,
+            "name": "thread_id"
+          }
+        ],
+        "index_xinfo": [
+          {
+            "seqno": 0,
+            "cid": 0,
+            "name": "host_id",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 1,
+            "cid": 15,
+            "name": "project_id",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 2,
+            "cid": 13,
+            "name": "source_recency_at",
+            "desc": 1,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 3,
+            "cid": 3,
+            "name": "source_created_at",
+            "desc": 1,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 4,
+            "cid": 1,
+            "name": "thread_id",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 5,
+            "cid": -1,
+            "name": null,
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 0
+          }
+        ]
+      },
+      "local_thread_catalog_thread_lookup_idx": {
+        "index_info": [
+          {
+            "seqno": 0,
+            "cid": 1,
+            "name": "thread_id"
+          },
+          {
+            "seqno": 1,
+            "cid": 13,
+            "name": "source_recency_at"
+          },
+          {
+            "seqno": 2,
+            "cid": 3,
+            "name": "source_created_at"
+          },
+          {
+            "seqno": 3,
+            "cid": 0,
+            "name": "host_id"
+          }
+        ],
+        "index_xinfo": [
+          {
+            "seqno": 0,
+            "cid": 1,
+            "name": "thread_id",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 1,
+            "cid": 13,
+            "name": "source_recency_at",
+            "desc": 1,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 2,
+            "cid": 3,
+            "name": "source_created_at",
+            "desc": 1,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 3,
+            "cid": 0,
+            "name": "host_id",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 4,
+            "cid": -1,
+            "name": null,
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 0
+          }
+        ]
+      },
+      "local_thread_catalog_updated_idx": {
+        "index_info": [
+          {
+            "seqno": 0,
+            "cid": 0,
+            "name": "host_id"
+          },
+          {
+            "seqno": 1,
+            "cid": 13,
+            "name": "source_recency_at"
+          },
+          {
+            "seqno": 2,
+            "cid": 3,
+            "name": "source_created_at"
+          },
+          {
+            "seqno": 3,
+            "cid": 1,
+            "name": "thread_id"
+          }
+        ],
+        "index_xinfo": [
+          {
+            "seqno": 0,
+            "cid": 0,
+            "name": "host_id",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 1,
+            "cid": 13,
+            "name": "source_recency_at",
+            "desc": 1,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 2,
+            "cid": 3,
+            "name": "source_created_at",
+            "desc": 1,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 3,
+            "cid": 1,
+            "name": "thread_id",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 4,
+            "cid": -1,
+            "name": null,
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 0
+          }
+        ]
+      },
+      "sqlite_autoindex_automation_runs_1": {
+        "index_info": [
+          {
+            "seqno": 0,
+            "cid": 0,
+            "name": "thread_id"
+          }
+        ],
+        "index_xinfo": [
+          {
+            "seqno": 0,
+            "cid": 0,
+            "name": "thread_id",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 1,
+            "cid": -1,
+            "name": null,
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 0
+          }
+        ]
+      },
+      "sqlite_autoindex_automations_1": {
+        "index_info": [
+          {
+            "seqno": 0,
+            "cid": 0,
+            "name": "id"
+          }
+        ],
+        "index_xinfo": [
+          {
+            "seqno": 0,
+            "cid": 0,
+            "name": "id",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 1,
+            "cid": -1,
+            "name": null,
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 0
+          }
+        ]
+      },
+      "sqlite_autoindex_codex_schema_migrations_1": {
+        "index_info": [
+          {
+            "seqno": 0,
+            "cid": 0,
+            "name": "id"
+          }
+        ],
+        "index_xinfo": [
+          {
+            "seqno": 0,
+            "cid": 0,
+            "name": "id",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 1,
+            "cid": -1,
+            "name": null,
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 0
+          }
+        ]
+      },
+      "sqlite_autoindex_inbox_items_1": {
+        "index_info": [
+          {
+            "seqno": 0,
+            "cid": 0,
+            "name": "id"
+          }
+        ],
+        "index_xinfo": [
+          {
+            "seqno": 0,
+            "cid": 0,
+            "name": "id",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 1,
+            "cid": -1,
+            "name": null,
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 0
+          }
+        ]
+      },
+      "sqlite_autoindex_local_app_server_feature_enablement_1": {
+        "index_info": [
+          {
+            "seqno": 0,
+            "cid": 0,
+            "name": "feature_name"
+          }
+        ],
+        "index_xinfo": [
+          {
+            "seqno": 0,
+            "cid": 0,
+            "name": "feature_name",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 1,
+            "cid": -1,
+            "name": null,
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 0
+          }
+        ]
+      },
+      "sqlite_autoindex_local_thread_catalog_1": {
+        "index_info": [
+          {
+            "seqno": 0,
+            "cid": 0,
+            "name": "host_id"
+          },
+          {
+            "seqno": 1,
+            "cid": 1,
+            "name": "thread_id"
+          }
+        ],
+        "index_xinfo": [
+          {
+            "seqno": 0,
+            "cid": 0,
+            "name": "host_id",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 1,
+            "cid": 1,
+            "name": "thread_id",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 2,
+            "cid": -1,
+            "name": null,
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 0
+          }
+        ]
+      },
+      "sqlite_autoindex_local_thread_catalog_hosts_1": {
+        "index_info": [
+          {
+            "seqno": 0,
+            "cid": 0,
+            "name": "host_id"
+          }
+        ],
+        "index_xinfo": [
+          {
+            "seqno": 0,
+            "cid": 0,
+            "name": "host_id",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 1,
+            "cid": -1,
+            "name": null,
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 0
+          }
+        ]
+      },
+      "sqlite_autoindex_local_thread_catalog_scan_checkpoints_1": {
+        "index_info": [
+          {
+            "seqno": 0,
+            "cid": 0,
+            "name": "host_id"
+          }
+        ],
+        "index_xinfo": [
+          {
+            "seqno": 0,
+            "cid": 0,
+            "name": "host_id",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 1,
+            "cid": -1,
+            "name": null,
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 0
+          }
+        ]
+      },
+      "sqlite_autoindex_local_thread_catalog_sync_state_1": {
+        "index_info": [
+          {
+            "seqno": 0,
+            "cid": 0,
+            "name": "host_id"
+          }
+        ],
+        "index_xinfo": [
+          {
+            "seqno": 0,
+            "cid": 0,
+            "name": "host_id",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 1,
+            "cid": -1,
+            "name": null,
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 0
+          }
+        ]
+      },
+      "sqlite_autoindex_thread_timeline_ledger_2": {
+        "index_info": [
+          {
+            "seqno": 0,
+            "cid": 0,
+            "name": "host_id"
+          },
+          {
+            "seqno": 1,
+            "cid": 1,
+            "name": "thread_id"
+          },
+          {
+            "seqno": 2,
+            "cid": 3,
+            "name": "record_id"
+          }
+        ],
+        "index_xinfo": [
+          {
+            "seqno": 0,
+            "cid": 0,
+            "name": "host_id",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 1,
+            "cid": 1,
+            "name": "thread_id",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 2,
+            "cid": 3,
+            "name": "record_id",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 1
+          },
+          {
+            "seqno": 3,
+            "cid": 2,
+            "name": "sequence",
+            "desc": 0,
+            "coll": "BINARY",
+            "key": 0
+          }
+        ]
+      }
+    },
+    "user_version": 34,
+    "application_id": 0
+  },
+  "disposable_sqlite_master_with_rootpages": [
+    {
+      "type": "index",
+      "name": "automations_owner_idx",
+      "tbl_name": "automations",
+      "rootpage": 17,
+      "sql": "CREATE INDEX automations_owner_idx\n        ON automations (account_id, user_id, installation_id)"
+    },
+    {
+      "type": "index",
+      "name": "local_thread_catalog_created_idx",
+      "tbl_name": "local_thread_catalog",
+      "rootpage": 13,
+      "sql": "CREATE INDEX local_thread_catalog_created_idx\n            ON local_thread_catalog (\n              host_id, source_created_at DESC, source_updated_at DESC, thread_id\n            ) WHERE missing_candidate = 0"
+    },
+    {
+      "type": "index",
+      "name": "local_thread_catalog_cwd_created_idx",
+      "tbl_name": "local_thread_catalog",
+      "rootpage": 22,
+      "sql": "CREATE INDEX local_thread_catalog_cwd_created_idx\n            ON local_thread_catalog (\n              host_id, cwd, source_created_at DESC, source_updated_at DESC,\n              thread_id\n            ) WHERE missing_candidate = 0"
+    },
+    {
+      "type": "index",
+      "name": "local_thread_catalog_cwd_updated_idx",
+      "tbl_name": "local_thread_catalog",
+      "rootpage": 14,
+      "sql": "CREATE INDEX local_thread_catalog_cwd_updated_idx\n            ON local_thread_catalog (\n              host_id, cwd, source_recency_at DESC, source_created_at DESC,\n              thread_id\n            ) WHERE missing_candidate = 0"
+    },
+    {
+      "type": "index",
+      "name": "local_thread_catalog_origin_updated_idx",
+      "tbl_name": "local_thread_catalog",
+      "rootpage": 27,
+      "sql": "CREATE INDEX local_thread_catalog_origin_updated_idx\n            ON local_thread_catalog (\n              host_id, conversation_origin, source_recency_at DESC,\n              source_created_at DESC, thread_id\n            ) WHERE missing_candidate = 0"
+    },
+    {
+      "type": "index",
+      "name": "local_thread_catalog_project_updated_idx",
+      "tbl_name": "local_thread_catalog",
+      "rootpage": 24,
+      "sql": "CREATE INDEX local_thread_catalog_project_updated_idx\n            ON local_thread_catalog (\n              host_id, project_id, source_recency_at DESC,\n              source_created_at DESC, thread_id\n            ) WHERE missing_candidate = 0"
+    },
+    {
+      "type": "index",
+      "name": "local_thread_catalog_thread_lookup_idx",
+      "tbl_name": "local_thread_catalog",
+      "rootpage": 23,
+      "sql": "CREATE INDEX local_thread_catalog_thread_lookup_idx\n            ON local_thread_catalog (\n              thread_id, source_recency_at DESC, source_created_at DESC, host_id\n            ) WHERE missing_candidate = 0"
+    },
+    {
+      "type": "index",
+      "name": "local_thread_catalog_updated_idx",
+      "tbl_name": "local_thread_catalog",
+      "rootpage": 12,
+      "sql": "CREATE INDEX local_thread_catalog_updated_idx\n            ON local_thread_catalog (\n              host_id, source_recency_at DESC, source_created_at DESC, thread_id\n            ) WHERE missing_candidate = 0"
+    },
+    {
+      "type": "index",
+      "name": "sqlite_autoindex_automation_runs_1",
+      "tbl_name": "automation_runs",
+      "rootpage": 9,
+      "sql": null
+    },
+    {
+      "type": "index",
+      "name": "sqlite_autoindex_automations_1",
+      "tbl_name": "automations",
+      "rootpage": 7,
+      "sql": null
+    },
+    {
+      "type": "index",
+      "name": "sqlite_autoindex_codex_schema_migrations_1",
+      "tbl_name": "codex_schema_migrations",
+      "rootpage": 3,
+      "sql": null
+    },
+    {
+      "type": "index",
+      "name": "sqlite_autoindex_inbox_items_1",
+      "tbl_name": "inbox_items",
+      "rootpage": 5,
+      "sql": null
+    },
+    {
+      "type": "index",
+      "name": "sqlite_autoindex_local_app_server_feature_enablement_1",
+      "tbl_name": "local_app_server_feature_enablement",
+      "rootpage": 11,
+      "sql": null
+    },
+    {
+      "type": "index",
+      "name": "sqlite_autoindex_local_thread_catalog_1",
+      "tbl_name": "local_thread_catalog",
+      "rootpage": 29,
+      "sql": null
+    },
+    {
+      "type": "index",
+      "name": "sqlite_autoindex_local_thread_catalog_hosts_1",
+      "tbl_name": "local_thread_catalog_hosts",
+      "rootpage": 31,
+      "sql": null
+    },
+    {
+      "type": "index",
+      "name": "sqlite_autoindex_local_thread_catalog_scan_checkpoints_1",
+      "tbl_name": "local_thread_catalog_scan_checkpoints",
+      "rootpage": 32,
+      "sql": null
+    },
+    {
+      "type": "index",
+      "name": "sqlite_autoindex_local_thread_catalog_sync_state_1",
+      "tbl_name": "local_thread_catalog_sync_state",
+      "rootpage": 16,
+      "sql": null
+    },
+    {
+      "type": "index",
+      "name": "sqlite_autoindex_thread_timeline_ledger_2",
+      "tbl_name": "thread_timeline_ledger",
+      "rootpage": 26,
+      "sql": null
+    },
+    {
+      "type": "table",
+      "name": "active_chat_turns",
+      "tbl_name": "active_chat_turns",
+      "rootpage": 36,
+      "sql": "CREATE TABLE active_chat_turns (\n      profile TEXT NOT NULL,\n      account_id TEXT NOT NULL,\n      user_id TEXT NOT NULL,\n      thread_id TEXT NOT NULL,\n      launch_id TEXT NOT NULL,\n      observed_at_ms INTEGER NOT NULL,\n      PRIMARY KEY (profile, account_id, user_id, thread_id)\n    ) WITHOUT ROWID"
+    },
+    {
+      "type": "table",
+      "name": "automation_runs",
+      "tbl_name": "automation_runs",
+      "rootpage": 8,
+      "sql": "CREATE TABLE automation_runs (\n          thread_id TEXT PRIMARY KEY,\n          automation_id TEXT NOT NULL,\n          status TEXT NOT NULL,\n          read_at INTEGER,\n          thread_title TEXT,\n          source_cwd TEXT,\n          inbox_title TEXT,\n          inbox_summary TEXT,\n          created_at INTEGER NOT NULL,\n          updated_at INTEGER NOT NULL\n        , archived_user_message TEXT, archived_assistant_message TEXT, archived_reason TEXT)"
+    },
+    {
+      "type": "table",
+      "name": "automations",
+      "tbl_name": "automations",
+      "rootpage": 6,
+      "sql": "CREATE TABLE automations (\n          id TEXT PRIMARY KEY,\n          name TEXT NOT NULL,\n          prompt TEXT NOT NULL,\n          status TEXT NOT NULL DEFAULT 'ACTIVE',\n          next_run_at INTEGER,\n          last_run_at INTEGER,\n          cwds TEXT NOT NULL DEFAULT '[]',\n          rrule TEXT NOT NULL DEFAULT 'FREQ=HOURLY;INTERVAL=24;BYMINUTE=0',\n          model TEXT,\n          reasoning_effort TEXT,\n          created_at INTEGER NOT NULL,\n          updated_at INTEGER NOT NULL\n        , target_type TEXT, project_id TEXT, kind TEXT NOT NULL DEFAULT 'cron', target_thread_id TEXT, execution_environment TEXT, local_environment_config_path TEXT, plugin_template_id TEXT, notification_policy TEXT, account_id TEXT, user_id TEXT, installation_id TEXT, legacy_automation_id TEXT, auto_archive INTEGER NOT NULL DEFAULT 0, next_run_nominal_at INTEGER)"
+    },
+    {
+      "type": "table",
+      "name": "codex_schema_migrations",
+      "tbl_name": "codex_schema_migrations",
+      "rootpage": 2,
+      "sql": "CREATE TABLE codex_schema_migrations (\n      id TEXT PRIMARY KEY,\n      predecessor_id TEXT,\n      checksum TEXT NOT NULL,\n      applied_at INTEGER NOT NULL,\n      app_version TEXT,\n      build_flavor TEXT,\n      build_commit TEXT\n    )"
+    },
+    {
+      "type": "table",
+      "name": "inbox_items",
+      "tbl_name": "inbox_items",
+      "rootpage": 4,
+      "sql": "CREATE TABLE inbox_items (\n          id TEXT PRIMARY KEY,\n          title TEXT\n        , description TEXT, thread_id TEXT, read_at INTEGER, created_at INTEGER)"
+    },
+    {
+      "type": "table",
+      "name": "live_visualization_suggestions",
+      "tbl_name": "live_visualization_suggestions",
+      "rootpage": 35,
+      "sql": "CREATE TABLE live_visualization_suggestions (\n          account_id TEXT NOT NULL,\n          user_id TEXT NOT NULL,\n          host_id TEXT NOT NULL,\n          thread_id TEXT NOT NULL,\n          id TEXT NOT NULL,\n          title TEXT NOT NULL,\n          description TEXT NOT NULL,\n          status TEXT NOT NULL CHECK (status IN ('pending', 'accepted', 'dismissed')),\n          submission TEXT CHECK (submission IN ('submitted', 'accepted')), turn_id TEXT, creation_turn_id TEXT,\n          PRIMARY KEY (account_id, user_id, host_id, thread_id)\n        ) WITHOUT ROWID"
+    },
+    {
+      "type": "table",
+      "name": "local_app_server_feature_enablement",
+      "tbl_name": "local_app_server_feature_enablement",
+      "rootpage": 10,
+      "sql": "CREATE TABLE local_app_server_feature_enablement (\n          feature_name TEXT PRIMARY KEY,\n          enabled INTEGER NOT NULL,\n          updated_at INTEGER NOT NULL\n        )"
+    },
+    {
+      "type": "table",
+      "name": "local_thread_catalog",
+      "tbl_name": "local_thread_catalog",
+      "rootpage": 28,
+      "sql": "CREATE TABLE \"local_thread_catalog\" (\n            host_id TEXT NOT NULL,\n            thread_id TEXT NOT NULL,\n            display_title TEXT NOT NULL,\n            source_created_at REAL NOT NULL,\n            source_updated_at REAL NOT NULL,\n            cwd TEXT,\n            source_kind TEXT NOT NULL,\n            source_detail TEXT,\n            model_provider TEXT,\n            git_branch TEXT,\n            observation_sequence INTEGER NOT NULL,\n            missing_candidate INTEGER NOT NULL DEFAULT 0\n              CHECK (missing_candidate IN (0, 1)),\n            thread_source TEXT,\n            source_recency_at REAL NOT NULL DEFAULT 0,\n            pending_observed_title INTEGER NOT NULL DEFAULT 0,\n            project_id TEXT,\n            conversation_origin TEXT, trial_conversation_type TEXT, chatgpt_async_status INTEGER,\n            PRIMARY KEY (host_id, thread_id)\n          )"
+    },
+    {
+      "type": "table",
+      "name": "local_thread_catalog_hosts",
+      "tbl_name": "local_thread_catalog_hosts",
+      "rootpage": 30,
+      "sql": "CREATE TABLE \"local_thread_catalog_hosts\" (\n            host_id TEXT PRIMARY KEY,\n            host_kind TEXT NOT NULL CHECK (\n              host_kind IN ('local', 'ssh', 'wsl', 'remote-control', 'chatgpt')\n            )\n          )"
+    },
+    {
+      "type": "table",
+      "name": "local_thread_catalog_metadata",
+      "tbl_name": "local_thread_catalog_metadata",
+      "rootpage": 20,
+      "sql": "CREATE TABLE local_thread_catalog_metadata (\n            id INTEGER PRIMARY KEY CHECK (id = 1),\n            catalog_revision INTEGER NOT NULL DEFAULT 0\n          )"
+    },
+    {
+      "type": "table",
+      "name": "local_thread_catalog_scan_checkpoints",
+      "tbl_name": "local_thread_catalog_scan_checkpoints",
+      "rootpage": 18,
+      "sql": "CREATE TABLE local_thread_catalog_scan_checkpoints (\n          host_id TEXT PRIMARY KEY,\n          checkpoint TEXT NOT NULL,\n          failed_at INTEGER\n        )"
+    },
+    {
+      "type": "table",
+      "name": "local_thread_catalog_scan_entries",
+      "tbl_name": "local_thread_catalog_scan_entries",
+      "rootpage": 33,
+      "sql": "CREATE TABLE local_thread_catalog_scan_entries (\n          host_id TEXT NOT NULL,\n          thread_id TEXT NOT NULL,\n          removed INTEGER NOT NULL DEFAULT 0,\n          PRIMARY KEY (host_id, thread_id)\n        ) WITHOUT ROWID"
+    },
+    {
+      "type": "table",
+      "name": "local_thread_catalog_sync_state",
+      "tbl_name": "local_thread_catalog_sync_state",
+      "rootpage": 15,
+      "sql": "CREATE TABLE local_thread_catalog_sync_state (\n            host_id TEXT PRIMARY KEY,\n            watermark_updated_at REAL,\n            initial_build_complete INTEGER NOT NULL DEFAULT 0,\n            observation_sequence INTEGER NOT NULL DEFAULT 0\n          , last_full_reconciled_at INTEGER)"
+    },
+    {
+      "type": "table",
+      "name": "thread_timeline_ledger",
+      "tbl_name": "thread_timeline_ledger",
+      "rootpage": 25,
+      "sql": "CREATE TABLE thread_timeline_ledger (\n            host_id TEXT NOT NULL,\n            thread_id TEXT NOT NULL,\n            sequence INTEGER NOT NULL,\n            record_id TEXT NOT NULL,\n            payload_json TEXT NOT NULL,\n            PRIMARY KEY (host_id, thread_id, sequence),\n            UNIQUE (host_id, thread_id, record_id)\n          ) WITHOUT ROWID"
+    }
+  ]
+}

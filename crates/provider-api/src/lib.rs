@@ -1,4 +1,5 @@
 //! Read-only ports and shared bounded observation helpers. No mutation port exists.
+pub mod desktop_process;
 pub mod evidence;
 pub mod filesystem;
 pub mod graph;

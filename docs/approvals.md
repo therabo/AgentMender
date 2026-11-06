@@ -1,5 +1,7 @@
 # Independent local approval
 
+Current Desktop candidate status: [2026-11-06 checkpoint](milestones/m8-2-1-desktop-candidate-2026-11-06.md). Schema 4 remains unadmitted and M8.2.1 remains OPEN.
+
 ## M8.2.1 current approval boundary
 
 [ADR-0019](adr/0019-structural-removal-and-profile-acceptance.md) adds separately
@@ -8,7 +10,7 @@ guardian rows, ordered primary actions, retained commitments, writer requirement
 and unverified persistent reconstruction. Existing terminal challenge, short-lived
 MAC grant, recovery binding and consumed DurableIntent remain mandatory.
 
-Old v2 grants cannot authorize schema-3 effects. Preparation uses the expanded
+Old v2 grants cannot authorize schema-3 effects. Expanded-primary preparation uses its own
 profile; inspection, approval, execution and reconciliation of an existing plan
 select its original version. No fallback or silent upgrade occurs. Neither grant
 authorizes index/history/global/backup/catalog mutation or application control.
@@ -18,11 +20,10 @@ The currently open graphical sidebar may temporarily be stale and is not the
 authority for cleanup success. An admitted exact compatibility profile must
 independently prove through isolated restart/reload acceptance that structurally
 removed sessions do not reappear. Production never restarts Codex for visual
-verification. Required stores without lifetime writer exclusion block before
-mutation; a process-absence snapshot alone does not fence a later launch.
+verification. The Desktop candidate requires relevant writers to remain closed throughout the
+transaction; a process-absence snapshot alone does not fence a later launch.
 
-No complete Desktop profile is admitted. Review discloses primary-only status and
-unknown maximum-safe closure. Coverage, a pure assessment and static source evidence
+No complete Desktop profile is admitted. Review discloses the selected profile and unknown maximum-safe closure. Coverage, a pure assessment and static source evidence
 never grant authority. M8.2.1 remains OPEN.
 
 ## M8.2 scoped cleanup approval

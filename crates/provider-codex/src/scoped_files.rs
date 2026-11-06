@@ -149,9 +149,12 @@ pub(crate) struct WriterFence {
 
 /// Existing WAL coordination files must be regular, single-linked files on
 /// the same device. Handles remain live until after SQLite closes.
+type DesktopSidecarIdentity = (String, Option<(u64, u64)>);
+
 pub(crate) struct DatabaseSidecars {
     root: PathBuf,
     files: Vec<(String, File)>,
+    created: Option<Vec<DesktopSidecarIdentity>>,
 }
 impl DatabaseSidecars {
     pub(crate) fn acquire(manifest: &CleanupManifest) -> Result<Self, EffectError> {
@@ -182,8 +185,91 @@ impl DatabaseSidecars {
         Ok(Self {
             root: identity.path.clone(),
             files,
+            created: None,
         })
     }
+
+    // Desktop supports the provider's checkpointed, fully sidecar-free state.
+    // Existing sidecars retain the historical descriptor-first acquisition.
+    pub(crate) fn acquire_desktop(manifest: &CleanupManifest) -> Result<Self, EffectError> {
+        let fd = root(&manifest.root.path)?;
+        check_root(&fd, &manifest.root)?;
+        let absent = |name| {
+            matches!(
+                fs::statat(&fd, name, AtFlags::SYMLINK_NOFOLLOW),
+                Err(rustix::io::Errno::NOENT)
+            )
+        };
+        if absent("state_5.sqlite-wal") && absent("state_5.sqlite-shm") {
+            if !absent("state_5.sqlite-journal") {
+                return bad();
+            }
+            Ok(Self {
+                root: manifest.root.path.clone(),
+                files: Vec::new(),
+                created: Some(Vec::new()),
+            })
+        } else {
+            Self::from_root(&manifest.root)
+        }
+    }
+
+    // SQLite may create WAL/SHM itself under the exclusive transaction. Freeze
+    // descriptor-relative object identities without opening another descriptor:
+    // closing a new descriptor could release SQLite's POSIX process locks.
+    #[allow(clippy::unnecessary_cast)]
+    pub(crate) fn bind_created(&mut self, manifest: &CleanupManifest) -> Result<(), EffectError> {
+        match &self.created {
+            None => return self.validate(manifest),
+            Some(created) if !created.is_empty() => return bad(),
+            Some(_) => {}
+        }
+        let fd = root(&self.root)?;
+        check_root(&fd, &manifest.root)?;
+        let mut frozen = Vec::new();
+        for name in ["state_5.sqlite-wal", "state_5.sqlite-shm"] {
+            let item = match fs::statat(&fd, name, AtFlags::SYMLINK_NOFOLLOW) {
+                Err(rustix::io::Errno::NOENT) => None,
+                Ok(stat)
+                    if fs::FileType::from_raw_mode(stat.st_mode) == fs::FileType::RegularFile
+                        && stat.st_nlink as u64 == 1
+                        && stat.st_dev as u64 == manifest.root.device =>
+                {
+                    Some((stat.st_dev as u64, stat.st_ino))
+                }
+                _ => return bad(),
+            };
+            frozen.push((name.to_owned(), item));
+        }
+        self.created = Some(frozen);
+        self.validate(manifest)
+    }
+
+    pub(crate) fn validate_before_database(
+        &self,
+        manifest: &CleanupManifest,
+    ) -> Result<(), EffectError> {
+        if self.created.is_none() {
+            return self.validate(manifest);
+        }
+        let fd = root(&self.root)?;
+        check_root(&fd, &manifest.root)?;
+        for name in [
+            "state_5.sqlite-wal",
+            "state_5.sqlite-shm",
+            "state_5.sqlite-journal",
+        ] {
+            if !matches!(
+                fs::statat(&fd, name, AtFlags::SYMLINK_NOFOLLOW),
+                Err(rustix::io::Errno::NOENT)
+            ) {
+                return bad();
+            }
+        }
+        Ok(())
+    }
+
+    #[allow(clippy::unnecessary_cast)]
     pub(crate) fn validate(&self, manifest: &CleanupManifest) -> Result<(), EffectError> {
         if self.root != manifest.root.path {
             return bad();
@@ -201,6 +287,28 @@ impl DatabaseSidecars {
                 || stat.st_ino as u64 != metadata.ino()
             {
                 return bad();
+            }
+        }
+        if let Some(created) = &self.created {
+            if created.len() != 2 {
+                return bad();
+            }
+            for (name, expected) in created {
+                let actual = match fs::statat(&fd, name.as_str(), AtFlags::SYMLINK_NOFOLLOW) {
+                    Err(rustix::io::Errno::NOENT) => None,
+                    Ok(stat)
+                        if fs::FileType::from_raw_mode(stat.st_mode)
+                            == fs::FileType::RegularFile
+                            && stat.st_nlink as u64 == 1
+                            && stat.st_dev as u64 == manifest.root.device =>
+                    {
+                        Some((stat.st_dev as u64, stat.st_ino))
+                    }
+                    _ => return bad(),
+                };
+                if &actual != expected {
+                    return bad();
+                }
             }
         }
         if !matches!(
@@ -671,6 +779,23 @@ pub(crate) fn observe(
     target: &str,
     db_target_path: &Path,
 ) -> Result<FileObservation, EffectError> {
+    observe_inner(path, target, db_target_path, false)
+}
+
+pub(crate) fn observe_desktop(
+    path: &Path,
+    target: &str,
+    db_target_path: &Path,
+) -> Result<FileObservation, EffectError> {
+    observe_inner(path, target, db_target_path, true)
+}
+
+fn observe_inner(
+    path: &Path,
+    target: &str,
+    db_target_path: &Path,
+    desktop: bool,
+) -> Result<FileObservation, EffectError> {
     let fd = root(path)?;
     no_history_store(&fd)?;
     let root_file = File::from(
@@ -683,7 +808,26 @@ pub(crate) fn observe(
         .map_err(|_| EffectError::InvalidEvidence)?,
     );
     let root_identity = identity(path.to_owned(), &root_file)?;
-    let _sidecars = DatabaseSidecars::from_root(&root_identity)?;
+    let _sidecars = if desktop {
+        let fd = root(&root_identity.path)?;
+        check_root(&fd, &root_identity)?;
+        let missing = |name| {
+            matches!(
+                fs::statat(&fd, name, AtFlags::SYMLINK_NOFOLLOW),
+                Err(rustix::io::Errno::NOENT)
+            )
+        };
+        if missing("state_5.sqlite-wal")
+            && missing("state_5.sqlite-shm")
+            && missing("state_5.sqlite-journal")
+        {
+            None
+        } else {
+            Some(DatabaseSidecars::from_root(&root_identity)?)
+        }
+    } else {
+        Some(DatabaseSidecars::from_root(&root_identity)?)
+    };
     let database_file = open_file(&fd, "state_5.sqlite".as_ref())?;
     let database = identity(path.join("state_5.sqlite"), &database_file)?;
     if database.device != root_identity.device {
@@ -870,6 +1014,38 @@ mod tests {
         };
         (temp, m)
     }
+    #[test]
+    fn desktop_accepts_closed_sidecars_and_freezes_created_identities() {
+        let (_temp, m) = fixture();
+        fs::remove_file(m.root.path.join("state_5.sqlite-wal")).unwrap();
+        fs::remove_file(m.root.path.join("state_5.sqlite-shm")).unwrap();
+        assert!(
+            observe(
+                &m.root.path,
+                m.native_session_id.as_str(),
+                &m.payloads[0].identity.path
+            )
+            .is_err()
+        );
+        assert!(
+            observe_desktop(
+                &m.root.path,
+                m.native_session_id.as_str(),
+                &m.payloads[0].identity.path
+            )
+            .is_ok()
+        );
+        let mut guard = DatabaseSidecars::acquire_desktop(&m).unwrap();
+        guard.validate_before_database(&m).unwrap();
+        fs::write(m.root.path.join("state_5.sqlite-wal"), b"created").unwrap();
+        assert!(guard.validate_before_database(&m).is_err());
+        guard.bind_created(&m).unwrap();
+        guard.validate(&m).unwrap();
+        fs::remove_file(m.root.path.join("state_5.sqlite-wal")).unwrap();
+        fs::write(m.root.path.join("state_5.sqlite-wal"), b"replacement").unwrap();
+        assert!(guard.validate(&m).is_err());
+    }
+
     #[test]
     fn exact_unlink_preserves_other_rollout_and_unknown_file() {
         let (_temp, m) = fixture();

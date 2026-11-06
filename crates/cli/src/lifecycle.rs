@@ -11,7 +11,14 @@ use agentmender_provider_codex::{CodexAdapter, CodexLifecycleAdapter, CodexScope
 use std::{env, path::Path};
 
 pub(super) fn scoped_adapter(args: &Args) -> Result<CodexScopedCleanupAdapter, CliError> {
-    scoped_adapter_version(args, true)
+    scoped_adapter_version(
+        args,
+        if args.codex_desktop_user_data.is_some() {
+            4
+        } else {
+            3
+        },
+    )
 }
 
 pub(super) fn scoped_adapter_for_plan(
@@ -19,9 +26,24 @@ pub(super) fn scoped_adapter_for_plan(
     plan: &agentmender_domain::LifecyclePlan,
 ) -> Result<CodexScopedCleanupAdapter, CliError> {
     match plan.content().schema_version {
-        2 if plan.content().cleanup_manifest.is_some() => scoped_adapter_version(args, false),
-        3 if plan.content().complete_removal_manifest.is_some() => {
-            scoped_adapter_version(args, true)
+        2 if plan.content().cleanup_manifest.is_some()
+            && args.codex_desktop_user_data.is_none() =>
+        {
+            scoped_adapter_version(args, 2)
+        }
+        3 if plan.content().complete_removal_manifest.is_some()
+            && args.codex_desktop_user_data.is_none() =>
+        {
+            scoped_adapter_version(args, 3)
+        }
+        4 if plan
+            .content()
+            .complete_removal_manifest
+            .as_ref()
+            .and_then(|m| m.desktop.as_ref())
+            .is_some_and(|d| args.codex_desktop_user_data.as_ref() == Some(&d.user_data.path)) =>
+        {
+            scoped_adapter_version(args, 4)
         }
         _ => Err(CliError::new(
             ErrorCode::InvalidArguments,
@@ -32,7 +54,7 @@ pub(super) fn scoped_adapter_for_plan(
 
 fn scoped_adapter_version(
     args: &Args,
-    expanded: bool,
+    version: u32,
 ) -> Result<CodexScopedCleanupAdapter, CliError> {
     if args.fixture.is_some()
         || args.desktop_fixture
@@ -63,11 +85,27 @@ fn scoped_adapter_version(
             .or_else(|| find_executable(ProviderKind::Codex)),
     };
     let reader = CodexAdapter::new(location).with_evidence_helper(helper, home);
-    Ok(if expanded {
-        CodexScopedCleanupAdapter::new_expanded(reader)
-    } else {
-        CodexScopedCleanupAdapter::new(reader)
-    })
+    match version {
+        2 => Ok(CodexScopedCleanupAdapter::new(reader)),
+        3 => Ok(CodexScopedCleanupAdapter::new_expanded(reader)),
+        #[cfg(unix)]
+        4 => {
+            let user_data = args.codex_desktop_user_data.as_ref().ok_or_else(|| {
+                CliError::new(
+                    ErrorCode::InvalidConfiguration,
+                    "Desktop user data root is required",
+                )
+            })?;
+            Ok(CodexScopedCleanupAdapter::new_desktop(
+                reader,
+                user_data.clone(),
+            ))
+        }
+        _ => Err(CliError::new(
+            ErrorCode::InvalidConfiguration,
+            "exact Desktop cleanup profile unavailable",
+        )),
+    }
 }
 
 pub fn run(args: &Args, state_root: &Path, action: &TransactionAction) -> Result<bool, CliError> {
@@ -141,9 +179,9 @@ pub fn run(args: &Args, state_root: &Path, action: &TransactionAction) -> Result
         let snapshot = store.inspect(&id).map_err(|_| unavailable())?;
         let plan = snapshot.review_plan().ok_or_else(unavailable)?;
         let cleanup = scoped_adapter_for_plan(args, plan)?;
-        if plan.content().schema_version == 3 && reconcile {
+        if matches!(plan.content().schema_version, 3 | 4) && reconcile {
             lifecycle::reconcile_complete_removal(&mut store, &id, &cleanup)
-        } else if plan.content().schema_version == 3 {
+        } else if matches!(plan.content().schema_version, 3 | 4) {
             lifecycle::execute_complete_removal(&mut store, &id, &cleanup, &cleanup)
         } else if reconcile {
             lifecycle::reconcile_cleanup(&mut store, &id, &cleanup)
@@ -157,6 +195,23 @@ pub fn run(args: &Args, state_root: &Path, action: &TransactionAction) -> Result
     };
     let state = match result {
         Ok(state) => state,
+        Err(lifecycle::LifecycleError::Native(
+            agentmender_persistence::EffectError::RequiresProviderClosed,
+        )) if scoped => {
+            let snapshot = store.inspect(&id).map_err(|_| unavailable())?;
+            let desktop = snapshot
+                .review_plan()
+                .and_then(|p| p.content().complete_removal_manifest.as_ref())
+                .and_then(|m| m.desktop.as_ref())
+                .ok_or_else(unavailable)?;
+            return Err(CliError::new(
+                ErrorCode::TransactionUnavailable,
+                format!(
+                    "Close Codex to remove {:?}. Keep Codex closed during cleanup.",
+                    desktop.target_title
+                ),
+            ));
+        }
         Err(error) if scoped => {
             let snapshot = store.inspect(&id).map_err(|_| unavailable())?;
             if !matches!(
@@ -214,7 +269,7 @@ fn report_cleanup(
     let snapshot = store.inspect(id).map_err(|_| unavailable())?;
     if snapshot
         .review_plan()
-        .is_some_and(|p| p.content().schema_version == 3)
+        .is_some_and(|p| matches!(p.content().schema_version, 3 | 4))
     {
         return report_expanded_cleanup(args, store, id, state, reconcile);
     }
@@ -340,6 +395,19 @@ fn report_expanded_cleanup(
                 "recovery":"reconciliation_metadata_only"
             }),
         )?;
+    } else if let Some(desktop) = &manifest.desktop {
+        if product_complete {
+            println!("Session removed\n{:?}", desktop.target_title);
+        } else {
+            println!(
+                "Desktop cleanup for {:?} is {state:?}. Complete removal awaits exact-build restart acceptance.",
+                desktop.target_title
+            );
+        }
+        println!(
+            "Committed actions {}",
+            super::approvals::safe(&committed_actions)?
+        );
     } else {
         println!(
             "Expanded primary cleanup: {state:?}. Complete session removal remains unverified."

@@ -129,6 +129,7 @@ pub enum ExpectedPostcondition {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PlanBlocker {
+    RequiresProviderClosed,
     UnsupportedIntent,
     CapabilityUnavailable,
     TargetMissing,
@@ -285,10 +286,10 @@ impl<'de> Deserialize<'de> for LifecyclePlan {
             || (c.schema_version == 2
                 && c.complete_removal_manifest.is_none()
                 && valid_scoped_plan(c))
-            || (c.schema_version == 3 && valid_complete_plan(c)))
+            || (matches!(c.schema_version, 3 | 4) && valid_complete_plan(c)))
             && c.requires_human_approval
             && c.recovery_required
-            && (matches!(c.schema_version, 2 | 3)
+            && (matches!(c.schema_version, 2..=4)
                 || match c.status {
                     PlanStatus::Ready => {
                         c.blockers.is_empty()
@@ -597,7 +598,9 @@ fn ordered_hash<T: Serialize>(domain: &[u8], value: &T) -> String {
     )
 }
 fn plan_hash(c: &PlanContent) -> PlanDigest {
-    if c.schema_version == 3 {
+    if c.schema_version == 4 {
+        PlanDigest(ordered_hash(b"agentmender/plan/v4\0", c))
+    } else if c.schema_version == 3 {
         PlanDigest(ordered_hash(b"agentmender/plan/v3\0", c))
     } else if c.schema_version == 2 {
         PlanDigest(ordered_hash(b"agentmender/plan/v2\0", c))
@@ -1346,6 +1349,8 @@ fn valid_complete_plan(c: &PlanContent) -> bool {
         return false;
     };
     if c.cleanup_manifest.is_some()
+        || (c.schema_version == 3 && m.desktop.is_some())
+        || (c.schema_version == 4 && m.desktop.is_none())
         || (c.status == PlanStatus::Ready && !validate_complete_removal_manifest(m))
     {
         return false;
@@ -1370,9 +1375,13 @@ fn plan_complete_cleanup(
     legacy_context.complete_removal_evidence = None;
     legacy_context.cleanup_evidence = Some(e.primary_evidence.clone());
     let mut c = plan_scoped_cleanup(g, report, &legacy_context, request.clone()).content;
-    c.schema_version = 3;
+    c.schema_version = if e.manifest.desktop.is_some() { 4 } else { 3 };
     c.state_fingerprint = StateFingerprint(ordered_hash(
-        b"agentmender/complete-state/v3\0",
+        if c.schema_version == 4 {
+            b"agentmender/complete-state/v4\0"
+        } else {
+            b"agentmender/complete-state/v3\0"
+        },
         &json!({
             "graph": projected(g,"graph"), "report": projected(report,"report"),
             "recomputed": projected(&evaluate_integrity(g, &report.proof_context),"report"),
@@ -1381,14 +1390,42 @@ fn plan_complete_cleanup(
     ));
     c.cleanup_manifest = None;
     c.complete_removal_manifest = Some(e.manifest.clone());
+    let desktop_boundary_ok = if c.schema_version == 4 {
+        e.desktop_boundary.as_ref().is_some_and(|b| {
+            b.writers_closed
+                && [b.legacy, b.roots, b.profile, b.writer_inventory]
+                    .iter()
+                    .all(|v| *v == CleanupBoundaryObservation::CompleteAndUnshared)
+        })
+    } else {
+        e.desktop_boundary.is_none()
+    };
     if context.cleanup_evidence.is_some()
+        || !desktop_boundary_ok
         || e.primary_evidence.manifest != e.manifest.primary
         || !validate_complete_removal_manifest(&e.manifest)
     {
         c.status = PlanStatus::Blocked;
         c.operations.clear();
-        if !c.blockers.contains(&PlanBlocker::EffectBoundaryInvalid) {
-            c.blockers.push(PlanBlocker::EffectBoundaryInvalid);
+        let closed_required = c.schema_version == 4
+            && e.desktop_boundary.as_ref().is_some_and(|b| {
+                !b.writers_closed
+                    && [b.legacy, b.roots, b.profile, b.writer_inventory]
+                        .iter()
+                        .all(|v| *v == CleanupBoundaryObservation::CompleteAndUnshared)
+            })
+            && context.cleanup_evidence.is_none()
+            && e.primary_evidence.manifest == e.manifest.primary
+            && e.manifest.desktop.as_ref().is_some_and(|desktop| {
+                crate::complete_removal::valid_desktop_contract(&e.manifest, desktop)
+            });
+        let blocker = if closed_required {
+            PlanBlocker::RequiresProviderClosed
+        } else {
+            PlanBlocker::EffectBoundaryInvalid
+        };
+        if !c.blockers.contains(&blocker) {
+            c.blockers.push(blocker);
         }
     }
     let digest = plan_hash(&c);

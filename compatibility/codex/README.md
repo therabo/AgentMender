@@ -1,5 +1,7 @@
 # Codex compatibility evidence
 
+Current Desktop schema-4 candidate and exact-build drift: [checkpoint](../../docs/milestones/m8-2-1-desktop-candidate-2026-11-06.md). The profile remains unadmitted.
+
 ## M8.2.1 complete-removal compatibility
 
 M8.2 primary cleanup is PASS and [integrated](../../docs/milestones/m8-2-integration.md)

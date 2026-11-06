@@ -953,7 +953,7 @@ impl TransactionStore {
             || receipt.id != *id
             || snapshot
                 .review_plan()
-                .is_none_or(|p| p.content().schema_version != 3)
+                .is_none_or(|p| !matches!(p.content().schema_version, 3 | 4))
         {
             return Err(StoreError::Preconditions);
         }
@@ -1030,7 +1030,7 @@ impl TransactionStore {
         if snapshot.sequence() != expected
             || snapshot
                 .review_plan()
-                .is_none_or(|p| p.content().schema_version != 3)
+                .is_none_or(|p| !matches!(p.content().schema_version, 3 | 4))
             || report
                 .primary
                 .actions

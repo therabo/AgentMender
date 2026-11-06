@@ -241,6 +241,16 @@ fn evidence_command(
     sandbox: &EvidenceSandbox,
     capture: bool,
 ) -> Result<Command, ProviderError> {
+    evidence_command_for(executable, sandbox, capture, false)
+}
+
+#[cfg(target_os = "macos")]
+fn evidence_command_for(
+    executable: &Path,
+    sandbox: &EvidenceSandbox,
+    capture: bool,
+    catalog: bool,
+) -> Result<Command, ProviderError> {
     sandbox.validate()?;
     if !executable.is_absolute() || !executable.is_file() {
         return Err(ProviderError::CapabilityUnavailable(
@@ -255,7 +265,14 @@ fn evidence_command(
             .canonicalize()
             .map_err(|e| crate::io_error(executable, e))?,
     )?;
-    let read_rule = if capture {
+    let read_rule = if catalog {
+        let database = policy_literal(&sandbox.source_root().join("sqlite/codex.db"))?;
+        let wal = policy_literal(&sandbox.source_root().join("sqlite/codex.db-wal"))?;
+        let shm = policy_literal(&sandbox.source_root().join("sqlite/codex.db-shm"))?;
+        format!(
+            "(deny file-read-data (require-all (require-any (subpath {home}) (subpath {source})) (require-not (require-any (literal {program}) (literal {database}) (literal {wal}) (literal {shm}) (subpath {root})))) )"
+        )
+    } else if capture {
         let database = policy_literal(&sandbox.source_root().join("state_5.sqlite"))?;
         let wal = policy_literal(&sandbox.source_root().join("state_5.sqlite-wal"))?;
         let shm = policy_literal(&sandbox.source_root().join("state_5.sqlite-shm"))?;
@@ -335,6 +352,31 @@ pub fn spawn_codex_scoped_capture(
     }
 }
 
+/// Fixed Desktop catalog observation worker under the protected evidence sandbox.
+pub fn spawn_codex_catalog_capture(
+    helper: &Path,
+    sandbox: &EvidenceSandbox,
+) -> Result<Child, ProviderError> {
+    #[cfg(target_os = "macos")]
+    {
+        evidence_command_for(helper, sandbox, false, true)?
+            .arg("--internal-codex-catalog-evidence-capture")
+            .spawn()
+            .map_err(|_| {
+                ProviderError::CapabilityUnavailable(
+                    "isolated catalog capture could not start".into(),
+                )
+            })
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (helper, sandbox);
+        Err(ProviderError::CapabilityUnavailable(
+            "isolated catalog capture is not verified on this platform".into(),
+        ))
+    }
+}
+
 pub fn spawn_codex_evidence(
     executable: &Path,
     sandbox: &EvidenceSandbox,
@@ -363,6 +405,21 @@ pub fn verify_source_write_denial(root: &Path) -> Result<(), ProviderError> {
     #[cfg(target_os = "macos")]
     {
         crate::macos_sandbox::verify_source_write_denial(root)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = root;
+        Err(ProviderError::CapabilityUnavailable(
+            "kernel sandbox attestation is only verified on macOS".into(),
+        ))
+    }
+}
+
+/// Attest write denial for the fixed Desktop catalog and its coordination files.
+pub fn verify_catalog_write_denial(root: &Path) -> Result<(), ProviderError> {
+    #[cfg(target_os = "macos")]
+    {
+        crate::macos_sandbox::verify_catalog_write_denial(root)
     }
     #[cfg(not(target_os = "macos"))]
     {
@@ -435,6 +492,35 @@ mod tests {
         assert!(!output.status.success());
         assert!(output.stdout.is_empty());
         assert_eq!(std::fs::read(private).unwrap(), b"secret-canary");
+    }
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn catalog_worker_policy_allows_only_fixed_catalog_files() {
+        let source = tempfile::tempdir().unwrap();
+        let home = tempfile::tempdir().unwrap();
+        let sqlite = source.path().join("sqlite");
+        std::fs::create_dir(&sqlite).unwrap();
+        let db = sqlite.join("codex.db");
+        let other = sqlite.join("other.db");
+        std::fs::write(&db, b"allowed").unwrap();
+        std::fs::write(&other, b"private").unwrap();
+        let sandbox = EvidenceSandbox::new(source.path(), home.path()).unwrap();
+        let read = |path: &Path| {
+            evidence_command_for(Path::new("/bin/cat"), &sandbox, false, true)
+                .unwrap()
+                .arg(path)
+                .output()
+                .unwrap()
+        };
+        assert_eq!(read(&db).stdout, b"allowed");
+        assert!(!read(&other).status.success());
+        let status = evidence_command_for(Path::new("/usr/bin/touch"), &sandbox, false, true)
+            .unwrap()
+            .arg(&db)
+            .status()
+            .unwrap();
+        assert!(!status.success());
+        assert_eq!(std::fs::read(&db).unwrap(), b"allowed");
     }
     #[test]
     fn banner_parser_keeps_exact_prereleases_and_rejects_ambiguous_output() {

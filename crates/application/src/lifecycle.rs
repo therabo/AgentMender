@@ -151,7 +151,7 @@ impl agentmender_persistence::CompleteRemovalProgress for RemovalProgressJournal
     }
 }
 
-/// Separately approved schema-3 path; it never upgrades an existing v2 grant.
+/// Separately approved schema-3/4 path; it never upgrades an existing v2 grant.
 pub fn execute_complete_removal(
     store: &mut TransactionStore,
     id: &TransactionId,
@@ -167,7 +167,7 @@ pub fn execute_complete_removal(
     if snapshot.schema_version() != 2
         || snapshot.state() != TransactionState::Prepared
         || snapshot.approval().state != ApprovalState::Granted
-        || c.schema_version != 3
+        || !matches!(c.schema_version, 3 | 4)
         || c.status != PlanStatus::Ready
         || c.request.intent != LifecycleIntent::CleanupSession
         || c.cleanup_manifest.is_some()
@@ -244,7 +244,7 @@ pub fn execute_complete_removal(
     Ok(store.inspect(id)?.state())
 }
 
-/// Observes only the frozen schema-3 target; never resumes destructive actions.
+/// Observes only the frozen schema-3/4 target; never resumes destructive actions.
 pub fn reconcile_complete_removal(
     store: &mut TransactionStore,
     id: &TransactionId,
@@ -254,7 +254,7 @@ pub fn reconcile_complete_removal(
     let plan = snapshot
         .review_plan()
         .ok_or(LifecycleError::Preconditions)?;
-    if plan.content().schema_version != 3
+    if !matches!(plan.content().schema_version, 3 | 4)
         || !matches!(
             snapshot.state(),
             TransactionState::OutcomeUnknown | TransactionState::RecoveryRequired

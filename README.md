@@ -23,16 +23,17 @@ The currently open graphical sidebar may temporarily be stale and is not the
 authority for cleanup success. An admitted exact compatibility profile must
 independently prove through isolated restart/reload acceptance that structurally
 removed sessions do not reappear. Production never restarts Codex for visual
-verification. Required stores without lifetime writer exclusion block before
-mutation; a process-absence snapshot alone does not fence a later launch.
+verification. The Desktop candidate requires the user to keep relevant writers closed throughout
+the transaction; repeated conservative census checks do not fence a later launch.
 
 New schema-3 `scoped-cleanup-v2` plans materially expand primary cleanup with exact
 target attachment metadata and guardian feedback. Shared attachment payloads and
 foreign records survive. Per-action journal progress stops subsequent effects when
 recording fails. Historical v2 plans/grants keep their original scope.
-Both profiles still report ProjectionIncomplete: Desktop writer coordination,
-persistent projection mutation and exact isolated restart acceptance are unadmitted.
-See [the current contract](docs/adr/0019-structural-removal-and-profile-acceptance.md),
+The schema-4 Desktop candidate integrates fixed persistent actions but remains
+unadmitted and cannot report product Removed; exact isolated reconstruction
+acceptance is missing. See [the candidate checkpoint](docs/milestones/m8-2-1-desktop-candidate-2026-11-06.md),
+[the current contract](docs/adr/0020-closed-desktop-complete-removal.md),
 [scoped behavior](docs/scoped-session-cleanup.md) and
 [continuation report](docs/milestones/m8-2-1-continuation-2026-11-03.md).
 

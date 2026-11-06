@@ -87,6 +87,7 @@ pub(super) fn protected_roots(args: &Args) -> Result<Vec<PathBuf>, CliError> {
         })?;
     let mut roots = vec![
         home.join(".codex"),
+        home.join("Library/Application Support/Codex"),
         home.join(".claude"),
         home.join("Library/Application Support/Claude"),
         home.join("Applications/Codex.app"),
@@ -94,10 +95,15 @@ pub(super) fn protected_roots(args: &Args) -> Result<Vec<PathBuf>, CliError> {
     ];
     #[cfg(target_os = "macos")]
     roots.extend([
+        PathBuf::from("/Applications/ChatGPT.app"),
         PathBuf::from("/Applications/Codex.app"),
         PathBuf::from("/Applications/Claude.app"),
     ]);
-    for variable in ["CODEX_HOME", "CLAUDE_CONFIG_DIR"] {
+    for variable in [
+        "CODEX_HOME",
+        "CODEX_ELECTRON_USER_DATA_PATH",
+        "CLAUDE_CONFIG_DIR",
+    ] {
         if let Some(value) = env::var_os(variable) {
             roots.push(PathBuf::from(value));
         }
@@ -112,6 +118,7 @@ pub(super) fn protected_roots(args: &Args) -> Result<Vec<PathBuf>, CliError> {
         [
             &args.fixture,
             &args.codex_root,
+            &args.codex_desktop_user_data,
             &args.claude_root,
             &args.claude_desktop_root,
             &args.codex_executable,

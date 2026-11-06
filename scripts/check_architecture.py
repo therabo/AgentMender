@@ -129,7 +129,7 @@ def approval_boundary_violation(source, crate_name, module_name):
     """ADR-0012: authority cannot enter MCP/providers or an execution CLI."""
     code = mask_literals(production_source(source))
     authority = r'\b(?:ApprovalGrant|ApprovalAction|ApprovalScope|ApprovalId|AuthorizationAuthentication|TransactionStore|RecoveryStore|DurableIntent|grant_approval|revoke_approval|record_intent|authorization_signing_bytes)\b'
-    if crate_name == 'provider-codex' and module_name in {'lifecycle.rs', 'scoped_cleanup.rs', 'scoped_unsupported.rs'}:
+    if crate_name == 'provider-codex' and module_name in {'lifecycle.rs', 'scoped_cleanup.rs', 'scoped_unsupported.rs', 'desktop_cleanup.rs'}:
         # This adapter may consume handoff gates; it cannot mint authority or write history.
         forbidden = r'\b(?:ApprovalGrant|ApprovalAction|ApprovalScope|ApprovalId|AuthorizationAuthentication|TransactionStore|RecoveryStore|grant_approval|revoke_approval|record_intent|authorization_signing_bytes|AuthorityMac)\b'
         return bool(re.search(forbidden, code))
@@ -292,9 +292,11 @@ for path in (ROOT / "crates").glob("*/src/**/*.rs"):
     code = mask_literals(source)
     reviewed_capture = path == ROOT / "crates/provider-codex/src/capture.rs"
     reviewed_lifecycle = path == ROOT / "crates/provider-codex/src/lifecycle.rs"
-    reviewed_scoped = path in {ROOT / "crates/provider-codex/src/scoped_cleanup.rs", ROOT / "crates/provider-codex/src/scoped_unsupported.rs"}
+    reviewed_scoped = path in {ROOT / f"crates/provider-codex/src/{name}.rs" for name in ["scoped_cleanup", "scoped_unsupported", "desktop_cleanup"]}
     reviewed_scoped_storage = path == ROOT / "crates/provider-codex/src/scoped_storage.rs"
     reviewed_scoped_files = path == ROOT / "crates/provider-codex/src/scoped_files.rs"
+    reviewed_desktop_catalog = path == ROOT / "crates/provider-codex/src/desktop_catalog.rs"
+    reviewed_desktop_shared = path == ROOT / "crates/provider-codex/src/desktop_shared.rs"
     crate_name = path.relative_to(ROOT / "crates").parts[0]
     if crate_name == 'provider-claude' and claude_lifecycle_violation(source):
         errors.append(f'Claude lifecycle authority before validated project contract: {path.relative_to(ROOT)}')
@@ -316,6 +318,8 @@ for path in (ROOT / "crates").glob("*/src/**/*.rs"):
             and not (reviewed_owned and pattern in patterns[:3])
             and not (reviewed_scoped_storage and pattern == patterns[-1])
             and not (reviewed_scoped_files and pattern == patterns[-2])
+            and not (reviewed_desktop_catalog and pattern == patterns[-1])
+            and not (reviewed_desktop_shared and pattern == patterns[-2])
             and not (crate_name == "persistence" and path.name == "store.rs" and pattern == patterns[-1])):
             errors.append(f"possible provider mutation: {path.relative_to(ROOT)}: {pattern}")
     if path != ROOT / "crates/provider-api/src/macos_sandbox.rs" and (re.search(r"\bunsafe\b", code) or re.search(r"allow\s*\(\s*unsafe_code", code)):
@@ -535,6 +539,43 @@ for name in ['execute_scoped_cleanup', 'execute_complete_removal']:
 assert approval_boundary_violation('fn bypass() { store.grant_approval(); }', 'provider-codex', 'scoped_cleanup.rs')
 assert approval_boundary_violation('use agentmender_persistence::TransactionStore;', 'provider-codex', 'scoped_unsupported.rs')
 assert production_source('#[cfg(all(test, unix))] mod tests { fs::write("test", b"x"); }\nfn later() {}').strip() == 'fn later() {}'
+
+# ADR-0020 admits only candidate catalog SQL and private shared-file replacement
+# within the exact Desktop handoff. A later admission must keep these boundaries.
+desktop_catalog = production_source((scoped_base / 'desktop_catalog.rs').read_text())
+desktop_catalog_sql = [
+    "UPDATE local_thread_catalog_sync_state SET observation_sequence=?1 WHERE host_id='local' AND observation_sequence=?2",
+    "INSERT INTO local_thread_catalog_scan_entries(host_id,thread_id,removed) VALUES('local',?1,1) ON CONFLICT(host_id,thread_id) DO UPDATE SET removed=1",
+    "DELETE FROM local_thread_catalog WHERE host_id='local' AND thread_id=?1 AND source_kind=?2 RETURNING missing_candidate",
+    "UPDATE local_thread_catalog_metadata SET catalog_revision=?1 WHERE id=1 AND catalog_revision=?2",
+]
+if sorted(re.findall(r'"((?:DELETE|UPDATE|INSERT)\s+[^"\n]*)"', desktop_catalog)) != sorted(desktop_catalog_sql):
+    raise SystemExit('unreviewed Desktop catalog SQL mutation')
+catalog_apply = list(method_bodies(desktop_catalog, 'apply'))
+if len(catalog_apply) != 1 or not all(sql in catalog_apply[0] for sql in desktop_catalog_sql):
+    raise SystemExit('Desktop catalog mutation escaped its fenced action')
+desktop_shared = production_source((scoped_base / 'desktop_shared.rs').read_text())
+desktop_publish = list(method_bodies(desktop_shared, 'publish'))
+if (len(desktop_publish) != 1 or len(re.findall(relative_mutation, mask_literals(desktop_shared))) != 2
+    or 'fs::renameat(&fence.fd, stage_name.as_str(), &fence.fd, name)' not in desktop_publish[0]
+    or 'fs::unlinkat(&fence.fd, stage_name.as_str(), AtFlags::empty())' not in desktop_publish[0]):
+    raise SystemExit('Desktop replacement escaped the private stage and exact destination')
+for name in ['acquire', 'publish_global', 'publish_index']:
+    bodies = list(method_bodies(desktop_shared, name))
+    if len(bodies) != 1 or 'DesktopExecution' not in bodies[0].split('{', 1)[0]:
+        raise SystemExit(f'Desktop shared effect lacks the consumed gate: {name}')
+desktop_catalog_capture = production_source((scoped_base / 'desktop_catalog_capture.rs').read_text())
+catalog_boundary = list(method_bodies(desktop_catalog_capture, 'acquire_catalog'))
+if len(catalog_boundary) != 1 or 'DesktopExecution' not in catalog_boundary[0].split('{', 1)[0]:
+    raise SystemExit('Desktop catalog write boundary lacks the consumed gate')
+desktop_cleanup = production_source((scoped_base / 'desktop_cleanup.rs').read_text())
+if re.search(r'\bstruct\s+DesktopExecution\s*<[^>]*>\s*\{[^}]*\bpub\b', mask_literals(desktop_cleanup)):
+    raise SystemExit('Desktop execution context can be constructed outside its adapter')
+desktop_dispatch = list(method_bodies(desktop_cleanup, 'dispatch'))
+if len(desktop_dispatch) != 1 or not (0 <= desktop_dispatch[0].find('intent.into_observation()') < desktop_dispatch[0].find('&DesktopExecution {')):
+    raise SystemExit('Desktop sequencing escaped the durable intent handoff')
+if any(re.search(r'\.(?:dispatch|record_intent)\s*\(', mask_literals(body)) for body in method_bodies(desktop_cleanup, 'reconcile')):
+    raise SystemExit('Desktop reconciliation can recreate authority')
 
 # ADR-0018 adds product assessment, not a general projection mutation port.
 # These structural canaries supplement the exact SQL/unlink allowlist above and

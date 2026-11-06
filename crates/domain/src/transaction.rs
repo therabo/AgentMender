@@ -118,7 +118,7 @@ impl TransactionBinding {
         }
         let op = &c.operations[0];
         if c.request.intent == LifecycleIntent::CleanupSession {
-            let manifest = if c.schema_version == 3 {
+            let manifest = if matches!(c.schema_version, 3 | 4) {
                 &c.complete_removal_manifest
                     .as_ref()
                     .ok_or(TransactionError)?
@@ -126,8 +126,8 @@ impl TransactionBinding {
             } else {
                 c.cleanup_manifest.as_ref().ok_or(TransactionError)?
             };
-            if !matches!(c.schema_version, 2 | 3)
-                || (c.schema_version == 3
+            if !matches!(c.schema_version, 2..=4)
+                || (matches!(c.schema_version, 3 | 4)
                     && !c
                         .complete_removal_manifest
                         .as_ref()
@@ -148,9 +148,13 @@ impl TransactionBinding {
                 target: commitment("agentmender.target.v1", &c.request.target),
                 native_identity: commitment("agentmender.native-id.v1", &op.native_id),
                 profile: commitment("agentmender.profile.v1", &c.provider),
-                capability_effect: if c.schema_version == 3 {
+                capability_effect: if matches!(c.schema_version, 3 | 4) {
                     commitment(
-                        "agentmender.complete-removal-manifest.v3",
+                        if c.schema_version == 4 {
+                            "agentmender.complete-removal-manifest.v4"
+                        } else {
+                            "agentmender.complete-removal-manifest.v3"
+                        },
                         c.complete_removal_manifest
                             .as_ref()
                             .ok_or(TransactionError)?,
@@ -619,7 +623,7 @@ impl TransactionSnapshot {
                     .as_ref()
                     .and_then(|p| p.content().complete_removal_manifest.as_ref())
                     .ok_or(TransactionError)?;
-                if plan_version != Some(3)
+                if !matches!(plan_version, Some(3 | 4))
                     || !matches!(
                         progress.outcome,
                         CleanupActionOutcome::Removed | CleanupActionOutcome::AlreadyAbsent
@@ -646,7 +650,7 @@ impl TransactionSnapshot {
                     .as_ref()
                     .and_then(|p| p.content().complete_removal_manifest.as_ref())
                     .ok_or(TransactionError)?;
-                if plan_version != Some(3)
+                if !matches!(plan_version, Some(3 | 4))
                     || !matches!(self.state, S::OutcomeUnknown | S::RecoveryRequired)
                     || report.actions != self.complete_progress
                     || !validate_complete_removal_report(m, report)

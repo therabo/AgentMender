@@ -1,5 +1,7 @@
 # Scoped session cleanup and complete session removal
 
+Current Desktop candidate status: [2026-11-06 checkpoint](milestones/m8-2-1-desktop-candidate-2026-11-06.md). Schema 4 remains unadmitted and M8.2.1 remains OPEN.
+
 M8.2 primary cleanup is **PASS**, integrated at
 `a284767157ace8769deee85b195b5b70efe374d8`; local, isolated and exact-head
 three-platform gates passed ([integration receipt](milestones/m8-2-integration.md)).
@@ -15,8 +17,8 @@ The currently open graphical sidebar may temporarily be stale and is not the
 authority for cleanup success. An admitted exact compatibility profile must
 independently prove through isolated restart/reload acceptance that structurally
 removed sessions do not reappear. Production never restarts Codex for visual
-verification. Required stores without lifetime writer exclusion block before
-mutation; a process-absence snapshot alone does not fence a later launch.
+verification. The Desktop candidate requires relevant writers to remain closed throughout the
+transaction; a process-absence snapshot alone does not fence a later launch.
 
 The existing SessionRemovalAssessment retains categorical coverage and exact
 root/profile/target binding. Required persistent surfaces must be structurally
@@ -34,7 +36,7 @@ shared asset remains protected. Metadata payload values never become filesystem
 deletion instructions. Guardian BLOB contents are hashed transiently and never
 persisted in review or journal metadata.
 
-New plans carry CompleteRemovalManifest and distinct v3 hash/binding domains,
+Expanded-primary plans carry CompleteRemovalManifest and distinct v3 hash/binding domains,
 ordered PrimaryPayload/StateThreadRecords actions and explicit PrimaryOnly profile
 admission. After all fences and preimages validate, the payload is unlinked and
 its progress synced, then the exact main-DB transaction commits and its progress

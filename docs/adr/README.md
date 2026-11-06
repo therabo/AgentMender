@@ -24,6 +24,8 @@
 
 | [0019: Structural removal authority and isolated profile acceptance](0019-structural-removal-and-profile-acceptance.md) | Accepted structural contract; partially supersedes 0018; new profiles gated |
 
+| [0020: Closed Desktop complete removal and qualified persistent actions](0020-closed-desktop-complete-removal.md) | Accepted design; explicit remain-closed operating prerequisite; implementation/acceptance gated |
+
 M8.1 integration/base is recorded in [the receipt](../milestones/m8-1-integration.md)
 (`c9dd04d` after integrated `6f798bc`). ADR-0017 accepts narrow partial
 supersession for the independently reviewed exact-profile local cleanup path.

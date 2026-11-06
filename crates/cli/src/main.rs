@@ -43,6 +43,9 @@ struct Args {
     claude_app_bundle: Vec<PathBuf>,
     #[arg(long, global = true)]
     codex_root: Option<PathBuf>,
+    /// Select the exact closed Codex Desktop cleanup profile at this Electron data root.
+    #[arg(long, global = true, value_parser = absolute_path)]
+    codex_desktop_user_data: Option<PathBuf>,
     #[arg(long, global = true)]
     claude_root: Option<PathBuf>,
     #[arg(long, global = true, value_parser = absolute_path)]
@@ -930,6 +933,16 @@ fn run(args: Args) -> Result<bool, CliError> {
 }
 fn main() -> ExitCode {
     let raw_args: Vec<_> = env::args_os().collect();
+    #[cfg(unix)]
+    if raw_args.len() == 2 && raw_args[1] == "--internal-codex-catalog-evidence-capture" {
+        return match agentmender_provider_codex::run_catalog_evidence_worker() {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(_) => {
+                eprintln!("internal Desktop catalog evidence capture failed");
+                ExitCode::from(2)
+            }
+        };
+    }
     if raw_args.len() == 2 && raw_args[1] == "--internal-codex-scoped-evidence-capture" {
         return match agentmender_provider_codex::run_scoped_evidence_worker() {
             Ok(()) => ExitCode::SUCCESS,

@@ -8,8 +8,9 @@ requirements still apply. See [v1](../scoped-cleanup-v1/README.md) for the
 underlying pin and [continuation report](../../../docs/milestones/m8-2-1-continuation-2026-11-03.md)
 for evidence and pending gates.
 
-New CLI preparation defaults to this adapter with a version 3 outer plan
-manifest. Historical schema-2 reviews select v1, without automatic upgrade; old
+Expanded-primary preparation uses this adapter with a version 3 outer plan
+manifest. The separate schema-4 Desktop candidate is described in the
+[checkpoint](../../../docs/milestones/m8-2-1-desktop-candidate-2026-11-06.md). Historical schema-2 reviews select v1, without automatic upgrade; old
 approvals cannot authorize expanded effects. Independent approval, consumed
 DurableIntent and the existing journal v2/approval MAC govern execution. The
 rollout unlink and state DB commit have separate durable action knowledge; an

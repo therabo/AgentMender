@@ -10,10 +10,13 @@ The currently open graphical sidebar may temporarily be stale and is not the
 authority for cleanup success. An admitted exact compatibility profile must
 independently prove through isolated restart/reload acceptance that structurally
 removed sessions do not reappear. Production never restarts Codex for visual
-verification. Required stores without lifetime writer exclusion block before
-mutation; a process-absence snapshot alone does not fence a later launch.
+verification. The Desktop candidate requires relevant writers to remain closed throughout the
+transaction; a process-absence snapshot alone does not fence a later launch.
 
-New cleanup plans use schema 3 and `CompleteRemovalManifest`, committing the
+The schema-4 Desktop candidate adds frozen exact actions and remains explicitly
+unadmitted; see the [checkpoint](milestones/m8-2-1-desktop-candidate-2026-11-06.md)
+and [ADR-0020](adr/0020-closed-desktop-complete-removal.md). Expanded primary
+plans use schema 3 and `CompleteRemovalManifest`, committing the
 expanded primary profile, exact row preimages/counts, ordered actions, retained
 state and explicitly unverified Desktop reconstruction. This profile removes
 exact target attachment metadata and guardian feedback in addition to the

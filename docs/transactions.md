@@ -1,5 +1,7 @@
 # Durable transactions and restart recovery
 
+Current Desktop candidate status: [2026-11-06 checkpoint](milestones/m8-2-1-desktop-candidate-2026-11-06.md). Schema 4 remains unadmitted and M8.2.1 remains OPEN.
+
 ## M8.2.1 current outcome boundary
 
 Plan schema 3 uses the existing authenticated journal schema 2, approval MAC and
@@ -21,8 +23,8 @@ The currently open graphical sidebar may temporarily be stale and is not the
 authority for cleanup success. An admitted exact compatibility profile must
 independently prove through isolated restart/reload acceptance that structurally
 removed sessions do not reappear. Production never restarts Codex for visual
-verification. Required stores without lifetime writer exclusion block before
-mutation; a process-absence snapshot alone does not fence a later launch.
+verification. The Desktop candidate requires relevant writers to remain closed throughout the
+transaction; a process-absence snapshot alone does not fence a later launch.
 
 See [ADR-0019](adr/0019-structural-removal-and-profile-acceptance.md).
 M8.2.1 remains OPEN; Desktop projection effects and their restart acceptance remain

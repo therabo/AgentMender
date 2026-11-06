@@ -386,6 +386,25 @@ impl DatabaseFence {
         }
         self.db.execute_batch("COMMIT").map_err(|_| invalid())?;
         self.prepared = false;
+        self.verify_postimage(m)
+    }
+
+    // Desktop retains a new write boundary and verifies the committed postimage
+    // under that boundary until all collateral verification has finished.
+    pub(super) fn hold_postimage(&self, m: &CleanupManifest) -> Result<bool, EffectError> {
+        if self.prepared || &self.manifest != m {
+            return Err(invalid());
+        }
+        self.db
+            .execute_batch("BEGIN IMMEDIATE")
+            .map_err(|_| invalid())?;
+        self.verify_postimage(m)
+    }
+
+    pub(super) fn verify_postimage(&self, m: &CleanupManifest) -> Result<bool, EffectError> {
+        if self.prepared || &self.manifest != m {
+            return Err(invalid());
+        }
         let count: i64 = self
             .db
             .query_row(

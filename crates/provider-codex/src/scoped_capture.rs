@@ -17,6 +17,8 @@ pub struct ScopedCaptureRequest {
     pub mirror_root: PathBuf,
     pub probe_path: PathBuf,
     pub target_id: String,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub desktop_closed_snapshot: bool,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -177,19 +179,173 @@ pub(super) fn commitment(
     })
 }
 
+#[cfg(unix)]
+type DesktopStateIdentity = (u64, u64, u64, i64, i64, i64, i64);
+
+// For Desktop only, a closed checkpointed WAL database may have no sidecars.
+// Observe fixed names through a no-follow root descriptor and reject journals,
+// hard links, cross-device database files and non-WAL SQLite headers.
+#[cfg(unix)]
+#[allow(clippy::unnecessary_cast)]
+fn desktop_closed_state(
+    root: &std::path::Path,
+) -> Result<(bool, Vec<DesktopStateIdentity>), ProviderError> {
+    use rustix::fs::{self, AtFlags, Mode, OFlags};
+    use std::{io::Read, os::unix::fs::MetadataExt};
+    if !root.is_absolute() || root.canonicalize().map_err(|_| unavailable())? != root {
+        return Err(unavailable());
+    }
+    let fd = fs::open(
+        root,
+        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        Mode::empty(),
+    )
+    .map_err(|_| unavailable())?;
+    let root_meta = std::fs::File::from(
+        fs::openat(
+            &fd,
+            ".",
+            OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            Mode::empty(),
+        )
+        .map_err(|_| unavailable())?,
+    )
+    .metadata()
+    .map_err(|_| unavailable())?;
+    let path_meta = std::fs::symlink_metadata(root).map_err(|_| unavailable())?;
+    if !path_meta.is_dir()
+        || path_meta.dev() != root_meta.dev()
+        || path_meta.ino() != root_meta.ino()
+    {
+        return Err(unavailable());
+    }
+    let database = std::fs::File::from(
+        fs::openat(
+            &fd,
+            capture::DB_NAME,
+            OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            Mode::empty(),
+        )
+        .map_err(|_| unavailable())?,
+    );
+    let db_meta = database.metadata().map_err(|_| unavailable())?;
+    let entry =
+        fs::statat(&fd, capture::DB_NAME, AtFlags::SYMLINK_NOFOLLOW).map_err(|_| unavailable())?;
+    if !db_meta.is_file()
+        || db_meta.nlink() != 1
+        || db_meta.dev() != root_meta.dev()
+        || db_meta.dev() != entry.st_dev as u64
+        || db_meta.ino() != entry.st_ino as u64
+    {
+        return Err(unavailable());
+    }
+    let mut header = [0u8; 20];
+    (&database)
+        .read_exact(&mut header)
+        .map_err(|_| unavailable())?;
+    if &header[..16] != b"SQLite format 3\0" || header[18] != 2 || header[19] != 2 {
+        return Err(unavailable());
+    }
+    let missing = |name: &str| match fs::statat(&fd, name, AtFlags::SYMLINK_NOFOLLOW) {
+        Err(rustix::io::Errno::NOENT) => Ok(true),
+        Ok(_) => Ok(false),
+        Err(_) => Err(unavailable()),
+    };
+    if !missing("state_5.sqlite-journal")? {
+        return Err(unavailable());
+    }
+    let absent = missing("state_5.sqlite-wal")? && missing("state_5.sqlite-shm")?;
+    let record = |m: &std::fs::Metadata| {
+        (
+            m.dev(),
+            m.ino(),
+            m.len(),
+            m.mtime(),
+            m.mtime_nsec(),
+            m.ctime(),
+            m.ctime_nsec(),
+        )
+    };
+    Ok((absent, vec![record(&root_meta), record(&db_meta)]))
+}
+
+#[cfg(unix)]
+fn immutable_uri(path: &std::path::Path) -> std::ffi::OsString {
+    use std::{fmt::Write, os::unix::ffi::OsStrExt};
+    let mut uri = String::from("file:");
+    for &byte in path.as_os_str().as_bytes() {
+        if byte.is_ascii_alphanumeric() || b"/-._~".contains(&byte) {
+            uri.push(byte as char);
+        } else {
+            write!(uri, "%{byte:02X}").expect("writing a string cannot fail");
+        }
+    }
+    uri.push_str("?mode=ro&immutable=1");
+    uri.into()
+}
+
 pub(super) fn snapshot(
     source_root: &std::path::Path,
     target: &str,
 ) -> Result<ScopedCaptureResult, ProviderError> {
+    snapshot_inner(source_root, target, false)
+}
+
+#[cfg(unix)]
+pub(super) fn desktop_snapshot(
+    source_root: &std::path::Path,
+    target: &str,
+) -> Result<ScopedCaptureResult, ProviderError> {
+    snapshot_inner(source_root, target, true)
+}
+
+fn snapshot_inner(
+    source_root: &std::path::Path,
+    target: &str,
+    desktop: bool,
+) -> Result<ScopedCaptureResult, ProviderError> {
     if !canonical_uuid(target) {
         return Err(unavailable());
     }
+    #[cfg(unix)]
+    let desktop_before = if desktop {
+        Some(desktop_closed_state(source_root)?)
+    } else {
+        None
+    };
+    #[cfg(not(unix))]
+    if desktop {
+        return Err(unavailable());
+    }
     let before = capture::fingerprints(source_root)?;
+    #[cfg(unix)]
+    let immutable = desktop_before.as_ref().is_some_and(|state| state.0);
+    #[cfg(not(unix))]
+    let immutable = false;
+    #[cfg(unix)]
+    if let Some(state) = &desktop_before
+        && desktop_closed_state(source_root)? != *state
+    {
+        return Err(unavailable());
+    }
+    #[cfg(unix)]
+    let source_path = if immutable {
+        std::path::PathBuf::from(immutable_uri(&source_root.join(capture::DB_NAME)))
+    } else {
+        source_root.join(capture::DB_NAME)
+    };
+    #[cfg(not(unix))]
+    let source_path = source_root.join(capture::DB_NAME);
     let source = Connection::open_with_flags(
-        source_root.join(capture::DB_NAME),
+        source_path,
         OpenFlags::SQLITE_OPEN_READ_ONLY
             | OpenFlags::SQLITE_OPEN_NO_MUTEX
-            | OpenFlags::SQLITE_OPEN_NOFOLLOW,
+            | OpenFlags::SQLITE_OPEN_NOFOLLOW
+            | if immutable {
+                OpenFlags::SQLITE_OPEN_URI
+            } else {
+                OpenFlags::empty()
+            },
     )
     .map_err(|_| unavailable())?;
     capture::configure(&source)?;
@@ -199,7 +355,7 @@ pub(super) fn snapshot(
     let journal_mode: String = source
         .query_row("PRAGMA journal_mode", [], |r| r.get(0))
         .map_err(|_| unavailable())?;
-    if !journal_mode.eq_ignore_ascii_case("wal") {
+    if !immutable && !journal_mode.eq_ignore_ascii_case("wal") {
         return Err(unavailable());
     }
     let mut memory = Connection::open_in_memory().map_err(|_| unavailable())?;
@@ -277,10 +433,25 @@ pub(super) fn snapshot(
         crate::scoped_storage::retained_digest_for_profile(&memory, target, true)
             .map_err(|_| unavailable())?;
     drop(memory);
+    #[cfg(unix)]
+    if immutable
+        && desktop_closed_state(source_root)? != *desktop_before.as_ref().ok_or_else(unavailable)?
+    {
+        return Err(unavailable());
+    }
     let after = capture::fingerprints(source_root)?;
+    #[cfg(unix)]
+    if immutable
+        && desktop_closed_state(source_root)? != *desktop_before.as_ref().ok_or_else(unavailable)?
+    {
+        return Err(unavailable());
+    }
     // SQLite may change SHM read marks while reading. The bounded snapshot is
     // accepted only if the database and WAL themselves remain byte-stable.
-    if capture::fingerprints_changed(&before[..2], &after[..2]) {
+    if capture::fingerprints_changed(
+        if immutable { &before[..] } else { &before[..2] },
+        if immutable { &after[..] } else { &after[..2] },
+    ) {
         return Err(unavailable());
     }
     Ok(ScopedCaptureResult {
@@ -320,7 +491,11 @@ pub fn run_scoped_evidence_worker() -> Result<(), ProviderError> {
             probe_path: request.probe_path,
         };
         capture::validate_worker_request(&validation)?;
-        let result = snapshot(&request.source_root, &request.target_id)?;
+        let result = if request.desktop_closed_snapshot {
+            desktop_snapshot(&request.source_root, &request.target_id)?
+        } else {
+            snapshot(&request.source_root, &request.target_id)?
+        };
         let output = serde_json::to_vec(&result).map_err(|_| unavailable())?;
         if output.len() > 512 * 1024 {
             return Err(unavailable());
@@ -511,6 +686,38 @@ mod tests {
                 "12345678-1234-1234-1234-123456789abC"
             )
             .is_err()
+        );
+    }
+
+    #[test]
+    fn desktop_closed_wal_capture_requires_clean_stable_fixed_files() {
+        let (root, db) = fixture();
+        drop(db);
+        let root = root.path().canonicalize().unwrap();
+        let target = "12345678-1234-1234-1234-123456789abc";
+        assert!(desktop_closed_state(&root).unwrap().0);
+        let snapshot = desktop_snapshot(&root, target).unwrap();
+        assert_eq!(snapshot.rows[0].count, 1);
+        std::fs::write(root.join("state_5.sqlite-journal"), b"unexpected").unwrap();
+        assert!(desktop_snapshot(&root, target).is_err());
+        std::fs::remove_file(root.join("state_5.sqlite-journal")).unwrap();
+        std::fs::write(root.join("state_5.sqlite-wal"), b"unexpected").unwrap();
+        assert!(!desktop_closed_state(&root).unwrap().0);
+    }
+
+    #[test]
+    fn historical_worker_request_omits_desktop_selector() {
+        let request = ScopedCaptureRequest {
+            source_root: "/source".into(),
+            mirror_root: "/mirror".into(),
+            probe_path: "/probe".into(),
+            target_id: "12345678-1234-1234-1234-123456789abc".into(),
+            desktop_closed_snapshot: false,
+        };
+        assert!(
+            !serde_json::to_string(&request)
+                .unwrap()
+                .contains("desktopClosedSnapshot")
         );
     }
 

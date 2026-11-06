@@ -21,6 +21,18 @@ use std::{
 
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 mod capture;
+#[cfg(unix)]
+mod desktop_catalog;
+#[cfg(unix)]
+mod desktop_catalog_capture;
+#[cfg(unix)]
+mod desktop_cleanup;
+#[cfg(unix)]
+mod desktop_json;
+#[cfg(unix)]
+mod desktop_legacy;
+#[cfg(unix)]
+mod desktop_shared;
 pub mod graph;
 mod lifecycle;
 mod planning;
@@ -38,6 +50,8 @@ mod scoped_profile;
 #[cfg_attr(not(unix), allow(dead_code))]
 mod scoped_storage;
 pub use capture::run_evidence_capture_worker;
+#[cfg(unix)]
+pub use desktop_catalog_capture::run_catalog_evidence_worker;
 pub use lifecycle::CodexLifecycleAdapter;
 pub use scoped_capture::{
     ScopedCaptureRequest, ScopedCaptureResult, ScopedRowCommitment, run_scoped_evidence_worker,

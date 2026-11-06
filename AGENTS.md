@@ -9,15 +9,19 @@ before changing boundaries. Sol/high accepted the pure product-assessment
 direction before implementation. No complete Desktop removal profile is admitted.
 Native M8.1 and Claude M9 blockers remain unchanged.
 
-Read ADR-0019 for the current structural contract. Product Removed requires
+Read ADR-0020 for the current closed-Desktop operating contract and ADR-0019 for structural authority. Product Removed requires
 primary/canonical absence, every required persistent projection/reconstruction
 source structurally absent, collateral preservation, maximum-safe approved actions
 completed and independently validated exact-profile isolated restart/reappearance
 acceptance. The current rendered sidebar is not authority; proven ephemeral UI
 may stay stale. Unknown reconstruction risk blocks profile promotion. Production
-must not start/stop/kill/reload/restart Codex for visual verification. If any required
-store lacks a compatible lifetime writer fence, block before destructive effects
-and require Codex closed; process absence alone is not a relaunch fence. Historical
+must not start/stop/kill/reload/restart Codex for visual verification. The exact Desktop profile may require all capable writers to remain closed
+throughout its short transaction (explicit user-authorized operating precondition).
+Use repeated qualified process census, native/SQLite/index locks, fresh preimages
+and retained postverification. Process absence and compare+rename are not an OS
+lifetime fence/CAS. Observed interference refuses publication or leaves Unknown;
+never overwrite from a stale snapshot. No detected writer may precede target
+destruction. RequiresProviderClosed is a resolvable prerequisite. Historical
 M8.2 v2 plan/report/digest/replay stays primary-only and cannot authorize new effects.
 No complete Desktop removal profile is currently admitted.
 
