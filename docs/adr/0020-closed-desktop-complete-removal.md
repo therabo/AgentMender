@@ -3,6 +3,11 @@
 Status: Accepted design (2026-11-03); exact mutation implementation and isolated acceptance require independent verification.
 Partially supersedes [ADR-0019](0019-structural-removal-and-profile-acceptance.md) only for the explicit supported closed-writer operating model.
 
+Implementation note, 2026-11-06. Builds 24141 and 23880 have distinct candidate
+identities. The compiled admission list is empty, and any future entry binds
+one exact bundle tuple. The decision below remains the governing contract. See
+the [admission checkpoint](../milestones/m8-2-1-desktop-admission-2026-11-06.md).
+
 ## Context
 
 The new continuation prioritizes the first actual complete Desktop removal profile.

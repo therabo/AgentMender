@@ -1,6 +1,7 @@
 # Codex native lifecycle execution
 
-Current Desktop candidate status: [2026-11-06 checkpoint](milestones/m8-2-1-desktop-candidate-2026-11-06.md). Schema 4 remains unadmitted and M8.2.1 remains OPEN.
+Builds 24141 and 23880 have separate schema-4 candidates. Both remain unadmitted.
+See the [current admission checkpoint](milestones/m8-2-1-desktop-admission-2026-11-06.md).
 
 ## M8.2.1 graphical removal boundary
 
@@ -19,9 +20,10 @@ verification. The Desktop candidate requires relevant writers to remain closed t
 transaction; a process-absence snapshot alone does not fence a later launch.
 
 [ADR-0019](adr/0019-structural-removal-and-profile-acceptance.md) is current.
-Desktop 26.1027.51404/build23880 embeds 0.166.0-alpha.5.1. Static review revalidated
-its identity and found no lifetime global-Map writer fence; default packaged macOS
-launches bypass Electron singleton locking. No complete Desktop profile is admitted.
+Installed build 24141 and recovered build 23880 embed the same 0.166.0-alpha.5.1
+executable. Static review found no lifetime global-Map writer fence. Default
+packaged macOS launches bypass Electron singleton locking. No complete Desktop
+profile is admitted.
 Native descendant delete and Claude blockers remain unchanged. M8.2.1 is OPEN.
 
 ## Current scope and separate M8.2 contract

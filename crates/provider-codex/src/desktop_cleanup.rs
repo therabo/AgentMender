@@ -11,8 +11,8 @@ use agentmender_domain::{
     CleanupActionOutcome, CleanupBoundaryObservation as Boundary, CleanupFileIdentity,
     CleanupOutcome, CompleteRemovalAction as Action, CompleteRemovalActionProgress,
     CompleteRemovalManifest, CompleteRemovalProfile, CompleteRemovalReport,
-    DesktopBoundaryEvidence, DesktopFileCommitment, DesktopRemovalManifest, EntityId,
-    LifecycleIntent, LifecyclePlan, NativeLifecycleOperation, PersistentObservation,
+    DesktopBoundaryEvidence, DesktopBundlePin, DesktopFileCommitment, DesktopRemovalManifest,
+    EntityId, LifecycleIntent, LifecyclePlan, NativeLifecycleOperation, PersistentObservation,
     PersistentSurface, PersistentSurfaceObservation, PlanStatus, ProfileAdmission,
     WriterRequirement, validate_complete_removal_manifest, validate_complete_removal_report,
 };
@@ -36,10 +36,9 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-const BUNDLE: &str = "/Applications/ChatGPT.app";
-const MAIN: &str = "0c1cb804f8858c8ab059a26a1640b9a66c9a5071c48f39d6618e8698da370b56";
-const ASAR: &str = "52e0a65f9fea51f4287bbd98c63343761f9424517bb793652bb554764bc0bcc8";
-const CLI: &str = "58a91f6ea19bea477ae3a2ec48d619f0039afe75d3476260747e11d201fa7cea";
+const BUNDLE: &str = DesktopBundlePin::PATH;
+const PLIST_23880: &str = "7a3920d56d052cdf4bf803a92e2098be015eaf9263589d51e04ac4121f16eed7";
+const PLIST_24141: &str = "fb72c75a6cabb64f05420aef782b2d6ac86269a6c5557a75dabfa796905ee6ef";
 const LOCAL: &str = "local";
 const SOURCE: &str = "cli";
 const SURFACES: [&str; 10] = [
@@ -143,77 +142,94 @@ fn roots(
     Ok((identity(root, &root_meta), identity(user_data, &user_meta)))
 }
 
-/// Check the packaged bytes without executing a provider binary. The first
-/// profile binds the full plist, ASAR, main executable and both CLI entrypoints.
-fn bundle() -> Result<(), EffectError> {
+fn hash_bundle_member(path: &Path, size: u64) -> Result<String, EffectError> {
+    let mismatch = EffectError::ProfileMismatch;
+    if path.canonicalize().ok().as_deref() != Some(path) {
+        return Err(mismatch);
+    }
+    let file = File::from(
+        fs::open(
+            path,
+            OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC | OFlags::NONBLOCK,
+            Mode::empty(),
+        )
+        .map_err(|_| mismatch)?,
+    );
+    let before = file.metadata().map_err(|_| mismatch)?;
+    if !before.is_file() || before.nlink() != 1 || before.len() != size {
+        return Err(mismatch);
+    }
+    let mut input = BufReader::new(&file);
+    let mut hasher = Sha256::new();
+    let mut buf = [0; 64 * 1024];
+    let mut len = 0;
+    loop {
+        let n = input.read(&mut buf).map_err(|_| mismatch)?;
+        len += n as u64;
+        if len > size {
+            return Err(mismatch);
+        }
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+    let after = std::fs::symlink_metadata(path).map_err(|_| mismatch)?;
+    if len != size
+        || !after.is_file()
+        || path.canonicalize().ok().as_deref() != Some(path)
+        || identity(path, &before) != identity(path, &after)
+        || (before.ctime(), before.ctime_nsec()) != (after.ctime(), after.ctime_nsec())
+    {
+        return Err(mismatch);
+    }
+    Ok(hasher
+        .finalize()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect())
+}
+
+/// Verify the exact plist, executable, archive and CLI bytes without launching
+/// the provider. The plist selects one build, so mixed bundles cannot match.
+fn bundle() -> Result<DesktopBundlePin, EffectError> {
     if !cfg!(all(target_os = "macos", target_arch = "aarch64")) {
         return Err(EffectError::UnsupportedVersion);
     }
-    for (relative, expected) in [
-        (
-            "Contents/Info.plist",
-            "7a3920d56d052cdf4bf803a92e2098be015eaf9263589d51e04ac4121f16eed7",
-        ),
-        ("Contents/MacOS/ChatGPT", MAIN),
-        ("Contents/Resources/app.asar", ASAR),
+    bundle_at(Path::new(BUNDLE))
+}
+
+fn bundle_at(root: &Path) -> Result<DesktopBundlePin, EffectError> {
+    let mismatch = EffectError::ProfileMismatch;
+    let plist = root.join("Contents/Info.plist");
+    let digest = hash_bundle_member(&plist, 20_787)?;
+    let (pin, asar_size) = match digest.as_str() {
+        PLIST_23880 => (DesktopBundlePin::BUILD_23880, 674_614_757),
+        PLIST_24141 => (DesktopBundlePin::BUILD_24141, 674_615_301),
+        _ => return Err(mismatch),
+    };
+    for (relative, size, expected) in [
+        ("Contents/MacOS/ChatGPT", 71_008, pin.main_sha256),
+        ("Contents/Resources/app.asar", asar_size, pin.asar_sha256),
         (
             "Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex",
-            CLI,
+            267_754_128,
+            DesktopBundlePin::CLI_SHA256,
         ),
         (
             "Contents/Resources/codex-cli/bin/codex",
+            328,
             "50ab38ba21d0d9f8346f32f41848382f15b556190f3c7a07e885a4fb73e379c8",
         ),
     ] {
-        let path = Path::new(BUNDLE).join(relative);
-        if path.canonicalize().ok().as_deref() != Some(path.as_path()) {
-            return Err(EffectError::ProfileMismatch);
-        }
-        let file = File::from(
-            fs::open(
-                &path,
-                OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC | OFlags::NONBLOCK,
-                Mode::empty(),
-            )
-            .map_err(|_| EffectError::ProfileMismatch)?,
-        );
-        let before = file.metadata().map_err(|_| EffectError::ProfileMismatch)?;
-        if !before.is_file() || before.nlink() != 1 || before.len() > 512 * 1024 * 1024 {
-            return Err(EffectError::ProfileMismatch);
-        }
-        let mut input = BufReader::new(&file);
-        let mut hasher = Sha256::new();
-        let mut buf = [0; 64 * 1024];
-        let mut len = 0;
-        loop {
-            let n = input
-                .read(&mut buf)
-                .map_err(|_| EffectError::ProfileMismatch)?;
-            len += n as u64;
-            if len > before.len() {
-                return Err(EffectError::ProfileMismatch);
-            }
-            if n == 0 {
-                break;
-            }
-            hasher.update(&buf[..n]);
-        }
-        let after = std::fs::symlink_metadata(&path).map_err(|_| EffectError::ProfileMismatch)?;
-        if len != before.len()
-            || !after.is_file()
-            || identity(&path, &before) != identity(&path, &after)
-            || (before.ctime(), before.ctime_nsec()) != (after.ctime(), after.ctime_nsec())
-            || hasher
-                .finalize()
-                .iter()
-                .map(|b| format!("{b:02x}"))
-                .collect::<String>()
-                != expected
-        {
-            return Err(EffectError::ProfileMismatch);
+        if hash_bundle_member(&root.join(relative), size)? != expected {
+            return Err(mismatch);
         }
     }
-    Ok(())
+    if hash_bundle_member(&plist, 20_787)? != digest {
+        return Err(mismatch);
+    }
+    Ok(pin)
 }
 
 fn writers(adapter: &CodexScopedCleanupAdapter) -> DesktopWriterInventory {
@@ -234,10 +250,10 @@ fn require_closed(adapter: &CodexScopedCleanupAdapter) -> Result<(), EffectError
 pub(super) fn validate_read_profile(
     adapter: &CodexScopedCleanupAdapter,
     user_data: &Path,
-) -> Result<(), ProviderError> {
-    bundle().map_err(|_| {
+) -> Result<DesktopBundlePin, ProviderError> {
+    let pin = bundle().map_err(|_| {
         ProviderError::CapabilityUnavailable(
-            "exact Codex Desktop build 23880 is unavailable".into(),
+            "installed Codex Desktop bundle does not match a reviewed candidate".into(),
         )
     })?;
     roots(adapter, user_data).map_err(|_| {
@@ -245,7 +261,7 @@ pub(super) fn validate_read_profile(
             "exact Codex Desktop storage roots are unavailable".into(),
         )
     })?;
-    Ok(())
+    Ok(pin)
 }
 
 fn shared_images(
@@ -262,6 +278,7 @@ pub(super) fn observe(
     adapter: &CodexScopedCleanupAdapter,
     user_data: &Path,
     target: &str,
+    pin: DesktopBundlePin,
     observation: &mut ScopedCleanupObservation,
 ) -> Result<(), ProviderError> {
     fn unavailable(reason: EffectError) -> ProviderError {
@@ -297,6 +314,9 @@ pub(super) fn observe(
     let [global_backup, global_main, session_index] =
         shared_images(&desktop_root, target, catalog.bare_uuid_qualified).map_err(unavailable)?;
     let legacy = desktop_legacy::observe(&user_data).map_err(unavailable)?;
+    if bundle().map_err(unavailable)? != pin {
+        return Err(unavailable(EffectError::ProfileMismatch));
+    }
     let after = writers(adapter);
     let inventory = if before == after {
         after
@@ -319,7 +339,7 @@ pub(super) fn observe(
         writers_closed: inventory == DesktopWriterInventory::Closed,
     });
     manifest.profile = CompleteRemovalProfile {
-        identity: EntityId::new("codex-desktop-complete-removal-v1").expect("fixed profile id"),
+        identity: EntityId::new(pin.profile_id).expect("fixed profile id"),
         admission: ProfileAdmission::DesktopUnaccepted,
         writer_requirement: WriterRequirement::RequiresProviderClosed,
     };
@@ -341,12 +361,12 @@ pub(super) fn observe(
         desktop_root,
         user_data,
         bundle_path: PathBuf::from(BUNDLE),
-        bundle_id: "com.openai.codex".into(),
-        bundle_version: "26.1027.51404".into(),
-        bundle_build: "23880".into(),
-        bundle_sha256: MAIN.into(),
-        asar_sha256: ASAR.into(),
-        cli_sha256: CLI.into(),
+        bundle_id: DesktopBundlePin::ID.into(),
+        bundle_version: pin.version.into(),
+        bundle_build: pin.build.into(),
+        bundle_sha256: pin.main_sha256.into(),
+        asar_sha256: pin.asar_sha256.into(),
+        cli_sha256: DesktopBundlePin::CLI_SHA256.into(),
         stable_worker_sha256: manifest.primary.profile.executable_sha256.clone(),
         local_host: LOCAL.into(),
         source_kind: SOURCE.into(),
@@ -410,8 +430,10 @@ pub(super) fn preflight(
     user_data: &Path,
     plan: &LifecyclePlan,
 ) -> Result<(), EffectError> {
-    let (_, desktop) = manifest(adapter, user_data, plan)?;
-    bundle()?;
+    let (manifest, desktop) = manifest(adapter, user_data, plan)?;
+    if !bundle()?.matches_manifest(&manifest.profile, desktop) {
+        return Err(EffectError::ProfileMismatch);
+    }
     require_closed(adapter)?;
     check_roots(adapter, desktop)
 }
@@ -509,9 +531,10 @@ fn run(
     {
         return Err(unknown(invalid()));
     }
-    require_closed(adapter).map_err(never)?;
+    // Acquiring the fences can leave a permanent lock or SQLite sidecars.
+    require_closed(adapter).map_err(unknown)?;
     if !not_expired(expires_at) {
-        return Err(never(invalid()));
+        return Err(unknown(invalid()));
     }
     let target = CatalogTarget {
         thread_id: thread.into(),
@@ -692,4 +715,52 @@ pub(super) fn reconcile(
         false,
     );
     Ok(report)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bundle_member_requires_exact_length_and_unaliased_file() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().canonicalize().unwrap();
+        let member = root.join("member");
+        std::fs::write(&member, b"abc").unwrap();
+        assert_eq!(
+            hash_bundle_member(&member, 3).unwrap(),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+        for length in [2, 4] {
+            assert!(matches!(
+                hash_bundle_member(&member, length),
+                Err(EffectError::ProfileMismatch)
+            ));
+        }
+        let alias = root.join("alias");
+        std::os::unix::fs::symlink(&member, &alias).unwrap();
+        assert!(matches!(
+            hash_bundle_member(&alias, 3),
+            Err(EffectError::ProfileMismatch)
+        ));
+        std::fs::remove_file(&alias).unwrap();
+        std::fs::hard_link(&member, &alias).unwrap();
+        assert!(matches!(
+            hash_bundle_member(&member, 3),
+            Err(EffectError::ProfileMismatch)
+        ));
+    }
+
+    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+    #[test]
+    #[ignore = "requires both exact signed bundles; reads bundle files only"]
+    fn exact_installed_and_recovered_bundle_pins() {
+        let recovered =
+            PathBuf::from(std::env::var_os("AGENTMENDER_RECOVERED_DESKTOP_BUNDLE").unwrap());
+        assert_eq!(
+            bundle_at(&recovered).unwrap(),
+            DesktopBundlePin::BUILD_23880
+        );
+        assert_eq!(bundle().unwrap(), DesktopBundlePin::BUILD_24141);
+    }
 }

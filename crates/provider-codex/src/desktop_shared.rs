@@ -53,6 +53,7 @@ pub(crate) fn reduce_index(
     }
     let mut output = Vec::with_capacity(bytes.len());
     let mut count = 0_u64;
+    let target_uuid = uuid::Uuid::try_parse(target).ok();
     for line in bytes.split_inclusive(|b| *b == b'\n') {
         if line.len() > MAX_INDEX_LINE_BYTES {
             return Err(SharedReductionError::TooLarge);
@@ -67,9 +68,17 @@ pub(crate) fn reduce_index(
             output.extend_from_slice(line);
             continue;
         };
-        let claims_target = fields
-            .iter()
-            .any(|(key, value)| key == "id" && value.as_str() == Some(target));
+        let mut claims_target = false;
+        for (_, value) in fields.iter().filter(|(key, _)| key == "id") {
+            let Some(id) = value.as_str() else { continue };
+            if id == target {
+                claims_target = true;
+            } else if target_uuid.is_some() && uuid::Uuid::try_parse(id).ok() == target_uuid {
+                // The provider also resolves noncanonical UUID text. Treat it
+                // as unresolved evidence without widening the reducer's edits.
+                return Err(SharedReductionError::UnsafeTargetRow);
+            }
+        }
         if !claims_target {
             output.extend_from_slice(line);
             continue;
@@ -117,6 +126,25 @@ mod tests {
     fn preserves_similar_and_unrelated_rows() {
         let input = b"{\"id\":\"TT\",\"thread_name\":\"a\",\"updated_at\":\"b\"}\n{}";
         assert_eq!(reduce_index(input, "T").unwrap(), (input.to_vec(), 0));
+    }
+
+    #[test]
+    fn refuses_provider_equivalent_noncanonical_ids() {
+        let target = "12345678-1234-1234-1234-123456789abc";
+        let peer = br#"{"id":"12345678-1234-1234-1234-123456789ABD","thread_name":"peer","updated_at":"now"}"#;
+        assert_eq!(reduce_index(peer, target).unwrap(), (peer.to_vec(), 0));
+        for id in [
+            "12345678-1234-1234-1234-123456789ABC",
+            "12345678123412341234123456789abc",
+            "urn:uuid:12345678-1234-1234-1234-123456789abc",
+            "{12345678-1234-1234-1234-123456789abc}",
+        ] {
+            let row = format!(r#"{{"id":"{id}","thread_name":"target","updated_at":"now"}}"#);
+            assert_eq!(
+                reduce_index(row.as_bytes(), target),
+                Err(SharedReductionError::UnsafeTargetRow)
+            );
+        }
     }
 }
 

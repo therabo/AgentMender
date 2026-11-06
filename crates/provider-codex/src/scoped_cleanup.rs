@@ -834,9 +834,11 @@ impl agentmender_provider_api::ScopedCleanupReadPort for CodexScopedCleanupAdapt
         {
             return Err(unavailable());
         }
-        if let Some(user_data) = &self.desktop_user_data {
-            crate::desktop_cleanup::validate_read_profile(self, user_data)?;
-        }
+        let desktop_pin = self
+            .desktop_user_data
+            .as_deref()
+            .map(|path| crate::desktop_cleanup::validate_read_profile(self, path))
+            .transpose()?;
         self.validate_executable().map_err(|_| unavailable())?;
         let db = self.capture_target(target)?;
         let cwd = db.cwd.as_deref().ok_or_else(unavailable)?;
@@ -1052,14 +1054,12 @@ impl agentmender_provider_api::ScopedCleanupReadPort for CodexScopedCleanupAdapt
             },
             complete_removal_evidence,
         };
-        #[allow(unused_mut)] // Desktop augmentation is Unix-only.
         let mut observation = ScopedCleanupObservation {
             graph: graph.finish()?,
             context,
         };
-        #[cfg(unix)]
-        if let Some(path) = &self.desktop_user_data {
-            crate::desktop_cleanup::observe(self, path, target, &mut observation)?;
+        if let (Some(path), Some(pin)) = (&self.desktop_user_data, desktop_pin) {
+            crate::desktop_cleanup::observe(self, path, target, pin, &mut observation)?;
         }
         Ok(observation)
     }

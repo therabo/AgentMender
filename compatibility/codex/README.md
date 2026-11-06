@@ -1,15 +1,16 @@
 # Codex compatibility evidence
 
-Current Desktop schema-4 candidate and exact-build drift: [checkpoint](../../docs/milestones/m8-2-1-desktop-candidate-2026-11-06.md). The profile remains unadmitted.
+Current Desktop schema-4 evidence is in the [admission checkpoint](../../docs/milestones/m8-2-1-desktop-admission-2026-11-06.md).
 
 ## M8.2.1 complete-removal compatibility
 
 M8.2 primary cleanup is PASS and [integrated](../../docs/milestones/m8-2-integration.md)
 at a284767157ace8769deee85b195b5b70efe374d8. M8.2.1 is OPEN under
 [ADR-0019](../../docs/adr/0019-structural-removal-and-profile-acceptance.md), with zero admitted
-complete graphical removal profiles. Installed Desktop 26.1027.51404/build23880
-embeds CLI 0.166.0-alpha.5.1, which cannot inherit stable scoped-cleanup-v1 authority.
-A stable CLI override is a research composite candidate, not an enabled profile.
+complete graphical removal profiles. The [installed 24141 candidate](desktop-complete-removal-24141-v1/README.md)
+and [recovered 23880 candidate](desktop-complete-removal-v1/catalog/README.md)
+are separate. Both embed CLI 0.166.0-alpha.5.1. A stable 0.166.0 primary worker
+override still requires exact composite acceptance.
 Exact static projection/source hashes, runtime evidence gaps, app coordination and
 restart acceptance must be considered independently. Historical v1 pins/receipts
 below remain primary-cleanup evidence and do not promise UI disappearance.

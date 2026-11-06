@@ -1,6 +1,7 @@
 # M8.1 Codex full cleanup / lifecycle compatibility refresh
 
-Current Desktop candidate status: [2026-11-06 checkpoint](milestones/m8-2-1-desktop-candidate-2026-11-06.md). Schema 4 remains unadmitted and M8.2.1 remains OPEN.
+Builds 24141 and 23880 have separate schema-4 candidates. Both remain unadmitted.
+See the [current admission checkpoint](milestones/m8-2-1-desktop-admission-2026-11-06.md).
 
 ## Historical M8.1 verdict and current development
 

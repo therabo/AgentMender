@@ -13,8 +13,9 @@ removed sessions do not reappear. Production never restarts Codex for visual
 verification. The Desktop candidate requires relevant writers to remain closed throughout the
 transaction; a process-absence snapshot alone does not fence a later launch.
 
-The schema-4 Desktop candidate adds frozen exact actions and remains explicitly
-unadmitted; see the [checkpoint](milestones/m8-2-1-desktop-candidate-2026-11-06.md)
+Schema 4 binds frozen exact actions to separate bundle tuples for 24141 and
+23880. Both candidates remain unadmitted. See the
+[admission checkpoint](milestones/m8-2-1-desktop-admission-2026-11-06.md)
 and [ADR-0020](adr/0020-closed-desktop-complete-removal.md). Expanded primary
 plans use schema 3 and `CompleteRemovalManifest`, committing the
 expanded primary profile, exact row preimages/counts, ordered actions, retained

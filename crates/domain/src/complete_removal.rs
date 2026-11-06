@@ -99,6 +99,51 @@ pub struct DesktopRemovalManifest {
     pub global_main: DesktopFileCommitment,
     pub session_index: DesktopFileCommitment,
 }
+/// Exact bundle identities eligible for candidate evidence only.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DesktopBundlePin {
+    pub profile_id: &'static str,
+    pub version: &'static str,
+    pub build: &'static str,
+    pub main_sha256: &'static str,
+    pub asar_sha256: &'static str,
+}
+impl DesktopBundlePin {
+    pub const PATH: &'static str = "/Applications/ChatGPT.app";
+    pub const ID: &'static str = "com.openai.codex";
+    pub const CLI_SHA256: &'static str =
+        "58a91f6ea19bea477ae3a2ec48d619f0039afe75d3476260747e11d201fa7cea";
+
+    pub const BUILD_23880: Self = Self {
+        profile_id: "codex-desktop-complete-removal-v1",
+        version: "26.1027.51404",
+        build: "23880",
+        main_sha256: "0c1cb804f8858c8ab059a26a1640b9a66c9a5071c48f39d6618e8698da370b56",
+        asar_sha256: "52e0a65f9fea51f4287bbd98c63343761f9424517bb793652bb554764bc0bcc8",
+    };
+    pub const BUILD_24141: Self = Self {
+        profile_id: "codex-desktop-complete-removal-24141-v1",
+        version: "26.1027.61615",
+        build: "24141",
+        main_sha256: "b3783838c86c3124d4b0fd5fa5c2d2fca327b4b4f52c7c7c369df25cfa879509",
+        asar_sha256: "bb88615052255e79b5977885f9a0cc212c268589587c79d4d3b7c4b46e881a95",
+    };
+
+    pub fn matches_manifest(
+        self,
+        profile: &CompleteRemovalProfile,
+        desktop: &DesktopRemovalManifest,
+    ) -> bool {
+        profile.identity.as_str() == self.profile_id
+            && desktop.bundle_path == std::path::Path::new(Self::PATH)
+            && desktop.bundle_id == Self::ID
+            && desktop.bundle_version == self.version
+            && desktop.bundle_build == self.build
+            && desktop.bundle_sha256 == self.main_sha256
+            && desktop.asar_sha256 == self.asar_sha256
+            && desktop.cli_sha256 == Self::CLI_SHA256
+    }
+}
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CompleteRemovalManifest {
@@ -130,7 +175,10 @@ pub struct DesktopBoundaryEvidence {
 /// obtained from serialized claims or a provider observation.
 pub fn validate_complete_removal_manifest(m: &CompleteRemovalManifest) -> bool {
     if let Some(d) = &m.desktop {
-        return compiled_desktop_mutation_profile() && valid_desktop_contract(m, d);
+        return ADMITTED_DESKTOP_BUNDLES
+            .iter()
+            .any(|pin| pin.matches_manifest(&m.profile, d))
+            && valid_desktop_contract(m, d);
     }
     validate_cleanup_manifest(&m.primary)
         && m.primary.optional_index.is_none()
@@ -233,10 +281,9 @@ fn desktop_distinct_files(m: &CompleteRemovalManifest, d: &DesktopRemovalManifes
         .chain(d.legacy.files.iter().map(|f| &f.identity))
         .all(|i| physical.insert((i.device, i.inode)))
 }
-fn compiled_desktop_mutation_profile() -> bool {
-    // No exact profile has passed the owned two-cycle acceptance.
-    false
-}
+// Add an exact bundle only after its own isolated two-cycle acceptance.
+const ADMITTED_DESKTOP_BUNDLES: &[DesktopBundlePin] = &[];
+
 pub(crate) fn valid_desktop_contract(
     m: &CompleteRemovalManifest,
     d: &DesktopRemovalManifest,
@@ -253,7 +300,9 @@ pub(crate) fn valid_desktop_contract(
         && m.primary.profile.history_layout == "legacy-plain"
         && m.primary.profile.executable_sha256
             == "39acf979729dd290f9a24ee38b2914e036c91b65952872e28ae2a6b88a7db7c1"
-        && m.profile.identity.as_str() == "codex-desktop-complete-removal-v1"
+        && [DesktopBundlePin::BUILD_23880, DesktopBundlePin::BUILD_24141]
+            .into_iter()
+            .any(|pin| pin.matches_manifest(&m.profile, d))
         && m.profile.admission == ProfileAdmission::DesktopUnaccepted
         && m.profile.writer_requirement == WriterRequirement::RequiresProviderClosed
         && m.actions
@@ -271,13 +320,6 @@ pub(crate) fn valid_desktop_contract(
         && !d.user_data.path.starts_with(&d.desktop_root.path)
         && !d.desktop_root.path.starts_with(&d.user_data.path)
         && (d.user_data.device, d.user_data.inode) != (d.desktop_root.device, d.desktop_root.inode)
-        && d.bundle_path == std::path::Path::new("/Applications/ChatGPT.app")
-        && d.bundle_id == "com.openai.codex"
-        && d.bundle_version == "26.1027.51404"
-        && d.bundle_build == "23880"
-        && d.bundle_sha256 == "0c1cb804f8858c8ab059a26a1640b9a66c9a5071c48f39d6618e8698da370b56"
-        && d.asar_sha256 == "52e0a65f9fea51f4287bbd98c63343761f9424517bb793652bb554764bc0bcc8"
-        && d.cli_sha256 == "58a91f6ea19bea477ae3a2ec48d619f0039afe75d3476260747e11d201fa7cea"
         && d.stable_worker_sha256 == m.primary.profile.executable_sha256
         && d.local_host == "local"
         && d.source_kind == "cli"

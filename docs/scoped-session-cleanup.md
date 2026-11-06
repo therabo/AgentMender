@@ -1,6 +1,7 @@
 # Scoped session cleanup and complete session removal
 
-Current Desktop candidate status: [2026-11-06 checkpoint](milestones/m8-2-1-desktop-candidate-2026-11-06.md). Schema 4 remains unadmitted and M8.2.1 remains OPEN.
+Builds 24141 and 23880 have separate schema-4 candidates. Both remain unadmitted.
+See the [current admission checkpoint](milestones/m8-2-1-desktop-admission-2026-11-06.md).
 
 M8.2 primary cleanup is **PASS**, integrated at
 `a284767157ace8769deee85b195b5b70efe374d8`; local, isolated and exact-head

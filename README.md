@@ -30,9 +30,9 @@ New schema-3 `scoped-cleanup-v2` plans materially expand primary cleanup with ex
 target attachment metadata and guardian feedback. Shared attachment payloads and
 foreign records survive. Per-action journal progress stops subsequent effects when
 recording fails. Historical v2 plans/grants keep their original scope.
-The schema-4 Desktop candidate integrates fixed persistent actions but remains
-unadmitted and cannot report product Removed; exact isolated reconstruction
-acceptance is missing. See [the candidate checkpoint](docs/milestones/m8-2-1-desktop-candidate-2026-11-06.md),
+Separate schema-4 candidates pin installed build 24141 and recovered build
+23880. Both remain unadmitted pending their own isolated reconstruction
+acceptance. See [the admission checkpoint](docs/milestones/m8-2-1-desktop-admission-2026-11-06.md),
 [the current contract](docs/adr/0020-closed-desktop-complete-removal.md),
 [scoped behavior](docs/scoped-session-cleanup.md) and
 [continuation report](docs/milestones/m8-2-1-continuation-2026-11-03.md).

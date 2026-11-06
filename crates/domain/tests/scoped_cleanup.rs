@@ -541,17 +541,18 @@ fn schema_three_binds_expanded_scope_and_never_claims_desktop_acceptance() {
     };
     let digest = "0".repeat(64);
     let mut unadmitted = manifest.clone();
+    let pin = DesktopBundlePin::BUILD_24141;
     unadmitted.desktop = Some(DesktopRemovalManifest {
         desktop_root: primary.root.clone(),
         user_data: primary.root.clone(),
-        bundle_path: "/Applications/Codex.app".into(),
-        bundle_id: "com.openai.codex".into(),
-        bundle_version: "26.1027.51404".into(),
-        bundle_build: "23880".into(),
-        asar_sha256: digest.clone(),
+        bundle_path: DesktopBundlePin::PATH.into(),
+        bundle_id: DesktopBundlePin::ID.into(),
+        bundle_version: pin.version.into(),
+        bundle_build: pin.build.into(),
+        asar_sha256: pin.asar_sha256.into(),
         stable_worker_sha256: digest.clone(),
-        bundle_sha256: digest.clone(),
-        cli_sha256: digest.clone(),
+        bundle_sha256: pin.main_sha256.into(),
+        cli_sha256: DesktopBundlePin::CLI_SHA256.into(),
         local_host: "local".into(),
         source_kind: "local".into(),
         target_title: "target".into(),
@@ -575,7 +576,7 @@ fn schema_three_binds_expanded_scope_and_never_claims_desktop_acceptance() {
         global_main: absent.clone(),
         session_index: absent,
     });
-    unadmitted.profile.identity = id("codex-desktop-complete-removal-v1");
+    unadmitted.profile.identity = id(pin.profile_id);
     unadmitted.profile.admission = ProfileAdmission::DesktopUnaccepted;
     unadmitted.profile.writer_requirement = WriterRequirement::RequiresProviderClosed;
     unadmitted.actions = vec![
@@ -586,6 +587,14 @@ fn schema_three_binds_expanded_scope_and_never_claims_desktop_acceptance() {
         CompleteRemovalAction::PrimaryPayload,
         CompleteRemovalAction::StateThreadRecords,
     ];
+    let desktop = unadmitted.desktop.as_ref().unwrap();
+    assert!(pin.matches_manifest(&unadmitted.profile, desktop));
+    let mut mixed = desktop.clone();
+    mixed.asar_sha256 = DesktopBundlePin::BUILD_23880.asar_sha256.into();
+    assert!(!pin.matches_manifest(&unadmitted.profile, &mixed));
+    let mut historical = unadmitted.profile.clone();
+    historical.identity = id(DesktopBundlePin::BUILD_23880.profile_id);
+    assert!(!pin.matches_manifest(&historical, desktop));
     assert!(!validate_complete_removal_manifest(&unadmitted));
     let mut desktop_context = context.clone();
     desktop_context
