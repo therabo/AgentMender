@@ -4,7 +4,7 @@ use agentmender_domain::CleanupFileIdentity;
 use agentmender_persistence::EffectError;
 use agentmender_provider_api::{ProviderError, evidence::EvidenceSandbox, process};
 use rusqlite::{Connection, OpenFlags};
-use rustix::fs::{self, Mode, OFlags};
+use rustix::fs::{self, Mode};
 use serde::{Deserialize, Serialize};
 use std::{
     fs::File,
@@ -137,6 +137,7 @@ fn open_source(
             .map(|db| (db, false))
             .map_err(|_| bad());
     }
+    use rustix::fs::OFlags;
     use std::{io::Read, os::unix::ffi::OsStrExt};
     let root_fd = root(&root_id.path)?;
     let sqlite = dir(&root_fd, "sqlite".as_ref())?;
