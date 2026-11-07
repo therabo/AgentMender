@@ -1,6 +1,6 @@
 # Codex compatibility evidence
 
-Current Desktop schema-4 evidence is in the [admission checkpoint](../../docs/milestones/m8-2-1-desktop-admission-2026-11-06.md).
+Current Desktop schema-4 evidence is in the [structural checkpoint](../../docs/milestones/m8-2-1-structural-2026-11-07.md).
 
 ## M8.2.1 complete-removal compatibility
 
@@ -21,8 +21,8 @@ below remain primary-cleanup evidence and do not promise UI disappearance.
 primary cleanup with exact attachment/guardian metadata actions. Old v2 plans and
 grants cannot reach it. It is not a graphical profile. Current removal authority
 is structural persistent state under [ADR-0019](../../docs/adr/0019-structural-removal-and-profile-acceptance.md);
-production never restarts Codex for visual verification. Isolated restart/reappearance
-acceptance remains required before complete-profile admission.
+exact persistent-source closure governs admission. Graphical acceptance is manual
+under [ADR-0021](../../docs/adr/0021-structural-admission-and-manual-desktop-acceptance.md).
 
 ## M8.2: separate scoped-local compatibility axis
 

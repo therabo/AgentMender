@@ -8,6 +8,9 @@ identities. The compiled admission list is empty, and any future entry binds
 one exact bundle tuple. The decision below remains the governing contract. See
 the [admission checkpoint](../milestones/m8-2-1-desktop-admission-2026-11-06.md).
 
+[ADR-0021](0021-structural-admission-and-manual-desktop-acceptance.md) supersedes
+the automated graphical acceptance requirements below.
+
 ## Context
 
 The new continuation prioritizes the first actual complete Desktop removal profile.

@@ -58,10 +58,15 @@ const SURFACES: [&str; 10] = [
 /// one-shot handoff. Sibling adapters cannot mint a second execution grant.
 pub(super) struct DesktopExecution<'a> {
     manifest: &'a CompleteRemovalManifest,
+    adapter: &'a CodexScopedCleanupAdapter,
 }
 impl DesktopExecution<'_> {
     pub(super) fn manifest(&self) -> &CompleteRemovalManifest {
         self.manifest
+    }
+
+    pub(super) fn require_closed(&self) -> Result<(), EffectError> {
+        require_closed(self.adapter)
     }
 }
 
@@ -557,10 +562,10 @@ fn run(
         require_closed(adapter).map_err(unknown)?;
         let post = match action {
             Action::GlobalBackup => {
-                shared::publish_global(execution, &shared, GlobalKind::Backup, true)
+                shared::publish_global(execution, &shared, GlobalKind::Backup, None)
             }
             Action::GlobalMain => {
-                shared::publish_global(execution, &shared, GlobalKind::Main, true)
+                shared::publish_global(execution, &shared, GlobalKind::Main, post_images.first())
             }
             Action::SessionIndex => shared::publish_index(execution, &shared),
             _ => return Err(unknown(invalid())),
@@ -644,7 +649,7 @@ pub(super) fn dispatch(
                 run(
                     adapter,
                     desktop,
-                    &DesktopExecution { manifest },
+                    &DesktopExecution { manifest, adapter },
                     &observation,
                     expires_at,
                     journal,

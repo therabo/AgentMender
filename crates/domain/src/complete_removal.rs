@@ -281,7 +281,7 @@ fn desktop_distinct_files(m: &CompleteRemovalManifest, d: &DesktopRemovalManifes
         .chain(d.legacy.files.iter().map(|f| &f.identity))
         .all(|i| physical.insert((i.device, i.inode)))
 }
-// Add an exact bundle only after its own isolated two-cycle acceptance.
+// Add an exact bundle only after independently verified structural closure (ADR-0021).
 const ADMITTED_DESKTOP_BUNDLES: &[DesktopBundlePin] = &[];
 
 pub(crate) fn valid_desktop_contract(
@@ -475,7 +475,7 @@ pub fn validate_complete_removal_report(
             .zip(&m.required_surfaces)
             .all(|(a, b)| a.id == b.id)
 }
-/// No currently compiled Desktop profile has isolated restart acceptance.
+/// No currently compiled Desktop profile has complete structural admission.
 pub fn assess_complete_removal(
     m: &CompleteRemovalManifest,
     r: &CompleteRemovalReport,

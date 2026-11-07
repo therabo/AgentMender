@@ -853,8 +853,10 @@ mod files {
         name: &str,
         expected: &DesktopFileCommitment,
         reducer: &Reducer<'_>,
+        revalidate: impl Fn() -> Result<(), EffectError>,
     ) -> Result<DesktopFileCommitment, EffectError> {
         fence.validate()?;
+        revalidate()?;
         let (current, retained) = observation(&fence.fd, &fence.root.path, name, reducer)?;
         if &current != expected {
             return bad();
@@ -919,6 +921,7 @@ mod files {
                     f();
                 }
             });
+            revalidate()?;
             let (source, fresh, fresh_metadata, ctime) =
                 read(&fence.fd, &fence.root.path, name)?.ok_or(EffectError::InvalidEvidence)?;
             if Some(&source) != expected.identity.as_ref()
@@ -993,11 +996,30 @@ mod files {
         }
         outcome
     }
+
+    fn verify_companion(
+        fence: &SharedFence,
+        kind: GlobalKind,
+        expected: &DesktopFileCommitment,
+    ) -> Result<(), EffectError> {
+        match read(&fence.fd, &fence.root.path, kind.name())? {
+            None if expected.identity.is_none() => Ok(()),
+            Some((identity, bytes, metadata, _))
+                if Some(&identity) == expected.identity.as_ref()
+                    && Some(digest(&bytes)) == expected.preimage_sha256
+                    && Some(metadata.digest()) == expected.metadata_sha256 =>
+            {
+                Ok(())
+            }
+            _ => bad(),
+        }
+    }
+
     pub(crate) fn publish_global(
         execution: &crate::desktop_cleanup::DesktopExecution<'_>,
         fence: &SharedFence,
         kind: GlobalKind,
-        ownership: bool,
+        backup_postimage: Option<&DesktopFileCommitment>,
     ) -> Result<DesktopFileCommitment, EffectError> {
         let manifest = execution.manifest();
         if fence.root != manifest.primary.root {
@@ -1007,15 +1029,30 @@ mod files {
             .desktop
             .as_ref()
             .ok_or(EffectError::InvalidEvidence)?;
-        let expected = match kind {
-            GlobalKind::Main => &desktop.global_main,
-            GlobalKind::Backup => &desktop.global_backup,
+        let (expected, companion_kind, companion) = match kind {
+            GlobalKind::Main => (
+                &desktop.global_main,
+                GlobalKind::Backup,
+                backup_postimage.ok_or(EffectError::InvalidEvidence)?,
+            ),
+            GlobalKind::Backup => (
+                &desktop.global_backup,
+                GlobalKind::Main,
+                &desktop.global_main,
+            ),
         };
         let target = manifest.primary.native_session_id.as_str();
         let host = local_host_scope(&desktop.desktop_root, &desktop.local_host)?;
-        publish(fence, kind.name(), expected, &|b| {
-            reduce_global(b, target, &host, ownership)
-        })
+        publish(
+            fence,
+            kind.name(),
+            expected,
+            &|b| reduce_global(b, target, &host, true),
+            || {
+                verify_companion(fence, companion_kind, companion)?;
+                execution.require_closed()
+            },
+        )
     }
     pub(crate) fn publish_index(
         execution: &crate::desktop_cleanup::DesktopExecution<'_>,
@@ -1030,9 +1067,13 @@ mod files {
             .as_ref()
             .ok_or(EffectError::InvalidEvidence)?;
         let target = manifest.primary.native_session_id.as_str();
-        publish(fence, "session_index.jsonl", &desktop.session_index, &|b| {
-            reduce_index(b, target)
-        })
+        publish(
+            fence,
+            "session_index.jsonl",
+            &desktop.session_index,
+            &|b| reduce_index(b, target),
+            || execution.require_closed(),
+        )
     }
     pub(crate) fn local_host_scope(
         root: &CleanupFileIdentity,
@@ -1045,6 +1086,14 @@ mod files {
     mod tests {
         use super::*;
         use std::os::unix::fs::MetadataExt;
+        fn publish_fixture(
+            fence: &SharedFence,
+            name: &str,
+            expected: &DesktopFileCommitment,
+            reducer: &Reducer<'_>,
+        ) -> Result<DesktopFileCommitment, EffectError> {
+            publish(fence, name, expected, reducer, || Ok(()))
+        }
 
         fn fixture() -> (tempfile::TempDir, SharedFence) {
             let dir = tempfile::tempdir().unwrap();
@@ -1092,7 +1141,7 @@ mod files {
             let concurrent = b"unrelated concurrent bytes\n";
             std::fs::write(&path, concurrent).unwrap();
             assert!(
-                publish(&fence, "session_index.jsonl", &expected, &|b| reduce_index(
+                publish_fixture(&fence, "session_index.jsonl", &expected, &|b| reduce_index(
                     b, "T"
                 ))
                 .is_err()
@@ -1142,7 +1191,7 @@ mod files {
             std::fs::rename(&path, &moved).unwrap();
             symlink(&moved, &path).unwrap();
             assert!(
-                publish(&fence, "session_index.jsonl", &expected, &|b| reduce_index(
+                publish_fixture(&fence, "session_index.jsonl", &expected, &|b| reduce_index(
                     b, "T"
                 ))
                 .is_err()
@@ -1173,7 +1222,7 @@ mod files {
                 }))
             });
             assert!(
-                publish(&fence, "session_index.jsonl", &expected, &|b| reduce_index(
+                publish_fixture(&fence, "session_index.jsonl", &expected, &|b| reduce_index(
                     b, "T"
                 ))
                 .is_err()
@@ -1208,7 +1257,7 @@ mod files {
                 }));
             });
             assert!(
-                publish(&fence, "session_index.jsonl", &expected, &|b| reduce_index(
+                publish_fixture(&fence, "session_index.jsonl", &expected, &|b| reduce_index(
                     b, "T"
                 ))
                 .is_err()
@@ -1219,22 +1268,114 @@ mod files {
         fn independent_global_main_and_backup_publication() {
             let (dir, fence) = fixture();
             let input = br#"{"pinned-thread-ids":["T","U"],"unknown":{"n":1e+09}}"#;
-            for name in [".codex-global-state.json", ".codex-global-state.json.bak"] {
-                std::fs::write(dir.path().join(name), input).unwrap();
-                let expected = observation(&fence.fd, &fence.root.path, name, &|b| {
-                    reduce_global(b, "T", "local:/x", true)
+            let clean = br#"{"pinned-thread-ids":["U"],"unknown":{"n":1e+09}}"#;
+            let backup = GlobalKind::Backup;
+            let main = GlobalKind::Main;
+            let backup_path = dir.path().join(backup.name());
+            let main_path = dir.path().join(main.name());
+            std::fs::write(&backup_path, input).unwrap();
+            std::fs::write(&main_path, input).unwrap();
+            let [backup_before, main_before] =
+                observe_globals(&fence.root, "T", "local:/x", true).unwrap();
+            let reduce = |bytes: &[u8]| reduce_global(bytes, "T", "local:/x", true);
+            let backup_postimage = publish(&fence, backup.name(), &backup_before, &reduce, || {
+                verify_companion(&fence, main, &main_before)
+            })
+            .unwrap();
+            // A reader after the first publication must still see the target
+            // in the main copy. The old pair is stale and cannot be retried.
+            assert_eq!(std::fs::read(&backup_path).unwrap(), clean);
+            assert_eq!(std::fs::read(&main_path).unwrap(), input);
+            assert_eq!(
+                observe_globals(&fence.root, "T", "local:/x", true).unwrap(),
+                [backup_postimage.clone(), main_before.clone()]
+            );
+            assert!(
+                publish(&fence, main.name(), &main_before, &reduce, || {
+                    verify_companion(&fence, backup, &backup_before)
                 })
-                .unwrap()
-                .0;
-                publish(&fence, name, &expected, &|b| {
-                    reduce_global(b, "T", "local:/x", true)
-                })
-                .unwrap();
-                assert_eq!(
-                    std::fs::read(dir.path().join(name)).unwrap(),
-                    br#"{"pinned-thread-ids":["U"],"unknown":{"n":1e+09}}"#
+                .is_err()
+            );
+            assert_eq!(std::fs::read(&main_path).unwrap(), input);
+            let main_postimage = publish(&fence, main.name(), &main_before, &reduce, || {
+                verify_companion(&fence, backup, &backup_postimage)
+            })
+            .unwrap();
+            assert_eq!(std::fs::read(&main_path).unwrap(), clean);
+            assert_eq!(
+                observe_globals(&fence.root, "T", "local:/x", true).unwrap(),
+                [backup_postimage, main_postimage]
+            );
+        }
+        #[test]
+        fn companion_drift_during_staging_refuses_either_copy() {
+            for (current, companion) in [
+                (GlobalKind::Backup, GlobalKind::Main),
+                (GlobalKind::Main, GlobalKind::Backup),
+            ] {
+                let (dir, fence) = fixture();
+                let current_path = dir.path().join(current.name());
+                let companion_path = dir.path().join(companion.name());
+                let original = br#"{"pinned-thread-ids":["T","U"]}"#;
+                let clean = br#"{"pinned-thread-ids":["U"]}"#;
+                std::fs::write(&current_path, original).unwrap();
+                std::fs::write(&companion_path, clean).unwrap();
+                let [backup, main] = observe_globals(&fence.root, "T", "local:/x", true).unwrap();
+                let (expected, companion_expected) = match current {
+                    GlobalKind::Backup => (&backup, &main),
+                    GlobalKind::Main => (&main, &backup),
+                };
+                let changed = br#"{"pinned-thread-ids":["U"],"electron-persisted-atom-state":{"unread-thread-ids-by-host-v1":{"remote":["T"]}}}"#;
+                let injected_path = companion_path.clone();
+                BEFORE_FINAL_COMPARE.with(|hook| {
+                    *hook.borrow_mut() = Some(Box::new(move || {
+                        std::fs::write(injected_path, changed).unwrap()
+                    }))
+                });
+                assert!(
+                    publish(
+                        &fence,
+                        current.name(),
+                        expected,
+                        &|b| reduce_global(b, "T", "local:/x", true),
+                        || verify_companion(&fence, companion, companion_expected),
+                    )
+                    .is_err()
                 );
+                assert_eq!(std::fs::read(current_path).unwrap(), original);
+                assert_eq!(std::fs::read(companion_path).unwrap(), changed);
+                assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 3);
             }
+        }
+        #[test]
+        fn writer_prerequisite_failure_after_staging_keeps_destination() {
+            use std::{cell::Cell, rc::Rc};
+            let (dir, fence) = fixture();
+            let path = dir.path().join(GlobalKind::Main.name());
+            let original = br#"{"pinned-thread-ids":["T","U"]}"#;
+            std::fs::write(&path, original).unwrap();
+            let [_, expected] = observe_globals(&fence.root, "T", "local:/x", true).unwrap();
+            let active = Rc::new(Cell::new(false));
+            let late_writer = Rc::clone(&active);
+            BEFORE_FINAL_COMPARE.with(|hook| {
+                *hook.borrow_mut() = Some(Box::new(move || late_writer.set(true)));
+            });
+            let outcome = publish(
+                &fence,
+                GlobalKind::Main.name(),
+                &expected,
+                &|b| reduce_global(b, "T", "local:/x", true),
+                || {
+                    if active.get() {
+                        Err(EffectError::RequiresProviderClosed)
+                    } else {
+                        Ok(())
+                    }
+                },
+            );
+            assert!(matches!(outcome, Err(EffectError::RequiresProviderClosed)));
+            assert_eq!(std::fs::read(path).unwrap(), original);
+            assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 2);
         }
         #[test]
         fn foreign_reference_in_either_global_copy_blocks_bare_pin_removal() {
@@ -1283,7 +1424,7 @@ mod files {
             })
             .unwrap()
             .0;
-            publish(&fence, "session_index.jsonl", &expected, &|b| {
+            publish_fixture(&fence, "session_index.jsonl", &expected, &|b| {
                 reduce_index(b, "T")
             })
             .unwrap();

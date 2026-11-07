@@ -1,7 +1,7 @@
 # Durable transactions and restart recovery
 
 Builds 24141 and 23880 have separate schema-4 candidates. Both remain unadmitted.
-See the [current admission checkpoint](milestones/m8-2-1-desktop-admission-2026-11-06.md).
+See the [current structural checkpoint](milestones/m8-2-1-structural-2026-11-07.md).
 
 ## M8.2.1 current outcome boundary
 
@@ -19,17 +19,14 @@ separate product assessment remains ProjectionIncomplete and CLI exits 2. This i
 explicitly primary-operation success, not a complete-removal receipt. Old v2 plan,
 report, hash and replay meanings are unchanged. There is no second authority store.
 
-Production success is established by structural persistent-state verification.
-The currently open graphical sidebar may temporarily be stale and is not the
-authority for cleanup success. An admitted exact compatibility profile must
-independently prove through isolated restart/reload acceptance that structurally
-removed sessions do not reappear. Production never restarts Codex for visual
-verification. The Desktop candidate requires relevant writers to remain closed throughout the
-transaction; a process-absence snapshot alone does not fence a later launch.
+AgentMender verifies exact persistent removal and collateral preservation.
+The user checks graphical disappearance separately. Automated restart is not a
+development gate under [ADR-0021](adr/0021-structural-admission-and-manual-desktop-acceptance.md).
+All relevant writers must remain closed throughout a Desktop cleanup. A
+process-absence snapshot cannot fence a later launch.
 
 See [ADR-0019](adr/0019-structural-removal-and-profile-acceptance.md).
-M8.2.1 remains OPEN; Desktop projection effects and their restart acceptance remain
-unadmitted. No automatic retry, restoration or application-control path is added.
+M8.2.1 remains OPEN. No Desktop projection profile has structural admission. No automatic retry, restoration or application-control path is added.
 
 ## M8.2 scoped transaction integration
 

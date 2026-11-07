@@ -56,5 +56,5 @@ The protected primary and catalog workers returned a schema-4 candidate on
 owned closed SQLite fixtures. The observed writer prerequisite blocked the plan
 before any operations were available.
 Effective roots, coherent runtime identity, historical schema paths, renderer and
-embedded-worker behavior, writer exclusion and both isolated graphical cycles
-remain separate prerequisites. See the [admission checkpoint](../../../docs/milestones/m8-2-1-desktop-admission-2026-11-06.md).
+embedded-worker behavior and writer exclusion still require structural evidence.
+Graphical acceptance is manual. See the [structural checkpoint](../../../docs/milestones/m8-2-1-structural-2026-11-07.md).

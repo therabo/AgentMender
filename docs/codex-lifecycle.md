@@ -1,7 +1,7 @@
 # Codex native lifecycle execution
 
 Builds 24141 and 23880 have separate schema-4 candidates. Both remain unadmitted.
-See the [current admission checkpoint](milestones/m8-2-1-desktop-admission-2026-11-06.md).
+See the [current structural checkpoint](milestones/m8-2-1-structural-2026-11-07.md).
 
 ## M8.2.1 graphical removal boundary
 
@@ -11,15 +11,12 @@ it retains shared payloads, spawn edges, unrelated rows and unsupported stores.
 Historical schema-2 `scoped-cleanup-v1` remains separate. Both assess complete
 Desktop removal as ProjectionIncomplete.
 
-Production success is established by structural persistent-state verification.
-The currently open graphical sidebar may temporarily be stale and is not the
-authority for cleanup success. An admitted exact compatibility profile must
-independently prove through isolated restart/reload acceptance that structurally
-removed sessions do not reappear. Production never restarts Codex for visual
-verification. The Desktop candidate requires relevant writers to remain closed throughout the
-transaction; a process-absence snapshot alone does not fence a later launch.
+AgentMender verifies exact persistent removal and collateral preservation.
+The user checks graphical disappearance separately. Automated restart is not a
+development gate under [ADR-0021](adr/0021-structural-admission-and-manual-desktop-acceptance.md).
+All relevant writers must remain closed throughout a Desktop cleanup. A
+process-absence snapshot cannot fence a later launch.
 
-[ADR-0019](adr/0019-structural-removal-and-profile-acceptance.md) is current.
 Installed build 24141 and recovered build 23880 embed the same 0.166.0-alpha.5.1
 executable. Static review found no lifetime global-Map writer fence. Default
 packaged macOS launches bypass Electron singleton locking. No complete Desktop

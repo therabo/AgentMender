@@ -18,21 +18,19 @@ RemovedWithResiduals result does not prove disappearance from Desktop views or
 absence after restart. Current product reporting distinguishes those facts;
 complete graphical removal has no admitted production profile yet.
 
-Production success is established by structural persistent-state verification.
-The currently open graphical sidebar may temporarily be stale and is not the
-authority for cleanup success. An admitted exact compatibility profile must
-independently prove through isolated restart/reload acceptance that structurally
-removed sessions do not reappear. Production never restarts Codex for visual
-verification. The Desktop candidate requires the user to keep relevant writers closed throughout
-the transaction; repeated conservative census checks do not fence a later launch.
+AgentMender verifies exact persistent removal and collateral preservation.
+The user checks graphical disappearance separately. Automated restart is not a
+development gate under [ADR-0021](docs/adr/0021-structural-admission-and-manual-desktop-acceptance.md).
+All relevant writers must remain closed throughout a Desktop cleanup. A
+process-absence snapshot cannot fence a later launch.
 
 New schema-3 `scoped-cleanup-v2` plans materially expand primary cleanup with exact
 target attachment metadata and guardian feedback. Shared attachment payloads and
 foreign records survive. Per-action journal progress stops subsequent effects when
 recording fails. Historical v2 plans/grants keep their original scope.
 Separate schema-4 candidates pin installed build 24141 and recovered build
-23880. Both remain unadmitted pending their own isolated reconstruction
-acceptance. See [the admission checkpoint](docs/milestones/m8-2-1-desktop-admission-2026-11-06.md),
+23880. Both remain unadmitted pending independent structural
+verification of all required sources. See [the current checkpoint](docs/milestones/m8-2-1-structural-2026-11-07.md),
 [the current contract](docs/adr/0020-closed-desktop-complete-removal.md),
 [scoped behavior](docs/scoped-session-cleanup.md) and
 [continuation report](docs/milestones/m8-2-1-continuation-2026-11-03.md).

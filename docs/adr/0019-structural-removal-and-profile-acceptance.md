@@ -3,6 +3,9 @@
 Status: Accepted structural product contract (2026-11-03); new mutation profiles require the independent gates below.
 Partially supersedes [ADR-0018](0018-complete-session-removal.md). M8.2.1 remains OPEN.
 
+[ADR-0021](0021-structural-admission-and-manual-desktop-acceptance.md) supersedes
+the automated graphical acceptance requirements below.
+
 ## Context
 
 The continuation request separates persistent removal from the currently rendered

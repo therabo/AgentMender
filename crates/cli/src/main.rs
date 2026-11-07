@@ -415,6 +415,33 @@ fn print_verification(r: &IntegrityReport) {
     );
     println!("  Use --json for the complete report and evidence.");
 }
+fn print_desktop_plan_status(plan: &LifecyclePlan) {
+    let content = plan.content();
+    let Some(manifest) = &content.complete_removal_manifest else {
+        return;
+    };
+    let Some(desktop) = &manifest.desktop else {
+        return;
+    };
+    println!(
+        "Desktop session: {:?} (ID: {}), build {}, profile {}",
+        desktop.target_title,
+        manifest.primary.native_session_id,
+        desktop.bundle_build,
+        manifest.profile.identity
+    );
+    if content
+        .blockers
+        .contains(&agentmender_domain::PlanBlocker::RequiresProviderClosed)
+    {
+        println!("Codex must remain closed throughout any admitted cleanup.");
+    }
+    if manifest.profile.admission == agentmender_domain::ProfileAdmission::DesktopUnaccepted {
+        println!("Structural implementation: Candidate. Desktop execution is disabled.");
+    }
+    println!("Graphical acceptance: Not tested. Verification is manual.");
+}
+
 fn print_plan(plan: &LifecyclePlan) {
     let c = plan.content();
     println!(
@@ -424,6 +451,7 @@ fn print_plan(plan: &LifecyclePlan) {
         c.request.target.state_root.display()
     );
     println!("Intent: {:?}; status: {:?}", c.request.intent, c.status);
+    print_desktop_plan_status(plan);
     println!("Digest: {}", plan.digest().as_str());
     println!("State fingerprint: {}", c.state_fingerprint.as_str());
     println!(

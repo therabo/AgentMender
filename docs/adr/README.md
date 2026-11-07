@@ -25,6 +25,7 @@
 | [0019: Structural removal authority and isolated profile acceptance](0019-structural-removal-and-profile-acceptance.md) | Accepted structural contract; partially supersedes 0018; new profiles gated |
 
 | [0020: Closed Desktop complete removal and qualified persistent actions](0020-closed-desktop-complete-removal.md) | Accepted design; explicit remain-closed operating prerequisite and [unadmitted exact-build candidates](../milestones/m8-2-1-desktop-admission-2026-11-06.md) |
+| [0021: Structural admission and manual Desktop acceptance](0021-structural-admission-and-manual-desktop-acceptance.md) | Accepted. Structural verification gates admission. User observation gates graphical acceptance. |
 
 M8.1 integration/base is recorded in [the receipt](../milestones/m8-1-integration.md)
 (`c9dd04d` after integrated `6f798bc`). ADR-0017 accepts narrow partial

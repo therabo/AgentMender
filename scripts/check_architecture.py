@@ -639,8 +639,8 @@ for marker in ['ProfileAdmission::PrimaryOnly', 'WriterRequirement::CompatibleLi
     if marker not in complete_contract:
         raise SystemExit(f'complete profile admission contract missing: {marker}')
 for marker in ['required_surfaces', 'RequiredPersistentProjection', 'EphemeralUiProjection',
-               'UnknownReconstructionSurface', 'ExactProfileAcceptance',
-               'first_reconstruction', 'second_reconstruction', 'profile_acceptance',
+               'UnknownReconstructionSurface', 'ExactProfileStructuralEvidence',
+               'reconstruction_source_coverage', 'structural_profile_evidence',
                'ReconstructionRisk::None', 'Preservation::Unchanged',
                'MaximumSafeCleanup::Complete', 'checked_add']:
     if marker not in assessment:

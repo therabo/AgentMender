@@ -379,10 +379,9 @@ fn report_expanded_cleanup(
         .collect();
     let assessment = report.map(|r| agentmender_domain::assess_complete_removal(manifest, r));
     let product_complete = assessment.as_ref().is_some_and(|a| a.product_complete());
+    let structural_verified = product_complete && state == TransactionState::Succeeded;
     if args.json {
-        super::emit(
-            "approved_scoped_cleanup",
-            serde_json::json!({
+        let mut value = serde_json::json!({
                 "transaction_id":id,"state":state,"reconciliation_only":reconcile,
                 "outcome_contract":"structural_session_removal_v2",
                 "outcome":assessment.as_ref().map(|a|a.outcome),"session_removal":assessment,
@@ -393,15 +392,29 @@ fn report_expanded_cleanup(
                 "profile":manifest.profile,"required_persistent_surfaces":manifest.required_surfaces,
                 "physical_reclaimed_bytes":null,"production_app_restart":false,
                 "recovery":"reconciliation_metadata_only"
-            }),
-        )?;
+        });
+        if let Some(desktop) = &manifest.desktop {
+            value["desktop_verification"] = serde_json::json!({
+                "session_title":desktop.target_title,
+                "session_id":manifest.primary.native_session_id,
+                "structural_cleanup_verified":structural_verified,
+                "graphical_acceptance":if structural_verified {"awaiting_user_verification"} else {"not_tested"},
+            });
+        }
+        super::emit("approved_scoped_cleanup", value)?;
     } else if let Some(desktop) = &manifest.desktop {
-        if product_complete {
-            println!("Session removed\n{:?}", desktop.target_title);
+        if structural_verified {
+            println!(
+                "Session removed: {:?} (ID: {})",
+                desktop.target_title, manifest.primary.native_session_id
+            );
+            println!(
+                "Structural cleanup: Verified. Graphical acceptance: Awaiting user verification."
+            );
         } else {
             println!(
-                "Desktop cleanup for {:?} is {state:?}. Complete removal awaits exact-build restart acceptance.",
-                desktop.target_title
+                "Desktop cleanup for {:?} (ID: {}) is {state:?}. Structural cleanup is unverified.",
+                desktop.target_title, manifest.primary.native_session_id
             );
         }
         println!(
@@ -416,7 +429,7 @@ fn report_expanded_cleanup(
             "Exact target attachment metadata and guardian feedback are included; shared payload assets are retained."
         );
         println!(
-            "Persistent Desktop reconstruction and isolated profile restart acceptance remain unverified. The current sidebar is not the success authority."
+            "Persistent Desktop reconstruction remains unverified. Graphical acceptance is manual."
         );
         println!(
             "Committed actions: {}",

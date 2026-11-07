@@ -1,7 +1,7 @@
 # M8.1 Codex full cleanup / lifecycle compatibility refresh
 
 Builds 24141 and 23880 have separate schema-4 candidates. Both remain unadmitted.
-See the [current admission checkpoint](milestones/m8-2-1-desktop-admission-2026-11-06.md).
+See the [current structural checkpoint](milestones/m8-2-1-structural-2026-11-07.md).
 
 ## Historical M8.1 verdict and current development
 
@@ -16,13 +16,11 @@ M8.2 scoped primary cleanup is PASS and integrated at
 ([receipt](milestones/m8-2-integration.md)). It proves its narrow exact local cut;
 it does not invalidate the historical native blockers below.
 M8.2.1 is OPEN under [ADR-0019](adr/0019-structural-removal-and-profile-acceptance.md).
-Production success is established by structural persistent-state verification.
-The currently open graphical sidebar may temporarily be stale and is not the
-authority for cleanup success. An admitted exact compatibility profile must
-independently prove through isolated restart/reload acceptance that structurally
-removed sessions do not reappear. Production never restarts Codex for visual
-verification. The Desktop candidate requires relevant writers to remain closed throughout the
-transaction; a process-absence snapshot alone does not fence a later launch.
+AgentMender verifies exact persistent removal and collateral preservation.
+The user checks graphical disappearance separately. Automated restart is not a
+development gate under [ADR-0021](adr/0021-structural-admission-and-manual-desktop-acceptance.md).
+All relevant writers must remain closed throughout a Desktop cleanup. A
+process-absence snapshot cannot fence a later launch.
 The expanded primary schema-3 profile removes exact attachment/guardian metadata,
 but no complete Desktop profile is admitted. See
 [the current contract](scoped-session-cleanup.md). Historical native verdict below

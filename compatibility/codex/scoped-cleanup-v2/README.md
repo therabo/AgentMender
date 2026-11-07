@@ -19,10 +19,9 @@ unrecorded effect remains unknown and is not retried automatically.
 This is **not a complete Desktop removal profile**. No catalog, index, history,
 global-state or other Desktop projection mutation is admitted. A primary receipt
 therefore maps to product `ProjectionIncomplete` (CLI exit 2) until the required
-persistent closure and independently accepted exact-profile two-cycle restart
-proof exist. There is no accepted Desktop restart/reappearance evidence and no
-imported acceptance proof. The current open sidebar is not the success authority;
-production does not restart Codex for visual verification.
+persistent closure and independent exact-profile structural verification exist.
+The user verifies graphical acceptance separately under
+[ADR-0021](../../../docs/adr/0021-structural-admission-and-manual-desktop-acceptance.md).
 
 ## Verified continuation evidence
 

@@ -21,10 +21,9 @@ fn witness() -> SessionRemovalEvidence {
             kind: SurfaceKind::RequiredPersistentProjection,
             observation: RemovalObservation::Absent,
         }],
-        profile_acceptance: Some(ExactProfileAcceptance {
+        structural_profile_evidence: Some(ExactProfileStructuralEvidence {
             profile: scope.profile.clone(),
-            first_reconstruction: RemovalObservation::Absent,
-            second_reconstruction: RemovalObservation::Absent,
+            reconstruction_source_coverage: Completeness::Complete,
             collateral: Preservation::Unchanged,
         }),
         primary_absence: RemovalObservation::Absent,
@@ -65,20 +64,23 @@ fn complete_synthetic_witness_and_exact_record_preserve_collateral() {
     );
 }
 #[test]
-fn projection_phases_and_inventory_fail_closed() {
+fn persistent_sources_and_exact_structural_profile_fail_closed() {
     for observation in [RemovalObservation::Present, RemovalObservation::Unknown] {
         let mut e = witness();
         e.surfaces[0].observation = observation;
         assert_eq!(outcome(&e), SessionRemovalOutcome::ProjectionIncomplete);
     }
     let mut e = witness();
-    e.profile_acceptance = None;
+    e.structural_profile_evidence = None;
     assert_eq!(outcome(&e), SessionRemovalOutcome::ProjectionIncomplete);
     let mut e = witness();
-    e.profile_acceptance.as_mut().unwrap().profile = id("wrong-profile");
+    e.structural_profile_evidence.as_mut().unwrap().profile = id("wrong-profile");
     assert_eq!(outcome(&e), SessionRemovalOutcome::ProjectionIncomplete);
     let mut e = witness();
-    e.profile_acceptance.as_mut().unwrap().second_reconstruction = RemovalObservation::Unknown;
+    e.structural_profile_evidence
+        .as_mut()
+        .unwrap()
+        .reconstruction_source_coverage = Completeness::Partial;
     assert_eq!(outcome(&e), SessionRemovalOutcome::ProjectionIncomplete);
     let mut e = witness();
     e.surfaces.push(ProjectionSurface {
@@ -316,12 +318,14 @@ fn fixed_seed_contract_properties() {
                 0 => e.surfaces[0].observation = RemovalObservation::Present,
                 1 => e.surfaces[0].observation = RemovalObservation::Unknown,
                 2 => {
-                    e.profile_acceptance.as_mut().unwrap().first_reconstruction =
-                        RemovalObservation::Present
+                    e.structural_profile_evidence
+                        .as_mut()
+                        .unwrap()
+                        .reconstruction_source_coverage = Completeness::Partial
                 }
                 3 => {
-                    e.profile_acceptance.as_mut().unwrap().second_reconstruction =
-                        RemovalObservation::Present
+                    e.structural_profile_evidence.as_mut().unwrap().collateral =
+                        Preservation::Unknown
                 }
                 4 => e.primary_absence = RemovalObservation::Unknown,
                 5 => e.canonical_catalog_absence = RemovalObservation::Unknown,

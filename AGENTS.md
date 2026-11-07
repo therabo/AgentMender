@@ -9,13 +9,14 @@ before changing boundaries. Sol/high accepted the pure product-assessment
 direction before implementation. No complete Desktop removal profile is admitted.
 Native M8.1 and Claude M9 blockers remain unchanged.
 
-Read ADR-0020 for the current closed-Desktop operating contract and ADR-0019 for structural authority. Product Removed requires
-primary/canonical absence, every required persistent projection/reconstruction
-source structurally absent, collateral preservation, maximum-safe approved actions
-completed and independently validated exact-profile isolated restart/reappearance
-acceptance. The current rendered sidebar is not authority; proven ephemeral UI
-may stay stale. Unknown reconstruction risk blocks profile promotion. Production
-must not start/stop/kill/reload/restart Codex for visual verification. The exact Desktop profile may require all capable writers to remain closed
+Read ADR-0021 for structural admission and manual graphical acceptance, and
+ADR-0020 for the closed-Desktop operating contract. Structural Removed requires
+an admitted exact profile, primary/canonical absence, every required persistent
+reconstruction source verified clean, collateral preservation and completion of
+the maximum safe approved actions. Unknown reconstruction risk blocks promotion.
+The user verifies graphical disappearance separately. Production must not start,
+stop, kill, reload or restart Codex for visual verification. All relevant writers
+may need to remain closed
 throughout its short transaction (explicit user-authorized operating precondition).
 Use repeated qualified process census, native/SQLite/index locks, fresh preimages
 and retained postverification. Process absence and compare+rename are not an OS
@@ -25,7 +26,7 @@ destruction. RequiresProviderClosed is a resolvable prerequisite. Historical
 M8.2 v2 plan/report/digest/replay stays primary-only and cannot authorize new effects.
 No complete Desktop removal profile is currently admitted. Build 24141 and
 recovered build 23880 have separate candidate identities and an empty compiled
-admission list. See [the admission checkpoint](docs/milestones/m8-2-1-desktop-admission-2026-11-06.md).
+admission list. See [the structural checkpoint](docs/milestones/m8-2-1-structural-2026-11-07.md).
 
 Remove every supported safe exclusive unit, including exact records inside shared
 containers. Preserve all unrelated records/keys and every shared/ambiguous/unknown

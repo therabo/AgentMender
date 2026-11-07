@@ -128,7 +128,7 @@ fn review_value(
             plan.content().request.intent == agentmender_domain::LifecycleIntent::CleanupSession
         })
         .map(|plan| {
-            serde_json::json!({
+            let mut scope = serde_json::json!({
                 "contract": match plan.content().schema_version {
                     4 => "codex_desktop_complete_removal_v1",
                     3 => "scoped_primary_cleanup_v2",
@@ -141,7 +141,15 @@ fn review_value(
                 "expanded_target_metadata":matches!(plan.content().schema_version, 3 | 4),
                 "maximum_safe_cleanup":"unknown",
                 "app_shutdown_restart_authorized":false
-            })
+            });
+            if let Some(manifest) = &plan.content().complete_removal_manifest
+                && let Some(desktop) = &manifest.desktop
+            {
+                scope["desktop_profile"] = serde_json::json!(manifest.profile.identity);
+                scope["desktop_build"] = serde_json::json!(desktop.bundle_build);
+                scope["graphical_acceptance"] = serde_json::json!("not_tested");
+            }
+            scope
         });
     Ok(
         serde_json::json!({"transaction_id":snapshot.id(),"sequence":snapshot.sequence(),"schema_version":snapshot.schema_version(),"state":snapshot.state(),"binding":snapshot.binding(),"plan":snapshot.review_plan(),"cleanup_scope":cleanup_scope,"approval_state":format!("{:?}", snapshot.approval_status_at(now)),"grant":snapshot.approval().grant,"recovery":snapshot.recovery(),"recovery_limitations":"ReconciliationOnly: recovery records do not restore provider state or authorize execution","terminal_scope":"This interaction proves only a current-user process used a local terminal; it does not establish human identity against a same-user shell or PTY"}),
@@ -201,32 +209,17 @@ pub fn prepare(
         service.approval_inputs(&|target| target.local_id == id, intent.into(), scope)?
     };
     println!("{}", safe(&inputs.plan)?);
-    if let Some(desktop) = inputs
+    if inputs
         .plan
         .content()
         .complete_removal_manifest
         .as_ref()
-        .and_then(|m| m.desktop.as_ref())
+        .is_some_and(|m| m.desktop.is_some())
     {
-        if inputs
-            .plan
-            .content()
-            .blockers
-            .contains(&agentmender_domain::PlanBlocker::RequiresProviderClosed)
-        {
-            println!(
-                "Close Codex to remove {:?}. Keep Codex closed during cleanup.",
-                desktop.target_title
-            );
-        } else {
-            println!(
-                "Desktop complete-removal candidate for {:?}. Exact-build restart acceptance is pending.",
-                desktop.target_title
-            );
-        }
+        super::print_desktop_plan_status(&inputs.plan);
     } else if matches!(intent, PlanIntent::CleanupSession) {
         println!(
-            "This profile plans expanded primary cleanup, including exact target attachment metadata and guardian feedback. Complete persistent Desktop removal and isolated restart acceptance remain unverified. Codex is never restarted for visual verification."
+            "This profile plans expanded primary cleanup, including exact target attachment metadata and guardian feedback. Complete persistent Desktop removal remains unverified."
         );
     }
     if inputs.plan.content().status != PlanStatus::Ready || !inputs.failures.is_empty() {

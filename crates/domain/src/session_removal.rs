@@ -42,13 +42,12 @@ pub struct ProjectionSurface {
     /// Current structural observation; ephemeral UI is not an authority.
     pub observation: RemovalObservation,
 }
-/// Adapter-owned isolated compatibility evidence; deliberately not deserializable.
-/// Both reconstruction cycles and collateral preservation must have been observed.
+/// Adapter-owned structural compatibility evidence under ADR-0021.
+/// This evidence cannot be imported or supplied by a graphical observation.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ExactProfileAcceptance {
+pub struct ExactProfileStructuralEvidence {
     pub profile: EntityId,
-    pub first_reconstruction: RemovalObservation,
-    pub second_reconstruction: RemovalObservation,
+    pub reconstruction_source_coverage: Completeness,
     pub collateral: Preservation,
 }
 
@@ -113,7 +112,7 @@ pub struct SessionRemovalEvidence {
     pub inventory_completeness: Completeness,
     pub required_surfaces: Vec<EntityId>,
     pub surfaces: Vec<ProjectionSurface>,
-    pub profile_acceptance: Option<ExactProfileAcceptance>,
+    pub structural_profile_evidence: Option<ExactProfileStructuralEvidence>,
     pub primary_absence: RemovalObservation,
     pub canonical_catalog_absence: RemovalObservation,
     /// Covers unrelated records, keys, ordering/bytes, and projection state.
@@ -349,17 +348,16 @@ pub fn assess_session_removal(e: &SessionRemovalEvidence) -> SessionRemovalAsses
         .filter(|s| s.kind == SurfaceKind::RequiredPersistentProjection)
         .map(|s| &s.id)
         .collect();
-    let accepted = e.profile_acceptance.as_ref().is_some_and(|a| {
+    let profile_verified = e.structural_profile_evidence.as_ref().is_some_and(|a| {
         a.profile == e.scope.profile
-            && a.first_reconstruction == RemovalObservation::Absent
-            && a.second_reconstruction == RemovalObservation::Absent
+            && a.reconstruction_source_coverage == Completeness::Complete
             && a.collateral == Preservation::Unchanged
     });
     let projection_complete = !projection_risk
         && e.inventory_completeness == Completeness::Complete
         && !required.is_empty()
         && required == observed_required
-        && accepted
+        && profile_verified
         && e.surfaces.iter().all(|s| match s.kind {
             SurfaceKind::RequiredPersistentProjection => {
                 s.observation == RemovalObservation::Absent

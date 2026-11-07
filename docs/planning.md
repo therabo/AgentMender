@@ -5,17 +5,15 @@
 [ADR-0019](adr/0019-structural-removal-and-profile-acceptance.md) partially
 supersedes ADR-0018's runtime GUI/restart requirement. M8.2.1 remains OPEN.
 
-Production success is established by structural persistent-state verification.
-The currently open graphical sidebar may temporarily be stale and is not the
-authority for cleanup success. An admitted exact compatibility profile must
-independently prove through isolated restart/reload acceptance that structurally
-removed sessions do not reappear. Production never restarts Codex for visual
-verification. The Desktop candidate requires relevant writers to remain closed throughout the
-transaction; a process-absence snapshot alone does not fence a later launch.
+AgentMender verifies exact persistent removal and collateral preservation.
+The user checks graphical disappearance separately. Automated restart is not a
+development gate under [ADR-0021](adr/0021-structural-admission-and-manual-desktop-acceptance.md).
+All relevant writers must remain closed throughout a Desktop cleanup. A
+process-absence snapshot cannot fence a later launch.
 
 Schema 4 binds frozen exact actions to separate bundle tuples for 24141 and
 23880. Both candidates remain unadmitted. See the
-[admission checkpoint](milestones/m8-2-1-desktop-admission-2026-11-06.md)
+[structural checkpoint](milestones/m8-2-1-structural-2026-11-07.md)
 and [ADR-0020](adr/0020-closed-desktop-complete-removal.md). Expanded primary
 plans use schema 3 and `CompleteRemovalManifest`, committing the
 expanded primary profile, exact row preimages/counts, ordered actions, retained
