@@ -1,4 +1,15 @@
-# Discovery test boundaries
+# Test boundaries and product-first phase mapping
+
+Current direction: [ADR-0022](../../../docs/adr/0022-product-first-session-lifecycle.md).
+These tests protect shared P0/P1 safety infrastructure and deferred P2 Desktop
+research. Passing M5 tests proves read-only MCP behavior, not a conversational
+removal workflow. Passing M8.2.1 candidate tests does not admit schema-4 effects.
+Retain the lost-update counterexample and historical journal/replay tests. Both
+providers remain initial product targets; M9 guards cover the investigated purge
+contract rather than proving provider-wide impossibility. See
+[development verification](../../../docs/development.md).
+
+The milestone-specific accounts below retain their original implementation scope.
 
 M8.1 adds two focused exact-version/effect-scope guards, source-fitness canaries
 and deterministic current-schema/evidence checks. No new operation/profile is
@@ -44,7 +55,8 @@ three competing-process authority races and grant/revoke/consume append crashes.
 CLI tests cover non-terminal/JSON rejection, escaped bounded review, blocked
 preparation without root creation and read-only exact-plan inspection. MCP protocol
 regressions reject six approval/execution names and three boolean confirmation
-fields before dispatch. Production MCP/provider code remains read-only.
+fields before dispatch. Production MCP and Claude provider code remain read-only; later Codex effect
+paths are separately gated.
 See [approval semantics](../../../docs/approvals.md). M7 performs no provider effect.
 
 M6 transaction tests use only private temporary roots and synthetic Ready plans.

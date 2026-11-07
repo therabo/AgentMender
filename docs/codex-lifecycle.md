@@ -1,46 +1,32 @@
 # Codex native lifecycle execution
 
-Builds 24141 and 23880 have separate schema-4 candidates. Both remain unadmitted.
-See the [current structural checkpoint](milestones/m8-2-1-structural-2026-11-07.md).
+## Current provider lifecycle status
 
-## M8.2.1 graphical removal boundary
+The [product roadmap](product-roadmap.md) and [ADR-0022](adr/0022-product-first-session-lifecycle.md)
+prioritize a complete conversational single-session workflow. Native operations
+are preferred when exact-version scope and postconditions fit approval. No native
+Codex delete dispatcher is implemented. The historical unarchive contract below
+is conditional; real native plans remain Blocked/Unsupported.
 
-M8.2 is historical primary-cleanup PASS. Schema-3 `scoped-cleanup-v2` extends exact
-stable 0.166.0 primary cleanup to target attachment metadata and guardian feedback;
-it retains shared payloads, spawn edges, unrelated rows and unsupported stores.
-Historical schema-2 `scoped-cleanup-v1` remains separate. Both assess complete
-Desktop removal as ProjectionIncomplete.
+M8.1 investigated 0.166.0 complete native cleanup and retained genuine descendant,
+partial-failure and verification blockers. That finding is specific to the tested
+contract, not a proof that every narrower native operation is impossible. A future
+single-session profile must prove a closed affected set and supported structural
+postconditions without silently including descendants.
 
-AgentMender verifies exact persistent removal and collateral preservation.
-The user checks graphical disappearance separately. Automated restart is not a
-development gate under [ADR-0021](adr/0021-structural-admission-and-manual-desktop-acceptance.md).
-All relevant writers must remain closed throughout a Desktop cleanup. A
-process-absence snapshot cannot fence a later launch.
+M8.2 primary cleanup is PASS and integrated at `a284767`; the separate exact local
+fallback is documented in [scoped cleanup](scoped-session-cleanup.md). Schema 3
+adds exact attachment/guardian metadata with disposable execution evidence. Both
+primary profiles retain an incomplete complete-Desktop assessment. Strategy is
+selected before approval; ambiguity never triggers a local fallback or retry.
 
-Installed build 24141 and recovered build 23880 embed the same 0.166.0-alpha.5.1
-executable. Static review found no lifetime global-Map writer fence. Default
-packaged macOS launches bypass Electron singleton locking. No complete Desktop
-profile is admitted.
-Native descendant delete and Claude blockers remain unchanged. M8.2.1 is OPEN.
+M8.2.1 is unfinished/deferred under P1/P2 and no longer a global MVP blocker.
+Schema-4 candidates for builds 24141/23880 remain unadmitted. The global writer
+refusal and lost-update regression remain mandatory. Any future complete Desktop
+claim still needs ADR-0020/0021's structural proof and separate user graphical
+acceptance. Closing writers alone does not close the JSON publication race.
 
-## Current scope and separate M8.2 contract
-
-M8.1 was integrated at `6f798bcebdfd2f763e31d62ef2695c52396ca709`
-([receipt](milestones/m8-1-integration.md), recorded in `c9dd04d`). Its full native
-cleanup remains BLOCKED. M8.2 is implemented on its scoped-cleanup branch;
-[ADR-0017](adr/0017-scoped-cleanup-residual-preservation-provider-local-mutation.md) is **Accepted**. The separate scoped-local profile is implemented under final release review.
-
-The historical exact unarchive contract and command path below remain unchanged.
-The separately reviewed local one-session cleanup reuses durable intent and
-approval while preserving children, shared/unknown state and unrelated data.
-It must select its strategy before approval; never use local mutation as a fallback
-after ambiguous native deletion. Its initial plain-legacy profile, dependency proof
-and strong writer/SQLite-WAL fence are still review gates. See
-[scoped cleanup architecture](scoped-session-cleanup.md).
-
-M8.1 separately investigated stable `0.166.0`; its archive/delete and cascading
-unarchive remain Unsupported. No historical exact profile was changed. See the
-[current cleanup report](codex-full-cleanup.md) and ADR-0016.
+## Historical exact unarchive contract
 
 M8 adds a typed, independently approved execution path. Within this historical native adapter only exact-profile native
 unarchive is conditionally supported. Native v1 real plans remain Blocked/Unsupported:

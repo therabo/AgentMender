@@ -1,0 +1,151 @@
+# Architecture and capability boundaries
+
+Current direction: [ADR-0022](adr/0022-product-first-session-lifecycle.md) and the
+[product roadmap](product-roadmap.md). The [audit](audits/2026-11-07-product-first-audit.md)
+distinguishes executable behavior from design, tests and deferred research.
+
+## Existing eight-crate structure
+
+| Crate | Responsibility | Internal runtime dependencies |
+|---|---|---|
+| domain | Observations, graph/evidence, integrity, immutable plans, approval eligibility, transaction replay, scoped/complete result validation | None |
+| provider-api | Read-only ports, bounded filesystem/process observations, owned evidence sandbox, audited OS queries | domain |
+| application | Provider-independent discovery/selection/planning and durable lifecycle orchestration | domain, provider-api, persistence |
+| provider-codex | Codex discovery, exact profiles, native handoff, scoped local effects, private Desktop candidates | domain, provider-api, persistence |
+| provider-claude | Read-only inventory, sidecar identity and graph interpretation | domain, provider-api |
+| persistence | Protected AgentMender-owned store, journal, human-approval authentication, recovery metadata and sealed handoff | domain |
+| mcp-server | Bounded stdio transport, strict DTOs, ephemeral references and privacy projections | application, domain |
+| CLI (`agentmender`) | Trusted adapter/root composition, independent terminal approval, command presentation | All seven library crates |
+
+This is a local modular application with ports and adapters, not a distributed
+service. No new crates or runtime are needed for the roadmap realignment.
+Codex's application dependency is test-only; persistence never calls providers.
+The narrow application/Codex dependency on persistence protects the private
+DurableIntent constructor (ADR-0013), rather than exposing write authority through
+every read adapter. Domain has serialization/hashing dependencies but no I/O.
+
+## Core session lifecycle versus additional cleanup
+
+The target flow is:
+
+```text
+Codex or Claude MCP client (interprets the user's language)
+  -> structured provider/root/session query and immutable preview
+  -> application orchestration
+  -> independent human channel -> plan-bound one-shot authorization
+  -> protected durable intent -> provider-specific approved operation
+  -> independent supported postconditions -> structured result
+```
+
+The current flow stops at read-only MCP planning. Terminal/CLI paths can separately
+exercise the narrow scoped Codex contract. There is no MCP transaction preparation,
+trusted approval-request integration or approved execution tool today.
+
+Core removal needs exact target identity, its relevant effect/dependency proof,
+approval and retained-session verification. It need not enumerate every cache or
+renderer artifact. P2 adds artifact graph attribution, extra frozen actions,
+independent approval and verification for each supported family. Those actions
+use the same protected engine. A future native delete must not be routed through
+Desktop cleanup merely to obtain a successful label.
+
+Current native v1 planning requires a closed native effects and M3 integrity
+contract and therefore cannot Ready from the real partial discovery profiles.
+That restriction remains unchanged. A future scoped native capability needs
+explicit relevant-scope proof and reviewed versioned plan semantics; it must not
+manufacture global Healthy or reuse an old grant for a new effect.
+
+## Native-first selection contract
+
+Resolve a unique target with explicit provider/root identity. Determine available
+operations and actual scope for the exact version. Include startup writes,
+descendants, references, project/remote state and concurrency. Prefer the native
+operation only when its entire effect set fits approval and its advertised
+postconditions can be verified. Otherwise evaluate an admitted scoped local
+fallback before producing the plan. If neither is suitable, return Unsupported
+or Blocked with the specific cause. Once effects are possible, ambiguity means
+OutcomeUnknown; it cannot authorize a fallback or automatic retry.
+
+Codex and Claude do not have interchangeable operation semantics. Keep concrete
+operations behind stable orchestration and typed handoffs. The current native
+port is historical Codex unarchive; it is not a generic provider delete API.
+Claude project purge must never substitute for a one-session request.
+
+## Existing schemas and outcomes
+
+| Contract | Meaning and admission |
+|---|---|
+| Native plan schema 1 | Immutable semantic intentions; historical exact unarchive dispatcher only; real plans blocked |
+| Cleanup plan schema 2 | M8.2 `CleanupManifest`, exact primary payload/row and optional name-index effects; historical primary results |
+| Expanded plan schema 3 | `CompleteRemovalManifest`, expanded primary row set, ordered durable action progress; PrimaryOnly admission |
+| Desktop plan schema 4 | Separate exact bundle/catalog/global/index manifest; all compiled candidates unadmitted |
+| Journal schema 1 | Historical inspection-only transactions |
+| Journal schema 2 | Authenticated original review plan, independent grants, atomic consumption/durable intent and typed action observations |
+
+Plan schema numbers and journal schema numbers are different namespaces. Do not
+upgrade an old grant or hash domain. Historical v2 fixtures retain exact encoding,
+binding digest and replay. New destructive effects require new reviewed scope.
+
+`PlanStatus` reports readiness. `NativeOutcome` reports dispatch knowledge, not
+deletion. `CleanupOutcome` and `CleanupReport` describe the approved primary
+contract and bytes. `SessionRemovalAssessment` retains the stronger complete
+persistent-projection criterion. `TransactionState` records durable knowledge and
+verification. These models serve different consumers; merging them loses facts.
+Human reporting should identify which contract succeeded and what remains.
+
+The current CLI still returns exit 2 when its complete-removal assessment is
+incomplete even if the primary transaction succeeded. This audit documents that
+coupling without changing exit codes or historical JSON. A future P0 operation
+must report its own narrower verified semantics without claiming complete erasure.
+
+## Authority, identity and recovery
+
+The private store constructs a noncloneable/nonserializable DurableIntent only
+after exact original binding, verified recovery, fresh Current validation and
+authenticated one-shot human approval. Consumption and intent are one signed
+event, externally synced and committed before effects. Adapters consume the token
+and return only observation authority. Per-action journaling stops later effects
+if recording fails. Reconciliation cannot recreate a dispatch gate.
+
+Terminal approval proves local interactive process participation, not personal
+identity against an arbitrary same-user shell/PTY adversary. P0 must compose an
+actually independent human interaction with the MCP workflow under an explicit
+client threat model. MCP client identity, annotations and boolean confirmation
+cannot supply it. Recovery stores bounded reconciliation metadata, not payload
+backups, automatic rollback or secure erasure.
+
+MCP references bind provider, class and hidden root to an ephemeral HMAC key. They
+are lookup/privacy tokens, not durable approval IDs. Current views omit native
+IDs, paths, titles/content and activity timestamps. Useful label disclosure,
+restart-stable review/transaction lookup and active management-session exclusion
+are design gaps for P0, not implemented capabilities. Cross-provider configuration
+is already independent of host identity on the read side.
+
+## Deferred Desktop and artifact work
+
+Desktop catalog/global/backup/index/legacy code is private to provider-codex and
+separate from MCP. It is preserved for P1/P2 because it contains exact reducers,
+host ownership, physical boundaries and valid regression evidence. Production
+global replacement with target records remains refused; both candidate profiles
+are unadmitted. Reclassification is not admission or permission to mutate JSON.
+
+Keep ADR-0020/0021's complete structural predicate for any future Desktop claim.
+Writer closure and all required persistent reconstruction sources still need
+proof. User graphical acceptance is separate; production cannot control the app
+for visual verification. The late-writer child-process regression remains a gate
+even though complete Desktop removal no longer blocks P0.
+
+## Fitness and maintenance
+
+`scripts/check_architecture.py` checks the eight-crate dependency graph, graph and
+planning purity, approval boundaries, one-shot gates, read-only Claude/MCP,
+reviewed exact SQL/filesystem effects, global publication refusal and product
+assessment constraints. Its built-in canaries detect prohibited source shapes;
+these are structural regression checks, not substitutes for behavioral safety
+tests or ownership proof. See [development verification](development.md).
+
+Retain native scope counterexamples, historical replay, generated destructive
+properties, crash/reopen tests and compatibility validators. Avoid speculative
+abstraction or deleting deferred code merely to shrink line counts. Review actual
+callers and serialization before removal. Future changes to MCP authority or
+provider operations must update the relevant ADR and narrow fitness rules with
+positive/negative behavior tests, rather than bypassing them.

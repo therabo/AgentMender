@@ -1,5 +1,10 @@
 # Manual acceptance for Codex Desktop removal
 
+Deferred P1/P2 work under [ADR-0022](adr/0022-product-first-session-lifecycle.md).
+M8.2.1 is unfinished/deferred and no longer a global conversational MVP blocker.
+The workflow below is retained for future complete-Desktop admission and is not
+an available P0 deletion path. No real-session execution is authorized by this audit.
+
 Current status **Candidate / NotTested**. Desktop cleanup has no admitted
 production profile. The first three steps can establish identity and review a
 read-only plan. Resume at step 4 only after AgentMender documents structural

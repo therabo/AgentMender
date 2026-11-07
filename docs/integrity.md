@@ -1,28 +1,23 @@
 # Integrity verification contract
 
-Builds 24141 and 23880 have separate schema-4 candidates. Both remain unadmitted.
-See the [current structural checkpoint](milestones/m8-2-1-structural-2026-11-07.md).
+## Verification in the product-first roadmap
 
-## M8.2.1 product verification
+[ADR-0022](adr/0022-product-first-session-lifecycle.md) separates primary/native
+session verification from optional artifact and complete Desktop verification.
+M3 remains a pure read-only integrity evaluator with unchanged negative-proof
+and Healthy/Unknown meanings. A scoped operation needs positive proof for its
+advertised postconditions and retained-session boundary; unrelated global Unknown
+need not imply that a separately proved primary operation failed.
 
-M3 integrity is unchanged. [ADR-0019](adr/0019-structural-removal-and-profile-acceptance.md)
-separates RequiredPersistentProjection, EphemeralUiProjection and
-UnknownReconstructionSurface. Runtime persistent absence and independent exact
-profile acceptance are distinct inputs to the existing pure removal assessment.
-Only proven ephemeral state incapable of repersisting target data is nonblocking.
-Unknown roles, required persistent residue, incomplete inventory, missing profile
-acceptance or collateral changes cannot produce product success.
+Complete Desktop `SessionRemovalAssessment` remains a stronger P1/P2 contract.
+Unknown reconstruction roles, required persistent residue, missing structural
+admission or collateral changes still prevent that claim. Schema-4 candidates
+are unadmitted; primary receipts do not satisfy the stronger assessment. The user
+checks graphical disappearance separately under ADR-0021. A stale sidebar, native
+command exit or hidden list entry cannot substitute for structural proof.
 
-AgentMender verifies exact persistent removal and collateral preservation.
-The user checks graphical disappearance separately. Automated restart is not a
-development gate under [ADR-0021](adr/0021-structural-admission-and-manual-desktop-acceptance.md).
-All relevant writers must remain closed throughout a Desktop cleanup. A
-process-absence snapshot cannot fence a later launch.
-
-Expanded primary schema-3 receipts remain ProjectionIncomplete. No compiled
-complete Desktop profile exists. Manual graphical acceptance is pending. Technical
-residual success requires no primary or persistent reconstruction risk. M3 Healthy,
-a provider return code or a visually hidden item supplies no cleanup authority.
+M8.2.1 is unfinished/deferred and no longer a global P0 blocker. This changes
+sequencing, not M3's evaluator, scope closure or safety properties.
 
 ## M8.2 scope clarification — no change to M3
 

@@ -1,29 +1,31 @@
 # Scoped session cleanup and complete session removal
 
-Builds 24141 and 23880 have separate schema-4 candidates. Both remain unadmitted.
-See the [current structural checkpoint](milestones/m8-2-1-structural-2026-11-07.md).
+## Product-first capability boundary
 
-M8.2 primary cleanup is **PASS**, integrated at
-`a284767157ace8769deee85b195b5b70efe374d8`; local, isolated and exact-head
-three-platform gates passed ([integration receipt](milestones/m8-2-integration.md)).
-M8.2.1 is **OPEN**, on `milestone/m8-2-1-complete-session-removal`.
-[ADR-0019](adr/0019-structural-removal-and-profile-acceptance.md) defines the current
-structural product claim. ADR-0017 and the historical implementation below retain their
-primary-cleanup meanings and original immutable encodings.
+[ADR-0022](adr/0022-product-first-session-lifecycle.md) separates useful primary
+session removal from optional deep artifact and Desktop projection cleanup.
+M8.2 remains **PASS**, integrated at `a284767157ace8769deee85b195b5b70efe374d8`
+([receipt](milestones/m8-2-integration.md)). Its exact profile and immutable
+encodings below remain unchanged. A primary receipt establishes only its own
+payload/canonical-row and retained-state postconditions at the fenced cutoff.
 
-## Current product contract
+M8.2.1 is **unfinished/deferred** under P1/P2 and **no longer a global blocker
+for the conversational MVP**. Both schema-4 Desktop candidates (24141/23880) remain
+unadmitted. Global target publication is refused because the real child-process
+counterexample demonstrates lost unrelated updates despite final checks and
+advisory locks. Closing Desktop does not resolve that race. See the
+[writer checkpoint](milestones/m8-2-1-writer-admission-2026-11-07.md).
 
-AgentMender verifies exact persistent removal and collateral preservation.
-The user checks graphical disappearance separately. Automated restart is not a
-development gate under [ADR-0021](adr/0021-structural-admission-and-manual-desktop-acceptance.md).
-All relevant writers must remain closed throughout a Desktop cleanup. A
-process-absence snapshot cannot fence a later launch.
+The stronger SessionRemovalAssessment is retained for complete persistent
+projection claims. Unknown reconstruction roles, residual required surfaces,
+incomplete structural evidence or collateral drift prevent that claim. User
+GUI confirmation is separate under ADR-0021. Production does not control or
+restart an app. These are complete-Desktop gates, not a requirement to erase
+every cache before honestly reporting a separately verified primary operation.
 
-The existing SessionRemovalAssessment retains categorical coverage and exact
-root/profile/target binding. Required persistent surfaces must be structurally
-absent; unknown reconstruction roles block. Independent exact-profile
-structural evidence covers all required persistent reconstruction sources. Remaining
-technical residue must not reconstruct primary or persistent projection state.
+Current CLI primary success still has an incomplete complete-removal assessment
+and exit 2. This audit changes neither JSON/exit semantics nor historical results.
+P0 must supply operation-scoped reporting and MCP integration in a later slice.
 
 ## Expanded primary profile (schema 3)
 
@@ -214,10 +216,12 @@ transaction, recovery, independent test approval and DurableIntent. Destructive
 acceptance never uses real user sessions. All standard local gates and exact-final-
 commit Linux/macOS/Windows Actions remain mandatory.
 
-After M8.2.1 PASS, M8.3 may compose frozen exact session sets using its stronger
-projection/restart contract and sum independently verified results. It is not a
-recursive project-path deletion. M8.3, NLP, M10, Claude local
-mutation, M11 recovery redesign and M12 repair are not implemented in M8.2.
+P3 may later compose frozen exact session sets using each supported primary
+contract and sum independently verified results. Optional complete-Desktop or
+deep-cleanup claims retain their additional gates; project association never
+authorizes recursive file deletion. M8.3/bulk, local NLP, broader platform
+mutation, Claude local mutation, recovery redesign and repair are not implemented
+by M8.2. M8.3 is not the next priority; see the canonical roadmap.
 
 ## Local CLI workflow
 

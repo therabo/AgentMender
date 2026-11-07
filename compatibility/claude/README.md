@@ -1,8 +1,16 @@
 # Claude installation and metadata evidence
 
-## Current roadmap boundary
+## Product-first roadmap and tested compatibility
 
-M9 blocker evidence is integrated; capability stays BLOCKED BY PROVIDER and all
+[ADR-0022](../../docs/adr/0022-product-first-session-lifecycle.md) keeps Claude Code
+as a required initial provider. The historical M9 blocker is specific to the
+investigated project-purge versions/operation, not all session management. A future
+session operation needs exact scope and transcript/resume verification; a
+background-list removal cannot be described as transcript deletion. Current
+production still has zero Claude mutation profiles. M8.2.1 is deferred and no
+longer a global conversational MVP blocker.
+
+M9 blocker evidence is integrated; its investigated capability stays BLOCKED BY PROVIDER and all
 Claude mutation profiles remain absent. The implemented M8.2 scoped path is Codex-only,
 with Accepted ADR-0017, and does not alter Claude metadata compatibility, provenance,
 partial coverage or lifecycle refusal. No transcript-storage deletion fallback or

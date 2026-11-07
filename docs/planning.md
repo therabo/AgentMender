@@ -1,9 +1,14 @@
 # Immutable lifecycle planning
 
-## M8.2.1 current planning boundary
+## Deferred expanded and Desktop planning contracts
 
-[ADR-0019](adr/0019-structural-removal-and-profile-acceptance.md) partially
-supersedes ADR-0018's runtime GUI/restart requirement. M8.2.1 remains OPEN.
+[ADR-0022](adr/0022-product-first-session-lifecycle.md) separates the P0 primary
+lifecycle plan from optional P2 artifact cleanup. Native operations are preferred
+only when exact-version scope fits approval. These existing expanded/Desktop
+contracts remain unchanged; M8.2.1 is unfinished/deferred, not a global MVP blocker.
+No new plan schema, MCP removal preview or operation is introduced in this audit.
+[ADR-0019](adr/0019-structural-removal-and-profile-acceptance.md) and ADR-0021
+continue to constrain the stronger complete-Desktop claim.
 
 AgentMender verifies exact persistent removal and collateral preservation.
 The user checks graphical disappearance separately. Automated restart is not a
@@ -52,9 +57,10 @@ M4 describes future provider-native intentions without invoking them. A plan is
 not authorization. Ready is not approved. `plan <intent> <id>` represents archive,
 unarchive, soft-delete, purge and repair requests. No execute, approval, recovery
 or repair system belongs to M4. M6 adds [durable transaction/recovery knowledge](transactions.md)
-without provider execution. All current real/sanitized plans are Blocked/Unsupported.
+without provider execution. All current native-v1 real/sanitized plans are Blocked/Unsupported; this does not
+describe the separately admitted exact scoped-cleanup path.
 
-## Types and flow
+## Native-v1 types and flow
 
 DiscoveryService::plan discovers once per adapter, builds its graph, obtains M3
 proof context, evaluates integrity and obtains pure PlanningContext. A unique
@@ -79,7 +85,7 @@ commands, SQL or file deletion. SoftDelete is not archive: independent recovery
 semantics are unimplemented. Repair remains unsupported. Orphan/residual findings
 never automatically produce lifecycle operations.
 
-## Identity and serialization
+## Native-v1 identity and serialization
 
 PlanDigest is the semantic ID; no random PlanId is necessary. SHA-256 preimages
 use `agentmender/state/v1` and `agentmender/plan/v1` separators followed by NUL.
@@ -116,7 +122,7 @@ ownership/integrity/effects or observed metadata invalidate old plans. New share
 references always change the fingerprint. Validation never edits the old plan.
 M6 must revalidate immediately before effects; M4 does not eliminate TOCTOU.
 
-## Effects and ownership
+## Native-v1 effects and ownership
 
 Native identity, operation effects and physical ownership are separate.
 NativeEffectBoundary requires an explicit contract, exact selected capability,

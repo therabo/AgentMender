@@ -1,32 +1,25 @@
 # Durable transactions and restart recovery
 
-Builds 24141 and 23880 have separate schema-4 candidates. Both remain unadmitted.
-See the [current structural checkpoint](milestones/m8-2-1-structural-2026-11-07.md).
+## Shared lifecycle substrate and current boundaries
 
-## M8.2.1 current outcome boundary
+The [product-first architecture](architecture.md) reuses one protected journal,
+transaction, approval and recovery engine for primary lifecycle and additional
+cleanup. [ADR-0022](adr/0022-product-first-session-lifecycle.md) introduces no
+parallel authority, schema migration or executor. Current MCP has no durable
+preparation/execution handoff; that missing integration belongs to a future P0 slice.
 
-Plan schema 3 uses the existing authenticated journal schema 2, approval MAC and
-recovery architecture. `CompleteRemovalActionObserved` durably records the frozen
-PrimaryPayload and StateThreadRecords commit boundaries in order. The final
-`CompleteRemovalObserved` must agree with the recorded prefix. The original
-consumed intent is the authenticated anchor even as progress advances the journal.
-An append failure stops subsequent effects; a crash gap stays unknown. Blocked or
-Failed cannot conceal Removed/Unknown destructive evidence. Reconciliation remains
-read-only and preserves existing commit records without inventing unlinks/bytes.
+Plan schemas 3/4 use authenticated journal schema 2. Durable ordered
+CompleteRemovalActionObserved records bind each frozen action. Append failure
+stops subsequent effects; effect/record crash gaps remain unknown. Reconciliation
+keeps authenticated existing receipts and never invents actions, bytes or retry
+permission. Historical v2 plan/report/hash/replay meanings remain unchanged.
 
-All approved expanded primary effects may yield transaction Succeeded while the
-separate product assessment remains ProjectionIncomplete and CLI exits 2. This is
-explicitly primary-operation success, not a complete-removal receipt. Old v2 plan,
-report, hash and replay meanings are unchanged. There is no second authority store.
-
-AgentMender verifies exact persistent removal and collateral preservation.
-The user checks graphical disappearance separately. Automated restart is not a
-development gate under [ADR-0021](adr/0021-structural-admission-and-manual-desktop-acceptance.md).
-All relevant writers must remain closed throughout a Desktop cleanup. A
-process-absence snapshot cannot fence a later launch.
-
-See [ADR-0019](adr/0019-structural-removal-and-profile-acceptance.md).
-M8.2.1 remains OPEN. No Desktop projection profile has structural admission. No automatic retry, restoration or application-control path is added.
+A primary transaction can Succeed while its stronger complete-removal assessment
+is ProjectionIncomplete; current CLI then exits 2. P0 must report the actual
+verified operation without pretending all artifacts are gone. This audit changes
+no outcomes or exit codes. M8.2.1 Desktop execution remains unadmitted and deferred
+under P1/P2, rather than gating every primary transaction. No real-state writes,
+app control, automatic retry, whole-store restore or payload backup are added.
 
 ## M8.2 scoped transaction integration
 
@@ -42,7 +35,8 @@ stale index/metadata after irreversible unlink; a missing outcome stays Unknown.
 Reconciliation must inspect frozen objects without redispatch, expanding the set
 or rebuilding receipts. Recovery remains bounded reconciliation metadata, not a
 multi-GB payload backup, automatic compensation or shared-store restoration.
-The exact profile, concurrency fence and durable encoding remain release-review gates.
+The exact profile, concurrency fence and durable encoding remain enforced
+contracts; M8.2 passed its release gates. New profiles need their own evidence.
 See [scoped sequencing and cleanup outcomes](scoped-session-cleanup.md).
 
 M6 established persistence without a provider executor or human approval system.
@@ -60,7 +54,7 @@ without rebuilding an execution receipt. The sections below describing M6's abse
 execution CLI record the historical foundation; the current local CLI also has
 `transactions execute` and `transactions reconcile`. MCP remains read-only.
 
-## Bound attempts and deterministic knowledge
+## Historical M6/v1 bindings and deterministic knowledge
 
 `TransactionId` is 256 bits from OS randomness, identifying one attempt rather than
 one plan. Multiple attempts can bind the same `PlanDigest`. `TransactionBinding`
@@ -201,7 +195,9 @@ JSON says `mode: durable_knowledge_only`, `provider_state_verified: false` and
 `execution_authorized: false`. Recovery availability and protection remain explicit.
 CLI checks standard homes, configured/env provider roots, Desktop stores and app
 bundles for overlap. Missing/empty state is never initialized by inspection.
-No create/execute/resume/retry/rollback/approval command exists.
+M6 originally had no create/execute/resume/retry/rollback/approval command.
+Current preparation/approval and gated execution are described above and in
+[approval](approvals.md); no raw consume or automatic retry command exists.
 
 ## Durability and security limits
 

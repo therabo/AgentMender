@@ -1,6 +1,19 @@
 # Dependency decisions
 
-## M8.2.1 assessment boundary
+## Product-first audit dependency decision
+
+ADR-0022 keeps the eight crates and all locked package versions. Retire the unused
+provider-api `spawn_codex_read_only` entry point, superseded by owned evidence
+capture, and its duplicate development declaration of the runtime `tempfile`
+dependency. Tests still access the runtime dependency; Cargo.lock is unchanged.
+No runtime, generic lifecycle package, crate split or feature flag is added.
+Provider-native selection remains provider-specific and uses the existing
+protected orchestration. Deep Desktop modules remain private and unadmitted.
+
+The remainder records dependency decisions at their stated historical dates;
+release-version claims there are not fresh package recommendations.
+
+## Deferred M8.2.1 assessment boundary
 
 The pure product assessment uses existing domain/serde dependencies and introduces
 no executor, new runtime, generic mutation library or parallel persistence store.

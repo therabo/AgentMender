@@ -2,10 +2,21 @@
 
 Current Desktop schema-4 evidence is in the [structural checkpoint](../../docs/milestones/m8-2-1-writer-admission-2026-11-07.md).
 
-## M8.2.1 complete-removal compatibility
+## Product-first support axes
+
+The [roadmap](../../docs/product-roadmap.md) separates exact read-only discovery,
+native lifecycle, scoped primary cleanup and optional Desktop/deep cleanup.
+A fingerprint recognized on one axis grants no authority on another. Native-first
+selection requires exact operation scope, not merely a matching protocol schema.
+The first conversational slice must address the gap between historical inventory
+profiles and the stable 0.166.0 primary-cleanup profile. See the
+[audit matrix](../../docs/audits/2026-11-07-product-first-audit.md).
+
+## Deferred M8.2.1 complete-removal compatibility
 
 M8.2 primary cleanup is PASS and [integrated](../../docs/milestones/m8-2-integration.md)
-at a284767157ace8769deee85b195b5b70efe374d8. M8.2.1 is OPEN under
+at a284767157ace8769deee85b195b5b70efe374d8. M8.2.1 is unfinished/deferred, no
+longer a global P0 blocker. Its stronger complete-removal claim remains governed by
 [ADR-0019](../../docs/adr/0019-structural-removal-and-profile-acceptance.md), with zero admitted
 complete graphical removal profiles. The [installed 24141 candidate](desktop-complete-removal-24141-v1/README.md)
 and [recovered 23880 candidate](desktop-complete-removal-v1/catalog/README.md)

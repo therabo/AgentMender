@@ -1,22 +1,33 @@
 # Read-only MCP interface
 
-## M8.2.1 scope
+## Product-first scope and readiness
 
-The new pure product assessment is not an authorization or mutation tool. MCP
-still exposes exactly the eight read-only tools below, with no additional input,
-proof import, persistent preparation, approval or app coordination port.
-[ADR-0018](adr/0018-complete-session-removal.md) changes no MCP wire schema.
-M8.2 primary-cleanup PASS does not supply complete graphical removal; M8.2.1 is OPEN.
+[ADR-0022](adr/0022-product-first-session-lifecycle.md) makes conversational
+session management the primary MVP. The existing registry remains exactly eight
+read-only tools. It supports structured observations and immutable intentions;
+it is not a complete conversational deletion workflow.
 
-## M8.2 status: unchanged read-only surface
+P0 still needs useful session labels/search, ambiguity review, active management-
+session protection, exact removal previews, durable preparation/transaction lookup,
+a trusted human approval handoff, approved execution and scoped result reporting.
+The calling agent handles natural language. Conceptual future operations may be
+combined with existing tools; no new tools or schemas are added by this audit.
+A future request-approval tool may initiate human review but cannot itself grant
+approval. The model cannot provide destructive authorization.
 
-M8.2 Scoped Session Cleanup is implemented; [ADR-0017](adr/0017-scoped-cleanup-residual-preservation-provider-local-mutation.md) is **Accepted**.
-The registry below remains exactly eight read-only tools. No scoped-cleanup intent,
-manifest import, persistent preparation, approval/revocation/consumption, writer lock,
-provider-local mutation or execution command has been added to MCP. Future planning
-views require separately reviewed DTO/privacy semantics; they cannot authorize effects.
-The existing lifecycle intent enum and command examples remain the implemented surface.
-See [the scoped architecture and command status](scoped-session-cleanup.md).
+The current privacy projection omits titles, paths, native IDs, activity timestamps
+and conversation content. Opaque references are useful for exact selection within
+one server process, but cannot support the MISSION1 README search example or
+persist as approval authority across restart. That disclosure/lifetime design must
+be reviewed before implementation. No new local NLP service is needed.
+
+Configured Codex and Claude adapters can both be queried from either MCP client;
+provider selection does not depend on the host agent. This architectural property
+has fixture coverage, not four-way real-client deletion acceptance. M8.2.1 Desktop
+work is deferred and does not block a separately proven primary operation. Current
+MCP still cannot prepare/grant/revoke/consume/execute or initialize durable storage.
+
+## Launch the current read-only server
 
 Build with `cargo build --locked --workspace`, then configure your MCP client to
 launch the local executable with `mcp`:

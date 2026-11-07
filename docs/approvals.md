@@ -1,9 +1,18 @@
 # Independent local approval
 
-Builds 24141 and 23880 have separate schema-4 candidates. Both remain unadmitted.
-See the [current structural checkpoint](milestones/m8-2-1-structural-2026-11-07.md).
+[ADR-0022](adr/0022-product-first-session-lifecycle.md) reuses this independent
+human channel for the future conversational workflow. MCP cannot currently
+prepare transactions or request/issue approval. A future review request may only
+initiate the trusted human interaction; the model must never grant authorization.
+Human-readable scope, durable lookup and client shell/PTY threat assumptions need
+explicit P0 integration. Additional artifact effects require their own frozen
+review, not broader authority on a successful primary removal.
 
-## M8.2.1 current approval boundary
+M8.2.1 is unfinished/deferred; builds 24141/23880 remain unadmitted candidates.
+It no longer gates every primary workflow. The existing complete-Desktop
+structural constraints and global-write refusal remain in force.
+
+## Shared human authority and deferred expanded scope
 
 [ADR-0019](adr/0019-structural-removal-and-profile-acceptance.md) adds separately
 versioned expanded primary review. Fresh schema-3 plans bind exact attachment and
@@ -23,7 +32,7 @@ All relevant writers must remain closed throughout a Desktop cleanup. A
 process-absence snapshot cannot fence a later launch.
 
 No complete Desktop profile is admitted. Review discloses the selected profile and unknown maximum-safe closure. Coverage, a pure assessment and static source evidence
-never grant authority. M8.2.1 remains OPEN.
+never grant authority. M8.2.1 remains historically OPEN and is now deferred.
 
 ## M8.2 scoped cleanup approval
 
@@ -101,7 +110,7 @@ lifecycle, scope and time, but does not authenticate a MAC or reobserve provider
 `scope_and_time_valid` is only a component check. All require authenticated history.
 Approval never overrides blockers, stale/Unknown/Partial/conflicting evidence,
 missing recovery, terminal states or OutcomeUnknown. Execution-time revalidation
-and provider-contract checks remain mandatory for future M8/M9.
+and provider-contract checks remain mandatory for every admitted operation.
 
 ## Durable authority
 
@@ -147,7 +156,9 @@ the external journal, file bytes, sidecar identity and security descriptor.
 `TransactionStore::record_intent` now requires an authenticated exact active grant,
 fresh plan validation and verified recovery. One signed Consumed action both
 consumes permission and moves Prepared to OutcomeUnknown. There is no standalone
-consume-then-intent gap and no consume/execute CLI or MCP command.
+consume-then-intent gap or standalone consume command. The later CLI
+`transactions execute` invokes application orchestration and cannot mint a grant;
+MCP still exposes neither consumption nor execution.
 
 External append/sync and SQLite commit precede the noncloneable DurableIntent,
 which identifies approval, transaction, sequence, plan/state and operation. M7

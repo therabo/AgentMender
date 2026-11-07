@@ -1,9 +1,13 @@
 # M8.1 Codex full cleanup / lifecycle compatibility refresh
 
-Builds 24141 and 23880 have separate schema-4 candidates. Both remain unadmitted.
-See the [current structural checkpoint](milestones/m8-2-1-structural-2026-11-07.md).
+Current priorities are in [ADR-0022](adr/0022-product-first-session-lifecycle.md)
+and the [product roadmap](product-roadmap.md). This report preserves investigated
+version/operation evidence, not a provider-wide impossibility verdict. Its broader
+complete-erasure gate does not automatically block a narrower verified lifecycle
+operation. Native delete remains unimplemented and needs actual affected-set and
+postcondition evidence before admission.
 
-## Historical M8.1 verdict and current development
+## Historical M8.1 verdict and product-first interpretation
 
 This report preserves M8.1's **BLOCKED** answer for complete provider-native effects,
 deletion and retention proof; it is not a verdict on a separately proven bounded
@@ -15,7 +19,7 @@ M8.2 scoped primary cleanup is PASS and integrated at
 `a284767157ace8769deee85b195b5b70efe374d8`
 ([receipt](milestones/m8-2-integration.md)). It proves its narrow exact local cut;
 it does not invalidate the historical native blockers below.
-M8.2.1 is OPEN under [ADR-0019](adr/0019-structural-removal-and-profile-acceptance.md).
+M8.2.1 is unfinished/deferred, no longer a global P0 blocker; its stronger claim remains governed by [ADR-0019](adr/0019-structural-removal-and-profile-acceptance.md).
 AgentMender verifies exact persistent removal and collateral preservation.
 The user checks graphical disappearance separately. Automated restart is not a
 development gate under [ADR-0021](adr/0021-structural-admission-and-manual-desktop-acceptance.md).
@@ -26,8 +30,7 @@ but no complete Desktop profile is admitted. See
 [the current contract](scoped-session-cleanup.md). Historical native verdict below
 retains its original scope.
 
-Verdict: **BLOCKED**. Can AgentMender now safely implement “remove this Codex
-session”? **NO**. The reviewed current contract does not supply a complete
+Historical M8.1 verdict: **BLOCKED** for its complete native cleanup contract. The reviewed current contract does not supply a complete
 preapproved native effect boundary and authoritative complete deletion/retention
 verification. No requirement was weakened to obtain a successful deletion.
 
@@ -55,7 +58,7 @@ Existing native research was internally consistent and was not reopened.
 
 ## Codex release refresh
 
-Historical exact version: `0.165.0-alpha.1.2`. Current official stable:
+Historical exact version: `0.165.0-alpha.1.2`. Official stable examined in that investigation:
 [`0.166.0`](https://github.com/openai/codex/releases/tag/rust-v0.166.0), independently
 confirmed through official GitHub release metadata and npm distribution. Acquisition
 was private; neither the app installation nor PATH Codex was updated.

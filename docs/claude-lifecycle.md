@@ -1,16 +1,28 @@
 # Claude project lifecycle investigation: M9 BLOCKED
 
-## M8.2.1 scope
+## Current product direction and provider-specific limits
 
-Complete session removal now requires supported UI projection disappearance,
-restart verification and maximum safe artifact cleanup under
-[ADR-0018](adr/0018-complete-session-removal.md). This Codex investigation enables
-no Claude mutation/profile or raw-storage fallback. Claude M9 remains historical
-BLOCKED BY PROVIDER CONTRACT; its zero mutation profiles and all guards remain.
+Both Codex and Claude Code are required by the [product roadmap](product-roadmap.md).
+The calling agent handles natural language; Claude discovery/removal must also be
+available to a Codex MCP client, subject to local permission and exact adapter
+support. Current Claude support remains read-only with zero mutation profiles.
+
+M9's project-purge investigation and its original BLOCKED verdict below are
+preserved for the tested versions and operation. They do not mean Claude session
+management as a whole is impossible. P0 must investigate a one-session operation,
+verify its actual transcript/resume effects and avoid widening to a project purge.
+A list-removal/background operation that leaves a resumable transcript is not
+transcript deletion. Any local fallback needs a separate exact-version identity,
+writer, ownership, approval and verification contract; none is admitted today.
+
+M8.2.1 is unfinished/deferred under P1/P2 and no longer a global blocker for the
+conversational MVP. It admits no Claude mutation and does not relax M9 guards.
+[ADR-0022](adr/0022-product-first-session-lifecycle.md) changes product sequencing;
+ADR-0014/0015's existing tested-operation safeguards remain in force.
 
 ## M8.2 scope does not enable Claude mutation
 
-The Codex-only [scoped cleanup proposal](scoped-session-cleanup.md) is **OPEN**
+The Codex-only [scoped primary cleanup](scoped-session-cleanup.md) is **PASS**
 under Accepted ADR-0017. It does not supersede ADR-0015's M9 evidence gate, add
 Claude profiles, widen a session into project purge or permit a JSONL/storage fallback.
 M9 remains BLOCKED BY PROVIDER, investigation CLOSED FOR CURRENT PROVIDER CONTRACT;
@@ -28,13 +40,13 @@ for AgentMender execution. No Claude mutation adapter or lifecycle compatibility
 profile is installed. Discovery remains read-only. See [ADR-0014](adr/0014-claude-project-lifecycle-evidence-gate.md)
 and the [native evidence record](../compatibility/claude/lifecycle-m9/README.md).
 
-## Current official release follow-up
+## Historical official release follow-up — 2026-10-30
 
 [ADR-0015](adr/0015-current-claude-purge-provider-blockers.md) changes the milestone
 assessment to BLOCKED: the current local provider contract requires upstream
-identity/effects/verification evidence before safe completion. The latest public
-non-prerelease is Code 2.1.314; the separately named delayed `stable` update channel
-serves 2.1.308. Both were acquired privately without installing or upgrading them.
+identity/effects/verification evidence before safe completion. The public
+non-prerelease examined on that date was Code 2.1.314; the separately named delayed `stable` update channel
+served 2.1.308. Both were acquired privately without installing or upgrading them.
 Their [separate evidence and comparison](../compatibility/claude/lifecycle-m9/current-2026-10-30/README.md)
 must not be applied retroactively to 2.1.222.
 

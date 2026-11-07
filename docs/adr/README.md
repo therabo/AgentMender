@@ -1,5 +1,12 @@
 # Architecture decisions
 
+[ADR-0022](0022-product-first-session-lifecycle.md) governs current product
+sequencing and separates primary/native lifecycle from deep cleanup. Older ADRs
+retain their operation-specific safety contracts and historical evidence.
+ADR-0018–0021 no longer impose complete Desktop removal as a global MVP gate;
+their stronger complete-Desktop claim remains gated. M9 restrictions remain
+version/operation-specific; no Claude mutation is enabled.
+
 | Decision | Status |
 |---|---|
 | [0001: Read-only hexagonal foundation](0001-read-only-foundation.md) | Accepted |
@@ -17,18 +24,17 @@
 | [0013: Exact Codex unarchive through a consumed durable handoff](0013-codex-durable-native-handoff.md) | Accepted |
 | [0014: Claude project lifecycle evidence gate](0014-claude-project-lifecycle-evidence-gate.md) | Accepted historical safety boundary; M9 BLOCKED under 0015 |
 | [0015: Current Claude purge provider blockers](0015-current-claude-purge-provider-blockers.md) | Accepted; M9 BLOCKED; preserves 0014 safety boundary |
-
 | [0016: Current Codex cleanup provider-contract gate](0016-current-codex-cleanup-provider-contract-gate.md) | Accepted; M8.1 native full cleanup BLOCKED; integrated |
 | [0017: Scoped cleanup, residual preservation and provider-local mutation](0017-scoped-cleanup-residual-preservation-provider-local-mutation.md) | Accepted; M8.2 historical primary-cleanup PASS, integrated |
-| [0018: Complete Session Removal, Projection Consistency and Maximum Safe Cleanup](0018-complete-session-removal.md) | Accepted product/assessment contract; M8.2.1 OPEN, no complete Desktop mutation profile |
-
+| [0018: Complete Session Removal, Projection Consistency and Maximum Safe Cleanup](0018-complete-session-removal.md) | Accepted complete-Desktop assessment contract; historical OPEN, now deferred; global sequencing superseded by 0022 |
 | [0019: Structural removal authority and isolated profile acceptance](0019-structural-removal-and-profile-acceptance.md) | Accepted structural contract; partially supersedes 0018; new profiles gated |
-
 | [0020: Closed Desktop complete removal and qualified persistent actions](0020-closed-desktop-complete-removal.md) | Accepted design; explicit remain-closed operating prerequisite and [unadmitted exact-build candidates](../milestones/m8-2-1-desktop-admission-2026-11-06.md) |
 | [0021: Structural admission and manual Desktop acceptance](0021-structural-admission-and-manual-desktop-acceptance.md) | Accepted. Structural verification gates admission. User observation gates graphical acceptance. |
+| [0022: Product-first session lifecycle and separation of primary removal from deep cleanup](0022-product-first-session-lifecycle.md) | Accepted; supersedes global Desktop/project-first sequencing, preserves existing authority and safety contracts |
 
-M8.1 integration/base is recorded in [the receipt](../milestones/m8-1-integration.md)
-(`c9dd04d` after integrated `6f798bc`). ADR-0017 accepts narrow partial
-supersession for the independently reviewed exact-profile local cleanup path.
-M3 integrity, MCP read-only authority, durable knowledge, independent approval and
-Claude refusal retain their existing meanings. See [scoped cleanup status](../scoped-session-cleanup.md).
+M8.1's integration/base is recorded in [the receipt](../milestones/m8-1-integration.md).
+ADR-0017 partially superseded native-only restrictions for the reviewed exact
+scoped-local Codex path. ADR-0022 changes sequencing without changing negative
+proofs, provider pins, plan/journal schemas, independent approval or current MCP
+read-only authority. The [canonical roadmap](../product-roadmap.md) and
+[audit](../audits/2026-11-07-product-first-audit.md) describe present capability.
