@@ -25,7 +25,7 @@ pub(super) fn scoped_adapter_for_plan(
     args: &Args,
     plan: &agentmender_domain::LifecyclePlan,
 ) -> Result<CodexScopedCleanupAdapter, CliError> {
-    match plan.content().schema_version {
+    let adapter = match plan.content().schema_version {
         2 if plan.content().cleanup_manifest.is_some()
             && args.codex_desktop_user_data.is_none() =>
         {
@@ -49,10 +49,26 @@ pub(super) fn scoped_adapter_for_plan(
             ErrorCode::InvalidArguments,
             "unsupported cleanup plan version",
         )),
-    }
+    }?;
+    let mut protected = args.protect_codex_session.clone();
+    protected.extend(
+        plan.content()
+            .artifacts
+            .iter()
+            .filter(|a| {
+                a.explicitly_protected && a.id.class == agentmender_domain::GraphNodeKind::Session
+            })
+            .filter_map(|a| {
+                a.id.local_id
+                    .as_str()
+                    .strip_prefix("codex:session:")
+                    .map(str::to_owned)
+            }),
+    );
+    Ok(adapter.with_protected_sessions(protected))
 }
 
-fn scoped_adapter_version(
+pub(super) fn scoped_adapter_version(
     args: &Args,
     version: u32,
 ) -> Result<CodexScopedCleanupAdapter, CliError> {
@@ -85,7 +101,7 @@ fn scoped_adapter_version(
             .or_else(|| find_executable(ProviderKind::Codex)),
     };
     let reader = CodexAdapter::new(location).with_evidence_helper(helper, home);
-    match version {
+    let adapter = match version {
         2 => Ok(CodexScopedCleanupAdapter::new(reader)),
         3 => Ok(CodexScopedCleanupAdapter::new_expanded(reader)),
         #[cfg(unix)]
@@ -105,7 +121,8 @@ fn scoped_adapter_version(
             ErrorCode::InvalidConfiguration,
             "exact Desktop cleanup profile unavailable",
         )),
-    }
+    }?;
+    Ok(adapter.with_protected_sessions(args.protect_codex_session.clone()))
 }
 
 pub fn run(args: &Args, state_root: &Path, action: &TransactionAction) -> Result<bool, CliError> {
@@ -278,6 +295,48 @@ fn report_cleanup(
         .and_then(|p| p.content().cleanup_manifest.as_ref())
         .ok_or_else(unavailable)?;
     let records = store.records(id).map_err(|_| unavailable())?;
+    if snapshot.review_plan().is_some_and(|p| {
+        p.content().artifacts.iter().any(|a| {
+            a.explicitly_protected && a.id.class == agentmender_domain::GraphNodeKind::Session
+        })
+    }) {
+        let presentation = agentmender_application::conversation::removal_status(
+            &snapshot,
+            &records,
+            snapshot.recovery().is_some(),
+        );
+        if args.json {
+            super::emit("scoped_primary_removal", &presentation)?;
+        } else {
+            println!("Session: {}", presentation.session_label);
+            println!(
+                "Primary session removal: {}",
+                if presentation.primary_verified {
+                    "Verified"
+                } else {
+                    "Not verified"
+                }
+            );
+            println!(
+                "Other sessions: {}",
+                if presentation.other_sessions_preserved {
+                    "Preserved at the fenced cutoff"
+                } else {
+                    "Not verified"
+                }
+            );
+            println!("Additional technical artifacts: Not fully cleaned");
+            println!(
+                "Logical bytes unlinked: {}. Physical reclaim: unknown",
+                presentation
+                    .logical_unlinked_bytes
+                    .map_or_else(|| "unknown".into(), |n| n.to_string())
+            );
+            println!("Graphical confirmation: Not requested");
+            println!("Recovery: reconciliation metadata only; no payload restore");
+        }
+        return Ok(!presentation.primary_verified);
+    }
     let report = records
         .iter()
         .rev()

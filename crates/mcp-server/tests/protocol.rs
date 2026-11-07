@@ -310,3 +310,139 @@ async fn authority_calls_and_confirmation_arguments_never_dispatch() {
     drop(cr);
     task.await.unwrap().unwrap();
 }
+
+#[tokio::test]
+async fn opt_in_conversation_registry_metadata_privacy_and_authority_rejection() {
+    use agentmender_application::conversation::{
+        ConversationRequest, ConversationResponse, SessionMatch,
+    };
+    use agentmender_domain::*;
+    let calls = Arc::new(AtomicUsize::new(0));
+    let workflow_calls = calls.clone();
+    let workflow: agentmender_mcp_server::ConversationExecutor = Arc::new(move |request, _| {
+        workflow_calls.fetch_add(1, Ordering::SeqCst);
+        match request {
+            ConversationRequest::Search { .. } => Ok(ConversationResponse::Search {
+                completeness: Completeness::Partial,
+                sessions: vec![SessionMatch {
+                    metadata: SessionMetadata {
+                        identity: ArtifactId {
+                            provider: ProviderKind::Codex,
+                            state_root: "/PRIVATE/ROOT".into(),
+                            class: GraphNodeKind::Session,
+                            local_id: EntityId::new(
+                                "codex:session:12345678-1234-1234-1234-123456789abc",
+                            )
+                            .unwrap(),
+                        },
+                        native_session_id: "12345678-1234-1234-1234-123456789abc".into(),
+                        title: Some("MISSION1 README\u{1b}\u{202e}".into()),
+                        project_label: Some("MISSION1".into()),
+                        created_at: Some(1),
+                        last_active_at: Some(2),
+                        state: SessionState::Archived,
+                        producer_version_matches: true,
+                    },
+                    protected: false,
+                    can_request_preview: true,
+                }],
+            }),
+            ConversationRequest::Status { .. } | ConversationRequest::RequestExecution { .. } => {
+                Ok(ConversationResponse::Transactions(vec![]))
+            }
+            _ => Err(ApplicationError::Cancelled),
+        }
+    });
+    let (client, server) = tokio::io::duplex(256 * 1024);
+    let (sr, sw) = tokio::io::split(server);
+    let task = tokio::spawn(agentmender_mcp_server::serve_io_with_conversation(
+        sr,
+        sw,
+        executor(Arc::new(AtomicUsize::new(0))),
+        workflow,
+        [42; 32],
+    ));
+    let (cr, mut cw) = tokio::io::split(client);
+    let mut cr = BufReader::new(cr);
+    let meta = json!({"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientInfo":{"name":"fixture","version":"1"},"io.modelcontextprotocol/clientCapabilities":{}});
+    let list = exchange(
+        &mut cr,
+        &mut cw,
+        json!({"jsonrpc":"2.0","id":1,"method":"tools/list","params":{"_meta":meta}}),
+    )
+    .await;
+    assert_eq!(list["result"]["tools"].as_array().unwrap().len(), 13);
+    assert!(serde_json::to_vec(&list).unwrap().len() + 64 * 1024 + 128 <= 256 * 1024);
+    let call = |id, name, args| json!({"jsonrpc":"2.0","id":id,"method":"tools/call","params":{"_meta":meta,"name":name,"arguments":args}});
+    let result = exchange(
+        &mut cr,
+        &mut cw,
+        call(2, "session_search", json!({"query":"MISSION1 README"})),
+    )
+    .await;
+    let view = &result["result"]["structuredContent"];
+    assert_eq!(view["completeness"], "partial");
+    assert_eq!(view["sessions"][0]["title"], "MISSION1 README");
+    assert_eq!(
+        view["sessions"][0]["native_session_id"],
+        "12345678-1234-1234-1234-123456789abc"
+    );
+    assert!(!result.to_string().contains("PRIVATE"));
+    let target = view["sessions"][0]["target"].clone();
+    for (id, name, args) in [
+        (
+            3,
+            "prepare_removal",
+            json!({"target":target,"expected_plan_digest":"a".repeat(64),"confirm":true}),
+        ),
+        (
+            4,
+            "preview_removal",
+            json!({"target":target,"caller_session_id":"attacker"}),
+        ),
+        (
+            5,
+            "request_removal_execution",
+            json!({"transaction_id":"a".repeat(64),"approval":true}),
+        ),
+        (6, "removal_status", json!({"transaction_id":"forged"})),
+        (
+            7,
+            "session_search",
+            json!({"query":"x","root":"/arbitrary"}),
+        ),
+    ] {
+        let rejected = exchange(&mut cr, &mut cw, call(id, name, args)).await;
+        assert_eq!(rejected["error"]["code"], -32602, "{rejected}");
+    }
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    let parsed_digest = exchange(
+        &mut cr,
+        &mut cw,
+        call(
+            12,
+            "prepare_removal",
+            json!({"target":target,"expected_plan_digest":format!("sha256:{}", "a".repeat(64))}),
+        ),
+    )
+    .await;
+    assert_eq!(
+        parsed_digest["result"]["structuredContent"]["error"],
+        "cancelled"
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+    let handoff = exchange(
+        &mut cr,
+        &mut cw,
+        call(
+            8,
+            "request_removal_execution",
+            json!({"transaction_id":"a".repeat(64)}),
+        ),
+    )
+    .await;
+    assert!(handoff["result"]["structuredContent"]["transactions"].is_array());
+    drop(cw);
+    drop(cr);
+    task.await.unwrap().unwrap();
+}

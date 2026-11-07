@@ -18,9 +18,12 @@ verified results. It protects other sessions and shared state throughout.
 > the trusted human channel. After execution and structural verification, the
 > agent explains the result and any remaining artifacts.
 
-This complete workflow is **planned**. The current MCP server is read-only and
-cannot delete a session. Either host agent should eventually be able to manage
-either target provider; cross-provider deletion is not implemented today.
+P0-C1 is **OPEN**. An opt-in Codex workflow now searches metadata, previews an
+exact primary removal, prepares its durable transaction and recovers status.
+The human approves and executes through the existing external-terminal path.
+Actual conversational client use with independent human approval remains an
+acceptance gate. See [the workflow and limits](docs/conversational-codex-removal.md).
+Cross-provider deletion is not implemented.
 
 ## What works today
 
@@ -29,8 +32,8 @@ either target provider; cross-provider deletion is not implemented today.
 | Provider discovery, scan and inspection | Implemented with explicit partial coverage and exact compatibility limits |
 | Codex inventory | Historical exact App Server profiles; unknown versions receive metadata audit only |
 | Claude inventory | Partial observed Desktop sidecar metadata; synthetic Code fixtures; no general live SDK inventory |
-| MCP | Eight bounded read-only stdio tools, opaque identities, inspection, integrity and immutable intentions |
-| Search by title/project/content | No dedicated search; current MCP output lacks useful labels and native IDs |
+| MCP | Eight default read-only tools; five opt-in Codex search/preview/preparation/status/external-handoff tools |
+| Session search | Opt-in exact stable-profile title/project/UUID metadata search; duplicates retained; no transcript search |
 | Human approval and durable transactions | Implemented local terminal review, one-shot authenticated grants, journal and read-only reconciliation |
 | Codex primary cleanup | M8.2 PASS for exact 0.166.0/macOS arm64, unshared Legacy plain history and reviewed WAL schema |
 | Native Codex mutation | Conditional historical unarchive handoff; real native plans remain blocked; archive/delete unsupported |
@@ -108,7 +111,7 @@ git diff --check
 ```
 
 Normal tests use sanitized/disposable fixtures. Real provider probes are separate
-opt-ins; this audit authorizes no real session deletion or application restart.
+opt-ins. Development never deletes real user sessions or restarts the application.
 Read [AGENTS.md](AGENTS.md) before changing safety boundaries. Detailed contracts:
 [planning](docs/planning.md), [integrity](docs/integrity.md),
 [approval](docs/approvals.md), [transactions/recovery](docs/transactions.md),

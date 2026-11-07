@@ -19,6 +19,8 @@ pub struct ScopedCaptureRequest {
     pub target_id: String,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub desktop_closed_snapshot: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub include_session_metadata: bool,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -50,6 +52,8 @@ pub struct ScopedCaptureResult {
     pub known_threads: Vec<ScopedKnownThread>,
     pub retained_database_sha256: String,
     pub expanded_retained_database_sha256: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_metadata: Option<agentmender_domain::SessionInventory>,
 }
 
 /// Only fixed identity and locator columns cross the protected boundary.
@@ -118,6 +122,73 @@ fn valid_known_threads(rows: &[ScopedKnownThread], root: &std::path::Path) -> bo
 
 fn unavailable() -> ProviderError {
     ProviderError::CapabilityUnavailable("scoped SQLite evidence rejected or unavailable".into())
+}
+
+/// Deliberately excludes preview, first_user_message, rollout bodies and full cwd.
+fn metadata_inventory(
+    db: &Connection,
+    root: &std::path::Path,
+) -> Result<agentmender_domain::SessionInventory, ProviderError> {
+    use agentmender_domain::*;
+    let mut stmt = db.prepare("SELECT id, title, cwd, created_at, updated_at, archived, cli_version FROM threads ORDER BY id LIMIT 501").map_err(|_| unavailable())?;
+    let mut rows = stmt.query([]).map_err(|_| unavailable())?;
+    let mut sessions = Vec::new();
+    let mut completeness = Completeness::Complete;
+    let mut bytes = 0;
+    while let Some(row) = rows.next().map_err(|_| unavailable())? {
+        if sessions.len() == 500 {
+            completeness = Completeness::Partial;
+            break;
+        }
+        let id: String = row.get(0).map_err(|_| unavailable())?;
+        if !canonical_uuid(&id) {
+            return Err(unavailable());
+        }
+        let title: String = row.get(1).map_err(|_| unavailable())?;
+        let cwd: String = row.get(2).map_err(|_| unavailable())?;
+        let title = (!title.trim().is_empty() && title.len() <= 1024).then_some(title);
+        let project_label = std::path::Path::new(&cwd)
+            .file_name()
+            .and_then(|p| p.to_str())
+            .filter(|p| !p.is_empty() && p.len() <= 256)
+            .map(str::to_owned);
+        bytes += title.as_ref().map_or(0, String::len)
+            + project_label.as_ref().map_or(0, String::len)
+            + 256;
+        if bytes > 128 * 1024 {
+            completeness = Completeness::Partial;
+            break;
+        }
+        let archived: i64 = row.get(5).map_err(|_| unavailable())?;
+        let version: String = row.get(6).map_err(|_| unavailable())?;
+        let timestamp = |index| -> Result<Option<i64>, ProviderError> {
+            let value: i64 = row.get(index).map_err(|_| unavailable())?;
+            Ok((value >= 0).then_some(value))
+        };
+        sessions.push(SessionMetadata {
+            identity: ArtifactId {
+                provider: ProviderKind::Codex,
+                state_root: root.into(),
+                class: GraphNodeKind::Session,
+                local_id: crate::scoped_id("session", &id)?,
+            },
+            native_session_id: id,
+            title,
+            project_label,
+            created_at: timestamp(3)?,
+            last_active_at: timestamp(4)?,
+            state: match archived {
+                0 => SessionState::Active,
+                1 => SessionState::Archived,
+                _ => SessionState::Unknown,
+            },
+            producer_version_matches: version == crate::scoped_profile::SCOPED_CODEX_VERSION,
+        });
+    }
+    Ok(SessionInventory {
+        sessions,
+        completeness,
+    })
 }
 
 fn canonical_uuid(value: &str) -> bool {
@@ -275,25 +346,27 @@ fn immutable_uri(path: &std::path::Path) -> std::ffi::OsString {
     uri.into()
 }
 
+#[cfg(test)]
 pub(super) fn snapshot(
     source_root: &std::path::Path,
     target: &str,
 ) -> Result<ScopedCaptureResult, ProviderError> {
-    snapshot_inner(source_root, target, false)
+    snapshot_inner(source_root, target, false, false)
 }
 
-#[cfg(unix)]
+#[cfg(all(test, unix))]
 pub(super) fn desktop_snapshot(
     source_root: &std::path::Path,
     target: &str,
 ) -> Result<ScopedCaptureResult, ProviderError> {
-    snapshot_inner(source_root, target, true)
+    snapshot_inner(source_root, target, true, false)
 }
 
-fn snapshot_inner(
+pub(super) fn snapshot_inner(
     source_root: &std::path::Path,
     target: &str,
     desktop: bool,
+    include_session_metadata: bool,
 ) -> Result<ScopedCaptureResult, ProviderError> {
     if !canonical_uuid(target) {
         return Err(unavailable());
@@ -418,6 +491,9 @@ fn snapshot_inner(
     };
     let dependent_rows = u64::try_from(dependent_rows).map_err(|_| unavailable())?;
     let known_threads = known_threads(&memory)?;
+    let session_metadata = include_session_metadata
+        .then(|| metadata_inventory(&memory, source_root))
+        .transpose()?;
     let retained_database_sha256 =
         crate::scoped_storage::retained_digest(&memory, target).map_err(|_| unavailable())?;
     let expanded_retained_database_sha256 =
@@ -457,6 +533,7 @@ fn snapshot_inner(
         known_threads,
         retained_database_sha256,
         expanded_retained_database_sha256,
+        session_metadata,
     })
 }
 
@@ -482,11 +559,12 @@ pub fn run_scoped_evidence_worker() -> Result<(), ProviderError> {
             probe_path: request.probe_path,
         };
         capture::validate_worker_request(&validation)?;
-        let result = if request.desktop_closed_snapshot {
-            desktop_snapshot(&request.source_root, &request.target_id)?
-        } else {
-            snapshot(&request.source_root, &request.target_id)?
-        };
+        let result = snapshot_inner(
+            &request.source_root,
+            &request.target_id,
+            request.desktop_closed_snapshot,
+            request.include_session_metadata,
+        )?;
         let output = serde_json::to_vec(&result).map_err(|_| unavailable())?;
         if output.len() > 512 * 1024 {
             return Err(unavailable());
@@ -563,6 +641,23 @@ pub(super) fn read_worker_result(
         "thread_spawn_edges",
     ];
     if result.schema_sha256 != crate::scoped_profile::SCOPED_CODEX_SCHEMA_SHA256
+        || result.session_metadata.is_some() != request.include_session_metadata
+        || result.session_metadata.as_ref().is_some_and(|inventory| {
+            inventory.sessions.len() > 500
+                || inventory.sessions.iter().any(|s| {
+                    s.identity.provider != agentmender_domain::ProviderKind::Codex
+                        || s.identity.state_root != request.source_root
+                        || s.identity.class != agentmender_domain::GraphNodeKind::Session
+                        || s.identity.local_id.as_str()
+                            != format!("codex:session:{}", s.native_session_id)
+                        || !result
+                            .known_threads
+                            .iter()
+                            .any(|r| r.id == s.native_session_id)
+                        || s.title.as_ref().is_some_and(|v| v.len() > 1024)
+                        || s.project_label.as_ref().is_some_and(|v| v.len() > 256)
+                })
+        })
         || !valid_known_threads(&result.known_threads, &request.source_root)
         || (result.rows.first().is_some_and(|r| r.count == 1)
             && !result.known_threads.iter().any(|row| {
@@ -612,6 +707,28 @@ pub(super) fn read_worker_result(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn opt_in_metadata_bounds_disclose_partial_without_transcript_fields() {
+        let db = Connection::open_in_memory().unwrap();
+        db.execute_batch("CREATE TABLE threads(id TEXT,title TEXT,cwd TEXT,created_at INTEGER,updated_at INTEGER,archived INTEGER,cli_version TEXT,preview TEXT)").unwrap();
+        for i in 0..501 {
+            db.execute("INSERT INTO threads VALUES (?1,?2,'/PRIVATE/mission',1,2,1,'0.166.0','SECRET PREVIEW')", (format!("00000000-0000-0000-0000-{i:012x}"), if i == 0 { "x".repeat(1025) } else { "README".into() })).unwrap();
+        }
+        let inventory = metadata_inventory(&db, std::path::Path::new("/owned")).unwrap();
+        assert_eq!(
+            inventory.completeness,
+            agentmender_domain::Completeness::Partial
+        );
+        assert!(inventory.sessions.len() <= 500);
+        assert!(inventory.sessions[0].title.is_none());
+        assert_eq!(
+            inventory.sessions[0].project_label.as_deref(),
+            Some("mission")
+        );
+        let encoded = serde_json::to_string(&inventory).unwrap();
+        assert!(!encoded.contains("SECRET") && !encoded.contains("PRIVATE"));
+    }
 
     #[test]
     fn worker_known_thread_metadata_rejects_outside_and_duplicate_paths() {
@@ -705,6 +822,7 @@ mod tests {
             probe_path: "/probe".into(),
             target_id: "12345678-1234-1234-1234-123456789abc".into(),
             desktop_closed_snapshot: false,
+            include_session_metadata: false,
         };
         assert!(
             !serde_json::to_string(&request)

@@ -18,6 +18,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 use serde::Serialize;
 
 mod approvals;
+mod conversation;
 mod lifecycle;
 mod transactions;
 
@@ -50,6 +51,9 @@ struct Args {
     claude_root: Option<PathBuf>,
     #[arg(long, global = true, value_parser = absolute_path)]
     codex_executable: Option<PathBuf>,
+    /// Independently registered management identities in the selected Codex root.
+    #[arg(long, global = true, value_parser = conversation::canonical_uuid)]
+    protect_codex_session: Vec<String>,
     #[arg(long, global = true, value_parser = absolute_path)]
     claude_executable: Option<PathBuf>,
     #[arg(long, global = true, value_parser = observed_project_path)]
@@ -90,7 +94,13 @@ impl From<PlanIntent> for LifecycleIntent {
 #[derive(Clone, Subcommand)]
 enum Action {
     Providers,
-    Mcp,
+    Mcp {
+        /// Opt in to metadata disclosure and durable primary-removal preparation.
+        #[arg(long)]
+        session_removal: bool,
+        #[arg(long, value_parser = absolute_path)]
+        state_root: Option<PathBuf>,
+    },
     Plans {
         #[command(subcommand)]
         action: approvals::PlanAction,
@@ -225,6 +235,11 @@ impl From<ProviderError> for CliError {
 impl From<ApplicationError> for CliError {
     fn from(error: ApplicationError) -> Self {
         match error {
+            ApplicationError::ManagementProtectionUnavailable
+            | ApplicationError::ProtectedManagementSession
+            | ApplicationError::RemovalPlanChanged => {
+                Self::new(ErrorCode::InvalidScope, error.to_string())
+            }
             ApplicationError::Provider(error) => error.into(),
             ApplicationError::Cancelled => Self::new(ErrorCode::DiscoveryFailed, "query cancelled"),
             ApplicationError::InspectionUnavailable(id) => Self::new(
@@ -617,7 +632,17 @@ fn run(args: Args) -> Result<bool, CliError> {
             "--desktop-fixture requires --provider claude",
         ));
     }
-    if matches!(args.command, Action::Mcp) {
+    if let Action::Mcp {
+        session_removal,
+        state_root,
+    } = &args.command
+    {
+        if *session_removal && (args.codex_root.is_none() || args.codex_executable.is_none()) {
+            return Err(CliError::new(
+                ErrorCode::InvalidConfiguration,
+                "session-removal requires explicit --codex-root and --codex-executable",
+            ));
+        }
         let mut config = args.clone();
         if config.fixture.is_none() {
             if !matches!(config.provider, Some(SelectedProvider::Claude)) {
@@ -662,6 +687,17 @@ fn run(args: Args) -> Result<bool, CliError> {
             home: env::var_os("HOME").map(PathBuf::from),
             helper: env::current_exe().ok(),
         };
+        let conversation = if *session_removal {
+            Some(conversation::executor(&config, state_root.as_deref())?)
+        } else {
+            if state_root.is_some() {
+                return Err(CliError::new(
+                    ErrorCode::InvalidArguments,
+                    "--state-root requires --session-removal",
+                ));
+            }
+            None
+        };
         let executor = Arc::new(
             move |request: ReadOnlyRequest,
                   control: QueryControl|
@@ -694,7 +730,7 @@ fn run(args: Args) -> Result<bool, CliError> {
                     .dispatch(request, control)
             },
         );
-        agentmender_mcp_server::run_stdio(executor)
+        agentmender_mcp_server::run_stdio_with_conversation(executor, conversation)
             .map_err(|_| CliError::new(ErrorCode::OutputError, "MCP transport failed"))?;
         return Ok(false);
     }
@@ -727,7 +763,7 @@ fn run(args: Args) -> Result<bool, CliError> {
         _ => {}
     }
     match args.command {
-        Action::Mcp
+        Action::Mcp { .. }
         | Action::Transactions { .. }
         | Action::Plans { .. }
         | Action::Approve { .. }

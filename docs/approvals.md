@@ -1,8 +1,20 @@
 # Independent local approval
 
+## P0-C1 current handoff
+
+Opt-in MCP can prepare the existing durable transaction and read status. It cannot
+issue/revoke/consume a grant or execute. The human independently reviews the exact
+original plan/digest and runs approval AND execution in the external terminal.
+Frozen management protections are restored from that original plan. Same-user
+shell/PTY/key access remains outside the authentication guarantee; fixture grants
+are not human acceptance. See [the current workflow](conversational-codex-removal.md)
+and [ADR-0023](adr/0023-conversational-primary-removal-handoff.md). Older statements
+below about eight-tool MCP refer to the default launch or historical milestones.
+
+
 [ADR-0022](adr/0022-product-first-session-lifecycle.md) reuses this independent
-human channel for the future conversational workflow. MCP cannot currently
-prepare transactions or request/issue approval. A future review request may only
+human channel for the future conversational workflow. Default MCP cannot prepare transactions; opt-in MCP prepares protected attempts
+but cannot request/issue human authorization. A future review request may only
 initiate the trusted human interaction; the model must never grant authorization.
 Human-readable scope, durable lookup and client shell/PTY threat assumptions need
 explicit P0 integration. Additional artifact effects require their own frozen

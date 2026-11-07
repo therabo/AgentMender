@@ -147,6 +147,14 @@ def approval_boundary_violation(source, crate_name, module_name):
     return False
 
 
+def conversation_authority_violation(source):
+    """ADR-0023: preparation/status only; no grants, intent or effects."""
+    return bool(re.search(
+        r'\b(?:grant_approval|revoke_approval|record_intent|DurableIntent|DurableCleanupPort|DurableEffectPort|DurableCompleteRemovalPort|record_compensation_intent)\b|\.dispatch\s*\(',
+        mask_literals(production_source(source)),
+    ))
+
+
 def claude_lifecycle_violation(source):
     """ADR-0014: no Claude effects until project identity/scope/proofs are validated.
 
@@ -212,6 +220,10 @@ else:
 for crate_name in ['mcp-server', 'provider-api', 'provider-codex', 'provider-claude']:
     for canary in ['fn bypass() { store.grant_approval(); }', 'use agentmender_domain::ApprovalGrant;']:
         assert approval_boundary_violation(canary, crate_name, 'lib.rs')
+for canary in ['fn bad() { store.grant_approval(); }', 'fn bad() { store.record_intent(); }', 'fn bad() { port.dispatch(receipt); }', 'use agentmender_persistence::DurableCleanupPort;']:
+    assert conversation_authority_violation(canary), 'conversation authority canary failed'
+assert not conversation_authority_violation('fn prepare() { store.create_transaction(plan); store.prepare_recovery(id, 0); }')
+assert not conversation_authority_violation('#[cfg(test)] mod tests { fn fixture() { store.grant_approval(); } }')
 assert approval_boundary_violation('fn consume() { store.record_intent(); }', 'cli', 'approvals.rs')
 assert approval_boundary_violation('struct Flags { yes: bool }', 'cli', 'approvals.rs')
 assert approval_boundary_violation('fn bypass() { store.grant_approval(); }', 'cli', 'main.rs')
@@ -376,7 +388,11 @@ for path in (ROOT / "crates").glob("*/src/**/*.rs"):
             errors.append(f"unreviewed persistence module: {path.relative_to(ROOT)}")
         if "Connection::" in code and path.name != "store.rs":
             errors.append(f"SQLite outside owned journal module: {path.relative_to(ROOT)}")
-    lifecycle_composition = {ROOT / 'crates/cli/src/lifecycle.rs', ROOT / 'crates/application/src/lifecycle.rs'}
+    # ADR-0023 admits only durable preparation in the application handoff;
+    # MCP still cannot access persistence, grants, keys or a dispatch gate.
+    lifecycle_composition = {ROOT / 'crates/cli/src/lifecycle.rs', ROOT / 'crates/application/src/lifecycle.rs', ROOT / 'crates/application/src/conversation.rs'}
+    if path == ROOT / 'crates/application/src/conversation.rs' and conversation_authority_violation(source):
+        errors.append('conversational preparation acquired approval or effect authority')
     if crate_name in {"cli", "mcp-server", "application"} and path != ROOT / "crates/cli/src/approvals.rs" and path not in lifecycle_composition and re.search(
         r"\b(?:TransactionStore|RecoveryStore|DurableIntent|create_transaction|record_intent|record_compensation_intent)\b", code
     ):

@@ -28,20 +28,33 @@ version/operation scope. They do not prove all Codex or Claude session managemen
 impossible. Current Claude has zero mutation profiles. Do not transfer historical
 Codex unarchive or stable primary-cleanup authority to a newer binary/Desktop.
 
-## This audit's implementation boundary
+## P0-C1 implementation boundary
 
-The authorized cycle is reconstruction, audit, small proven simplification,
-documentation and verification on `refactor/product-first-roadmap`. Stop with a
-readiness assessment before beginning new features. Do not implement new MCP
-execution tools, native dispatch, Claude deletion, resolution/search services,
-bulk cleanup, artifact families or Desktop mutation in this cycle. No real-user
-session deletion, provider global-state/index/history edits or app restart.
+Read [ADR-0023](docs/adr/0023-conversational-primary-removal-handoff.md) and the
+[conversational contract](docs/conversational-codex-removal.md). P0-C1 is OPEN,
+with bounded components and disposable tests. Default MCP retains eight read-only
+tools. Explicit session-removal mode adds metadata search, exact schema-2 preview,
+existing durable preparation, authenticated status and external execution handoff.
+MCP cannot grant/revoke/consume approval, obtain keys or dispatch effects. Only
+application/conversation.rs may prepare existing transactions; it has no grant or
+intent/effect authority. Preserve the source canaries for this boundary.
 
-Current MCP has exactly eight read-only tools. It cannot prepare durable plans,
-grant/revoke/consume approval, execute, access signing keys or import proofs.
-Future P0 work may propose a reviewed execution handoff; this roadmap grants no
-current production authority. Preserve existing MCP schemas/privacy until that
-work defines safe human-readable labels and exact result semantics.
+Trusted launch configuration independently registers management UUIDs. Freeze them
+as retained UserProtected graph roots; restore them from the original plan during
+CLI approval/execution and recheck at preflight/fresh validation. No model-supplied
+caller identity, Active label or title authenticates the management session. No
+registration means no conversational destructive admission. Same-user shell/PTY,
+configuration or authority-key access does not enforce human independence: retain
+external human approval AND execution, and do not claim production/client acceptance
+from a fixture grant. No real-user tests or app restart.
+
+P0-C1 selects exact stable 0.166.0 Darwin arm64 scoped-cleanup-v1 Legacy/WAL.
+Native delete remains unadmitted; no fallback after unknown native effects. Keep
+schema-3/4, old hashes/journals/outcomes and historical CLI meanings unchanged.
+Protected conversational schema-2 plans have operation-qualified primary reporting.
+Do not start Claude deletion, bulk/project cleanup, Desktop global mutation or
+additional artifact families. Full P0-C1 PASS needs actual Codex client + independent
+human approval/execution + structural primary/collateral proof + final exact CI.
 
 ## Architecture
 

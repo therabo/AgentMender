@@ -63,7 +63,7 @@ fn tx(s: &str) -> Result<TransactionId, CliError> {
     s.parse()
         .map_err(|_| CliError::new(ErrorCode::InvalidIdentity, "invalid transaction ID"))
 }
-fn root(args: &Args, path: &Path, create: bool) -> Result<OwnedStateRoot, CliError> {
+pub(super) fn root(args: &Args, path: &Path, create: bool) -> Result<OwnedStateRoot, CliError> {
     let protected = protected_roots(args)?;
     if create && !path.exists() {
         OwnedStateRoot::create(path, &protected)

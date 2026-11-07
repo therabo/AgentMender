@@ -20,6 +20,8 @@ pub mod complete_removal;
 pub use complete_removal::*;
 pub mod session_removal;
 pub use session_removal::*;
+pub mod session_metadata;
+pub use session_metadata::*;
 pub mod planning;
 pub use planning::*;
 pub mod approval;

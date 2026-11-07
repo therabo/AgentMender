@@ -60,6 +60,27 @@ fn run_acceptance(
     crash_base: Option<&std::path::Path>,
     expanded: bool,
 ) {
+    run_acceptance_inner(live, fault, crash_base, expanded, false);
+}
+
+#[test]
+fn conversational_protection_preparation_retry_and_verified_result() {
+    run_acceptance_inner(false, None, None, false, true);
+}
+
+#[test]
+#[ignore = "requires pinned stable Codex and built evidence helper; fixture approval only"]
+fn exact_binary_conversational_primary_workflow() {
+    run_acceptance_inner(true, None, None, false, true);
+}
+
+fn run_acceptance_inner(
+    live: bool,
+    fault: Option<TestFault>,
+    crash_base: Option<&std::path::Path>,
+    expanded: bool,
+    conversational: bool,
+) {
     let tmp = crash_base.is_none().then(|| tempfile::tempdir().unwrap());
     let base = crash_base
         .unwrap_or_else(|| tmp.as_ref().unwrap().path())
@@ -167,6 +188,10 @@ fn run_acceptance(
     };
     adapter.fault = fault;
     adapter.expanded = expanded;
+    if conversational {
+        conversation_acceptance(base.as_path(), &root, adapter, target, child, &payload);
+        return;
+    }
     if !live && fault.is_none() && crash_base.is_none() {
         let outside = base.join("foreign-rollout.jsonl");
         let contents = format!(
@@ -595,5 +620,259 @@ fn expanded_process_termination_after_commit_preserves_commit_prefix() {
         87,
         false,
         true,
+    );
+}
+
+fn conversation_acceptance(
+    base: &std::path::Path,
+    root: &std::path::Path,
+    adapter: CodexScopedCleanupAdapter,
+    target: &str,
+    management: &str,
+    payload: &std::path::Path,
+) {
+    use agentmender_application::{
+        QueryControl,
+        conversation::{
+            ConversationRequest as Request, ConversationResponse as Response, ConversationService,
+        },
+    };
+    use agentmender_provider_api::SessionMetadataReadPort;
+    let adapter = adapter.with_protected_sessions(vec![management.into()]);
+    let protected = vec![management.to_owned()];
+    let service = ConversationService {
+        metadata: &adapter,
+        cleanup: &adapter,
+        protected_sessions: &protected,
+        provider_root: root,
+    };
+    let db = Connection::open(root.join("state_5.sqlite")).unwrap();
+    let mut sentinels = Vec::new();
+    for (suffix, title, archived, version) in [
+        ("ab0", "MISSION1 README", 0, "0.166.0"),
+        ("ab1", "MISSION1 README notes", 1, "0.166.0"),
+        ("ab2", "", 0, "0.166.0"),
+        ("ab3", "MISSION1 README", 0, "unknown"),
+    ] {
+        let id = format!("12345678-1234-1234-1234-123456789{suffix}");
+        let path = root.join(format!("sessions/rollout-2026-01-01T00-00-03-{id}.jsonl"));
+        let bytes = format!(
+            "{{\"type\":\"session_meta\",\"payload\":{{\"id\":\"{id}\"}}}}\nunrelated transcript secret\n"
+        );
+        fs::write(&path, &bytes).unwrap();
+        db.execute("INSERT INTO threads(id,rollout_path,created_at,updated_at,source,model_provider,cwd,title,sandbox_policy,approval_mode,cli_version,archived,preview,first_user_message) VALUES (?1,?2,1,2,'cli','openai',?3,?4,'read-only','never',?5,?6,'PRIVATE PREVIEW','PRIVATE MESSAGE')", (&id,path.to_str().unwrap(),base.to_str().unwrap(),title,version,archived)).unwrap();
+        sentinels.push((id, path, bytes));
+    }
+    db.execute(
+        "UPDATE threads SET title='MISSION1 README' WHERE id=?1",
+        [target],
+    )
+    .unwrap();
+    let mut persist = 1;
+    db.file_control(
+        None::<&str>,
+        rusqlite::FileControl::PersistWal(&mut persist),
+    )
+    .unwrap();
+    drop(db);
+    let search = service
+        .dispatch(
+            Request::Search {
+                query: "MISSION1 README".into(),
+                include_archived: true,
+            },
+            None,
+            QueryControl::default(),
+        )
+        .unwrap();
+    let Response::Search { sessions, .. } = search else {
+        panic!("search")
+    };
+    assert_eq!(sessions.len(), 4);
+    assert!(
+        sessions
+            .iter()
+            .any(|s| s.metadata.state == agentmender_domain::SessionState::Archived)
+    );
+    assert!(
+        sessions
+            .iter()
+            .any(|s| !s.metadata.producer_version_matches && !s.can_request_preview)
+    );
+    let metadata = adapter.session_metadata().unwrap();
+    let encoded = serde_json::to_string(&metadata).unwrap();
+    assert!(
+        !encoded.contains("PRIVATE PREVIEW")
+            && !encoded.contains("PRIVATE MESSAGE")
+            && !encoded.contains("unrelated transcript secret")
+    );
+    assert!(metadata.sessions.iter().any(|s| s.title.is_none()));
+    let select = |id: &str| {
+        let identity = metadata
+            .sessions
+            .iter()
+            .find(|s| s.native_session_id == id)
+            .unwrap()
+            .identity
+            .clone();
+        std::sync::Arc::new(move |candidate: &agentmender_domain::ArtifactId| {
+            *candidate == identity
+        }) as agentmender_application::TargetSelector
+    };
+    assert!(
+        service
+            .dispatch(
+                Request::Preview {
+                    target: select(management)
+                },
+                None,
+                QueryControl::default()
+            )
+            .is_err()
+    );
+    assert!(
+        service
+            .dispatch(
+                Request::Preview {
+                    target: select(&sentinels[3].0)
+                },
+                None,
+                QueryControl::default()
+            )
+            .is_err()
+    );
+    let Response::Preview { inputs, .. } = service
+        .dispatch(
+            Request::Preview {
+                target: select(target),
+            },
+            None,
+            QueryControl::default(),
+        )
+        .unwrap()
+    else {
+        panic!("preview")
+    };
+    assert!(
+        inputs
+            .plan
+            .content()
+            .artifacts
+            .iter()
+            .any(|a| a.explicitly_protected && a.id.local_id.as_str().ends_with(management))
+    );
+    let owned_path = base.join("conversation-owned");
+    let owned = OwnedStateRoot::create(&owned_path, &[root.into()]).unwrap();
+    let digest = inputs.plan.digest().to_string();
+    assert!(
+        service
+            .dispatch(
+                Request::Prepare {
+                    target: select(target),
+                    expected_digest: "0".repeat(64)
+                },
+                Some(owned.clone()),
+                QueryControl::default()
+            )
+            .is_err()
+    );
+    assert!(!owned_path.join("authority.key").exists());
+    let prepared = service
+        .dispatch(
+            Request::Prepare {
+                target: select(target),
+                expected_digest: digest.clone(),
+            },
+            Some(owned.clone()),
+            QueryControl::default(),
+        )
+        .unwrap();
+    let Response::Transactions(statuses) = prepared else {
+        panic!("prepare")
+    };
+    let id: agentmender_domain::TransactionId = statuses[0].transaction_id.parse().unwrap();
+    assert!(!statuses[0].primary_verified);
+    let Response::Transactions(retried) = service
+        .dispatch(
+            Request::Prepare {
+                target: select(target),
+                expected_digest: digest,
+            },
+            Some(owned.clone()),
+            QueryControl::default(),
+        )
+        .unwrap()
+    else {
+        panic!("retry")
+    };
+    assert_eq!(retried[0].transaction_id, id.to_string());
+    service
+        .dispatch(
+            Request::RequestExecution {
+                transaction_id: id.to_string(),
+            },
+            Some(owned.clone()),
+            QueryControl::default(),
+        )
+        .unwrap();
+    let mut store = TransactionStore::open(owned.clone()).unwrap();
+    assert!(execute_scoped_cleanup(&mut store, &id, &adapter, &adapter).is_err());
+    assert!(payload.exists());
+    // Fixture authority is not actual independent human acceptance.
+    store
+        .grant_approval(
+            &id,
+            2,
+            &inputs.plan,
+            &inputs.graph,
+            &inputs.integrity,
+            &inputs.context,
+        )
+        .unwrap();
+    let mut now_protected = protected.clone();
+    now_protected.push(target.into());
+    let protected_adapter =
+        CodexScopedCleanupAdapter::for_owned_test(CodexAdapter::new(ProviderLocation {
+            state_root: root.into(),
+            executable: None,
+        }))
+        .with_protected_sessions(now_protected);
+    assert!(
+        execute_scoped_cleanup(&mut store, &id, &protected_adapter, &protected_adapter).is_err()
+    );
+    assert_eq!(
+        store.inspect(&id).unwrap().state(),
+        TransactionState::Prepared
+    );
+    assert!(payload.exists());
+    assert_eq!(
+        execute_scoped_cleanup(&mut store, &id, &adapter, &adapter).unwrap(),
+        TransactionState::Succeeded
+    );
+    assert!(!payload.exists());
+    assert!(execute_scoped_cleanup(&mut store, &id, &adapter, &adapter).is_err());
+    drop(store);
+    let Response::Transactions(statuses) = service
+        .dispatch(
+            Request::Status {
+                transaction_id: Some(id.to_string()),
+            },
+            Some(owned),
+            QueryControl::default(),
+        )
+        .unwrap()
+    else {
+        panic!("status")
+    };
+    assert!(statuses[0].primary_verified && statuses[0].other_sessions_preserved);
+    assert!(!statuses[0].additional_artifacts_fully_cleaned && !statuses[0].retry_permitted);
+    for (_, path, bytes) in sentinels {
+        assert_eq!(fs::read_to_string(path).unwrap(), bytes);
+    }
+    assert!(
+        root.join(format!(
+            "sessions/rollout-2026-01-01T00-00-01-{management}.jsonl"
+        ))
+        .exists()
     );
 }

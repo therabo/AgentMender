@@ -1,10 +1,20 @@
 # Development and verification
 
+## P0-C1 verification
+
+Current work is the bounded [conversational primary handoff](conversational-codex-removal.md),
+not another Desktop milestone. Normal tests retain all prior safety regressions.
+The explicit `conversational_removal` CLI integration test uses disposable exact
+provider state and real stdio/worker/CLI effects; its grant is fixture authority.
+Do not count it as an actual Codex conversation or independent human acceptance.
+The final report records those gates separately. No test deletes real sessions.
+
+
 Start with [AGENTS.md](../AGENTS.md), [architecture](architecture.md),
 [product roadmap](product-roadmap.md) and the [audit](audits/2026-11-07-product-first-audit.md).
 M8.2.1 and historical M9 reports remain evidence; they do not set the next product
 milestone. Both initial providers are required, with one supported vertical slice
-delivered first. This audit stops before feature implementation.
+delivered first. The audit baseline stopped before features; the current P0-C1 work follows ADR-0023.
 
 Use Rust >=1.89 and Cargo.lock. The eight-crate workspace has no build.rs or
 application frontend. Python scripts use the standard library. CI's bundled SQLite

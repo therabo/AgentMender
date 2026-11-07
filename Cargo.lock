@@ -15,6 +15,7 @@ dependencies = [
  "agentmender-provider-codex",
  "clap",
  "getrandom 0.4.3",
+ "rusqlite",
  "serde",
  "serde_json",
  "tempfile",

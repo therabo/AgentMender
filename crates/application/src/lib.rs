@@ -1,4 +1,5 @@
 //! Query use cases shared by CLI and the read-only MCP interface.
+pub mod conversation;
 pub mod lifecycle;
 pub mod transactions;
 use agentmender_domain::*;
@@ -13,6 +14,12 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum ApplicationError {
+    #[error("trusted management-session registration is missing or no longer verified")]
+    ManagementProtectionUnavailable,
+    #[error("the selected session is a protected management session")]
+    ProtectedManagementSession,
+    #[error("removal preview changed; obtain and review a new exact plan digest")]
+    RemovalPlanChanged,
     #[error("query cancelled or deadline exceeded")]
     Cancelled,
     #[error(transparent)]
@@ -29,6 +36,9 @@ impl ApplicationError {
     /// Stable, sanitized error catalog for inbound interfaces.
     pub fn public_code(&self) -> &'static str {
         match self {
+            Self::ManagementProtectionUnavailable => "management_protection_required",
+            Self::ProtectedManagementSession => "protected_management_session",
+            Self::RemovalPlanChanged => "removal_plan_changed",
             Self::Cancelled => "cancelled",
             Self::UnknownEntity(_) => "target_not_observed",
             Self::AmbiguousEntity(_) => "ambiguous_target",

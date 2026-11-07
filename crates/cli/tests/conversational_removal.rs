@@ -1,0 +1,297 @@
+//! Actual stdio + protected worker + approved provider effects on disposable state.
+//! The test grant is fixture authority, never independent human/client acceptance.
+#![cfg(all(target_os = "macos", target_arch = "aarch64"))]
+use agentmender_domain::*;
+use agentmender_persistence::{OwnedStateRoot, TransactionStore};
+use agentmender_provider_api::ProviderLocation;
+use agentmender_provider_codex::{CodexAdapter, CodexScopedCleanupAdapter};
+use rusqlite::Connection;
+use serde_json::{Value, json};
+use std::{
+    fs,
+    io::{BufRead, BufReader, Write},
+    path::{Path, PathBuf},
+    process::{Child, ChildStdin, ChildStdout, Command, Stdio},
+};
+const T: &str = "12345678-1234-1234-1234-123456789abc";
+const M: &str = "12345678-1234-1234-1234-123456789abd";
+const U: &str = "12345678-1234-1234-1234-123456789ab0";
+struct Client {
+    child: Child,
+    input: Option<ChildStdin>,
+    output: BufReader<ChildStdout>,
+}
+impl Client {
+    fn start(root: &Path, owned: &Path, binary: &Path, home: &Path) -> Self {
+        let mut child = base(root, binary, home)
+            .args([
+                "--protect-codex-session",
+                M,
+                "mcp",
+                "--session-removal",
+                "--state-root",
+            ])
+            .arg(owned)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let input = child.stdin.take();
+        let output = BufReader::new(child.stdout.take().unwrap());
+        let mut client = Self {
+            child,
+            input,
+            output,
+        };
+        let init = client.exchange(json!({"jsonrpc":"2.0","id":0,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"disposable-protocol-fixture","version":"1"}}}));
+        assert!(init.get("result").is_some(), "{init}");
+        writeln!(
+            client.input.as_mut().unwrap(),
+            "{}",
+            json!({"jsonrpc":"2.0","method":"notifications/initialized"})
+        )
+        .unwrap();
+        client
+    }
+    fn exchange(&mut self, request: Value) -> Value {
+        writeln!(self.input.as_mut().unwrap(), "{request}").unwrap();
+        let mut line = String::new();
+        self.output.read_line(&mut line).unwrap();
+        assert!(line.len() <= 256 * 1024);
+        serde_json::from_str(&line).unwrap()
+    }
+    fn call(&mut self, id: u64, name: &str, args: Value) -> Value {
+        self.exchange(json!({"jsonrpc":"2.0","id":id,"method":"tools/call","params":{"name":name,"arguments":args}}))
+    }
+    fn close(mut self) {
+        self.input.take();
+        assert!(self.child.wait().unwrap().success());
+    }
+}
+impl Drop for Client {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+fn base(root: &Path, binary: &Path, home: &Path) -> Command {
+    let mut c = Command::new(env!("CARGO_BIN_EXE_agentmender"));
+    c.env_clear()
+        .env("HOME", home)
+        .env("PATH", "")
+        .args(["--provider", "codex", "--codex-root"])
+        .arg(root)
+        .arg("--codex-executable")
+        .arg(binary);
+    c
+}
+fn seed(root: &Path, cwd: &Path) -> Vec<(PathBuf, Vec<u8>)> {
+    fs::create_dir(root).unwrap();
+    for name in ["sessions", ".tmp", "thread-writer-locks"] {
+        fs::create_dir(root.join(name)).unwrap();
+    }
+    fs::write(root.join(".tmp/rollout-maintenance.lock"), b"").unwrap();
+    fs::write(root.join("thread-writer-locks/.coordination.lock"), b"").unwrap();
+    let db = Connection::open(root.join("state_5.sqlite")).unwrap();
+    db.pragma_update(None, "journal_mode", "WAL").unwrap();
+    db.execute_batch("PRAGMA foreign_keys=ON; CREATE TABLE fixture_sequence_seed(value INTEGER PRIMARY KEY AUTOINCREMENT); DROP TABLE fixture_sequence_seed;").unwrap();
+    let schema: Vec<(String, String, String, Option<String>)> = serde_json::from_str(include_str!(
+        "../../../compatibility/codex/0.165.0-alpha.1.2/state-schema-5.json"
+    ))
+    .unwrap();
+    for kind in ["table", "index", "trigger", "view"] {
+        for (entry, name, _, sql) in &schema {
+            if entry == kind
+                && name != "sqlite_sequence"
+                && let Some(sql) = sql
+            {
+                db.execute_batch(sql).unwrap();
+            }
+        }
+    }
+    let mut files = vec![];
+    for (id, title) in [
+        (T, "MISSION1 README"),
+        (M, "Management"),
+        (U, "MISSION1 README"),
+    ] {
+        let path = root.join(format!("sessions/rollout-2026-01-01T00-00-00-{id}.jsonl"));
+        let bytes = format!("{{\"type\":\"session_meta\",\"payload\":{{\"id\":\"{id}\",\"cli_version\":\"0.166.0\"}}}}\nPRIVATE TRANSCRIPT\n").into_bytes();
+        fs::write(&path, &bytes).unwrap();
+        db.execute("INSERT INTO threads(id,rollout_path,created_at,updated_at,source,model_provider,cwd,title,sandbox_policy,approval_mode,cli_version,preview,first_user_message) VALUES (?1,?2,1,2,'cli','openai',?3,?4,'read-only','never','0.166.0','PRIVATE PREVIEW','PRIVATE MESSAGE')",(id,path.to_str().unwrap(),cwd.to_str().unwrap(),title)).unwrap();
+        files.push((path, bytes));
+    }
+    let mut persist = 1;
+    db.file_control(
+        None::<&str>,
+        rusqlite::FileControl::PersistWal(&mut persist),
+    )
+    .unwrap();
+    files
+}
+#[test]
+#[ignore = "explicit pinned-binary disposable MCP integration; fixture authority, no human approval claim"]
+fn exact_profile_stdio_prepare_external_execution_restart_and_status() {
+    let binary = PathBuf::from(
+        std::env::var_os("AGENTMENDER_CODEX166_BINARY").expect("exact binary required"),
+    )
+    .canonicalize()
+    .unwrap();
+    let home = PathBuf::from(std::env::var_os("HOME").unwrap())
+        .canonicalize()
+        .unwrap();
+    let temp = tempfile::tempdir().unwrap();
+    let base_path = temp.path().canonicalize().unwrap();
+    let root = base_path.join("provider");
+    let other_root = base_path.join("other-provider");
+    let owned_path = base_path.join("owned");
+    let files = seed(&root, &base_path);
+    let foreign_files = seed(&other_root, &base_path);
+    let mut client = Client::start(&root, &owned_path, &binary, &home);
+    let tools = client.exchange(json!({"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}));
+    assert_eq!(tools["result"]["tools"].as_array().unwrap().len(), 13);
+    let found = client.call(2, "session_search", json!({"query":"MISSION1 README"}));
+    let sessions = found["result"]["structuredContent"]["sessions"]
+        .as_array()
+        .expect("search");
+    assert_eq!(sessions.len(), 2, "{found}");
+    assert!(!found.to_string().contains("PRIVATE"));
+    let target = sessions
+        .iter()
+        .find(|s| s["native_session_id"] == T)
+        .unwrap()["target"]
+        .clone();
+    let old_unrelated = sessions
+        .iter()
+        .find(|s| s["native_session_id"] == U)
+        .unwrap()["target"]
+        .clone();
+    let all = client.call(3, "session_search", json!({"query":"Management"}));
+    let management = all["result"]["structuredContent"]["sessions"][0]["target"].clone();
+    assert_eq!(
+        all["result"]["structuredContent"]["sessions"][0]["protected"],
+        true
+    );
+    assert_eq!(
+        client.call(4, "preview_removal", json!({"target":management}))["result"]["isError"],
+        true
+    );
+    let preview = client.call(5, "preview_removal", json!({"target":target}));
+    let digest = preview["result"]["structuredContent"]["review"]["plan_digest"]
+        .as_str()
+        .expect("preview");
+    let prepared = client.call(
+        6,
+        "prepare_removal",
+        json!({"target":target,"expected_plan_digest":digest}),
+    );
+    assert!(
+        prepared["result"]["structuredContent"]["transactions"].is_array(),
+        "preview={preview}; prepare={prepared}"
+    );
+    let transaction = prepared["result"]["structuredContent"]["transactions"][0]["transaction_id"]
+        .as_str()
+        .expect("prepare")
+        .to_owned();
+    let retried = client.call(
+        7,
+        "prepare_removal",
+        json!({"target":target,"expected_plan_digest":digest}),
+    );
+    assert_eq!(
+        retried["result"]["structuredContent"]["transactions"][0]["transaction_id"],
+        transaction
+    );
+    let handoff = client.call(
+        8,
+        "request_removal_execution",
+        json!({"transaction_id":transaction}),
+    );
+    assert_eq!(
+        handoff["result"]["structuredContent"]["transactions"][0]["execution_channel"],
+        "trusted_external_terminal"
+    );
+    assert_eq!(
+        handoff["result"]["structuredContent"]["transactions"][0]["approval_status"],
+        "None"
+    );
+    client.close();
+    assert!(files[0].0.exists());
+    let adapter = CodexScopedCleanupAdapter::new(
+        CodexAdapter::new(ProviderLocation {
+            state_root: root.clone(),
+            executable: Some(binary.clone()),
+        })
+        .with_evidence_helper(
+            PathBuf::from(env!("CARGO_BIN_EXE_agentmender")),
+            home.clone(),
+        ),
+    )
+    .with_protected_sessions(vec![M.into()]);
+    let inputs =
+        agentmender_application::cleanup_inputs(&adapter, T, &DiscoveryScope::default()).unwrap();
+    assert_eq!(inputs.plan.digest().to_string(), digest);
+    let owned = OwnedStateRoot::open(&owned_path, std::slice::from_ref(&root)).unwrap();
+    let id: TransactionId = transaction.parse().unwrap();
+    let mut store = TransactionStore::open(owned).unwrap();
+    // A test fixture supplies authority here. A model must never perform this
+    // step in an actual human acceptance run.
+    store
+        .grant_approval(
+            &id,
+            2,
+            &inputs.plan,
+            &inputs.graph,
+            &inputs.integrity,
+            &inputs.context,
+        )
+        .unwrap();
+    drop(store);
+    let executed = base(&root, &binary, &home)
+        .arg("--json")
+        .args(["transactions", "--state-root"])
+        .arg(&owned_path)
+        .args(["execute", &transaction])
+        .output()
+        .unwrap();
+    assert!(
+        executed.status.success(),
+        "{} {}",
+        String::from_utf8_lossy(&executed.stdout),
+        String::from_utf8_lossy(&executed.stderr)
+    );
+    let result: Value = serde_json::from_slice(&executed.stdout).unwrap();
+    assert_eq!(result["report"]["primary_verified"], true);
+    assert!(!files[0].0.exists());
+    for (path, bytes) in files.iter().skip(1).chain(&foreign_files) {
+        assert_eq!(fs::read(path).unwrap(), *bytes);
+    }
+    let mut reopened = Client::start(&root, &owned_path, &binary, &home);
+    let status = reopened.call(9, "removal_status", json!({"transaction_id":transaction}));
+    let result = &status["result"]["structuredContent"]["transactions"][0];
+    assert_eq!(result["primary_verified"], true);
+    assert_eq!(result["other_sessions_preserved"], true);
+    assert_eq!(result["approval_status"], "Consumed");
+    assert_eq!(result["retry_permitted"], false);
+    assert_eq!(
+        reopened.call(10, "preview_removal", json!({"target":old_unrelated}))["result"]["isError"],
+        true
+    );
+    reopened.call(
+        11,
+        "request_removal_execution",
+        json!({"transaction_id":transaction}),
+    );
+    reopened.close();
+    let repeated = base(&root, &binary, &home)
+        .args(["transactions", "--state-root"])
+        .arg(&owned_path)
+        .args(["execute", &transaction])
+        .output()
+        .unwrap();
+    assert!(!repeated.status.success());
+    for (path, bytes) in files.iter().skip(1).chain(&foreign_files) {
+        assert_eq!(fs::read(path).unwrap(), *bytes);
+    }
+}

@@ -27,6 +27,11 @@ pub trait ScopedCleanupReadPort {
     ) -> Result<ScopedCleanupObservation, ProviderError>;
 }
 
+/// Opt-in labels from a bounded metadata source, never transcript contents.
+pub trait SessionMetadataReadPort {
+    fn session_metadata(&self) -> Result<agentmender_domain::SessionInventory, ProviderError>;
+}
+
 #[derive(Debug, Error)]
 pub enum ProviderError {
     #[error(transparent)]

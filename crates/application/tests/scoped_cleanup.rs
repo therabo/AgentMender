@@ -113,6 +113,17 @@ fn ready_cleanup() -> (
     IntegrityContext,
     PlanningContext,
 ) {
+    ready_cleanup_with_protection(false)
+}
+
+fn ready_cleanup_with_protection(
+    protected: bool,
+) -> (
+    LifecyclePlan,
+    ArtifactGraph,
+    IntegrityContext,
+    PlanningContext,
+) {
     let m = manifest();
     let sample = lifecycle_common::case(0);
     let mut context = sample.graph.context().clone();
@@ -153,6 +164,14 @@ fn ready_cleanup() -> (
         evidence: raw,
     }));
     builder.add_node_evidence(&payload, evidence).unwrap();
+    if protected {
+        builder
+            .add_root(ProtectedRoot {
+                node: target.clone(),
+                kind: RootKind::UserProtected,
+            })
+            .unwrap();
+    }
     let graph = builder.finish().unwrap();
     let proof = IntegrityContext::default();
     let planning = PlanningContext {
@@ -178,6 +197,13 @@ fn ready_cleanup() -> (
         },
     );
     (plan, graph, proof, planning)
+}
+
+#[test]
+fn pure_primary_planning_cannot_admit_a_user_protected_target() {
+    let (plan, _, _, _) = ready_cleanup_with_protection(true);
+    assert_eq!(plan.content().status, PlanStatus::Blocked);
+    assert!(plan.content().operations.is_empty());
 }
 
 struct Adapter {

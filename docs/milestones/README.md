@@ -31,3 +31,9 @@ management. Both Codex and Claude Code remain initial product targets.
 
 The [audit](../audits/2026-11-07-product-first-audit.md) maps these results to
 actual user capabilities, readiness gaps and proposed small vertical slices.
+
+## P0-C1 current delivery
+
+[Conversational Codex primary removal](p0-c1-conversational-codex-removal.md): OPEN.
+Opt-in metadata/preparation/status and protected external CLI workflow implemented;
+actual client conversation with independent human approval remains an acceptance gate.

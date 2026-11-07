@@ -23,6 +23,7 @@ use std::io::Read;
 pub struct CodexScopedCleanupAdapter {
     reader: CodexAdapter,
     expanded: bool,
+    protected_sessions: std::collections::BTreeSet<String>,
     #[cfg(unix)]
     desktop_user_data: Option<std::path::PathBuf>,
     #[cfg(test)]
@@ -46,6 +47,7 @@ impl CodexScopedCleanupAdapter {
         Self {
             reader,
             expanded: false,
+            protected_sessions: Default::default(),
             #[cfg(unix)]
             desktop_user_data: None,
             #[cfg(test)]
@@ -62,11 +64,18 @@ impl CodexScopedCleanupAdapter {
         adapter
     }
 
+    /// Trusted host registration, fixed before MCP requests; not a caller assertion.
+    pub fn with_protected_sessions(mut self, sessions: Vec<String>) -> Self {
+        self.protected_sessions = sessions.into_iter().collect();
+        self
+    }
+
     #[cfg(test)]
     pub(super) fn for_owned_test(reader: CodexAdapter) -> Self {
         Self {
             reader,
             expanded: false,
+            protected_sessions: Default::default(),
             #[cfg(unix)]
             desktop_user_data: None,
             synthetic_pin: true,
@@ -89,13 +98,22 @@ impl CodexScopedCleanupAdapter {
         &self,
         target: &str,
     ) -> Result<crate::ScopedCaptureResult, agentmender_provider_api::ProviderError> {
+        self.capture(target, false)
+    }
+
+    fn capture(
+        &self,
+        target: &str,
+        metadata: bool,
+    ) -> Result<crate::ScopedCaptureResult, agentmender_provider_api::ProviderError> {
         #[cfg(test)]
         if self.synthetic_pin {
-            return if self.desktop_user_data.is_some() {
-                crate::scoped_capture::desktop_snapshot(&self.reader.location.state_root, target)
-            } else {
-                crate::scoped_capture::snapshot(&self.reader.location.state_root, target)
-            };
+            return crate::scoped_capture::snapshot_inner(
+                &self.reader.location.state_root,
+                target,
+                self.desktop_user_data.is_some(),
+                metadata,
+            );
         }
         use agentmender_provider_api::{ProviderError, evidence::EvidenceSandbox, process};
         let (helper, real_home) = self.reader.evidence_helper.as_ref().ok_or_else(|| {
@@ -115,6 +133,7 @@ impl CodexScopedCleanupAdapter {
             probe_path: sandbox.probe_path().into(),
             target_id: target.into(),
             desktop_closed_snapshot: self.desktop_user_data.is_some(),
+            include_session_metadata: metadata,
         };
         crate::scoped_capture::read_worker_result(
             process::spawn_codex_scoped_capture(helper, &sandbox)?,
@@ -132,6 +151,24 @@ impl CodexScopedCleanupAdapter {
         expanded: bool,
     ) -> Result<&'a CleanupManifest, EffectError> {
         let p = plan.content();
+        let frozen: std::collections::BTreeSet<_> = p
+            .artifacts
+            .iter()
+            .filter(|a| a.explicitly_protected && a.id.class == GraphNodeKind::Session)
+            .filter_map(|a| {
+                a.id.local_id
+                    .as_str()
+                    .strip_prefix("codex:session:")
+                    .map(str::to_owned)
+            })
+            .collect();
+        if frozen != self.protected_sessions
+            || self
+                .protected_sessions
+                .contains(p.native_target_id.as_ref().map_or("", |id| id.as_str()))
+        {
+            return Err(EffectError::InvalidEvidence);
+        }
         let m = if expanded {
             let outer = p
                 .complete_removal_manifest
@@ -813,6 +850,25 @@ impl CodexScopedCleanupAdapter {
     }
 }
 
+impl agentmender_provider_api::SessionMetadataReadPort for CodexScopedCleanupAdapter {
+    fn session_metadata(
+        &self,
+    ) -> Result<agentmender_domain::SessionInventory, agentmender_provider_api::ProviderError> {
+        self.validate_executable().map_err(|_| {
+            agentmender_provider_api::ProviderError::CapabilityUnavailable(
+                "exact stable 0.166.0 Darwin arm64 metadata profile required".into(),
+            )
+        })?;
+        self.capture("00000000-0000-0000-0000-000000000000", true)?
+            .session_metadata
+            .ok_or_else(|| {
+                agentmender_provider_api::ProviderError::CapabilityUnavailable(
+                    "session metadata unavailable".into(),
+                )
+            })
+    }
+}
+
 impl agentmender_provider_api::ScopedCleanupReadPort for CodexScopedCleanupAdapter {
     fn observe_cleanup(
         &self,
@@ -830,7 +886,13 @@ impl agentmender_provider_api::ScopedCleanupReadPort for CodexScopedCleanupAdapt
             )
         };
         validate_scope(scope)?;
-        if scope.project_path.is_some() || !scope.include_archived || self.reader.fixture.is_some()
+        if scope.project_path.is_some()
+            || !scope.include_archived
+            || self.reader.fixture.is_some()
+            || self
+                .protected_sessions
+                .iter()
+                .any(|protected| protected == target)
         {
             return Err(unavailable());
         }
@@ -841,6 +903,13 @@ impl agentmender_provider_api::ScopedCleanupReadPort for CodexScopedCleanupAdapt
             .transpose()?;
         self.validate_executable().map_err(|_| unavailable())?;
         let db = self.capture_target(target)?;
+        if self
+            .protected_sessions
+            .iter()
+            .any(|id| !db.known_threads.iter().any(|r| &r.id == id))
+        {
+            return Err(unavailable());
+        }
         let cwd = db.cwd.as_deref().ok_or_else(unavailable)?;
         crate::scoped_config::validate(&self.reader.location.state_root, cwd)
             .map_err(|_| unavailable())?;
@@ -932,6 +1001,21 @@ impl agentmender_provider_api::ScopedCleanupReadPort for CodexScopedCleanupAdapt
             node: global,
             kind: RootKind::ProviderGlobal,
         })?;
+        for id in &self.protected_sessions {
+            let node = graph.observe(NodeObservation::Session(Session {
+                id: crate::scoped_id("session", id)?,
+                provider_session_id: id.clone(),
+                project_id: None,
+                state: SessionState::Unknown,
+                last_active: None,
+                evidence: evidence.clone(),
+            }));
+            graph.add_root(ProtectedRoot {
+                node: node.clone(),
+                kind: RootKind::UserProtected,
+            })?;
+            graph.add_node_evidence(&node, graph_evidence.clone())?;
+        }
         let session = graph.observe(NodeObservation::Session(Session {
             id: target_local,
             provider_session_id: target.into(),

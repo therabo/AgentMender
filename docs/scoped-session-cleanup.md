@@ -1,5 +1,15 @@
 # Scoped session cleanup and complete session removal
 
+## P0-C1 protected primary workflow
+
+The [conversational handoff](conversational-codex-removal.md) reuses historical
+scoped-cleanup-v1/schema 2, with registered management exclusions committed through
+the existing graph and plan. Human approval/execution remain external. Protected
+conversational plans report verified primary success separately from complete
+Desktop removal; legacy plans retain their original JSON/exit/assessment meanings.
+No schema-3/4 effect, global JSON publication or new artifact family is enabled.
+
+
 ## Product-first capability boundary
 
 [ADR-0022](adr/0022-product-first-session-lifecycle.md) separates useful primary

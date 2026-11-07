@@ -67,7 +67,7 @@ impl Projector {
             &serde_json::to_vec(x).expect("domain serialization"),
         ))
     }
-    fn namespace_ref(&self, id: &d::ArtifactId) -> String {
+    pub(crate) fn namespace_ref(&self, id: &d::ArtifactId) -> String {
         let mut namespace = id.clone();
         namespace.class = d::GraphNodeKind::ProviderState;
         namespace.local_id = d::EntityId::new("provider-state").expect("fixed ID");

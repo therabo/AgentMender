@@ -37,9 +37,11 @@ Codex or Claude MCP client (interprets the user's language)
   -> independent supported postconditions -> structured result
 ```
 
-The current flow stops at read-only MCP planning. Terminal/CLI paths can separately
-exercise the narrow scoped Codex contract. There is no MCP transaction preparation,
-trusted approval-request integration or approved execution tool today.
+Default MCP remains read-only. The opt-in [P0-C1 handoff](conversational-codex-removal.md)
+adds metadata search, exact primary preview, existing durable preparation and result
+lookup. Human approval and execution remain in the trusted external terminal.
+[ADR-0023](adr/0023-conversational-primary-removal-handoff.md) admits application
+preparation only; MCP still has no persistence, grant, intent or effect authority.
 
 Core removal needs exact target identity, its relevant effect/dependency proof,
 approval and retained-session verification. It need not enumerate every cache or
@@ -92,10 +94,10 @@ persistent-projection criterion. `TransactionState` records durable knowledge an
 verification. These models serve different consumers; merging them loses facts.
 Human reporting should identify which contract succeeded and what remains.
 
-The current CLI still returns exit 2 when its complete-removal assessment is
-incomplete even if the primary transaction succeeded. This audit documents that
-coupling without changing exit codes or historical JSON. A future P0 operation
-must report its own narrower verified semantics without claiming complete erasure.
+Historical CLI plans retain the stronger assessment and exit-2 behavior. Protected
+conversational schema-2 plans use an operation-qualified presentation and return
+success for verified primary removal while disclosing residuals and pending GUI
+observation. Old JSON, plan hashes, journals and outcome encodings are unchanged.
 
 ## Authority, identity and recovery
 
@@ -114,10 +116,11 @@ cannot supply it. Recovery stores bounded reconciliation metadata, not payload
 backups, automatic rollback or secure erasure.
 
 MCP references bind provider, class and hidden root to an ephemeral HMAC key. They
-are lookup/privacy tokens, not durable approval IDs. Current views omit native
-IDs, paths, titles/content and activity timestamps. Useful label disclosure,
-restart-stable review/transaction lookup and active management-session exclusion
-are design gaps for P0, not implemented capabilities. Cross-provider configuration
+are lookup/privacy tokens, not durable approval IDs. Default views omit native IDs/paths/titles/time. The opt-in metadata projection
+discloses bounded labels/IDs/time, and durable lookup survives restart. Trusted
+launch registrations are frozen as UserProtected roots and restored from the
+original plan during CLI approval/execution; they are not authenticated caller
+metadata. Strong same-user agent/human separation remains an acceptance gap. Cross-provider configuration
 is already independent of host identity on the read side.
 
 ## Deferred Desktop and artifact work

@@ -1,5 +1,18 @@
 # Codex compatibility evidence
 
+## P0-C1 compatibility axes
+
+Opt-in conversational search uses a new bounded metadata projection of the exact
+stable 0.166.0 state schema through the protected worker. This is separate from
+historical App Server discovery. It does not admit Desktop alpha.5.1/24141 or an
+unknown producer. Preview/execution retain scoped-cleanup-v1's exact binary,
+Legacy/WAL/config/physical/dependency/writer gates; search eligibility is no grant.
+Native delete remains unsupported. Human approval/execution remain external and
+full actual-client/human acceptance remains OPEN. See
+[the workflow](../../docs/conversational-codex-removal.md) and
+[ADR-0023](../../docs/adr/0023-conversational-primary-removal-handoff.md).
+
+
 Current Desktop schema-4 evidence is in the [structural checkpoint](../../docs/milestones/m8-2-1-writer-admission-2026-11-07.md).
 
 ## Product-first support axes

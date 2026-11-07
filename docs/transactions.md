@@ -1,12 +1,25 @@
 # Durable transactions and restart recovery
 
+## P0-C1 durable handoff
+
+Opt-in MCP prepares existing schema-2 primary attempts through application
+orchestration and exposes authenticated status by durable transaction ID. Identical
+preparation retries recover the original attempt; disconnect/restart never creates
+dispatch authority. Human approval/execution remain external. Protected identities
+are already committed through the original graph/plan/binding; no plan or journal
+schema migration is added. Status requires supported durable postconditions before
+claiming primary success and never retries unknown effects. See
+[the operating contract](conversational-codex-removal.md). Historical/default MCP
+statements below do not describe this opt-in preparation surface.
+
+
 ## Shared lifecycle substrate and current boundaries
 
 The [product-first architecture](architecture.md) reuses one protected journal,
 transaction, approval and recovery engine for primary lifecycle and additional
 cleanup. [ADR-0022](adr/0022-product-first-session-lifecycle.md) introduces no
-parallel authority, schema migration or executor. Current MCP has no durable
-preparation/execution handoff; that missing integration belongs to a future P0 slice.
+parallel authority, schema migration or executor. Default MCP has no durable preparation; opt-in P0-C1 supplies preparation/status
+and retains external human approval/execution as described above.
 
 Plan schemas 3/4 use authenticated journal schema 2. Durable ordered
 CompleteRemovalActionObserved records bind each frozen action. Append failure
@@ -15,9 +28,9 @@ keeps authenticated existing receipts and never invents actions, bytes or retry
 permission. Historical v2 plan/report/hash/replay meanings remain unchanged.
 
 A primary transaction can Succeed while its stronger complete-removal assessment
-is ProjectionIncomplete; current CLI then exits 2. P0 must report the actual
-verified operation without pretending all artifacts are gone. This audit changes
-no outcomes or exit codes. M8.2.1 Desktop execution remains unadmitted and deferred
+is ProjectionIncomplete. Legacy CLI plans retain exit 2; protected conversational
+schema-2 plans report their verified primary operation separately. Historical
+outcomes and wire meanings are unchanged. M8.2.1 Desktop execution remains unadmitted and deferred
 under P1/P2, rather than gating every primary transaction. No real-state writes,
 app control, automatic retry, whole-store restore or payload backup are added.
 
@@ -44,7 +57,7 @@ M7 now adds [independent approval](approvals.md), explicit schema2 migration and
 authenticated one-shot handoff. This document records the M6 foundation; legacy
 v1 attempts remain inspection-only. New v2 intent creation requires a valid grant
 and consumes it atomically with intent. A transaction or digest alone never
-authorizes an effect. MCP remains read-only. Native v1 provider plans keep their blockers; the dedicated
+authorizes an effect. Default MCP remains read-only; P0-C1 preparation is the explicit opt-in exception. Native v1 provider plans keep their blockers; the dedicated
 scoped read port supplies separately validated local cleanup inputs.
 
 M8's [Codex lifecycle workflow](codex-lifecycle.md) now consumes the noncloneable
@@ -52,7 +65,7 @@ DurableIntent and returns a noncloneable DurableObservation for result recording
 Its observation-only reconciliation can advance authenticated consumed v2 attempts
 without rebuilding an execution receipt. The sections below describing M6's absent
 execution CLI record the historical foundation; the current local CLI also has
-`transactions execute` and `transactions reconcile`. MCP remains read-only.
+`transactions execute` and `transactions reconcile`. Default MCP remains read-only; P0-C1 preparation is the explicit opt-in exception.
 
 ## Historical M6/v1 bindings and deterministic knowledge
 

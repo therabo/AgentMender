@@ -1,5 +1,14 @@
 # Codex native lifecycle execution
 
+## P0-C1 selected operation
+
+The [conversational slice](conversational-codex-removal.md) selects the exact stable
+0.166.0 scoped primary fallback before review; no native delete dispatcher is added.
+The opt-in MCP surface prepares and reports the existing transaction. Human approval
+and execution use the external CLI, with frozen registered management exclusions.
+Installed alpha.5.1/Desktop 24141 does not inherit stable-profile authority.
+
+
 ## Current provider lifecycle status
 
 The [product roadmap](product-roadmap.md) and [ADR-0022](adr/0022-product-first-session-lifecycle.md)
@@ -65,7 +74,7 @@ planning inputs, validates Current and atomically consumes approval with intent.
 `DurableIntent` exists only after external journal sync and SQLite commit.
 Dispatch consumes it by value; only an observation handle returns. Missing,
 revoked, expired, consumed, mismatched or stale authority cannot dispatch.
-Fixture and Claude configurations are rejected. MCP keeps its eight read-only tools.
+Fixture and Claude configurations are rejected. Default MCP keeps its eight read-only tools; opt-in preparation never dispatches.
 
 The private launcher copies only the exact executable and three bounded signing
 files into owned scratch, verifies their digests and launches that private image.

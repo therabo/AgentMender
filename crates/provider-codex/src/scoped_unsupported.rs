@@ -14,6 +14,16 @@ impl CodexScopedCleanupAdapter {
     pub fn new_expanded(_: CodexAdapter) -> Self {
         Self
     }
+    pub fn with_protected_sessions(self, _: Vec<String>) -> Self {
+        self
+    }
+}
+impl agentmender_provider_api::SessionMetadataReadPort for CodexScopedCleanupAdapter {
+    fn session_metadata(&self) -> Result<agentmender_domain::SessionInventory, ProviderError> {
+        Err(ProviderError::CapabilityUnavailable(
+            "exact metadata profile unsupported on this platform".into(),
+        ))
+    }
 }
 impl ScopedCleanupReadPort for CodexScopedCleanupAdapter {
     fn observe_cleanup(

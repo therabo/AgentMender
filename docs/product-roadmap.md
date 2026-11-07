@@ -17,7 +17,7 @@ provider are independent: Codex→Codex, Claude→Claude, Codex→Claude and Cla
 must eventually pass the same workflow, subject to supported local profiles and
 explicit permissions. Exact provider/root identity belongs in every operation.
 
-Example target experience, **planned, not currently available end to end**:
+Example target experience, **P0-C1 OPEN; external human acceptance incomplete**:
 
 > Find the old Codex session where we worked on the MISSION1 README.
 >
@@ -66,9 +66,9 @@ Acceptance criteria:
   return explicit limits rather than widening a session to a project purge.
 
 Dependencies: existing discovery/planning, exact operation compatibility,
-independent approval, persistence/recovery and structural verification. Useful
-search metadata, caller-session binding and the MCP review/execute handoff are
-missing. Exhaustive Desktop projections, caches and bulk work are not dependencies.
+independent approval, persistence/recovery and structural verification. P0-C1 adds
+metadata, registered exclusions and MCP preparation/status. Actual caller/client
+validation and independently operated human approval/execution remain open. Exhaustive Desktop projections, caches and bulk work are not dependencies.
 No local LLM or new natural-language interpretation service is required.
 
 ## P1 — Provider coverage and native lifecycle operations
@@ -152,16 +152,21 @@ M8.3 multi-session cleanup is not the next implementation priority.
 |---|---|
 | Codex discovery | Partial, exact historical App Server profiles; generic unknown releases are metadata-audit-only |
 | Claude discovery | Partial observed Desktop sidecars and synthetic transcript fixtures; no general live Code SDK inventory |
-| Search / useful labels | No dedicated search or title/content index; MCP intentionally hides native IDs, paths and activity metadata |
-| MCP | Eight read-only tools, bounded stdio protocol and opaque session references; no conversational removal workflow |
+| Search / useful labels | Opt-in stable-profile title/project/UUID metadata search, archive/time/protection and ambiguity; no content index |
+| MCP | Eight default read-only tools plus five opt-in search/preview/preparation/status/external-handoff tools |
 | Native Codex | Exact historical unarchive handoff is tested but real plans remain blocked; native archive/delete not executable |
 | Scoped Codex | M8.2 primary cleanup PASS for exact 0.166.0 Darwin arm64 Legacy/WAL profile; schema-3 expanded primary has disposable evidence |
 | Desktop complete removal | Schema-4 candidates 24141/23880 unadmitted; global writer refusal and reconstruction gaps remain |
 | Claude mutation | Zero adapters/profiles; historical project-purge blockers preserved |
-| Approval / transactions | Implemented local terminal challenge, authenticated one-shot grants, durable journal and read-only reconciliation; no MCP handoff |
+| Approval / transactions | Existing terminal challenge/grants/journal; MCP prepares durable attempts and reads status; human approval and execution remain external |
 | Deep / bulk cleanup | Some exact primary/index actions exist; broader artifact families and batch execution are deferred |
 
-Readiness: **READY WITH CONSTRAINTS**. Review the
+P0-C1 delivery: **OPEN**. See [the current report](milestones/p0-c1-conversational-codex-removal.md)
+and [operating contract](conversational-codex-removal.md). Metadata, protected
+preparation and provider execution components are implemented; an actual Codex
+conversation with independently operated human approval remains unaccepted.
+
+Audit baseline readiness: **READY WITH CONSTRAINTS**. Review the
 [proposed bounded vertical slices](audits/2026-11-07-product-first-audit.md#proposed-next-implementation-milestones)
 before selecting work. This audit implements no new feature.
 
@@ -169,9 +174,10 @@ before selecting work. This audit implements no new feature.
 
 Provider drift, native cascade/startup effects, incomplete discovery and ambiguous
 ownership can invalidate scope. Human approval must remain independent from the
-calling model, including its available shell/PTY capabilities. MCP identities
-currently expire at server restart and lack useful user labels. Active-session
-protection has no implemented caller-binding contract. Writer races and recovery
+calling model, including its available shell/PTY capabilities. Opaque MCP identities expire at restart; durable transaction IDs survive. Opt-in
+labels and trusted registered exclusions are implemented. Registration is not an
+authenticated caller binding, and an unrestricted same-user agent can cross the
+terminal/key boundary. Writer races and recovery
 crash gaps require explicit unknown results. Exact-version support can be narrow,
 but must be honestly described and tested. Do not turn complete global M3 health
 into a proxy for every future scoped operation or weaken M3's negative proofs.

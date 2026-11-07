@@ -1303,6 +1303,7 @@ fn plan_scoped_cleanup(
         let graph_session = native_id(g, &request.target).as_ref() == Some(&m.native_session_id);
         let graph_payloads = m.payloads.iter().all(|p| g.node(&p.artifact).is_some_and(|n| authoritative(g, &n.evidence) && n.observations.len() == 1 && matches!(&n.observations[0], NodeObservation::Artifact(a) if a.locator == p.identity.path && a.size_bytes == Some(p.identity.size_bytes))));
         validate_cleanup_manifest(m) && m.target == request.target && graph_session && graph_payloads
+            && !g.roots().iter().any(|r| r.node == request.target && r.kind == RootKind::UserProtected)
             && projected(report, "report") == projected(&evaluate_integrity(g, &report.proof_context), "report")
             && [e.root_boundary, e.references, e.writer_fence, e.schema].iter().all(|v| *v == CleanupBoundaryObservation::CompleteAndUnshared)
             && g.context().provider.state_root == m.root.path

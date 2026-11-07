@@ -1,31 +1,30 @@
-# Read-only MCP interface
+# MCP interface
 
-## Product-first scope and readiness
+## P0-C1 opt-in conversational handoff
 
-[ADR-0022](adr/0022-product-first-session-lifecycle.md) makes conversational
-session management the primary MVP. The existing registry remains exactly eight
-read-only tools. It supports structured observations and immutable intentions;
-it is not a complete conversational deletion workflow.
+Default launch retains the original eight read-only tools and privacy behavior
+specified below. Explicit session-removal mode adds five tools under
+[ADR-0023](adr/0023-conversational-primary-removal-handoff.md). Read the
+[setup, exact compatibility, registration and human workflow](conversational-codex-removal.md)
+before enabling it. P0-C1 remains OPEN pending actual client/human acceptance.
 
-P0 still needs useful session labels/search, ambiguity review, active management-
-session protection, exact removal previews, durable preparation/transaction lookup,
-a trusted human approval handoff, approved execution and scoped result reporting.
-The calling agent handles natural language. Conceptual future operations may be
-combined with existing tools; no new tools or schemas are added by this audit.
-A future request-approval tool may initiate human review but cannot itself grant
-approval. The model cannot provide destructive authorization.
+| Tool | Strict input | Capability |
+|---|---|---|
+| `session_search` | `query` (<=256 bytes), `include_archived` | Opt-in title/project basename/UUID metadata; preserve all matches and Partial coverage |
+| `preview_removal` | opaque session `target` | Fresh protected exact stable-profile schema-2 primary plan and original digest |
+| `prepare_removal` | `target`, `expected_plan_digest` (`sha256:` + 64 lowercase hex) | Prepare the existing durable review/recovery transaction; no grant |
+| `removal_status` | optional `transaction_id` (64 lowercase hex) | Matching configured-root durable status/results across restart; empty input lists attempts |
+| `request_removal_execution` | `transaction_id` | Status plus trusted external-terminal handoff; never dispatch or consume |
 
-The current privacy projection omits titles, paths, native IDs, activity timestamps
-and conversation content. Opaque references are useful for exact selection within
-one server process, but cannot support the MISSION1 README search example or
-persist as approval authority across restart. That disclosure/lifetime design must
-be reviewed before implementation. No new local NLP service is needed.
-
-Configured Codex and Claude adapters can both be queried from either MCP client;
-provider selection does not depend on the host agent. This architectural property
-has fixture coverage, not four-way real-client deletion acceptance. M8.2.1 Desktop
-work is deferred and does not block a separately proven primary operation. Current
-MCP still cannot prepare/grant/revoke/consume/execute or initialize durable storage.
+Only preparation writes AgentMender-owned metadata. No tool grants/revokes approval,
+imports proofs, selects roots/principals/clocks or accepts `confirm`/caller IDs.
+The host fixes exact roots/binary and independently registered protected management
+UUIDs. Human approval and execution stay external because a same-user shell/PTY
+agent is not an independent human channel. Search references grant no authority.
+Search metadata is opt-in; existing default projections still hide titles/IDs/time.
+All tools share the existing frame, response, busy, deadline, cancellation and drain
+bounds. Oversize search results require a narrower query; there is no silent page
+truncation. The default read-only interface reference follows.
 
 ## Launch the current read-only server
 

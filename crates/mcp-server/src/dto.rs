@@ -690,6 +690,9 @@ pub struct PageView {
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ErrorCode {
+    ManagementProtectionRequired,
+    ProtectedManagementSession,
+    RemovalPlanChanged,
     Busy,
     Cancelled,
     DeadlineExceeded,

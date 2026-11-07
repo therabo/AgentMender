@@ -1,5 +1,17 @@
 # Immutable lifecycle planning
 
+## P0-C1 exact primary preview
+
+The opt-in conversational path selects scoped-cleanup-v1/schema 2 before review,
+resolves full root/session identity from fresh metadata and requires the original
+`sha256:` plan digest on preparation. Independently registered management sessions
+become retained UserProtected graph roots and therefore enter existing hashes.
+The pure scoped planner rejects a UserProtected target. CLI fresh validation and
+provider preflight/dispatch restore and recheck the frozen protections. No native
+fallback, plan version or historic hash change is introduced. See
+[ADR-0023](adr/0023-conversational-primary-removal-handoff.md).
+
+
 ## Deferred expanded and Desktop planning contracts
 
 [ADR-0022](adr/0022-product-first-session-lifecycle.md) separates the P0 primary
