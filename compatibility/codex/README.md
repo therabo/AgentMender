@@ -1,6 +1,6 @@
 # Codex compatibility evidence
 
-Current Desktop schema-4 evidence is in the [structural checkpoint](../../docs/milestones/m8-2-1-structural-2026-11-07.md).
+Current Desktop schema-4 evidence is in the [structural checkpoint](../../docs/milestones/m8-2-1-writer-admission-2026-11-07.md).
 
 ## M8.2.1 complete-removal compatibility
 

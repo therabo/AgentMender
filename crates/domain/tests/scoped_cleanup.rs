@@ -614,6 +614,35 @@ fn schema_three_binds_expanded_scope_and_never_claims_desktop_acceptance() {
     assert_eq!(desktop_plan.content().schema_version, 4);
     assert_eq!(desktop_plan.content().status, PlanStatus::Blocked);
     assert!(TransactionBinding::from_plan(&desktop_plan).is_err());
+    for backup in [false, true] {
+        let mut changed = desktop_context.clone();
+        let manifest = &mut changed.complete_removal_evidence.as_mut().unwrap().manifest;
+        let desktop = manifest.desktop.as_mut().unwrap();
+        if backup {
+            desktop.global_backup.target_units = 1;
+        } else {
+            desktop.global_main.target_units = 1;
+        }
+        assert!(desktop.requires_shared_global_publication());
+        let refused = plan_lifecycle(
+            &graph,
+            &evaluate_integrity(&graph, &proof),
+            &changed,
+            LifecycleRequest {
+                target: primary.target.clone(),
+                intent: LifecycleIntent::CleanupSession,
+            },
+        );
+        assert_eq!(refused.content().status, PlanStatus::Blocked);
+        assert!(refused.content().operations.is_empty());
+        assert!(
+            refused
+                .content()
+                .blockers
+                .contains(&PlanBlocker::SharedWriterCoordinationUnavailable)
+        );
+        assert!(TransactionBinding::from_plan(&refused).is_err());
+    }
     assert_ne!(desktop_plan.digest(), plan.digest());
     assert_eq!(plan.content().schema_version, 3);
     assert_eq!(plan.content().status, PlanStatus::Ready);

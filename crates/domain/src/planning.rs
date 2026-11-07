@@ -130,6 +130,7 @@ pub enum ExpectedPostcondition {
 #[serde(rename_all = "snake_case")]
 pub enum PlanBlocker {
     RequiresProviderClosed,
+    SharedWriterCoordinationUnavailable,
     UnsupportedIntent,
     CapabilityUnavailable,
     TargetMissing,
@@ -1400,7 +1401,13 @@ fn plan_complete_cleanup(
     } else {
         e.desktop_boundary.is_none()
     };
+    let shared_publication_required = e
+        .manifest
+        .desktop
+        .as_ref()
+        .is_some_and(|d| d.requires_shared_global_publication());
     if context.cleanup_evidence.is_some()
+        || shared_publication_required
         || !desktop_boundary_ok
         || e.primary_evidence.manifest != e.manifest.primary
         || !validate_complete_removal_manifest(&e.manifest)
@@ -1426,6 +1433,10 @@ fn plan_complete_cleanup(
         };
         if !c.blockers.contains(&blocker) {
             c.blockers.push(blocker);
+        }
+        if shared_publication_required {
+            c.blockers
+                .push(PlanBlocker::SharedWriterCoordinationUnavailable);
         }
     }
     let digest = plan_hash(&c);

@@ -99,6 +99,11 @@ pub struct DesktopRemovalManifest {
     pub global_main: DesktopFileCommitment,
     pub session_index: DesktopFileCommitment,
 }
+impl DesktopRemovalManifest {
+    pub fn requires_shared_global_publication(&self) -> bool {
+        self.global_backup.target_units > 0 || self.global_main.target_units > 0
+    }
+}
 /// Exact bundle identities eligible for candidate evidence only.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DesktopBundlePin {
@@ -175,9 +180,10 @@ pub struct DesktopBoundaryEvidence {
 /// obtained from serialized claims or a provider observation.
 pub fn validate_complete_removal_manifest(m: &CompleteRemovalManifest) -> bool {
     if let Some(d) = &m.desktop {
-        return ADMITTED_DESKTOP_BUNDLES
-            .iter()
-            .any(|pin| pin.matches_manifest(&m.profile, d))
+        return !d.requires_shared_global_publication()
+            && ADMITTED_DESKTOP_BUNDLES
+                .iter()
+                .any(|pin| pin.matches_manifest(&m.profile, d))
             && valid_desktop_contract(m, d);
     }
     validate_cleanup_manifest(&m.primary)

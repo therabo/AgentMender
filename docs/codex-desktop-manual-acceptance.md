@@ -18,6 +18,9 @@ admission for your exact build and your plan reports Ready.
    `--codex-root`, `--codex-desktop-user-data` and `--codex-executable` options.
    Verify the printed title, UUID, profile/build and blockers. A candidate or
    any other blocked plan carries zero executable operations.
+   `SharedWriterCoordinationUnavailable` means the target requires global JSON
+   publication without a compatible writer protocol. Closing Codex cannot
+   resolve this blocker.
 4. For a future admitted profile, quit Codex manually and keep all relevant
    writers closed until structural verification finishes. Repeat the plan from
    the external terminal and verify Ready and the same title and UUID. Use the

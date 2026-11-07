@@ -26,7 +26,7 @@ destruction. RequiresProviderClosed is a resolvable prerequisite. Historical
 M8.2 v2 plan/report/digest/replay stays primary-only and cannot authorize new effects.
 No complete Desktop removal profile is currently admitted. Build 24141 and
 recovered build 23880 have separate candidate identities and an empty compiled
-admission list. See [the structural checkpoint](docs/milestones/m8-2-1-structural-2026-11-07.md).
+admission list. See [the structural checkpoint](docs/milestones/m8-2-1-writer-admission-2026-11-07.md).
 
 Remove every supported safe exclusive unit, including exact records inside shared
 containers. Preserve all unrelated records/keys and every shared/ambiguous/unknown

@@ -545,6 +545,7 @@ mod files {
     #[cfg(test)]
     thread_local! {
         static BEFORE_FINAL_COMPARE: std::cell::RefCell<Option<Box<dyn FnOnce()>>> = std::cell::RefCell::new(None);
+        static AFTER_FINAL_COMPARE: std::cell::RefCell<Option<Box<dyn FnOnce()>>> = std::cell::RefCell::new(None);
     }
 
     #[derive(Clone, Copy)]
@@ -959,6 +960,12 @@ mod files {
             {
                 return bad();
             }
+            #[cfg(test)]
+            AFTER_FINAL_COMPARE.with(|hook| {
+                if let Some(f) = hook.borrow_mut().take() {
+                    f();
+                }
+            });
             fs::renameat(&fence.fd, stage_name.as_str(), &fence.fd, name)
                 .map_err(|_| EffectError::Transport)?;
             fs::fsync(&fence.fd).map_err(|_| EffectError::Transport)?;
@@ -1041,6 +1048,11 @@ mod files {
                 &desktop.global_main,
             ),
         };
+        // No compatible exclusion of the provider's whole-Map writer exists.
+        // Even the final stat cannot condition rename on an unchanged inode.
+        if expected.target_units > 0 {
+            return Err(EffectError::UnsupportedOperation);
+        }
         let target = manifest.primary.native_session_id.as_str();
         let host = local_host_scope(&desktop.desktop_root, &desktop.local_host)?;
         publish(
@@ -1096,7 +1108,10 @@ mod files {
         }
 
         fn fixture() -> (tempfile::TempDir, SharedFence) {
-            let dir = tempfile::tempdir().unwrap();
+            let dir = tempfile::Builder::new()
+                .prefix("agentmender-shared-fixture-")
+                .tempdir()
+                .unwrap();
             let m = std::fs::metadata(dir.path()).unwrap();
             let identity = CleanupFileIdentity {
                 path: dir.path().canonicalize().unwrap(),
@@ -1126,6 +1141,80 @@ mod files {
                     root: identity,
                 },
             )
+        }
+        #[test]
+        fn uncoordinated_writer_child() {
+            let Some(path) = std::env::var_os("AGENTMENDER_TEST_LATE_WRITER_ROOT") else {
+                return;
+            };
+            let root = std::path::PathBuf::from(path);
+            assert_eq!(root.canonicalize().unwrap(), root);
+            assert!(
+                root.file_name()
+                    .unwrap()
+                    .to_str()
+                    .unwrap()
+                    .starts_with("agentmender-shared-fixture-")
+            );
+            assert_eq!(
+                std::fs::read(root.join("owned-writer-counterexample")).unwrap(),
+                b"AgentMender disposable shared-state fixture"
+            );
+            let concurrent = br#"{"pinned-thread-ids":["T","U"],"peer":"new"}"#;
+            let staged = root.join("provider-new.json");
+            let file = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&staged)
+                .unwrap();
+            (&file).write_all(concurrent).unwrap();
+            file.sync_all().unwrap();
+            std::fs::rename(staged, root.join(GlobalKind::Main.name())).unwrap();
+            std::fs::write(root.join("concurrent-published"), concurrent).unwrap();
+        }
+
+        #[test]
+        fn late_writer_counterexample_requires_global_publication_refusal() {
+            let (dir, fence) = fixture();
+            let root = dir.path().canonicalize().unwrap();
+            let path = root.join(GlobalKind::Main.name());
+            let original = br#"{"pinned-thread-ids":["T","U"],"peer":"old"}"#;
+            let concurrent = br#"{"pinned-thread-ids":["T","U"],"peer":"new"}"#;
+            let retained = br#"{"pinned-thread-ids":["U"],"peer":"old"}"#;
+            std::fs::write(&path, original).unwrap();
+            std::fs::write(
+                root.join("owned-writer-counterexample"),
+                b"AgentMender disposable shared-state fixture",
+            )
+            .unwrap();
+            let locked = File::open(&path).unwrap();
+            fs::flock(&locked, FlockOperation::NonBlockingLockExclusive).unwrap();
+            let [_, expected] = observe_globals(&fence.root, "T", "local:/x", true).unwrap();
+            AFTER_FINAL_COMPARE.with(|hook| {
+                *hook.borrow_mut() = Some(Box::new(move || {
+                    let output = std::process::Command::new(std::env::current_exe().unwrap())
+                        .args([
+                            "--exact",
+                            "desktop_shared::files::tests::uncoordinated_writer_child",
+                        ])
+                        .env("AGENTMENDER_TEST_LATE_WRITER_ROOT", root)
+                        .output()
+                        .unwrap();
+                    assert!(output.status.success(), "{output:?}");
+                }));
+            });
+            // Exercise the private primitive to demonstrate the missing fence.
+            // The production wrapper rejects this target_units > 0 action.
+            let post = publish_fixture(&fence, GlobalKind::Main.name(), &expected, &|b| {
+                reduce_global(b, "T", "local:/x", true)
+            })
+            .unwrap();
+            assert_eq!(post.target_units, 0);
+            assert_eq!(std::fs::read(path).unwrap(), retained);
+            assert_eq!(
+                std::fs::read(dir.path().join("concurrent-published")).unwrap(),
+                concurrent
+            );
         }
         #[test]
         fn changed_preimage_is_preserved_and_refused() {

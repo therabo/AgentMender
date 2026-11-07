@@ -439,6 +439,11 @@ fn print_desktop_plan_status(plan: &LifecyclePlan) {
     if manifest.profile.admission == agentmender_domain::ProfileAdmission::DesktopUnaccepted {
         println!("Structural implementation: Candidate. Desktop execution is disabled.");
     }
+    if desktop.requires_shared_global_publication() {
+        println!(
+            "Shared global-state publication requires compatible writer coordination. Closing Codex alone cannot resolve this blocker."
+        );
+    }
     println!("Graphical acceptance: Not tested. Verification is manual.");
 }
 

@@ -30,7 +30,7 @@ foreign records survive. Per-action journal progress stops subsequent effects wh
 recording fails. Historical v2 plans/grants keep their original scope.
 Separate schema-4 candidates pin installed build 24141 and recovered build
 23880. Both remain unadmitted pending independent structural
-verification of all required sources. See [the current checkpoint](docs/milestones/m8-2-1-structural-2026-11-07.md),
+verification of all required sources. See [the current checkpoint](docs/milestones/m8-2-1-writer-admission-2026-11-07.md),
 [the current contract](docs/adr/0020-closed-desktop-complete-removal.md),
 [scoped behavior](docs/scoped-session-cleanup.md) and
 [continuation report](docs/milestones/m8-2-1-continuation-2026-11-03.md).

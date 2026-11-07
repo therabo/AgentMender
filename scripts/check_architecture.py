@@ -564,6 +564,11 @@ for name in ['acquire', 'publish_global', 'publish_index']:
     bodies = list(method_bodies(desktop_shared, name))
     if len(bodies) != 1 or 'DesktopExecution' not in bodies[0].split('{', 1)[0]:
         raise SystemExit(f'Desktop shared effect lacks the consumed gate: {name}')
+global_publication = list(method_bodies(desktop_shared, 'publish_global'))[0]
+if not (0 <= global_publication.find('if expected.target_units > 0')
+        < global_publication.find('return Err(EffectError::UnsupportedOperation)')
+        < global_publication.find('publish(')):
+    raise SystemExit('uncoordinated Desktop global publication was enabled')
 desktop_catalog_capture = production_source((scoped_base / 'desktop_catalog_capture.rs').read_text())
 catalog_boundary = list(method_bodies(desktop_catalog_capture, 'acquire_catalog'))
 if len(catalog_boundary) != 1 or 'DesktopExecution' not in catalog_boundary[0].split('{', 1)[0]:
