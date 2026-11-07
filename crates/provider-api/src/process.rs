@@ -196,31 +196,6 @@ pub fn parse_version(kind: ProviderKind, banner: &str) -> Option<String> {
     Some(value.into())
 }
 
-/// Private adapter transport must send only the fixed read-only request set.
-/// Even a provider startup bug cannot write files under the inherited sandbox.
-pub fn spawn_codex_read_only(executable: &Path, state_root: &Path) -> Result<Child, ProviderError> {
-    #[cfg(target_os = "macos")]
-    {
-        command(executable)?
-            .args(["app-server", "--listen", "stdio://"])
-            .env("CODEX_HOME", state_root)
-            .stdin(Stdio::piped())
-            .spawn()
-            .map_err(|_| {
-                ProviderError::CapabilityUnavailable(
-                    "write-denied Codex App Server could not start".into(),
-                )
-            })
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        let _ = (executable, state_root);
-        Err(ProviderError::CapabilityUnavailable(
-            "Codex process isolation is not verified on this platform".into(),
-        ))
-    }
-}
-
 #[cfg(target_os = "macos")]
 fn policy_literal(path: &Path) -> Result<String, ProviderError> {
     let text = path
