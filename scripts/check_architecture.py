@@ -300,7 +300,7 @@ patterns = [
     r'"(?:DELETE|UPDATE|INSERT)\s+',
 ]
 for path in (ROOT / "crates").glob("*/src/**/*.rs"):
-    source = production_source(path.read_text())
+    source = production_source(path.read_text(encoding="utf-8"))
     code = mask_literals(source)
     reviewed_capture = path == ROOT / "crates/provider-codex/src/capture.rs"
     reviewed_lifecycle = path == ROOT / "crates/provider-codex/src/lifecycle.rs"
@@ -452,13 +452,13 @@ for path in (ROOT / "crates").glob("*/src/**/*.rs"):
 if errors:
     print("\n".join(errors), file=sys.stderr)
     sys.exit(1)
-if 'unsafe_code = "forbid"' not in (ROOT / "Cargo.toml").read_text():
+if 'unsafe_code = "forbid"' not in (ROOT / "Cargo.toml").read_text(encoding="utf-8"):
     raise SystemExit("workspace unsafe-code prohibition changed")
-store = production_source((ROOT / "crates/persistence/src/store.rs").read_text())
+store = production_source((ROOT / "crates/persistence/src/store.rs").read_text(encoding="utf-8"))
 for marker in ["try_lock", "synchronous=EXTRA", "BEGIN IMMEDIATE", "events_no_update", "events_no_delete", "validate_against", "verify_manifest", "SQLITE_OPEN_READ_ONLY", "SQLITE_OPEN_NOFOLLOW"]:
     if marker not in store:
         raise SystemExit(f"ADR-0011 journal safety contract missing: {marker}")
-transactions = production_source((ROOT / "crates/domain/src/transaction.rs").read_text())
+transactions = production_source((ROOT / "crates/domain/src/transaction.rs").read_text(encoding="utf-8"))
 for name in ["TransactionEvent", "TransactionBinding", "RecoveryManifest"]:
     try:
         raw_payload = declaration_has_raw_payload(transactions, name)
@@ -466,7 +466,7 @@ for name in ["TransactionEvent", "TransactionBinding", "RecoveryManifest"]:
         raise SystemExit(str(error)) from error
     if raw_payload:
         raise SystemExit(f"raw content or operation payload in {name}")
-approval = production_source((ROOT / 'crates/domain/src/approval.rs').read_text())
+approval = production_source((ROOT / 'crates/domain/src/approval.rs').read_text(encoding="utf-8"))
 for name in ['ApprovalScope', 'ApprovalGrant', 'ApprovalAction', 'AuthorizationAuthentication']:
     if declaration_has_raw_payload(approval, name):
         raise SystemExit(f'raw content or operation payload in {name}')
@@ -476,7 +476,7 @@ for marker in ['approval_eligible', 'approval_valid', 'authorization_signing_byt
 for marker in ['verify_slice', 'grant_approval', 'revoke_approval', 'ApprovalAction::Consumed', 'authority_metadata', 'migrate_v1']:
     if marker not in store:
         raise SystemExit(f'ADR-0012 authenticated persistence contract missing: {marker}')
-handoff = production_source((ROOT / 'crates/persistence/src/handoff.rs').read_text())
+handoff = production_source((ROOT / 'crates/persistence/src/handoff.rs').read_text(encoding="utf-8"))
 for name in ['EffectError', 'NativeOutcome', 'EffectAttempt', 'NativeObservation', 'EffectObservation', 'CleanupAttempt']:
     if declaration_has_raw_payload(handoff, name):
         raise SystemExit(f'raw provider payload in lifecycle handoff: {name}')
@@ -497,7 +497,7 @@ if impl_methods(store, 'DurableIntent') != gate_methods or impl_methods(store, '
 intents = list(method_bodies(store, 'record_intent'))
 if len(intents) != 1 or not (0 <= intents[0].find('self.append(r)?') < intents[0].find('Ok(DurableIntent {')):
     raise SystemExit('durable receipt construction no longer follows committed intent')
-workflow = production_source((ROOT / 'crates/application/src/lifecycle.rs').read_text())
+workflow = production_source((ROOT / 'crates/application/src/lifecycle.rs').read_text(encoding="utf-8"))
 reconciliation = list(method_bodies(workflow, 'reconcile'))
 if len(reconciliation) != 1 or re.search(r'\.(?:dispatch|record_intent)\s*\(', mask_literals(reconciliation[0])):
     raise SystemExit('reconciliation can dispatch or recreate execution authority')
@@ -514,10 +514,10 @@ if not re.search(r'fn\s+dispatch\s*\([^;{]*\bDurableIntent\b', mask_literals(han
 # deletes behind a separately approved schema-3 profile. One relative payload
 # unlink, never a generic local mutation port. Keep these exceptions auditable.
 scoped_base = ROOT / 'crates/provider-codex/src'
-scoped_storage = production_source((scoped_base / 'scoped_storage.rs').read_text())
-scoped_files = production_source((scoped_base / 'scoped_files.rs').read_text())
-scoped_adapter = production_source((scoped_base / 'scoped_cleanup.rs').read_text())
-scoped_profile = production_source((scoped_base / 'scoped_profile.rs').read_text())
+scoped_storage = production_source((scoped_base / 'scoped_storage.rs').read_text(encoding="utf-8"))
+scoped_files = production_source((scoped_base / 'scoped_files.rs').read_text(encoding="utf-8"))
+scoped_adapter = production_source((scoped_base / 'scoped_cleanup.rs').read_text(encoding="utf-8"))
+scoped_profile = production_source((scoped_base / 'scoped_profile.rs').read_text(encoding="utf-8"))
 deletes = re.findall(r'"((?:DELETE|UPDATE|INSERT)\s+[^"\n]*)"', scoped_storage)
 if sorted(deletes) != sorted(['DELETE FROM thread_read_receipts WHERE thread_id=?1', 'DELETE FROM threads WHERE id=?1',
                              'DELETE FROM thread_attachments WHERE thread_id=?1',
@@ -562,7 +562,7 @@ assert production_source('#[cfg(all(test, unix))] mod tests { fs::write("test", 
 
 # ADR-0020 admits only candidate catalog SQL and private shared-file replacement
 # within the exact Desktop handoff. A later admission must keep these boundaries.
-desktop_catalog = production_source((scoped_base / 'desktop_catalog.rs').read_text())
+desktop_catalog = production_source((scoped_base / 'desktop_catalog.rs').read_text(encoding="utf-8"))
 desktop_catalog_sql = [
     "UPDATE local_thread_catalog_sync_state SET observation_sequence=?1 WHERE host_id='local' AND observation_sequence=?2",
     "INSERT INTO local_thread_catalog_scan_entries(host_id,thread_id,removed) VALUES('local',?1,1) ON CONFLICT(host_id,thread_id) DO UPDATE SET removed=1",
@@ -574,7 +574,7 @@ if sorted(re.findall(r'"((?:DELETE|UPDATE|INSERT)\s+[^"\n]*)"', desktop_catalog)
 catalog_apply = list(method_bodies(desktop_catalog, 'apply'))
 if len(catalog_apply) != 1 or not all(sql in catalog_apply[0] for sql in desktop_catalog_sql):
     raise SystemExit('Desktop catalog mutation escaped its fenced action')
-desktop_shared = production_source((scoped_base / 'desktop_shared.rs').read_text())
+desktop_shared = production_source((scoped_base / 'desktop_shared.rs').read_text(encoding="utf-8"))
 desktop_publish = list(method_bodies(desktop_shared, 'publish'))
 if (len(desktop_publish) != 1 or len(re.findall(relative_mutation, mask_literals(desktop_shared))) != 2
     or 'fs::renameat(&fence.fd, stage_name.as_str(), &fence.fd, name)' not in desktop_publish[0]
@@ -589,11 +589,11 @@ if not (0 <= global_publication.find('if expected.target_units > 0')
         < global_publication.find('return Err(EffectError::UnsupportedOperation)')
         < global_publication.find('publish(')):
     raise SystemExit('uncoordinated Desktop global publication was enabled')
-desktop_catalog_capture = production_source((scoped_base / 'desktop_catalog_capture.rs').read_text())
+desktop_catalog_capture = production_source((scoped_base / 'desktop_catalog_capture.rs').read_text(encoding="utf-8"))
 catalog_boundary = list(method_bodies(desktop_catalog_capture, 'acquire_catalog'))
 if len(catalog_boundary) != 1 or 'DesktopExecution' not in catalog_boundary[0].split('{', 1)[0]:
     raise SystemExit('Desktop catalog write boundary lacks the consumed gate')
-desktop_cleanup = production_source((scoped_base / 'desktop_cleanup.rs').read_text())
+desktop_cleanup = production_source((scoped_base / 'desktop_cleanup.rs').read_text(encoding="utf-8"))
 if re.search(r'\bstruct\s+DesktopExecution\s*<[^>]*>\s*\{[^}]*\bpub\b', mask_literals(desktop_cleanup)):
     raise SystemExit('Desktop execution context can be constructed outside its adapter')
 desktop_dispatch = list(method_bodies(desktop_cleanup, 'dispatch'))
@@ -647,16 +647,16 @@ for canary in [
 assert not projection_mutation_violation('fn exact() { record.id == target; }')
 for crate in ['provider-codex', 'provider-api', 'application', 'cli']:
     for path in (ROOT / 'crates' / crate / 'src').glob('*.rs'):
-        if projection_mutation_violation(path.read_text()):
+        if projection_mutation_violation(path.read_text(encoding="utf-8")):
             raise SystemExit(f'unreviewed broad/generic projection mutation: {path}')
 
-assessment = production_source((ROOT / 'crates/domain/src/session_removal.rs').read_text())
+assessment = production_source((ROOT / 'crates/domain/src/session_removal.rs').read_text(encoding="utf-8"))
 if impure_graph_code(assessment) or re.search(r'\bDeserialize\b', mask_literals(assessment)):
     raise SystemExit('product assessment gained I/O or imported proof')
 legacy_assessment = list(method_bodies(assessment, 'assess_legacy_session_removal'))
 if len(legacy_assessment) != 1 or 'SessionRemovalOutcome::Removed' in legacy_assessment[0]:
     raise SystemExit('historical primary receipt can claim complete removal')
-complete_contract = production_source((ROOT / 'crates/domain/src/complete_removal.rs').read_text())
+complete_contract = production_source((ROOT / 'crates/domain/src/complete_removal.rs').read_text(encoding="utf-8"))
 if impure_graph_code(complete_contract):
     raise SystemExit('complete removal contract gained I/O')
 for marker in ['ProfileAdmission::PrimaryOnly', 'WriterRequirement::CompatibleLifetimeFence',
@@ -670,7 +670,7 @@ for marker in ['required_surfaces', 'RequiredPersistentProjection', 'EphemeralUi
                'MaximumSafeCleanup::Complete', 'checked_add']:
     if marker not in assessment:
         raise SystemExit(f'product verification contract missing: {marker}')
-cli_cleanup = list(method_bodies((ROOT / 'crates/cli/src/lifecycle.rs').read_text(), 'report_cleanup'))
+cli_cleanup = list(method_bodies((ROOT / 'crates/cli/src/lifecycle.rs').read_text(encoding="utf-8"), 'report_cleanup'))
 if len(cli_cleanup) != 1 or any(marker not in cli_cleanup[0] for marker in [
     'assess_legacy_session_removal', 'primary_cleanup_outcome', 'product_complete', 'Ok(!product_complete)',
 ]):
@@ -678,12 +678,12 @@ if len(cli_cleanup) != 1 or any(marker not in cli_cleanup[0] for marker in [
 
 
 # ADR-0024: adaptive metadata is a fixed read contract, never mutation authority.
-adaptive = production_source((ROOT / 'crates/provider-codex/src/metadata.rs').read_text())
+adaptive = production_source((ROOT / 'crates/provider-codex/src/metadata.rs').read_text(encoding="utf-8"))
 for marker in ['validate_worker_paths', 'SQLITE_OPEN_READ_ONLY', 'SQLITE_OPEN_NOFOLLOW', 'PRAGMA query_only=ON', 'bounded_backup', 'LIMIT 501']:
     if marker not in adaptive: raise SystemExit('adaptive metadata isolation/bounds lost: ' + marker)
 if re.search(r'"(?:DELETE|UPDATE|INSERT|ATTACH|CREATE)\s+', adaptive, re.I):
     raise SystemExit('adaptive metadata must not change source SQL state')
-probe = list(method_bodies(production_source((ROOT / 'crates/provider-api/src/process.rs').read_text()), 'codex_app_server_schema'))
+probe = list(method_bodies(production_source((ROOT / 'crates/provider-api/src/process.rs').read_text(encoding="utf-8")), 'codex_app_server_schema'))
 if len(probe) != 1 or 'generate-json-schema' not in probe[0] or re.search(r'\.(?:send|write_all)\s*\(', probe[0]):
     raise SystemExit('native capability inspection acquired dispatch authority')
 
@@ -702,9 +702,9 @@ for canary in ['fn bad() { fs::write(path, bytes); }',
                'fn bad() { port.dispatch(intent); }']:
     assert search_write_violation(canary), 'search write canary failed'
 assert not search_write_violation('fn read() { source.read_to_end(&mut bytes); }')
-content = production_source((ROOT / 'crates/provider-codex/src/content.rs').read_text())
+content = production_source((ROOT / 'crates/provider-codex/src/content.rs').read_text(encoding="utf-8"))
 for relative in ['provider-codex/src/content.rs', 'application/src/session_search.rs', 'cli/src/management.rs']:
-    if search_write_violation((ROOT / 'crates' / relative).read_text()):
+    if search_write_violation((ROOT / 'crates' / relative).read_text(encoding="utf-8")):
         raise SystemExit('read-only search/registration gained write authority: ' + relative)
 for marker in ['validate_worker_paths', 'SQLITE_OPEN_READ_ONLY', 'SQLITE_OPEN_NOFOLLOW',
                'PRAGMA query_only=ON', 'bounded_backup', 'open_source_read',
@@ -712,11 +712,11 @@ for marker in ['validate_worker_paths', 'SQLITE_OPEN_READ_ONLY', 'SQLITE_OPEN_NO
                'RECORD_BYTES', 'LIMIT 10001', 'WHERE id NOT IN', 'header_identity_mismatch']:
     if marker not in content:
         raise SystemExit('content isolation/identity/bounds lost: ' + marker)
-search_service = (ROOT / 'crates/application/src/session_search.rs').read_text()
+search_service = (ROOT / 'crates/application/src/session_search.rs').read_text(encoding="utf-8")
 search_body = list(method_bodies(search_service, 'search'))
 if len(search_body) != 1 or not (0 <= search_body[0].find('self.binding(') < search_body[0].find('.search_sessions(')):
     raise SystemExit('management binding must precede provider search access')
-registration = (ROOT / 'crates/cli/src/management.rs').read_text()
+registration = (ROOT / 'crates/cli/src/management.rs').read_text(encoding="utf-8")
 for marker in ['verify_operator_descriptor', 'root_device', 'root_inode', 'server_instance', 'expires_at', 'single_conversation_operator_verified']:
     if marker not in registration:
         raise SystemExit('independent registration boundary lost: ' + marker)
