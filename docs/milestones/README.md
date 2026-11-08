@@ -37,3 +37,8 @@ actual user capabilities, readiness gaps and proposed small vertical slices.
 [Conversational Codex primary removal](p0-c1-conversational-codex-removal.md): OPEN.
 Opt-in metadata/preparation/status and protected external CLI workflow implemented;
 actual client conversation with independent human approval remains an acceptance gate.
+
+[Final integration and client review, 2026-11-08](p0-c1-client-acceptance.md): OPEN.
+The installed alpha.6 client loaded all 13 MCP schemas; its isolated model request
+stopped at missing authentication. Use the [manual acceptance guide](../p0-c1-manual-acceptance.md)
+to complete actual invocation, management binding and independent human execution.

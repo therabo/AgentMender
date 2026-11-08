@@ -3,6 +3,10 @@
 Status: **OPEN**. The bounded components and disposable workflow are implemented.
 Actual Codex conversational acceptance with independently operated human approval
 has not passed. No real user session is used for development tests.
+Follow the [manual acceptance guide](p0-c1-manual-acceptance.md) and the
+[2026-11-08 client review](milestones/p0-c1-client-acceptance.md). The actual alpha.6
+client loaded all 13 schemas; its isolated natural-language probe required login
+and invoked no tool. Catalog discovery alone is not conversational acceptance.
 
 ## Supported boundary
 
@@ -14,8 +18,9 @@ physical identity, dependency and writer restrictions in the
 [primary contract](scoped-session-cleanup.md#initial-exact-codex-contract) all apply.
 The pinned executable is hashed, not launched, for this local fallback.
 
-Installed Desktop 24141/26.1027.61615 and its alpha.5.1 executable are separate
-identities. Unknown/alpha releases, Linux/Windows mutation, shared histories,
+Desktop observed on 2026-11-08 is 24614/26.1029.61003 with alpha.6 (the prior
+24141/alpha.5.1 observation is historical). These are separate identities.
+Unknown/alpha releases, Linux/Windows mutation, shared histories,
 spawn dependencies and uncertain writers refuse. General historical App Server
 inventory and this stable exact-schema metadata reader have separate compatibility.
 Current native `thread/delete` is not dispatched; see retained

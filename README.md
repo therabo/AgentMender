@@ -23,6 +23,8 @@ exact primary removal, prepares its durable transaction and recovers status.
 The human approves and executes through the existing external-terminal path.
 Actual conversational client use with independent human approval remains an
 acceptance gate. See [the workflow and limits](docs/conversational-codex-removal.md).
+The [manual acceptance guide](docs/p0-c1-manual-acceptance.md) includes fresh
+read-only fixture setup, actual-client search and the external human workflow.
 Cross-provider deletion is not implemented.
 
 ## What works today

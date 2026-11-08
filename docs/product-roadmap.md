@@ -165,6 +165,9 @@ P0-C1 delivery: **OPEN**. See [the current report](milestones/p0-c1-conversation
 and [operating contract](conversational-codex-removal.md). Metadata, protected
 preparation and provider execution components are implemented; an actual Codex
 conversation with independently operated human approval remains unaccepted.
+The [2026-11-08 client review](milestones/p0-c1-client-acceptance.md) verifies actual
+13-tool catalog loading, not model invocation: the isolated client needs login.
+The [manual acceptance guide](p0-c1-manual-acceptance.md) records the exact user gates.
 
 Audit baseline readiness: **READY WITH CONSTRAINTS**. Review the
 [proposed bounded vertical slices](audits/2026-11-07-product-first-audit.md#proposed-next-implementation-milestones)

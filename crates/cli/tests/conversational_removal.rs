@@ -8,6 +8,7 @@ use agentmender_provider_codex::{CodexAdapter, CodexScopedCleanupAdapter};
 use rusqlite::Connection;
 use serde_json::{Value, json};
 use std::{
+    collections::BTreeMap,
     fs,
     io::{BufRead, BufReader, Write},
     path::{Path, PathBuf},
@@ -130,6 +131,55 @@ fn seed(root: &Path, cwd: &Path) -> Vec<(PathBuf, Vec<u8>)> {
     .unwrap();
     files
 }
+fn tree_bytes(root: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
+    fn visit(root: &Path, directory: &Path, result: &mut BTreeMap<PathBuf, Vec<u8>>) {
+        for entry in fs::read_dir(directory).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                visit(root, &path, result);
+            } else {
+                result.insert(
+                    path.strip_prefix(root).unwrap().into(),
+                    fs::read(path).unwrap(),
+                );
+            }
+        }
+    }
+    let mut result = BTreeMap::new();
+    visit(root, root, &mut result);
+    result
+}
+fn retained_thread_rows(root: &Path) -> Vec<Vec<rusqlite::types::Value>> {
+    let db = Connection::open_with_flags(
+        root.join("state_5.sqlite"),
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )
+    .unwrap();
+    let mut statement = db
+        .prepare("SELECT * FROM threads WHERE id<>?1 ORDER BY id")
+        .unwrap();
+    let columns = statement.column_count();
+    statement
+        .query_map([T], |row| (0..columns).map(|i| row.get(i)).collect())
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap()
+}
+fn assert_primary_cut(root: &Path, retained: &[Vec<rusqlite::types::Value>]) {
+    let db = Connection::open_with_flags(
+        root.join("state_5.sqlite"),
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )
+    .unwrap();
+    let target_rows: i64 = db
+        .query_row("SELECT count(*) FROM threads WHERE id=?1", [T], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    assert_eq!(target_rows, 0);
+    drop(db);
+    assert_eq!(retained_thread_rows(root), retained);
+}
 #[test]
 #[ignore = "explicit pinned-binary disposable MCP integration; fixture authority, no human approval claim"]
 fn exact_profile_stdio_prepare_external_execution_restart_and_status() {
@@ -148,6 +198,8 @@ fn exact_profile_stdio_prepare_external_execution_restart_and_status() {
     let owned_path = base_path.join("owned");
     let files = seed(&root, &base_path);
     let foreign_files = seed(&other_root, &base_path);
+    let foreign_before = tree_bytes(&other_root);
+    let retained_before = retained_thread_rows(&root);
     let mut client = Client::start(&root, &owned_path, &binary, &home);
     let tools = client.exchange(json!({"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}));
     assert_eq!(tools["result"]["tools"].as_array().unwrap().len(), 13);
@@ -264,6 +316,9 @@ fn exact_profile_stdio_prepare_external_execution_restart_and_status() {
     let result: Value = serde_json::from_slice(&executed.stdout).unwrap();
     assert_eq!(result["report"]["primary_verified"], true);
     assert!(!files[0].0.exists());
+    // Independent inspection, not an assertion based only on the adapter report.
+    assert_primary_cut(&root, &retained_before);
+    assert_eq!(tree_bytes(&other_root), foreign_before);
     for (path, bytes) in files.iter().skip(1).chain(&foreign_files) {
         assert_eq!(fs::read(path).unwrap(), *bytes);
     }
@@ -291,6 +346,8 @@ fn exact_profile_stdio_prepare_external_execution_restart_and_status() {
         .output()
         .unwrap();
     assert!(!repeated.status.success());
+    assert_primary_cut(&root, &retained_before);
+    assert_eq!(tree_bytes(&other_root), foreign_before);
     for (path, bytes) in files.iter().skip(1).chain(&foreign_files) {
         assert_eq!(fs::read(path).unwrap(), *bytes);
     }
