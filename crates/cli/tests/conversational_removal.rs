@@ -139,6 +139,136 @@ fn adaptive_metadata_search_needs_no_supported_binary_or_approval_root() {
     assert_eq!(tree_bytes(&root), before);
     assert!(!path.join("owned").exists());
 }
+#[test]
+fn content_search_stdio_is_grounded_and_management_requires_independent_binding() {
+    use std::os::unix::fs::MetadataExt;
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().canonicalize().unwrap();
+    let root = path.join("provider");
+    seed(&root, &path.join("MISSION1"));
+    let fake = root.join("not-an-executable");
+    fs::write(&fake, b"no executable mutation profile").unwrap();
+    let home = PathBuf::from(std::env::var_os("HOME").unwrap())
+        .canonicalize()
+        .unwrap();
+    let registration = path.join("untrusted-registration.json");
+    fs::write(&registration, b"{}").unwrap();
+    let before = tree_bytes(&root);
+    let mut client = Client::connect(
+        base(&root, &fake, &home)
+            .args([
+                "--protect-codex-session",
+                M,
+                "mcp",
+                "--session-search",
+                "--management-registration",
+            ])
+            .arg(&registration),
+    );
+    let args = json!({"query":"Earth rendering Cesium camera","include_content":true,"purpose":"diagnostic","page_size":20});
+    let found = client.call(1, "session_search", args);
+    let view = &found["result"]["structuredContent"];
+    assert_eq!(view["result_count"], 1, "{found}");
+    assert_eq!(view["coverage"]["eligible_observed"], 2);
+    assert_eq!(view["management_exclusion"], "not_guaranteed_diagnostic");
+    let hit = &view["sessions"][0];
+    assert_eq!(hit["native_session_id"], T);
+    assert_eq!(hit["title"], "MISSION1 README");
+    assert!(
+        hit["evidence"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|e| e["untrusted_data"] == true
+                && e["excerpt"].as_str().unwrap().chars().count() <= 320)
+    );
+    assert!(!found.to_string().contains("PRIVATE"));
+    let target = hit["target"].clone();
+    let evidence = hit["evidence"][0]["evidence_ref"].clone();
+    let context = client.call(
+        2,
+        "session_context",
+        json!({"target":target,"evidence_ref":evidence}),
+    );
+    assert!(
+        context["result"]["structuredContent"]["evidence"]["excerpt"].is_string(),
+        "{context}"
+    );
+    assert!(
+        serde_json::to_vec(&context["result"]["structuredContent"])
+            .unwrap()
+            .len()
+            <= 2048
+    );
+    let legacy = client.call(3, "session_search", json!({"query":"README"}));
+    let other = legacy["result"]["structuredContent"]["sessions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|h| h["native_session_id"] == U)
+        .unwrap()["target"]
+        .clone();
+    assert_eq!(
+        client.call(
+            4,
+            "session_context",
+            json!({"target":other,"evidence_ref":evidence})
+        )["result"]["isError"],
+        true
+    );
+    let forged = format!("{}0", evidence.as_str().unwrap());
+    assert!(
+        client
+            .call(
+                5,
+                "session_context",
+                json!({"target":target,"evidence_ref":forged})
+            )
+            .get("error")
+            .is_some()
+    );
+    let denied = client.call(
+        6,
+        "session_search",
+        json!({"query":"","purpose":"management"}),
+    );
+    assert_eq!(
+        denied["result"]["structuredContent"]["error"],
+        "caller_identity_required"
+    );
+    assert_eq!(denied["result"]["structuredContent"]["sessions"], json!([]));
+    // Even a well-formed file using the observed instance challenge cannot be
+    // registered by this same-user model-controlled fixture process.
+    let m = fs::metadata(&root).unwrap();
+    let expires = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        + 300;
+    fs::write(&registration,json!({"schema":1,"server_instance":denied["result"]["structuredContent"]["registration_instance"],"provider":"codex","state_root":root,"root_device":m.dev(),"root_inode":m.ino(),"native_session_id":M,"expires_at":expires,"connection_scope":"single_conversation_operator_verified"}).to_string()).unwrap();
+    assert_eq!(
+        client.call(
+            7,
+            "session_search",
+            json!({"query":"Earth","purpose":"management","include_content":true})
+        )["result"]["structuredContent"]["error"],
+        "caller_identity_required"
+    );
+    assert!(
+        client
+            .call(
+                8,
+                "session_search",
+                json!({"purpose":"management","caller_session_id":M})
+            )
+            .get("error")
+            .is_some()
+    );
+    client.close();
+    assert_eq!(before, tree_bytes(&root));
+    assert!(!path.join("owned").exists());
+}
+
 impl Drop for Client {
     fn drop(&mut self) {
         let _ = self.child.kill();
@@ -187,7 +317,28 @@ fn seed(root: &Path, cwd: &Path) -> Vec<(PathBuf, Vec<u8>)> {
         (U, "MISSION1 README"),
     ] {
         let path = root.join(format!("sessions/rollout-2026-01-01T00-00-00-{id}.jsonl"));
-        let bytes = format!("{{\"type\":\"session_meta\",\"payload\":{{\"id\":\"{id}\",\"cli_version\":\"0.166.0\"}}}}\nPRIVATE TRANSCRIPT\n").into_bytes();
+        let mut body = format!(
+            "{{\"type\":\"session_meta\",\"payload\":{{\"id\":\"{id}\",\"cli_version\":\"0.166.0\"}}}}\nPRIVATE TRANSCRIPT\n"
+        );
+        let texts = if id == U {
+            vec![("user", "Discuss lunch plans")]
+        } else if id == M {
+            vec![
+                ("user", "Earth rendering Cesium camera"),
+                ("assistant", "Earth rendering Cesium camera"),
+                ("user", "Earth rendering Cesium camera"),
+            ]
+        } else {
+            vec![
+                ("user", "Earth rendering performance is slow"),
+                ("assistant", "Cesium camera behavior needs tuning"),
+            ]
+        };
+        for (role, text) in texts {
+            body.push_str(&json!({"type":"response_item","payload":{"type":"message","role":role,"content":[{"type":if role=="assistant"{"output_text"}else{"input_text"},"text":text}]}}).to_string());
+            body.push('\n');
+        }
+        let bytes = body.into_bytes();
         fs::write(&path, &bytes).unwrap();
         db.execute("INSERT INTO threads(id,rollout_path,created_at,updated_at,source,model_provider,cwd,title,sandbox_policy,approval_mode,cli_version,preview,first_user_message) VALUES (?1,?2,1,2,'cli','openai',?3,?4,'read-only','never','0.166.0','PRIVATE PREVIEW','PRIVATE MESSAGE')",(id,path.to_str().unwrap(),cwd.to_str().unwrap(),title)).unwrap();
         files.push((path, bytes));
@@ -271,7 +422,7 @@ fn exact_profile_stdio_prepare_external_execution_restart_and_status() {
     let retained_before = retained_thread_rows(&root);
     let mut client = Client::start(&root, &owned_path, &binary, &home);
     let tools = client.exchange(json!({"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}));
-    assert_eq!(tools["result"]["tools"].as_array().unwrap().len(), 13);
+    assert_eq!(tools["result"]["tools"].as_array().unwrap().len(), 14);
     let found = client.call(2, "session_search", json!({"query":"MISSION1 README"}));
     let sessions = found["result"]["structuredContent"]["sessions"]
         .as_array()

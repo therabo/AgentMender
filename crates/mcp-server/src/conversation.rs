@@ -23,6 +23,43 @@ struct SearchInput {
     query: String,
     #[serde(default = "include_archived")]
     include_archived: bool,
+    #[serde(default)]
+    include_content: bool,
+    #[serde(default)]
+    purpose: SearchPurposeInput,
+    #[serde(default)]
+    #[schemars(length(max = 256))]
+    project_label: Option<String>,
+    #[serde(default)]
+    #[schemars(range(min = 1, max = 20))]
+    page_size: Option<usize>,
+    #[serde(default)]
+    #[schemars(length(max = 4096))]
+    cursor: Option<String>,
+    #[serde(default = "include_archived")]
+    excerpts: bool,
+}
+#[derive(Clone, Copy, Default, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+enum SearchPurposeInput {
+    #[default]
+    Diagnostic,
+    Management,
+}
+impl From<SearchPurposeInput> for agentmender_domain::SearchPurpose {
+    fn from(p: SearchPurposeInput) -> Self {
+        match p {
+            SearchPurposeInput::Diagnostic => Self::Diagnostic,
+            SearchPurposeInput::Management => Self::Management,
+        }
+    }
+}
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct ContextInput {
+    target: EntityRef,
+    #[schemars(length(max = 4096))]
+    evidence_ref: String,
 }
 fn include_archived() -> bool {
     true
@@ -78,8 +115,77 @@ struct SearchView {
     sessions: Vec<SessionLabelView>,
     completeness: String,
     search_basis: &'static str,
+    purpose: &'static str,
+    management_exclusion: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     read_compatibility: Option<ReadCompatibilityView>,
+}
+#[derive(Serialize, JsonSchema)]
+#[serde(untagged)]
+enum SearchOutput {
+    Legacy(SearchView),
+    Evidence(EvidenceSearchView),
+    Error(crate::dto::ErrorView),
+}
+pub(super) fn caller_identity_required(instance: String) -> serde_json::Value {
+    let mut value = serde_json::to_value(SearchOutput::Error(crate::dto::ErrorView {
+        error: crate::dto::ErrorCode::CallerIdentityRequired,
+    }))
+    .expect("error serializes");
+    value.as_object_mut().expect("error object").extend(serde_json::json!({"sessions":[],"result_count":0,"registration_instance":instance,"authenticated_caller_binding":false}).as_object().expect("fixed object").clone());
+    value
+}
+#[derive(Serialize, JsonSchema)]
+struct EvidenceView {
+    source: String,
+    capture: &'static str,
+    record_index: usize,
+    excerpt: Option<String>,
+    truncated: bool,
+    format: String,
+    evidence_ref: String,
+    untrusted_data: bool,
+}
+#[derive(Serialize, JsonSchema)]
+struct EvidenceHitView {
+    #[serde(flatten)]
+    session: SessionLabelView,
+    score: u32,
+    matched_terms: Vec<String>,
+    match_sources: Vec<String>,
+    content_status: String,
+    evidence: Vec<EvidenceView>,
+}
+#[derive(Serialize, JsonSchema)]
+struct SearchCoverageView {
+    eligible_observed: usize,
+    sessions_inspected: usize,
+    bytes_read: usize,
+    matched_in_batch: usize,
+    unsupported_sessions: usize,
+    truncated_sessions: usize,
+    suppressed_records: usize,
+    reasons: Vec<String>,
+}
+#[derive(Serialize, JsonSchema)]
+struct EvidenceSearchView {
+    sessions: Vec<EvidenceHitView>,
+    purpose: String,
+    management_exclusion: String,
+    authenticated_caller_binding: bool,
+    registration_instance: String,
+    completeness: &'static str,
+    search_basis: &'static str,
+    ranking: &'static str,
+    result_count: usize,
+    coverage: SearchCoverageView,
+    next_cursor: Option<String>,
+}
+#[derive(Serialize, JsonSchema)]
+struct ContextView {
+    evidence: EvidenceView,
+    purpose: String,
+    management_exclusion: &'static str,
 }
 #[derive(Serialize, JsonSchema)]
 struct ReadCompatibilityView {
@@ -198,7 +304,8 @@ struct TransactionsView {
 
 pub(super) fn tools() -> Vec<Tool> {
     [
-        ("session_search", "Search opt-in title/project metadata; return all possible matches, never select by title", schema::<SearchInput>(), schema::<SearchView>(), true),
+        ("session_search", "Search metadata and opt-in bounded user/assistant text. Diagnostic mode has no caller guarantee; management mode requires independent verified identity and excludes it before counts/paging", schema::<SearchInput>(), schema::<SearchOutput>(), true),
+        ("session_context", "Retrieve one bounded untrusted message using a prior signed evidence reference; recheck identity, source freshness and exclusions", schema::<ContextInput>(), schema::<ContextView>(), true),
         ("preview_removal", "Fresh removal review when admitted; read-only deployments return a compatibility assessment without a plan or execution authority", schema::<PreviewInput>(), schema::<PreviewOutput>(), true),
         ("prepare_removal", "Persist the exact reviewed plan and recovery metadata; never grant human approval or delete", schema::<PrepareInput>(), schema::<TransactionsView>(), false),
         ("removal_status", "Recover durable primary-removal results across client disconnect or restart; no redispatch", schema::<StatusInput>(), schema::<TransactionsView>(), true),
@@ -237,9 +344,47 @@ pub(super) fn request(
             if v.query.len() > 256 || v.query.chars().any(char::is_control) {
                 return Err(invalid());
             }
+            if v.include_content
+                || matches!(v.purpose, SearchPurposeInput::Management)
+                || v.project_label.is_some()
+                || v.page_size.is_some()
+                || v.cursor.is_some()
+                || !v.excerpts
+            {
+                let parameters = agentmender_domain::SearchParameters {
+                    query: v.query,
+                    include_archived: v.include_archived,
+                    include_content: v.include_content,
+                    project_label: v.project_label,
+                    purpose: v.purpose.into(),
+                    page_size: v.page_size.unwrap_or(20),
+                    excerpts: v.excerpts,
+                };
+                if !parameters.valid() {
+                    return Err(invalid());
+                }
+                let continuation = v
+                    .cursor
+                    .map(|c| projector.open_search(b"cursor", &c).ok_or_else(invalid))
+                    .transpose()?;
+                return Ok(ConversationRequest::EvidenceSearch {
+                    parameters,
+                    continuation,
+                });
+            }
             Ok(ConversationRequest::Search {
                 query: v.query,
                 include_archived: v.include_archived,
+            })
+        }
+        "session_context" => {
+            let v: ContextInput = serde_json::from_value(args.clone()).map_err(|_| invalid())?;
+            let reference = projector
+                .open_search(b"evidence", &v.evidence_ref)
+                .ok_or_else(invalid)?;
+            Ok(ConversationRequest::Context {
+                reference,
+                target: target(v.target)?,
             })
         }
         "preview_removal" => {
@@ -334,17 +479,87 @@ fn label(
         },
     }
 }
+fn evidence_view(
+    e: agentmender_domain::ConversationEvidence,
+    evidence_ref: String,
+) -> EvidenceView {
+    EvidenceView {
+        source: e.source,
+        capture: "bounded_full_or_header_and_tail_windows; record_index_is_capture_ordinal",
+        record_index: e.record_index,
+        excerpt: e.excerpt,
+        truncated: e.truncated,
+        format: e.format,
+        evidence_ref,
+        untrusted_data: true,
+    }
+}
 pub(super) fn project(
     response: ConversationResponse,
     projector: &Projector,
 ) -> Result<serde_json::Value, crate::projection::ProjectionError> {
     use crate::projection::ProjectionError;
     let value = match response {
+        ConversationResponse::EvidenceSearch(result) => {
+            let management = result.parameters.purpose == agentmender_domain::SearchPurpose::Management;
+            let sessions: Vec<_> = result.page.sessions.into_iter().map(|hit| {
+                let evidence = hit.evidence.into_iter().map(|e| {
+                    let reference = agentmender_domain::ContextReference {
+                        native_session_id: hit.metadata.native_session_id.clone(),
+                        local_id: hit.metadata.identity.local_id.clone(),
+                        record_index: e.record_index,
+                        source_fingerprint: e.source_fingerprint.clone(),
+                        source_bytes: e.source_bytes,
+                        purpose: result.parameters.purpose,
+                        binding_revision: result.binding_revision.clone(),
+                    };
+                    evidence_view(e, projector.seal_search(b"evidence", &reference))
+                }).collect();
+                EvidenceHitView {
+                    session: label(projector, &hit.metadata, hit.metadata.state != agentmender_domain::SessionState::Unknown, true),
+                    score: hit.score,
+                    matched_terms: hit.matched_terms,
+                    match_sources: hit.match_sources,
+                    content_status: hit.content_status,
+                    evidence,
+                }
+            }).collect();
+            let coverage = result.page.coverage;
+            serde_json::to_value(SearchOutput::Evidence(EvidenceSearchView {
+                result_count: sessions.len(), sessions,
+                purpose: if management { "management" } else { "diagnostic" }.into(),
+                management_exclusion: if management { "independent_operator_registration" } else { "not_guaranteed_diagnostic" }.into(),
+                authenticated_caller_binding: false,
+                registration_instance: result.registration_instance,
+                completeness: "partial",
+                search_basis: if result.parameters.include_content { "bounded_metadata_and_conversation_content" } else { "bounded_metadata_only" },
+                ranking: "within_inspected_batch: per-message term hits user=4 assistant=3 title=2 metadata=1; exact identity breaks ties; not semantic search",
+                coverage: SearchCoverageView {
+                    eligible_observed: coverage.eligible_observed,
+                    sessions_inspected: coverage.sessions_inspected,
+                    bytes_read: coverage.bytes_read,
+                    matched_in_batch: coverage.matched_in_batch,
+                    unsupported_sessions: coverage.unsupported_sessions,
+                    truncated_sessions: coverage.truncated_sessions,
+                    suppressed_records: coverage.suppressed_records,
+                    reasons: coverage.reasons,
+                },
+                next_cursor: result.page.next.map(|next| projector.seal_search(b"cursor", &next)),
+            }))
+        }
+        ConversationResponse::Context(result) => {
+            let management = result.purpose == agentmender_domain::SearchPurpose::Management;
+            serde_json::to_value(ContextView {
+                purpose: if management { "management" } else { "diagnostic" }.into(),
+                management_exclusion: if management { "independent_operator_registration" } else { "not_guaranteed_diagnostic" },
+                evidence: evidence_view(result.evidence, String::new()),
+            })
+        }
         ConversationResponse::Search {
             sessions,
             completeness,
             read_compatibility,
-        } => serde_json::to_value(SearchView {
+        } => serde_json::to_value(SearchOutput::Legacy(SearchView {
             sessions: sessions
                 .into_iter()
                 .map(|s| label(projector, &s.metadata, s.can_request_preview, read_compatibility.is_some()))
@@ -355,8 +570,10 @@ pub(super) fn project(
                 .expect("coverage enum")
                 .into(),
             search_basis: "metadata_only_all_terms_no_transcript_search",
+            purpose:"diagnostic",
+            management_exclusion:"registered_only_no_caller_guarantee",
             read_compatibility: read_compatibility.as_ref().map(ReadCompatibilityView::from),
-        }),
+        })),
         ConversationResponse::ReadOnlyPreview {session, compatibility} => serde_json::to_value(PreviewOutput::ReadOnly(ReadOnlyPreviewView {
             session:label(projector,&session,true,true),compatibility:ReadCompatibilityView::from(&compatibility),
             operation:"not_admitted",status:"blocked",execution_permitted:false,

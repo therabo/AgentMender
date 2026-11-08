@@ -1,6 +1,7 @@
 //! Query use cases shared by CLI and the read-only MCP interface.
 pub mod conversation;
 pub mod lifecycle;
+pub mod session_search;
 pub mod transactions;
 use agentmender_domain::*;
 use agentmender_provider_api::{ProviderAdapter, ProviderError, validate_scope};
@@ -14,6 +15,12 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum ApplicationError {
+    #[error("independently verified management identity required")]
+    CallerIdentityRequired { instance: String },
+    #[error("invalid bounded search request or provider response")]
+    InvalidSearch,
+    #[error("search continuation or conversation evidence changed")]
+    StaleSearchEvidence,
     #[error("trusted management-session registration is missing or no longer verified")]
     ManagementProtectionUnavailable,
     #[error("the selected session is a protected management session")]
@@ -40,6 +47,9 @@ impl ApplicationError {
     /// Stable, sanitized error catalog for inbound interfaces.
     pub fn public_code(&self) -> &'static str {
         match self {
+            Self::CallerIdentityRequired { .. } => "caller_identity_required",
+            Self::InvalidSearch => "invalid_scope",
+            Self::StaleSearchEvidence => "stale_search_evidence",
             Self::ManagementProtectionUnavailable => "management_protection_required",
             Self::ProtectedManagementSession => "protected_management_session",
             Self::RemovalPlanChanged => "removal_plan_changed",

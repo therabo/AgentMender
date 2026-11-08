@@ -55,6 +55,37 @@ impl Projector {
     pub fn new(key: [u8; 32]) -> Self {
         Self { key }
     }
+    pub(crate) fn seal_search<T: Serialize>(&self, kind: &[u8], value: &T) -> String {
+        let data = serde_json::to_vec(value).expect("bounded search token serializes");
+        let mut signed = b"agentmender/search-token/v1\0".to_vec();
+        signed.extend_from_slice(kind);
+        signed.extend_from_slice(&data);
+        format!(
+            "{}.{}",
+            hex(&data),
+            hex(&self.mac(b"agentmender/search-token/v1\0", &signed))
+        )
+    }
+    pub(crate) fn open_search<T: serde::de::DeserializeOwned>(
+        &self,
+        kind: &[u8],
+        token: &str,
+    ) -> Option<T> {
+        if token.len() > 4096 || !token.is_ascii() {
+            return None;
+        }
+        let (data, tag) = token.split_once('.')?;
+        let data = unhex(data)?;
+        let tag = unhex(tag)?;
+        let mut signed = b"agentmender/search-token/v1\0".to_vec();
+        signed.extend_from_slice(kind);
+        signed.extend_from_slice(&data);
+        let mut mac = <HmacSha256 as KeyInit>::new_from_slice(&self.key).ok()?;
+        mac.update(b"agentmender/search-token/v1\0");
+        mac.update(&signed);
+        mac.verify_slice(&tag).ok()?;
+        serde_json::from_slice(&data).ok()
+    }
     fn mac(&self, domain: &[u8], data: &[u8]) -> Vec<u8> {
         let mut m = <HmacSha256 as KeyInit>::new_from_slice(&self.key).expect("HMAC key");
         m.update(domain);
@@ -1058,6 +1089,33 @@ mod tests {
     use super::*;
     use agentmender_application::ProviderReport;
     use std::path::PathBuf;
+    #[test]
+    fn search_references_are_kind_and_process_bound_and_cannot_be_modified() {
+        let projector = Projector::new([1; 32]);
+        let value = serde_json::json!({"scope":"fixture","start":100});
+        let token = projector.seal_search(b"cursor", &value);
+        assert_eq!(
+            projector.open_search::<serde_json::Value>(b"cursor", &token),
+            Some(value)
+        );
+        assert!(
+            projector
+                .open_search::<serde_json::Value>(b"evidence", &token)
+                .is_none()
+        );
+        assert!(
+            Projector::new([2; 32])
+                .open_search::<serde_json::Value>(b"cursor", &token)
+                .is_none()
+        );
+        let mut forged = token.into_bytes();
+        forged[0] = if forged[0] == b'0' { b'1' } else { b'0' };
+        assert!(
+            projector
+                .open_search::<serde_json::Value>(b"cursor", std::str::from_utf8(&forged).unwrap())
+                .is_none()
+        );
+    }
     fn id(root: &str, class: d::GraphNodeKind) -> d::ArtifactId {
         d::ArtifactId {
             provider: d::ProviderKind::Codex,

@@ -6,6 +6,14 @@ use agentmender_provider_api::{ProviderError, ScopedCleanupReadPort, SessionMeta
 use serde::Serialize;
 
 pub enum ConversationRequest {
+    EvidenceSearch {
+        parameters: SearchParameters,
+        continuation: Option<SearchContinuation>,
+    },
+    Context {
+        reference: ContextReference,
+        target: TargetSelector,
+    },
     Search {
         query: String,
         include_archived: bool,
@@ -31,6 +39,8 @@ pub struct SessionMatch {
     pub can_request_preview: bool,
 }
 pub enum ConversationResponse {
+    EvidenceSearch(crate::session_search::SearchResult),
+    Context(crate::session_search::ContextResult),
     Search {
         sessions: Vec<SessionMatch>,
         completeness: Completeness,
@@ -190,6 +200,16 @@ impl ConversationService<'_> {
     ) -> Result<ConversationResponse, ApplicationError> {
         control.check()?;
         match request {
+            ConversationRequest::EvidenceSearch { parameters, .. }
+                if parameters.purpose == SearchPurpose::Management =>
+            {
+                Err(ApplicationError::CallerIdentityRequired {
+                    instance: "management_registration_requires_read_mode".into(),
+                })
+            }
+            ConversationRequest::EvidenceSearch { .. } | ConversationRequest::Context { .. } => {
+                Err(unavailable())
+            }
             ConversationRequest::Search {
                 query,
                 include_archived,

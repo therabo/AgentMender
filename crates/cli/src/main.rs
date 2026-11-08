@@ -20,6 +20,7 @@ use serde::Serialize;
 mod approvals;
 mod conversation;
 mod lifecycle;
+mod management;
 mod transactions;
 
 #[derive(Clone, Parser)]
@@ -95,12 +96,15 @@ impl From<PlanIntent> for LifecycleIntent {
 enum Action {
     Providers,
     Mcp {
-        /// Opt in to real-session metadata search and non-authorizing assessment.
+        /// Opt in to bounded real-session metadata/content reads and blocked assessment.
         #[arg(long, conflicts_with = "session_removal")]
         session_search: bool,
         /// Opt in to metadata disclosure and durable primary-removal preparation.
         #[arg(long)]
         session_removal: bool,
+        /// Root-owned, per-process independent management registration (read mode).
+        #[arg(long, requires = "session_search", value_parser = absolute_path)]
+        management_registration: Option<PathBuf>,
         #[arg(long, value_parser = absolute_path)]
         state_root: Option<PathBuf>,
     },
@@ -238,6 +242,16 @@ impl From<ProviderError> for CliError {
 impl From<ApplicationError> for CliError {
     fn from(error: ApplicationError) -> Self {
         match error {
+            ApplicationError::CallerIdentityRequired { .. } => {
+                Self::new(ErrorCode::InvalidConfiguration, "caller_identity_required")
+            }
+            ApplicationError::InvalidSearch => Self::new(
+                ErrorCode::InvalidArguments,
+                "invalid bounded search request",
+            ),
+            ApplicationError::StaleSearchEvidence => {
+                Self::new(ErrorCode::InvalidArguments, "stale_search_evidence")
+            }
             ApplicationError::ManagementProtectionUnavailable
             | ApplicationError::ProtectedManagementSession
             | ApplicationError::RemovalPlanChanged
@@ -640,6 +654,7 @@ fn run(args: Args) -> Result<bool, CliError> {
         session_search,
         session_removal,
         state_root,
+        management_registration,
     } = &args.command
     {
         if *session_removal && (args.codex_root.is_none() || args.codex_executable.is_none()) {
@@ -706,7 +721,10 @@ fn run(args: Args) -> Result<bool, CliError> {
                     "read-only session search does not use a transaction state root",
                 ));
             }
-            Some(conversation::read_only_executor(&config)?)
+            Some(conversation::read_only_executor(
+                &config,
+                management_registration.as_deref(),
+            )?)
         } else if *session_removal {
             Some(conversation::executor(&config, state_root.as_deref())?)
         } else {
@@ -1022,6 +1040,15 @@ fn run(args: Args) -> Result<bool, CliError> {
 }
 fn main() -> ExitCode {
     let raw_args: Vec<_> = env::args_os().collect();
+    if raw_args.len() == 2 && raw_args[1] == "--internal-codex-content-capture" {
+        return match agentmender_provider_codex::run_content_capture_worker() {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(_) => {
+                eprintln!("internal content evidence capture failed");
+                ExitCode::FAILURE
+            }
+        };
+    }
     if raw_args.len() == 2 && raw_args[1] == "--internal-codex-metadata-capture" {
         return match agentmender_provider_codex::run_metadata_capture_worker() {
             Ok(()) => ExitCode::SUCCESS,

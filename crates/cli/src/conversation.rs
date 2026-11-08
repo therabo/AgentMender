@@ -47,6 +47,13 @@ pub(super) fn executor(
     let state_root = state_root.expect("checked").to_path_buf();
     Ok(Arc::new(move |request, control| {
         control.check()?;
+        if matches!(&request, ConversationRequest::EvidenceSearch { parameters, .. }
+            if parameters.purpose == agentmender_domain::SearchPurpose::Management)
+        {
+            return Err(ApplicationError::CallerIdentityRequired {
+                instance: "management_registration_requires_read_mode".into(),
+            });
+        }
         let adapter =
             super::lifecycle::scoped_adapter_version(&config, 2).map_err(|_| unavailable())?;
         // Only preparation may initialize AgentMender-owned state. Other calls
@@ -84,9 +91,12 @@ fn unavailable() -> ApplicationError {
     .into()
 }
 
-/// Current installation, fixed source root, metadata only. No owned state or
+/// Current installation, fixed source root, bounded read evidence. No owned state or
 /// cleanup adapter is constructed by this launch mode.
-pub(super) fn read_only_executor(args: &Args) -> Result<ConversationExecutor, CliError> {
+pub(super) fn read_only_executor(
+    args: &Args,
+    registration: Option<&Path>,
+) -> Result<ConversationExecutor, CliError> {
     if !matches!(args.provider, Some(SelectedProvider::Codex))
         || args.fixture.is_some()
         || args.codex_desktop_user_data.is_some()
@@ -109,6 +119,17 @@ pub(super) fn read_only_executor(args: &Args) -> Result<ConversationExecutor, Cl
         .map(std::path::PathBuf::from)
         .filter(|h| h.is_absolute())
         .ok_or_else(|| CliError::new(ErrorCode::InvalidConfiguration, "absolute HOME required"))?;
+    let registration = registration.map(Path::to_path_buf);
+    let mut nonce = [0u8; 16];
+    getrandom::fill(&mut nonce)
+        .map_err(|_| unavailable())
+        .map_err(|_| {
+            CliError::new(
+                ErrorCode::InvalidConfiguration,
+                "instance randomness unavailable",
+            )
+        })?;
+    let instance: String = nonce.iter().map(|b| format!("{b:02x}")).collect();
     Ok(Arc::new(move |request, control| {
         let adapter = agentmender_provider_codex::CodexAdapter::new(
             agentmender_provider_api::ProviderLocation {
@@ -117,12 +138,48 @@ pub(super) fn read_only_executor(args: &Args) -> Result<ConversationExecutor, Cl
             },
         )
         .with_evidence_helper(helper.clone(), home.clone());
+        let management = super::management::read(registration.as_deref(), &instance, &root);
+        let registrations: Vec<_> = config
+            .protect_codex_session
+            .iter()
+            .map(|id| agentmender_domain::ArtifactId {
+                provider: agentmender_domain::ProviderKind::Codex,
+                state_root: root.clone(),
+                class: agentmender_domain::GraphNodeKind::Session,
+                local_id: agentmender_domain::EntityId::new(format!("codex:session:{id}"))
+                    .expect("validated launch UUID"),
+            })
+            .collect();
+        let service = agentmender_application::session_search::SessionSearchService {
+            reader: &adapter,
+            provider_root: &root,
+            provider: agentmender_domain::ProviderKind::Codex,
+            management: management.as_ref(),
+            registered: &registrations,
+            instance: &instance,
+        };
+        match request {
+            ConversationRequest::EvidenceSearch {
+                parameters,
+                continuation,
+            } => {
+                return service.search(parameters, continuation, control).map(
+                    agentmender_application::conversation::ConversationResponse::EvidenceSearch,
+                );
+            }
+            ConversationRequest::Context { reference, target } => {
+                return service
+                    .context(reference, target, control)
+                    .map(agentmender_application::conversation::ConversationResponse::Context);
+            }
+            _ => {}
+        }
+        let mut protected = config.protect_codex_session.clone();
+        if let Some(management) = management {
+            protected.push(management.native_session_id);
+        }
         agentmender_application::conversation::read_only_dispatch(
-            &adapter,
-            &root,
-            &config.protect_codex_session,
-            request,
-            control,
+            &adapter, &root, &protected, request, control,
         )
     }))
 }
