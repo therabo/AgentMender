@@ -346,7 +346,6 @@ async fn opt_in_conversation_registry_metadata_privacy_and_authority_rejection()
                         producer_version: None,
                         parent_native_session_id: None,
                     },
-                    protected: false,
                     can_request_preview: true,
                 }],
             }),

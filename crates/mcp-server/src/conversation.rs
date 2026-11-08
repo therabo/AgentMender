@@ -293,7 +293,6 @@ fn safe(v: &str) -> String {
 fn label(
     projector: &Projector,
     s: &agentmender_domain::SessionMetadata,
-    protected: bool,
     can_preview: bool,
     assessment: bool,
 ) -> SessionLabelView {
@@ -323,11 +322,10 @@ fn label(
         producer_version_matches: s.producer_version_matches,
         producer_version: s.producer_version.clone(),
         parent_native_session_id: s.parent_native_session_id.clone(),
-        protected,
+        // Protected identities are refused before reaching this projection.
+        protected: false,
         can_request_preview: can_preview,
-        removal_eligibility: if protected {
-            "protected"
-        } else if assessment {
+        removal_eligibility: if assessment {
             "read_only_assessment_no_execution"
         } else if !can_preview {
             "unavailable"
@@ -349,7 +347,7 @@ pub(super) fn project(
         } => serde_json::to_value(SearchView {
             sessions: sessions
                 .into_iter()
-                .map(|s| label(projector, &s.metadata, s.protected, s.can_request_preview, read_compatibility.is_some()))
+                .map(|s| label(projector, &s.metadata, s.can_request_preview, read_compatibility.is_some()))
                 .collect(),
             completeness: serde_json::to_value(completeness)
                 .expect("coverage")
@@ -359,8 +357,8 @@ pub(super) fn project(
             search_basis: "metadata_only_all_terms_no_transcript_search",
             read_compatibility: read_compatibility.as_ref().map(ReadCompatibilityView::from),
         }),
-        ConversationResponse::ReadOnlyPreview {session, compatibility, protected} => serde_json::to_value(PreviewOutput::ReadOnly(ReadOnlyPreviewView {
-            session:label(projector,&session,protected,!protected,true),compatibility:ReadCompatibilityView::from(&compatibility),
+        ConversationResponse::ReadOnlyPreview {session, compatibility} => serde_json::to_value(PreviewOutput::ReadOnly(ReadOnlyPreviewView {
+            session:label(projector,&session,true,true),compatibility:ReadCompatibilityView::from(&compatibility),
             operation:"not_admitted",status:"blocked",execution_permitted:false,
             affected_session_ids:vec![session.native_session_id],affected_set_complete:false,
             descendant_effects:"native_delete_may_include_spawned_descendants; complete effect closure is unverified",
@@ -421,7 +419,7 @@ pub(super) fn project(
                     .collect(),
             };
             serde_json::to_value(PreviewOutput::Supported(PreviewView {
-                session: label(projector, &session, false, true, false),
+                session: label(projector, &session, true, false),
                 review,
                 operation: "scoped_primary_cleanup_v1",
                 irreversible: true,

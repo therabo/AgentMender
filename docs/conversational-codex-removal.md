@@ -4,6 +4,13 @@ Status: **OPEN**. Start with the [real-session quick start](p0-c1-manual-accepta
 and [real-world report](milestones/p0-c1-real-world-integration.md). Normal browsing
 uses the installed Codex, not a synthetic root or historical binary.
 
+Real conversational metadata search is now accepted, separately from the OPEN
+deletion verdict. [Search and management identity](session-search.md) governs
+future content evidence and guaranteed exclusion. Trusted registered identities
+are filtered before matching/projection in both modes and refuse preview/prepare;
+automatic caller binding remains incomplete. Unregistered browsing is diagnostic
+metadata access and may include its caller.
+
 ## Current real-session read mode
 
 `agentmender --provider codex mcp --session-search` adds the five conversational
@@ -107,10 +114,10 @@ presentation label, not proof of a live writer or caller identity.
 Titles/project names are untrusted data. Full paths, transcript bodies, previews,
 first-user-message and raw databases are excluded. Metadata is opt-in because
 labels can themselves contain private text. Existing eight-tool privacy is unchanged.
-The reader bounds inventory at 500 records/128 KiB; Partial results cannot prove
+The adaptive reader bounds inventory at 500 records/96 KiB; Partial results cannot prove
 absence. Responses over the MCP budget fail explicitly; narrow the query.
 
-Return all matching candidates, including duplicate/similar titles, archives and
+Return all unprotected matching candidates, including duplicate/similar titles, archives and
 same-project peers. Ask the user to choose an exact UUID/root namespace. The same
 UUID/title in another root is a different identity. Opaque references expire on
 restart and never authorize removal. Search does not infer ownership.

@@ -43,9 +43,17 @@ Acceptance criteria:
 - A request about a project/title returns useful matching metadata and an exact
   provider-scoped identity. Duplicate titles, alias IDs, roots and partial scans
   cannot silently choose a target or prove absence. No project path grants deletion.
+- Content-aware discovery must also find supported user/assistant conversation
+  text when query words are absent from title/project, with bounded excerpts,
+  match provenance and explicit Partial coverage. The
+  [search contract](session-search.md) defines privacy, limits and acceptance.
 - Identify and protect the active management session and other unsupported active
   targets before approval and again at dispatch. An unknown caller binding cannot
   be treated as an exclusion proof.
+- Exclude the verified management identity before matching/ranking, pagination,
+  counts and presentation across management listings, metadata/content/archive/
+  project queries and bounded context. Missing verified identity in a guaranteed
+  workflow must return caller_identity_required, never heuristic candidates.
 - Preview freezes exact provider version, target, affected set, side effects,
   residuals, irreversible consequences, recovery limits and supported postconditions.
 - An MCP client cannot grant/revoke/consume authority, supply `confirm=true`, choose
@@ -152,7 +160,8 @@ M8.3 multi-session cleanup is not the next implementation priority.
 |---|---|
 | Codex discovery | Real fixed-column metadata search independent of executable hash; separate historical App Server profiles; partial coverage |
 | Claude discovery | Partial observed Desktop sidecars and synthetic transcript fixtures; no general live Code SDK inventory |
-| Search / useful labels | Real bounded title/name/project/UUID/time/archive/parent metadata; unknown producers can be readable; no content index |
+| Search / useful labels | Real conversational metadata search accepted: user-reported 37 MISSION1 records, Partial; title/name/project/UUID matching, available time/archive/parent observations; content search not implemented |
+| Management-session exclusion | Registered identities filtered from both conversational searches and refused at preview/prepare; automatic caller binding incomplete; general diagnostics have no guaranteed management-list policy |
 | MCP | Eight default read-only tools plus five opt-in search/preview/preparation/status/external-handoff tools |
 | Native Codex | Exact historical unarchive handoff is tested but real plans remain blocked; native archive/delete not executable |
 | Scoped Codex | M8.2 primary cleanup PASS for exact 0.166.0 Darwin arm64 Legacy/WAL profile; schema-3 expanded primary has disposable evidence |
@@ -167,8 +176,17 @@ preparation and provider execution components are implemented; an actual Codex
 conversation with independently operated human approval remains unaccepted.
 The [real-world integration report](milestones/p0-c1-real-world-integration.md)
 records real read-only discovery and the current-version native counterexamples.
-Use the [real-session quick start](p0-c1-manual-acceptance.md). Actual model invocation,
+Use the [real-session quick start](p0-c1-manual-acceptance.md). The later accepted
+real model metadata invocation supersedes the earlier reports' client gap only;
 verified management binding and independent human deletion remain acceptance gates.
+
+Next proposed implementation is **P0-S1: bounded content evidence with verified
+management exclusion**, defined in [ADR-0025](adr/0025-bounded-search-and-management-exclusion.md)
+and the [search contract](session-search.md). Establish one verified identity
+integration, add one evidenced bounded content reader and grounded results, then
+exercise read-only client acceptance. No indexing service, deletion authority,
+Claude mutation, deep-cleanup family or bulk operation is included. Repository
+consolidation prepares this work; it does not start it.
 
 
 Audit baseline readiness: **READY WITH CONSTRAINTS**. Review the
@@ -187,7 +205,8 @@ crash gaps require explicit unknown results. Exact-version support can be narrow
 but must be honestly described and tested. Do not turn complete global M3 health
 into a proxy for every future scoped operation or weaken M3's negative proofs.
 
-Changes ship in small reviewable branches with relevant targeted tests, full
-locked local gates and exact final three-OS CI. No automatic merge to main,
-history rewriting, real-user destructive tests or app restarts. Historical ADRs,
+`main` is the sole ordinary development branch; annotated archival tags and the
+verified bundle preserve original tips. Changes need relevant targeted tests,
+full locked local gates and exact final three-OS CI. No history rewriting,
+real-user destructive tests or app restarts. Historical ADRs,
 research and PASS/OPEN/BLOCKED receipts remain evidence, read with ADR-0022.

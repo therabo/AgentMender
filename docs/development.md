@@ -4,10 +4,11 @@
 
 Normal onboarding starts with the existing installation and
 `agentmender --provider codex mcp --session-search`; see the
-[quick start](p0-c1-manual-acceptance.md). The
-`prepare_p0_c1_readonly_fixture.py` helper is **development-only** and accepts no
-existing provider path. Preserve it and all deterministic CI/security fixtures.
-The new normal macOS stdio test proves readable unknown binaries, blocked preview,
+[quick start](p0-c1-manual-acceptance.md). The standalone synthetic onboarding
+generator was retired during consolidation: no CI/test consumer, and its search
+invariants are exercised by application and disposable stdio tests. Its original
+bytes remain in commit `d58311b64580bd4213bf928d64888e563aa0755f` and archival refs.
+Preserve all deterministic CI/security fixtures. The normal macOS stdio test proves readable unknown binaries, blocked preview,
 preparation refusal, no owned-state creation and unchanged fixture bytes. Real
 metadata checks are separate from private-data-free CI and from actual model use,
 human approval, real deletion and optional GUI confirmation.
@@ -15,8 +16,10 @@ human approval, real deletion and optional GUI confirmation.
 
 ## P0-C1 verification
 
-Current work is the bounded [conversational primary handoff](conversational-codex-removal.md),
-not another Desktop milestone. Normal tests retain all prior safety regressions.
+The [conversational primary handoff](conversational-codex-removal.md) is implemented
+with destructive acceptance still OPEN. Real conversational metadata search is
+accepted; the next proposed read-only step is [bounded content search and verified
+management exclusion](session-search.md). Normal tests retain all prior safety regressions.
 The explicit `conversational_removal` CLI integration test uses disposable exact
 provider state and real stdio/worker/CLI effects; its grant is fixture authority.
 Do not count it as an actual Codex conversation or independent human acceptance.
@@ -76,10 +79,12 @@ features, tests, historical wire/replay consumers and provider contracts. A priv
 unadmitted advanced module is not automatically dead. Avoid a new generic executor,
 crate or outcome model where the existing boundary is sufficient.
 
-Work from a verified baseline on a separate branch, preserve unfinished milestone
-branches, commit coherently and push normally. Check GitHub Actions against the
+Work from a verified `main` baseline, commit coherently and push normally. Preserve
+historical tips through the [archival manifest](audits/2026-11-08-original-refs.json)
+and verified external bundle; do not recreate long-lived milestone branches.
+Check GitHub Actions against the
 **final exact SHA**, including Linux/macOS/Windows jobs; an earlier green commit
-does not satisfy this gate. No automatic merge, squash, history rewrite or force
+does not satisfy this gate. No whole-history squash, history rewrite or force
 push. Keep historical receipts immutable and record current status in the
 canonical roadmap/audit. Final verification receipts can be retained externally
 to bind the final commit without a self-referential commit hash.

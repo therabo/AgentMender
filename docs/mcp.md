@@ -2,6 +2,15 @@
 
 ## Real-session metadata mode
 
+Real conversational metadata search is accepted (user's 37 MISSION1 records,
+Partial); transcript-content search and automatic authenticated caller binding
+are not complete. [Search and management identity](session-search.md) is the
+canonical contract for evidence, exclusions and the next read-only step.
+Trusted registered identities are excluded before matching/projection in both
+conversational modes and refuse preview/preparation. Unbound diagnostic browsing
+does not guarantee management-session exclusion; default scan/graph/inspect must
+not be presented as a guaranteed safe management candidate list.
+
 Normal Codex browsing uses `agentmender --provider codex mcp --session-search`.
 No fixture, historical executable, protected caller UUID or state root is required.
 The explicit mode locates the existing bundled macOS executable without PATH;

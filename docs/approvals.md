@@ -2,6 +2,12 @@
 
 ## Read-only real-session deployment
 
+See [the verified-management identity contract](session-search.md). Registered
+identities are filtered from conversational candidates and refused at preview/
+prepare. Automatic caller binding remains incomplete; general diagnostic inventory
+does not guarantee self-exclusion. No approval or mutation authority is added by
+the accepted metadata search or the proposed content-search milestone.
+
 `mcp --session-search` has no approval key, transaction state root, cleanup port or
 preparation capability. It returns a blocked compatibility assessment for preview;
 other removal calls refuse. No caller UUID is required for browsing, and none is

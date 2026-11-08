@@ -27,7 +27,6 @@ pub enum ConversationRequest {
 
 pub struct SessionMatch {
     pub metadata: SessionMetadata,
-    pub protected: bool,
     /// Preview is a fresh safety assessment, not a Ready or approved operation.
     pub can_request_preview: bool,
 }
@@ -44,7 +43,6 @@ pub enum ConversationResponse {
     ReadOnlyPreview {
         session: SessionMetadata,
         compatibility: SessionReadCompatibility,
-        protected: bool,
     },
     Transactions(Vec<RemovalStatus>),
 }
@@ -196,6 +194,9 @@ impl ConversationService<'_> {
                 query,
                 include_archived,
             } => {
+                if self.protected_sessions.is_empty() {
+                    return Err(ApplicationError::ManagementProtectionUnavailable);
+                }
                 let inventory = self.metadata.session_metadata()?;
                 search_inventory(
                     inventory,
@@ -322,6 +323,15 @@ fn search_inventory(
     let mut sessions: Vec<_> = inventory
         .sessions
         .into_iter()
+        // Trusted registrations belong to this provider/root, not a matching
+        // title or UUID in another namespace. Exclude before matching/sorting
+        // and before MCP can project a target or compute response budgets.
+        .filter(|s| {
+            !(s.identity.provider == ProviderKind::Codex
+                && s.identity.class == GraphNodeKind::Session
+                && s.identity.state_root == provider_root
+                && protected_sessions.contains(&s.native_session_id))
+        })
         .filter(|s| {
             let haystack = format!(
                 "{} {} {}",
@@ -334,16 +344,13 @@ fn search_inventory(
                 && words.iter().all(|w| haystack.contains(w))
         })
         .map(|s| {
-            let protected = protected_sessions.contains(&s.native_session_id);
-            let can_request_preview = (!primary || !protected_sessions.is_empty())
-                && !protected
-                && s.identity.provider == ProviderKind::Codex
+            let can_request_preview = s.identity.provider == ProviderKind::Codex
+                && s.identity.class == GraphNodeKind::Session
                 && s.identity.state_root == provider_root
                 && (!primary || s.producer_version_matches)
                 && s.state != SessionState::Unknown;
             SessionMatch {
                 metadata: s,
-                protected,
                 can_request_preview,
             }
         })
@@ -395,12 +402,13 @@ pub fn read_only_dispatch(
             {
                 return Err(unavailable());
             }
-            let protected = protected_sessions.contains(&session.native_session_id);
+            if protected_sessions.contains(&session.native_session_id) {
+                return Err(ApplicationError::ProtectedManagementSession);
+            }
             control.check()?;
             Ok(ConversationResponse::ReadOnlyPreview {
                 session,
                 compatibility: inventory.read_compatibility.ok_or_else(unavailable)?,
-                protected,
             })
         }
         _ => Err(ApplicationError::ReadOnlyRemovalUnavailable),

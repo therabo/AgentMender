@@ -1,8 +1,9 @@
 # Use AgentMender with real Codex sessions
 
-P0-C1 is **OPEN**. Real read-only discovery works with the installed macOS Codex;
-actual model/client invocation and independently approved deletion are separate
-acceptance gates. No synthetic provider root or historical binary is needed to
+P0-C1 deletion is **OPEN**. Real conversational metadata search is accepted:
+the user's actual Codex call returned 37 MISSION1 records with Partial coverage.
+Transcript-content search, automatic caller binding and independently approved
+current-version deletion remain incomplete. No synthetic provider root or historical binary is needed to
 browse. Synthetic fixtures remain development tests only.
 
 ## Connect the existing installation
@@ -59,8 +60,9 @@ web ChatGPT Plugins screen is not evidence that the current Codex chat has it.
 
 For this workstation, the real read-only registration has been saved in the
 Codex config. The obsolete generated fixture was removed after provenance checks.
-The UI tool prohibits access to the Codex application, and the user could not
-refresh/verify its tools during development. That client gate remains OPEN.
+The earlier integration report's client gate was OPEN; the user's subsequent
+real conversational search acceptance closes only that read-only metadata gate.
+See the [search and management identity contract](session-search.md).
 
 ## Search and choose an exact identity
 

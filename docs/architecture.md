@@ -26,6 +26,16 @@ every read adapter. Domain has serialization/hashing dependencies but no I/O.
 
 ## Adaptive real-session reads
 
+[ADR-0025](adr/0025-bounded-search-and-management-exclusion.md) and the
+[canonical search contract](session-search.md) add content evidence and mandatory
+verified management exclusion as requirements. Current conversational search
+filters trusted registered identities before matching/sorting/projection and
+refuses protected preview/preparation; it does not authenticate the caller.
+General diagnostic inventory is not a guaranteed management list. The next step
+needs one verified binding and a provider-owned bounded read port for supported
+message text, with pure evidence types and bounded untrusted MCP excerpts. No
+content index, new crate or change to destructive authority is needed or shipped.
+
 [ADR-0024](adr/0024-adaptive-read-only-metadata.md) separates useful metadata from
 mutation contracts. Explicit `--session-search` uses a fixed-column protected
 source worker and bounded in-memory SQLite snapshot, accepting additive structures

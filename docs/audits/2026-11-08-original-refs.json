@@ -1,0 +1,90 @@
+{
+  "starting_branch": "feature/p0-c1-real-world-adaptive-compatibility",
+  "starting_sha": "b54222b2f65a40ca56f7bd0e42f37e8369cb9213",
+  "starting_default_branch": "milestone/m0-m1-read-only",
+  "local_and_remote_tips_matched": true,
+  "all_tips_reachable_from_starting_head": true,
+  "existing_tags": [],
+  "branches": [
+    {
+      "branch": "feature/p0-c1-conversational-codex-removal",
+      "sha": "d58311b64580bd4213bf928d64888e563aa0755f",
+      "archive_tag": "archive/2026-11-08/feature/p0-c1-conversational-codex-removal"
+    },
+    {
+      "branch": "feature/p0-c1-real-world-adaptive-compatibility",
+      "sha": "b54222b2f65a40ca56f7bd0e42f37e8369cb9213",
+      "archive_tag": "archive/2026-11-08/feature/p0-c1-real-world-adaptive-compatibility"
+    },
+    {
+      "branch": "main",
+      "sha": "a284767157ace8769deee85b195b5b70efe374d8",
+      "archive_tag": "archive/2026-11-08/main"
+    },
+    {
+      "branch": "milestone/m0-m1-read-only",
+      "sha": "19d2be5d80467214afae24ae796844d3a4db82aa",
+      "archive_tag": "archive/2026-11-08/milestone/m0-m1-read-only"
+    },
+    {
+      "branch": "milestone/m2-artifact-graph",
+      "sha": "b96c31710758942bfb85e3527c17cebe2ef9a40a",
+      "archive_tag": "archive/2026-11-08/milestone/m2-artifact-graph"
+    },
+    {
+      "branch": "milestone/m3-integrity-forensics",
+      "sha": "fa291282bea9257cf2fdb57a3827aac005a678e7",
+      "archive_tag": "archive/2026-11-08/milestone/m3-integrity-forensics"
+    },
+    {
+      "branch": "milestone/m4-immutable-planning",
+      "sha": "139291761975c1dca50492adcb5972cbfe7233f5",
+      "archive_tag": "archive/2026-11-08/milestone/m4-immutable-planning"
+    },
+    {
+      "branch": "milestone/m5-readonly-mcp",
+      "sha": "c426a7fe4e12c24afc2f383087912e7f54111b39",
+      "archive_tag": "archive/2026-11-08/milestone/m5-readonly-mcp"
+    },
+    {
+      "branch": "milestone/m6-durable-transactions",
+      "sha": "f2268d2cdcff961a91e079af79314571fb3752d7",
+      "archive_tag": "archive/2026-11-08/milestone/m6-durable-transactions"
+    },
+    {
+      "branch": "milestone/m7-independent-approval",
+      "sha": "5cf94c01d1d14acf6034d7bb7f5521547ee470dd",
+      "archive_tag": "archive/2026-11-08/milestone/m7-independent-approval"
+    },
+    {
+      "branch": "milestone/m8-1-codex-full-cleanup",
+      "sha": "6f798bcebdfd2f763e31d62ef2695c52396ca709",
+      "archive_tag": "archive/2026-11-08/milestone/m8-1-codex-full-cleanup"
+    },
+    {
+      "branch": "milestone/m8-2-1-complete-session-removal",
+      "sha": "14a8931f38949d3dbde04a61b22091752a685402",
+      "archive_tag": "archive/2026-11-08/milestone/m8-2-1-complete-session-removal"
+    },
+    {
+      "branch": "milestone/m8-2-scoped-session-cleanup",
+      "sha": "a284767157ace8769deee85b195b5b70efe374d8",
+      "archive_tag": "archive/2026-11-08/milestone/m8-2-scoped-session-cleanup"
+    },
+    {
+      "branch": "milestone/m8-codex-lifecycle",
+      "sha": "83f0692cdda33bc3be34146ab8ceefab5dadf1f3",
+      "archive_tag": "archive/2026-11-08/milestone/m8-codex-lifecycle"
+    },
+    {
+      "branch": "milestone/m9-claude-lifecycle",
+      "sha": "9daa237ac6eadeb3d74e71b19ba31bcd6eef97ef",
+      "archive_tag": "archive/2026-11-08/milestone/m9-claude-lifecycle"
+    },
+    {
+      "branch": "refactor/product-first-roadmap",
+      "sha": "3a0eebb0fe21207845c8f0d691be9e0a98778f08",
+      "archive_tag": "archive/2026-11-08/refactor/product-first-roadmap"
+    }
+  ]
+}

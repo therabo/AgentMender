@@ -18,7 +18,8 @@ M8.3 multi-session cleanup is not the next implementation priority.
 M8.2 primary cleanup remains historical PASS at main
 `a284767157ace8769deee85b195b5b70efe374d8`. M8.2.1 is **unfinished/deferred**, not
 PASS and **no longer a global blocker for the conversational MVP**. Preserve its
-branch `milestone/m8-2-1-complete-session-removal` and historical evidence.
+tip `14a8931f38949d3dbde04a61b22091752a685402` through archival tag
+`archive/2026-11-08/milestone/m8-2-1-complete-session-removal` and historical evidence.
 Schema-4 builds 24141/23880 remain separate unadmitted candidates with an empty
 compiled admission list. Never enable unsafe Desktop global JSON publication;
 preserve the child-process lost-update regression and zero-operation refusal.
@@ -55,7 +56,8 @@ READ_ONLY/NOFOLLOW, query_only, bounded memory backup; no transcripts/auth/confi
 Additive schemas/unknown producers may be readable. Generated native method names
 are availability observations only. Read-mode preview stays blocked with no plan;
 prepare/status/execution handoff refuse. Do not turn this reader into raw mutation
-or infer caller protection. Synthetic onboarding is development-only.
+or infer caller protection. Synthetic onboarding is retired; preserve deterministic
+regression fixtures, not the standalone onboarding generator.
 
 The existing P0-C1 destructive fallback selects exact stable 0.166.0 Darwin arm64 scoped-cleanup-v1 Legacy/WAL.
 Native delete remains unadmitted; no fallback after unknown native effects. Keep
@@ -66,6 +68,17 @@ additional artifact families. Full P0-C1 PASS needs actual Codex client + indepe
 human approval/execution + structural primary/collateral proof + final exact CI.
 
 ## Architecture
+
+Read [ADR-0025](docs/adr/0025-bounded-search-and-management-exclusion.md) and the
+[search contract](docs/session-search.md). Real conversational metadata search is
+accepted (the user's 37-record MISSION1 call, Partial); complete transcript search,
+automatic authenticated caller binding and current-version destructive acceptance
+remain open. Exclude registered provider/root/session identities before matching
+and projection in both conversational modes; refuse protected previews/preparation.
+Future guaranteed management workflows must return caller_identity_required until
+verified host binding or independent protected registration is established. General
+diagnostic inventory is not a guaranteed management candidate list. Never guess
+identity from title/cwd/activity or accept a model-supplied UUID as proof.
 
 Keep the eight crates. Domain is pure and owns shared approval eligibility.
 Provider-api has read-only ports and protected observation helpers. Provider
@@ -156,9 +169,12 @@ python3 scripts/check_complete_removal_evidence.py
 git diff --check
 ```
 
-Verify branch/remote/main baselines; preserve unfinished milestone branches.
-Use coherent commits and normal pushes. Verify the exact final commit on all
-three GitHub Actions platforms. Do not force push, rewrite history, merge to main
-without instruction, or substitute an earlier green run for final CI. Historical
+Use `main` as the sole ordinary development branch after consolidation. Preserve
+historical milestone tips through verified archival tags and the
+[original-ref manifest](docs/audits/2026-11-08-original-refs.json), not active branches.
+Before future branch retirement, verify a complete outside-repository bundle and
+recovery refs, remote/default HEAD, exact final three-OS CI and worktree/dependency
+absence. Use coherent commits and normal pushes. Do not force push, rewrite
+history or substitute an earlier green run for final CI. Historical
 milestone reports, compatibility evidence and ADRs retain their original verdicts;
 new decisions supersede them explicitly. The current roadmap controls sequencing.

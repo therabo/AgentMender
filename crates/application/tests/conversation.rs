@@ -110,8 +110,12 @@ fn ambiguous_metadata_partial_coverage_and_root_identity_never_authorize() {
         panic!()
     };
     assert_eq!(completeness, Completeness::Partial);
-    assert_eq!(sessions.len(), 4);
-    assert_ne!(sessions[0].metadata.identity, sessions[3].metadata.identity);
+    assert_eq!(sessions.len(), 3);
+    assert!(sessions.iter().all(|s| {
+        s.metadata.identity.state_root != std::path::Path::new("/a")
+            || s.metadata.native_session_id != M
+    }));
+    assert_ne!(sessions[0].metadata.identity, sessions[2].metadata.identity);
     assert!(
         sessions
             .iter()
@@ -119,7 +123,7 @@ fn ambiguous_metadata_partial_coverage_and_root_identity_never_authorize() {
     );
     for identity in [
         sessions[0].metadata.identity.clone(),
-        sessions[3].metadata.identity.clone(),
+        sessions[2].metadata.identity.clone(),
         ArtifactId {
             provider: ProviderKind::Claude,
             ..sessions[0].metadata.identity.clone()
@@ -161,4 +165,126 @@ fn ambiguous_metadata_partial_coverage_and_root_identity_never_authorize() {
             )
             .is_err()
     );
+}
+
+#[test]
+fn registered_management_is_excluded_before_matching_in_both_search_modes() {
+    let protected = vec![M.into()];
+    let root = std::path::Path::new("/a");
+    let service = ConversationService {
+        metadata: &Metadata,
+        cleanup: &Metadata,
+        protected_sessions: &protected,
+        provider_root: root,
+    };
+    // Blank listings, exact UUID, keywords and archive filtering use one policy.
+    for query in ["", M, "README", "MISSION1"] {
+        for include_archived in [false, true] {
+            for primary in [false, true] {
+                let request = ConversationRequest::Search {
+                    query: query.into(),
+                    include_archived,
+                };
+                let response = if primary {
+                    service.dispatch(request, None, QueryControl::default())
+                } else {
+                    read_only_dispatch(
+                        &Metadata,
+                        root,
+                        &protected,
+                        request,
+                        QueryControl::default(),
+                    )
+                };
+                let ConversationResponse::Search { sessions, .. } = response.unwrap() else {
+                    panic!("expected search")
+                };
+                assert!(sessions.iter().all(|s| {
+                    s.metadata.identity.state_root != root || s.metadata.native_session_id != M
+                }));
+                // A same-UUID session in another root is independent evidence.
+                let foreign = sessions
+                    .iter()
+                    .find(|s| {
+                        s.metadata.identity.state_root == std::path::Path::new("/b")
+                            && s.metadata.native_session_id == M
+                    })
+                    .expect("do not erase the foreign namespace");
+                assert!(!foreign.can_request_preview);
+            }
+        }
+    }
+}
+
+#[test]
+fn protected_preview_prepare_and_unregistered_management_search_refuse() {
+    use agentmender_application::ApplicationError;
+    let protected = vec![M.into()];
+    let root = std::path::Path::new("/a");
+    let service = ConversationService {
+        metadata: &Metadata,
+        cleanup: &Metadata,
+        protected_sessions: &protected,
+        provider_root: root,
+    };
+    let target: agentmender_application::TargetSelector = std::sync::Arc::new(|id| {
+        id.state_root == std::path::Path::new("/a")
+            && id.local_id.as_str() == format!("codex:session:{M}")
+    });
+    assert!(matches!(
+        read_only_dispatch(
+            &Metadata,
+            root,
+            &protected,
+            ConversationRequest::Preview {
+                target: target.clone()
+            },
+            QueryControl::default()
+        ),
+        Err(ApplicationError::ProtectedManagementSession)
+    ));
+    for request in [
+        ConversationRequest::Preview {
+            target: target.clone(),
+        },
+        ConversationRequest::Prepare {
+            target,
+            expected_digest: "untrusted".into(),
+        },
+    ] {
+        assert!(matches!(
+            service.dispatch(request, None, QueryControl::default()),
+            Err(ApplicationError::ProtectedManagementSession)
+        ));
+    }
+    let unregistered = ConversationService {
+        protected_sessions: &[],
+        ..service
+    };
+    assert!(matches!(
+        unregistered.dispatch(
+            ConversationRequest::Search {
+                query: "MISSION1".into(),
+                include_archived: true
+            },
+            None,
+            QueryControl::default()
+        ),
+        Err(ApplicationError::ManagementProtectionUnavailable)
+    ));
+    // Legacy read-only browsing is still available, without claiming caller binding.
+    let ConversationResponse::Search { sessions, .. } = read_only_dispatch(
+        &Metadata,
+        root,
+        &[],
+        ConversationRequest::Search {
+            query: M.into(),
+            include_archived: true,
+        },
+        QueryControl::default(),
+    )
+    .unwrap() else {
+        panic!("expected metadata")
+    };
+    assert_eq!(sessions.len(), 2);
 }

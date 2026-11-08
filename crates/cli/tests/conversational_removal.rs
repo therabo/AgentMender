@@ -125,6 +125,17 @@ fn adaptive_metadata_search_needs_no_supported_binary_or_approval_root() {
         "read_only_removal_unavailable"
     );
     client.close();
+    let mut registered = Client::connect(base(&root, &fake, &home).args([
+        "--protect-codex-session",
+        M,
+        "mcp",
+        "--session-search",
+    ]));
+    for query in [M, "Management"] {
+        let found = registered.call(1, "session_search", json!({"query":query}));
+        assert_eq!(found["result"]["structuredContent"]["sessions"], json!([]));
+    }
+    registered.close();
     assert_eq!(tree_bytes(&root), before);
     assert!(!path.join("owned").exists());
 }
@@ -278,16 +289,16 @@ fn exact_profile_stdio_prepare_external_execution_restart_and_status() {
         .unwrap()["target"]
         .clone();
     let all = client.call(3, "session_search", json!({"query":"Management"}));
-    let management = all["result"]["structuredContent"]["sessions"][0]["target"].clone();
-    assert_eq!(
-        all["result"]["structuredContent"]["sessions"][0]["protected"],
-        true
-    );
+    assert_eq!(all["result"]["structuredContent"]["sessions"], json!([]));
+    let preview = client.call(5, "preview_removal", json!({"target":target}));
+    // The retained-plan reference cannot bypass protection even though search
+    // no longer presents the management session as a candidate.
+    let management =
+        preview["result"]["structuredContent"]["review"]["protected_sessions"][0].clone();
     assert_eq!(
         client.call(4, "preview_removal", json!({"target":management}))["result"]["isError"],
         true
     );
-    let preview = client.call(5, "preview_removal", json!({"target":target}));
     let digest = preview["result"]["structuredContent"]["review"]["plan_digest"]
         .as_str()
         .expect("preview");

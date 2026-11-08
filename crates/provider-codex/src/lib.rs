@@ -46,7 +46,6 @@ mod scoped_cleanup;
 #[cfg(unix)]
 mod scoped_config;
 #[cfg(unix)]
-#[allow(dead_code)]
 mod scoped_files;
 #[cfg_attr(not(unix), allow(dead_code))]
 mod scoped_profile;

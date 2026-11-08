@@ -32,7 +32,14 @@ management. Both Codex and Claude Code remain initial product targets.
 The [audit](../audits/2026-11-07-product-first-audit.md) maps these results to
 actual user capabilities, readiness gaps and proposed small vertical slices.
 
-## P0-C1 current delivery
+## P0-C1 delivery receipts (historical)
+
+These receipts retain their original verdicts. Later accepted real conversational
+metadata search (37 MISSION1 records, Partial) supersedes only the earlier client
+invocation gap. Current capability status belongs in the [README](../../README.md)
+and [roadmap](../product-roadmap.md); [ADR-0025](../adr/0025-bounded-search-and-management-exclusion.md)
+defines the next search/identity step. Historical branch names resolve through
+[archival tags and original SHAs](../audits/2026-11-08-original-refs.json).
 
 [Conversational Codex primary removal](p0-c1-conversational-codex-removal.md): OPEN.
 Opt-in metadata/preparation/status and protected external CLI workflow implemented;

@@ -2,6 +2,13 @@
 
 ## Current real metadata versus mutation compatibility
 
+Real conversational MCP metadata search is accepted with Partial coverage.
+Transcript-content search has no admitted reader yet; automatic management caller
+binding is incomplete. Registered exact identities are excluded by the application,
+independently of metadata readability or mutation compatibility. See the
+[canonical search contract](../../docs/session-search.md) for the source/identity
+admission and future bounded-read acceptance requirements.
+
 `codex-state-threads-columns-v1` validates required metadata columns/values inside
 the protected read-only worker. Additive columns and unknown producer versions
 can be readable without a binary-hash admission list. Its bounded selected-root

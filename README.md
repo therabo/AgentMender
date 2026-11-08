@@ -18,7 +18,15 @@ verified results. It protects other sessions and shared state throughout.
 > the trusted human channel. After execution and structural verification, the
 > agent explains the result and any remaining artifacts.
 
-P0-C1 is **OPEN**. Real Codex session search now uses a bounded, protected
+P0-C1 deletion is **OPEN**. Real conversational MCP metadata search is **accepted**:
+the user's Codex invoked `session_search(query="MISSION1", include_archived=true)`
+and received 37 real records with Partial coverage. Transcript-content search is
+not yet accepted or implemented. Automatic management-session caller binding
+remains incomplete; registered exclusions are enforced, but unbound diagnostic
+browsing cannot guarantee self-exclusion. Current-version destructive Codex
+deletion is not accepted, and Claude mutation remains a later milestone.
+
+Real Codex session search uses a bounded, protected
 metadata reader independent of the historical cleanup binary. The existing
 installation supplies runtime version/interface observations; deletion admission
 remains separate. Search mode can assess an exact target but cannot prepare or
@@ -35,7 +43,8 @@ is not implemented.
 | Codex inventory | Real metadata search with validated column/value contract; historical App Server scans remain separate |
 | Claude inventory | Partial observed Desktop sidecar metadata; synthetic Code fixtures; no general live SDK inventory |
 | MCP | Eight default read-only tools; five opt-in Codex search/preview/preparation/status/external-handoff tools |
-| Session search | Real title/project/UUID/time/archive/parent metadata; readable unknown producers; duplicates and partial coverage retained |
+| Session search | Accepted real conversational metadata search; all-term title/project/UUID matching, available time/archive/parent observations, duplicates and Partial coverage; no content search |
+| Management-session exclusion | Trusted registered identities excluded from conversational search and refused at preview/planning/execution; automatic authenticated caller binding incomplete |
 | Human approval and durable transactions | Implemented local terminal review, one-shot authenticated grants, journal and read-only reconciliation |
 | Codex primary cleanup | M8.2 PASS for exact 0.166.0/macOS arm64, unshared Legacy plain history and reviewed WAL schema |
 | Native Codex mutation | Conditional historical unarchive handoff; real native plans remain blocked; archive/delete unsupported |
@@ -102,6 +111,20 @@ Plugins screen is not proof that this chat has the tool.
 [Setup, current limits and human acceptance](docs/p0-c1-manual-acceptance.md).
 
 ## Development and regression fixtures
+
+`main` is the ordinary development branch. Original branch tips are preserved in
+annotated `archive/2026-11-08/*` tags and the
+[consolidation manifest](docs/audits/2026-11-08-original-refs.json).
+The dated [consolidation audit](docs/audits/2026-11-08-repository-consolidation.md)
+records code/test retention decisions and the verification boundary.
+
+Current documentation: this README for capability status; [architecture](docs/architecture.md)
+for boundaries; [roadmap](docs/product-roadmap.md) for sequencing;
+[search and management identity](docs/session-search.md) for the next read-only
+contract; [MCP](docs/mcp.md) for tools; [development](docs/development.md) for checks.
+Dated audits, milestone receipts and research are historical evidence, not competing
+roadmaps. [ADR-0025](docs/adr/0025-bounded-search-and-management-exclusion.md)
+records the search/exclusion requirement without starting that next milestone.
 
 Use Rust 1.89 or newer and the checked-in Cargo.lock. CI also tests current stable
 on Linux, macOS and Windows. Live provider isolation and mutation have narrower
