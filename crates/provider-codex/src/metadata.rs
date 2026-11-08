@@ -25,7 +25,7 @@ struct Request {
 fn unavailable() -> ProviderError {
     ProviderError::CapabilityUnavailable("validated metadata read contract unavailable".into())
 }
-fn uuid(id: &str) -> bool {
+pub(super) fn uuid(id: &str) -> bool {
     id.len() == 36
         && id.bytes().enumerate().all(|(i, b)| {
             if [8, 13, 18, 23].contains(&i) {
@@ -35,7 +35,10 @@ fn uuid(id: &str) -> bool {
             }
         })
 }
-fn columns(db: &Connection, table: &str) -> Result<BTreeMap<String, String>, ProviderError> {
+pub(super) fn columns(
+    db: &Connection,
+    table: &str,
+) -> Result<BTreeMap<String, String>, ProviderError> {
     // Only these fixed table names can enter the statement, never tool input.
     let sql = match table {
         "threads" => "PRAGMA table_info(threads)",

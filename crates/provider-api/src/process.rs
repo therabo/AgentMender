@@ -216,7 +216,7 @@ fn evidence_command(
     sandbox: &EvidenceSandbox,
     capture: bool,
 ) -> Result<Command, ProviderError> {
-    evidence_command_for(executable, sandbox, capture, false)
+    evidence_command_for(executable, sandbox, capture, false, false)
 }
 
 #[cfg(target_os = "macos")]
@@ -225,6 +225,7 @@ fn evidence_command_for(
     sandbox: &EvidenceSandbox,
     capture: bool,
     catalog: bool,
+    transcripts: bool,
 ) -> Result<Command, ProviderError> {
     sandbox.validate()?;
     if !executable.is_absolute() || !executable.is_file() {
@@ -240,7 +241,16 @@ fn evidence_command_for(
             .canonicalize()
             .map_err(|e| crate::io_error(executable, e))?,
     )?;
-    let read_rule = if catalog {
+    let read_rule = if transcripts {
+        let database = policy_literal(&sandbox.source_root().join("state_5.sqlite"))?;
+        let wal = policy_literal(&sandbox.source_root().join("state_5.sqlite-wal"))?;
+        let shm = policy_literal(&sandbox.source_root().join("state_5.sqlite-shm"))?;
+        let sessions = policy_literal(&sandbox.source_root().join("sessions"))?;
+        let archived = policy_literal(&sandbox.source_root().join("archived_sessions"))?;
+        format!(
+            "(deny file-read-data (require-all (require-any (subpath {home}) (subpath {source})) (require-not (require-any (literal {program}) (literal {database}) (literal {wal}) (literal {shm}) (literal {source}) (subpath {sessions}) (subpath {archived}) (subpath {root})))) )"
+        )
+    } else if catalog {
         let database = policy_literal(&sandbox.source_root().join("sqlite/codex.db"))?;
         let wal = policy_literal(&sandbox.source_root().join("sqlite/codex.db-wal"))?;
         let shm = policy_literal(&sandbox.source_root().join("sqlite/codex.db-shm"))?;
@@ -348,6 +358,28 @@ pub fn spawn_codex_metadata_capture(
     }
 }
 
+/// Fixed message reader under kernel-attested source write denial. Only the
+/// selected database and known rollout directories gain source read access.
+pub fn spawn_codex_content_capture(
+    helper: &Path,
+    sandbox: &EvidenceSandbox,
+) -> Result<Child, ProviderError> {
+    #[cfg(target_os = "macos")]
+    {
+        evidence_command_for(helper, sandbox, true, false, true)?
+            .arg("--internal-codex-content-capture")
+            .spawn()
+            .map_err(|_| ProviderError::CapabilityUnavailable("content worker unavailable".into()))
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (helper, sandbox);
+        Err(ProviderError::CapabilityUnavailable(
+            "content isolation unsupported on this platform".into(),
+        ))
+    }
+}
+
 /// Observe the installed implementation's advertised methods, not their effects.
 /// The generator can write only to the fresh evidence home and cannot read source
 /// state, auth/configuration or transcripts. No lifecycle request is dispatched.
@@ -384,7 +416,7 @@ pub fn spawn_codex_catalog_capture(
 ) -> Result<Child, ProviderError> {
     #[cfg(target_os = "macos")]
     {
-        evidence_command_for(helper, sandbox, false, true)?
+        evidence_command_for(helper, sandbox, false, true, false)?
             .arg("--internal-codex-catalog-evidence-capture")
             .spawn()
             .map_err(|_| {
@@ -507,6 +539,46 @@ mod tests {
     use super::*;
     #[cfg(target_os = "macos")]
     #[test]
+    fn content_policy_reads_only_declared_transcripts_and_denies_source_writes_auth_and_links() {
+        use std::os::unix::fs::symlink;
+        let source = tempfile::tempdir().unwrap();
+        let home = tempfile::tempdir().unwrap();
+        std::fs::create_dir(source.path().join("sessions")).unwrap();
+        let transcript = source.path().join("sessions/visible.jsonl");
+        std::fs::write(&transcript, b"VISIBLE FIXTURE").unwrap();
+        let auth = source.path().join("auth.json");
+        std::fs::write(&auth, b"SECRET CANARY").unwrap();
+        let link = source.path().join("sessions/linked.jsonl");
+        symlink(&auth, &link).unwrap();
+        let sandbox = EvidenceSandbox::new(source.path(), home.path()).unwrap();
+        let output = evidence_command_for(Path::new("/bin/cat"), &sandbox, true, false, true)
+            .unwrap()
+            .arg(&transcript)
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        assert_eq!(output.stdout, b"VISIBLE FIXTURE");
+        for path in [&auth, &link] {
+            let output = evidence_command_for(Path::new("/bin/cat"), &sandbox, true, false, true)
+                .unwrap()
+                .arg(path)
+                .output()
+                .unwrap();
+            assert!(!output.status.success());
+            assert!(output.stdout.is_empty());
+        }
+        assert!(
+            !evidence_command_for(Path::new("/usr/bin/touch"), &sandbox, true, false, true)
+                .unwrap()
+                .arg(source.path().join("sessions/must-remain-absent"))
+                .status()
+                .unwrap()
+                .success()
+        );
+        assert_eq!(std::fs::read(auth).unwrap(), b"SECRET CANARY");
+    }
+    #[cfg(target_os = "macos")]
+    #[test]
     fn evidence_sandbox_allows_owned_writes_and_only_source_metadata_reads() {
         let source = tempfile::tempdir().unwrap();
         let home = tempfile::tempdir().unwrap();
@@ -557,7 +629,7 @@ mod tests {
         std::fs::write(&other, b"private").unwrap();
         let sandbox = EvidenceSandbox::new(source.path(), home.path()).unwrap();
         let read = |path: &Path| {
-            evidence_command_for(Path::new("/bin/cat"), &sandbox, false, true)
+            evidence_command_for(Path::new("/bin/cat"), &sandbox, false, true, false)
                 .unwrap()
                 .arg(path)
                 .output()
@@ -565,11 +637,12 @@ mod tests {
         };
         assert_eq!(read(&db).stdout, b"allowed");
         assert!(!read(&other).status.success());
-        let status = evidence_command_for(Path::new("/usr/bin/touch"), &sandbox, false, true)
-            .unwrap()
-            .arg(&db)
-            .status()
-            .unwrap();
+        let status =
+            evidence_command_for(Path::new("/usr/bin/touch"), &sandbox, false, true, false)
+                .unwrap()
+                .arg(&db)
+                .status()
+                .unwrap();
         assert!(!status.success());
         assert_eq!(std::fs::read(&db).unwrap(), b"allowed");
     }

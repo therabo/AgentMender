@@ -21,6 +21,8 @@ use std::{
 
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 mod capture;
+#[cfg_attr(not(target_os = "macos"), allow(dead_code, unused_imports))]
+mod content;
 #[cfg(unix)]
 mod desktop_catalog;
 #[cfg(unix)]
@@ -37,6 +39,7 @@ pub mod graph;
 mod lifecycle;
 #[cfg_attr(not(target_os = "macos"), allow(dead_code, unused_imports))]
 mod metadata;
+pub use content::run_content_capture_worker;
 mod planning;
 pub use metadata::run_metadata_capture_worker;
 #[cfg_attr(not(target_os = "macos"), allow(dead_code, unused_imports))]

@@ -301,6 +301,103 @@ pub fn read_bounded(root: &Path, path: &Path, max_bytes: usize) -> Result<Vec<u8
     Ok(bytes)
 }
 
+/// Descriptor-relative no-follow source read, used only inside attested workers.
+/// Returning a reader grants no write or arbitrary command capability.
+pub fn open_source_read(root: &Path, path: &Path) -> Result<fs::File, ProviderError> {
+    #[cfg(unix)]
+    {
+        use rustix::fs::{Mode, OFlags, open, openat};
+        let relative = path
+            .strip_prefix(root)
+            .map_err(|_| ProviderError::InvalidScope("source read outside root".into()))?;
+        let components: Vec<_> = relative.components().collect();
+        if components.is_empty()
+            || components
+                .iter()
+                .any(|c| !matches!(c, Component::Normal(_)))
+        {
+            return Err(ProviderError::InvalidScope(
+                "invalid source components".into(),
+            ));
+        }
+        let mut directory = open(
+            root,
+            OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            Mode::empty(),
+        )
+        .map_err(|_| ProviderError::CapabilityUnavailable("source directory unavailable".into()))?;
+        for component in &components[..components.len() - 1] {
+            directory = openat(
+                &directory,
+                component.as_os_str(),
+                OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+                Mode::empty(),
+            )
+            .map_err(|_| {
+                ProviderError::CapabilityUnavailable("source ancestor unavailable".into())
+            })?;
+        }
+        let fd = openat(
+            &directory,
+            components.last().expect("nonempty").as_os_str(),
+            OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::NONBLOCK | OFlags::CLOEXEC,
+            Mode::empty(),
+        )
+        .map_err(|e| {
+            ProviderError::CapabilityUnavailable(
+                if e == rustix::io::Errno::NOENT {
+                    "source file missing"
+                } else if e == rustix::io::Errno::LOOP {
+                    "source file linked"
+                } else {
+                    "source file unavailable"
+                }
+                .into(),
+            )
+        })?;
+        let file = fs::File::from(fd);
+        let metadata = file.metadata().map_err(|e| io_error(path, e))?;
+        use std::os::unix::fs::MetadataExt;
+        if !metadata.is_file() || metadata.nlink() != 1 {
+            return Err(ProviderError::InvalidScope(
+                "source must be an unshared regular file".into(),
+            ));
+        }
+        Ok(file)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (root, path);
+        Err(ProviderError::CapabilityUnavailable(
+            "descriptor source reads unsupported".into(),
+        ))
+    }
+}
+
+/// Narrow independent-operator registration admission; no credential creation.
+pub fn verify_operator_descriptor(file: &fs::File) -> Result<(), ProviderError> {
+    #[cfg(target_os = "macos")]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let m = file
+            .metadata()
+            .map_err(|_| ProviderError::InvalidScope("operator metadata unavailable".into()))?;
+        if rustix::process::geteuid().is_root() || m.uid() != 0 || m.mode() & 0o022 != 0 {
+            return Err(ProviderError::InvalidScope(
+                "independent operator ownership required".into(),
+            ));
+        }
+        crate::macos_sandbox::verify_no_descriptor_acl(file)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = file;
+        Err(ProviderError::CapabilityUnavailable(
+            "operator registration admission is macOS-only".into(),
+        ))
+    }
+}
+
 /// Read only a prefix of a large transcript; callers must discard an unfinished line.
 pub fn read_prefix(root: &Path, path: &Path, max_bytes: usize) -> Result<Vec<u8>, ProviderError> {
     let file = open_regular(root, path)?;

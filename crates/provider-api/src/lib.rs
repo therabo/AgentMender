@@ -32,6 +32,19 @@ pub trait SessionMetadataReadPort {
     fn session_metadata(&self) -> Result<agentmender_domain::SessionInventory, ProviderError>;
 }
 
+/// Bounded conversation evidence, not transcript dumps or mutation authority.
+pub trait SessionSearchReadPort {
+    fn search_sessions(
+        &self,
+        request: &agentmender_domain::SearchReadRequest,
+    ) -> Result<agentmender_domain::SessionSearchPage, ProviderError>;
+    fn session_context(
+        &self,
+        reference: &agentmender_domain::ContextReference,
+        excluded: &[agentmender_domain::ArtifactId],
+    ) -> Result<agentmender_domain::ConversationEvidence, ProviderError>;
+}
+
 #[derive(Debug, Error)]
 pub enum ProviderError {
     #[error(transparent)]

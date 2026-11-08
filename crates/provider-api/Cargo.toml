@@ -10,7 +10,7 @@ thiserror.workspace = true
 tempfile.workspace = true
 [target.'cfg(unix)'.dependencies]
 libc.workspace = true
-rustix = { version = "1.1.6", default-features = false, features = ["std", "fs"] }
+rustix = { version = "1.1.6", default-features = false, features = ["std", "fs", "process"] }
 [lints.rust]
 unsafe_code = "deny"
 [lints.clippy]

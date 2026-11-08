@@ -22,6 +22,8 @@ pub mod session_removal;
 pub use session_removal::*;
 pub mod session_metadata;
 pub use session_metadata::*;
+pub mod session_search;
+pub use session_search::*;
 pub mod planning;
 pub use planning::*;
 pub mod approval;
