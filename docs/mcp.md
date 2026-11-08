@@ -1,15 +1,15 @@
 # MCP interface
 
-## Real-session metadata mode
+## Real-session bounded read mode
 
 Real conversational metadata search is accepted (user's 37 MISSION1 records,
-Partial); transcript-content search and automatic authenticated caller binding
-are not complete. [Search and management identity](session-search.md) is the
-canonical contract for evidence, exclusions and the next read-only step.
-Trusted registered identities are excluded before matching/projection in both
-conversational modes and refuse preview/preparation. Unbound diagnostic browsing
-does not guarantee management-session exclusion; default scan/graph/inspect must
-not be presented as a guaranteed safe management candidate list.
+Partial). P0-S1 implements bounded content search and fail-closed guaranteed-mode
+requests; actual updated conversational use and independently verified protection
+of the real management chat remain **OPEN**. Automatic caller binding is not
+established. [The canonical search contract](session-search.md) defines exact
+inputs, formats, privacy, limits, registration and remaining acceptance gates.
+Default scan/graph/inspect and legacy diagnostic search are not guaranteed
+management candidate lists.
 
 Normal Codex browsing uses `agentmender --provider codex mcp --session-search`.
 No fixture, historical executable, protected caller UUID or state root is required.
@@ -17,8 +17,14 @@ The explicit mode locates the existing bundled macOS executable without PATH;
 trusted root/executable flags can override selection. See the
 [quick start](p0-c1-manual-acceptance.md) and [ADR-0024](adr/0024-adaptive-read-only-metadata.md).
 
-Its thirteen-tool catalog is unchanged in names. `session_search` uses the bounded
-validated metadata reader; `preview_removal` returns a blocked compatibility
+Its fourteen-tool catalog adds `session_context`. `session_search` preserves the
+legacy metadata request and adds explicit content, purpose, project, excerpt and
+continuation inputs. Guaranteed `purpose=management` requires independent exact
+registration or returns `caller_identity_required` with zero candidates before any
+provider read. Diagnostic responses have no caller guarantee. `session_context`
+requires a prior process-authenticated evidence reference and fresh source/binding
+checks. These advanced reads are available in `--session-search` mode.
+`preview_removal` returns a blocked compatibility
 assessment rather than a Ready plan. Its output schema admits either that typed
 assessment or the historical supported preview. A read-mode assessment has no plan
 or digest and `execution_permitted: false`. Other removal calls fail explicitly
@@ -28,8 +34,11 @@ eight tools. Read-only metadata availability never transfers mutation authority.
 
 Search adds optional producer and parent UUID fields plus a capability/coverage
 header. Titles prefer native display names; unavailable/oversized optional labels
-stay null. Real metadata is opt-in, never transcript/preview/first-message export.
-The selected-root recent inventory is at most 500 records/96 KiB; all existing MCP
+stay null. Legacy metadata never exports first-message bodies. Explicit content
+search returns at most two 320-character known visible excerpts/hit and one
+512-character/1,024-byte context message, marked untrusted. No full transcript API.
+The legacy selected-root recent inventory is at most 500 records/96 KiB; advanced
+search uses explicit 100-session batches and the limits in the search contract; all existing MCP
 budgets and Partial/ambiguity semantics remain. Native methods advertised by the
 installed schema are not equivalent to admitted effects. The separate historical
 `providers`/scan profile catalog keeps its prior meanings.
@@ -37,14 +46,16 @@ installed schema are not equivalent to admitted effects. The separate historical
 ## P0-C1 separately admitted removal mode
 
 Default launch retains the original eight read-only tools and privacy behavior
-specified below. Explicit session-removal mode adds five tools under
+specified below. Explicit session-removal mode shares the six-tool catalog, but advanced content/context
+reads are unavailable there; its five original tools follow
 [ADR-0023](adr/0023-conversational-primary-removal-handoff.md). Read the
 [setup, exact compatibility, registration and human workflow](conversational-codex-removal.md)
 before enabling it. P0-C1 remains OPEN pending actual client/human acceptance.
 
 | Tool | Strict input | Capability |
 |---|---|---|
-| `session_search` | `query` (<=256 bytes), `include_archived` | Opt-in title/project basename/UUID metadata; preserve all matches and Partial coverage |
+| `session_search` | Legacy query/archive or advanced content/purpose/project/page/cursor/excerpts; see [schema](session-search.md) | Diagnostic metadata or bounded content; guaranteed mode requires independent binding before all matching/counts/paging |
+| `session_context` | exact opaque `target`, sealed `evidence_ref` | One fresh bounded supported message in read mode; no arbitrary path/offset/full dump |
 | `preview_removal` | opaque session `target` | Fresh protected exact stable-profile schema-2 primary plan and original digest |
 | `prepare_removal` | `target`, `expected_plan_digest` (`sha256:` + 64 lowercase hex) | Prepare the existing durable review/recovery transaction; no grant |
 | `removal_status` | optional `transaction_id` (64 lowercase hex) | Matching configured-root durable status/results across restart; empty input lists attempts |
@@ -57,8 +68,8 @@ UUIDs. Human approval and execution stay external because a same-user shell/PTY
 agent is not an independent human channel. Search references grant no authority.
 Search metadata is opt-in; existing default projections still hide titles/IDs/time.
 All tools share the existing frame, response, busy, deadline, cancellation and drain
-bounds. Oversize search results require a narrower query; there is no silent page
-truncation. The default read-only interface reference follows.
+bounds. Oversize search results require a narrower query; legacy requests have no silent truncation; advanced search uses explicit
+continuation and Partial coverage. The default read-only interface reference follows.
 
 ## Launch the current read-only server
 
@@ -170,7 +181,7 @@ smaller observation budget where necessary. The fixed tool registry is bounded t
 
 Stable tool errors include `busy`, `cancelled`, `deadline_exceeded`, `query_failed`,
 `target_not_observed`, `ambiguous_target`, `target_unavailable`, `provider_not_detected`,
-`provider_unsupported`, `compatibility_blocked`, `capability_unavailable`, `invalid_scope`,
+`provider_unsupported`, `compatibility_blocked`, `capability_unavailable`, `caller_identity_required`, `invalid_scope`,
 `stale_cursor`, `invalid_cursor` and `response_too_large`. Provider failures within
 multi-provider reports retain provider and typed diagnostic codes. Unknown integrity
 and blocked/unsupported plans are successful observations, not protocol failures.

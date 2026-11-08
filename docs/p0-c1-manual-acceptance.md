@@ -2,8 +2,9 @@
 
 P0-C1 deletion is **OPEN**. Real conversational metadata search is accepted:
 the user's actual Codex call returned 37 MISSION1 records with Partial coverage.
-Transcript-content search, automatic caller binding and independently approved
-current-version deletion remain incomplete. No synthetic provider root or historical binary is needed to
+Bounded content search is implemented; actual updated conversational acceptance,
+automatic caller binding, independent real management protection and independently
+approved current-version deletion remain OPEN. No synthetic provider root or historical binary is needed to
 browse. Synthetic fixtures remain development tests only.
 
 ## Connect the existing installation
@@ -74,9 +75,13 @@ In a dedicated management conversation, ask:
 > limits. Keep duplicate titles separate. Do not prepare or execute removal.
 
 Require an actual `session_search` call and grounded output. The configured server
-exposes thirteen tools; the original default launch still exposes eight.
-Search uses all-term title/display-name/project-basename/UUID matching, not full
-transcript search. Native display names take precedence over first-prompt titles.
+exposes fourteen tools; the original default launch still exposes eight.
+The legacy call uses all-term title/display-name/project-basename/UUID matching.
+For bounded content use `include_content:true`, an explicit purpose and paging;
+[the search contract](session-search.md) gives full inputs/limits. Management mode
+requires independent registration or refuses with zero candidates; diagnostic
+mode may include the calling chat. Additional context requires returned sealed
+evidence. Complete transcript search is not claimed. Native display names take precedence over first-prompt titles.
 Missing or oversized labels are null/UUID fallbacks, not invented titles. Times
 are Unix seconds and may be unavailable. `active` means non-archived in this DB;
 it does not prove runtime activity. Parent metadata is partial, not descendant

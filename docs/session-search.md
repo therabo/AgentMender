@@ -1,192 +1,187 @@
-# Session search and management identity
+# Session search and management protection
 
-Canonical search/security contract under [ADR-0025](adr/0025-bounded-search-and-management-exclusion.md).
-The [roadmap](product-roadmap.md) controls implementation order. This document
-specifies the next read-only step; it does not claim transcript search is shipped.
+P0-S1 implements bounded Codex content evidence and fail-closed guaranteed-mode
+search. Verdict **OPEN**: actual updated conversational client acceptance and
+independently verified protection of the real management conversation remain open.
+See [ADR-0026](adr/0026-bounded-conversation-reader-and-independent-registration.md).
+The earlier actual `session_search(query="MISSION1", include_archived=true)` call
+returned 37 real metadata records, Partial. That legacy call stays supported;
+changing live counts are not a frozen inventory or a deletion proof.
 
-## Current accepted behavior
+## Modes and tools
 
-The user accepted an actual Codex model invocation of
-`session_search(query="MISSION1", include_archived=true)`: 37 real records,
-explicit Partial coverage. A cleanup-time invocation returned 36 records with
-Partial coverage. Live counts are observations, not stable acceptance assertions.
-Earlier [real-world](milestones/p0-c1-real-world-integration.md) and
-[client](milestones/p0-c1-client-acceptance.md) receipts retain their then-OPEN
-client verdicts. The later read-only acceptance does not accept deletion.
+Launch `agentmender --provider codex mcp --session-search`. Default plain `mcp`
+keeps eight tools; opt-in conversational mode exposes fourteen. No approval store
+is initialized by read mode. Preview remains blocked without a plan; prepare,
+status and execution handoff refuse `read_only_removal_unavailable`.
 
-`SessionMetadataReadPort` → `provider-codex/metadata.rs` →
-`application/conversation.rs::search_inventory` → `mcp-server/conversation.rs`
-provides opt-in display-name/title, project basename and UUID all-term substring
-matching. A blank query lists bounded metadata. Available timestamps, archive
-state, producer and parent observations are projected, not searched numerically.
-Duplicate labels and provider/root identity remain distinct. Inventory is bounded
-to 500 recent records/96 KiB from the selected DB; MCP budgets may refuse oversized
-responses. Results always remain Partial; no pagination or relevance ranking is
-implemented. `search_basis` explicitly says metadata only, no transcript search.
+`session_search` accepts strict fields:
 
-Registered Codex identities in the configured root are excluded in application
-before query matching, sorting and projection in both conversational modes.
-Read-only and supported preview refuse protected targets; supported preparation
-does too. A same-UUID record in another root is distinct and cannot be previewed
-through this root. Internal redundant protection flags were removed; existing
-wire fields remain compatible. Search in removal mode requires registrations.
-
-Without verified caller identity, read-only browsing remains diagnostic metadata
-access only: `authenticated_caller_binding` is false. It can include the caller.
-No automatic management-session exclusion guarantee is made.
-
-## Required content-search contract
-
-Search title, explicit project/workspace label, supported metadata, user messages,
-assistant messages and relevant supported transcript text. A title containing
-keywords is evidence of a title match, never sufficient proof of conversational
-relevance. A neutral-titled conversation discussing Earth/Cesium rendering must
-be discoverable even when none of those words occurs in its title or project.
-
-Each match must return these bounded facts:
-
-| Fact | Required meaning |
+| Field | Default and bound |
 |---|---|
-| Identity | Provider, opaque root namespace, exact native session ID and restart-scoped target reference |
-| Labels/activity | Available title, explicit project label, creation/activity and archive observations; missing is unavailable |
-| Match evidence | One or more `title`, `metadata`, `user_message`, `assistant_message`, `conversation_content` sources |
-| Relevance | Deterministic matched terms and source-weight explanation; lexical score is not semantic certainty |
-| Excerpt | At most two 320-character excerpts per match, at most 640 characters combined; omitted when sensitive or unsupported |
-| Provenance | Reader/format contract, opaque evidence reference, record/turn/item position and source fingerprint; no raw path |
-| Coverage | Sources attempted/skipped, inspected sessions/bytes and explicit reasons for Partial/Unsupported/budget exhaustion |
+| `query` | Empty; <=256 UTF-8 bytes, <=16 whitespace terms; no controls |
+| `include_archived` | true |
+| `include_content` | false; opt in to supported human-visible text |
+| `purpose` | `diagnostic`; use `management` for a guaranteed candidate list |
+| `project_label` | Optional exact project basename, <=256 bytes |
+| `page_size` | Optional 1..20, advanced default 20 |
+| `cursor` | Optional process-bound authenticated continuation, <=4096 bytes |
+| `excerpts` | true; false suppresses text projection |
 
-Proposed input extends the existing bounded query with explicit content opt-in,
-optional exact root/project/archive/time filters, page size <=20 and an opaque
-cursor. It accepts neither arbitrary paths/SQL nor a caller UUID. Additional
-context, if necessary, uses an exact prior evidence reference, the same verified
-exclusion and privacy checks, a <=2 KiB response and no arbitrary file/offset API.
-No unrestricted full-transcript endpoint. These fields are proposals, not current
-tool arguments; version and test the DTO changes before exposing them.
+Calls using only the original query/archive inputs retain the existing metadata
+response, recent inventory bound (500/96 KiB), labels/timestamps/optional parents,
+duplicates and Partial coverage. They are labeled diagnostic with
+`registered_only_no_caller_guarantee`. Explicit advanced fields select the new
+bounded path. Diagnostic results, including content results, are never a guaranteed
+management list. Do not turn a diagnostic result into proof of safe selection.
 
-Apply explicit metadata filters before content reads, but never require query
-words to occur in metadata before scanning content: that would hide the example
-above. Exclude verified management identities before source/result limits,
-matching, ranking, pagination, counts or context extraction. Stable tie breaking
-uses exact provider/root/session identity; never collapse duplicate labels.
+Example guaranteed request (refuses until independently bound):
 
-## Reusable access and missing readers
+```json
+{"query":"Earth rendering performance Cesium camera","include_archived":true,"include_content":true,"purpose":"management","page_size":20}
+```
 
-| Existing path | Reuse / limitation |
+For read-only troubleshooting, deliberately select `purpose:"diagnostic"` and
+retain its `not_guaranteed_diagnostic` label. No caller UUID, raw source path,
+provider SQL, shell command, principal or registration proof is a tool input.
+
+`session_context` takes the exact returned `target` and `evidence_ref`, retrieving
+one prior supported message under fresh binding, exclusion, identity and source
+checks. It is not an arbitrary transcript endpoint. Tokens are HMAC authenticated,
+kind-separated and process-local; changed filters/query/root/registration or a
+restarted server invalidate them. A stale source refuses; reacquire search evidence.
+Context returns no new context chain.
+
+## Supported Codex reads
+
+The current macOS implementation uses the existing kernel-attested helper with
+source writes, network, auth/configuration and process spawning denied. SQLite is
+READ_ONLY/NOFOLLOW/query_only and copied only to bounded memory. Only fixed DB
+columns are interpreted. A rollout locator must be within the selected root's
+`sessions` or `archived_sessions`, with no symlink/hardlink/shared-file traversal,
+and an exact session header. Stale missing locators remain explicitly unreadable;
+there is no unrestricted filesystem fallback or filename ownership inference.
+No native session resume, model execution or provider/application restart occurs.
+
+| Contract | Supported visible data |
 |---|---|
-| Codex `metadata.rs`, `capture.rs`, provider-api evidence/process isolation | Fixed-column worker, attestation, READ_ONLY/NOFOLLOW, query_only, bounded RAM backup; intentionally excludes bodies and rollout paths from MCP |
-| Installed alpha.6 `ThreadListParams` evidence | `searchTerm` searches extracted title only; `excludedThreadIds` filters before the provider limit, but does not authenticate those IDs |
-| Installed `ThreadReadParams` and native schema | `includeTurns` can hydrate history; generated advertisement is not safe startup or bounded read admission |
-| Codex `scoped_files.rs::header`, `inspect_rollouts` | Exact session-meta/physical/filename checks for supported Legacy payloads; not message extraction or support for paginated history |
-| Claude `lib.rs::transcript_shape`, `parse_metadata`, `read_sidecar` | Bounded synthetic metadata-prefix/sidecar fixtures; live unknown profiles deliberately avoid parsing conversation bodies |
-| provider-api `filesystem::{read_bounded,read_prefix}` | No-link scoped primitives and bounded reads; whole-prefix reads alone cannot search large transcripts completely |
-| Application `QueryControl`, MCP frame/projection | Cancellation, deadlines, response bounds, opaque targets and privacy; no content retrieval port currently exists |
+| `codex-rollout-response-item-message-v1` | Header history mode absent/legacy; `response_item` message user `input_text` and assistant `output_text`, known visible phase/channel only |
+| `codex-paginated-item-completed-message-v1` | Paginated header; `event_msg/item_completed` with exact thread ID and `UserMessage` text or `AgentMessage` Text parts; skip duplicate model view |
 
-Prefer demonstrated native paged history access when its entire startup/read
-boundary satisfies source-write denial. Official [App Server documentation](https://learn.chatgpt.com/docs/app-server)
-describes `thread/turns/list` and `thread/items/list`; the active store must support
-item pagination. The installed read-only startup previously refused under kernel
-denial. Do not retry unsandboxed or resume a thread to search it. Otherwise add a
-small provider-owned bounded streaming reader for an evidenced format. Unknown
-Legacy/paginated/Claude formats remain unsupported; do not guess table or line
-semantics from filenames. No provider-native full-content search is established
-by the checked-in title-search schema.
+System/developer text, reasoning, tool calls/results, inter-agent messages,
+attachments and unrelated file/config/env data are not extracted. Unknown record
+shapes are not guessed. Additive DB schemas and unknown producer versions can be
+readable when these exact shape contracts hold; this is separate from mutation
+admission. The alpha.6 protocol/persistence references are linked in ADR-0026.
+Paginated support reads known display items in the bounded source windows only;
+it does not hydrate complete provider history or inspect a separate history store.
+Live source changes and unsupported/oversized/malformed records reduce coverage.
+Linux/Windows fixture coverage does not provide a live isolation backend.
 
-## Privacy, bounds and scale
+## Matching, evidence and limits
 
-Treat every label and excerpt as untrusted quoted data. Historical instructions
-never become executable commands, tool calls, configuration or higher-priority
-agent instructions. Restrict extraction to supported user/assistant text. Exclude
-system/developer prompts, auth/config, tool outputs, environment dumps, attachments,
-binary data and hidden reasoning. Suppress credential/token/private-key patterns
-and whole sensitive records; redact before returning evidence. Pattern matching
-alone cannot guarantee absence of all secrets, so disclose limits and allow
-content/excerpts to be disabled. Do not persist queries, excerpts or transcripts
-in logs, journals, scratch, reports or caches. Source paths never come from MCP.
+Apply exact trusted exclusions first, then archive/project filters and content
+reads. Query terms never gate transcript reads through title matches. Lowercase
+substring terms must all occur in the union of eligible metadata and safe messages.
+Every term hit adds user 4, assistant 3, title 2 or other metadata 1 per message/
+field. Return score and match sources; sort within the inspected batch, then by
+exact identity. There is no semantic claim, global top-K or silent deduplication.
 
-Initial proposed request ceilings: 500 inspected sessions, 32 MiB total source
-bytes, 1 MiB per transcript and 256 KiB per record, 5-second cancellable scan,
-20 returned matches and the existing MCP byte budget. Enforce bounds while reading,
-before allocation. Omitted/unknown/changing sources, unreadable archives and budget
-cuts yield Partial with a reason; exhausting the last response slot is not full
-coverage. A protected identity must not consume a session/match limit. Cursors
-bind query/filters, verified caller/exclusion revision and source snapshot; changed
-inputs invalidate cursors rather than duplicate/drop evidence silently.
-
-Start without an index: stream supported records and retain only bounded matches.
-Measure bytes read, peak memory, cancellation and latency on thousands of
-disposable sessions, including late matches. The current 500-most-recent reader
-cannot establish older-session absence; the next reader needs bounded continuation
-or explicit incomplete-source reporting. Do not raise caps silently to obtain a
-match. Only measured need can justify a later local index, with a prior ADR for
-private disjoint storage, permissions, stale/deleted-session invalidation, root/
-schema changes, sync, explicit clearing and preventing recovery of deleted text.
-No external database, embedding service or semantic-search subsystem is proposed.
-
-## Trustworthy management identity and audited gaps
-
-Required identity is the host provider/root/exact conversation, independent of the
-target provider. Use a host-authenticated binding tied to the connection/request,
-or an independently verified operator registration outside model-writable control.
-Rebind on conversation switch/reconnect and recheck before context/preview/plan/
-execution. Never infer from title, cwd, project, recent activity, UUID ordering,
-archive state or an arbitrary model field. Protect both the current thread and
-any separately established host-session scope; do not confuse a thread-tree root
-with proof of the current conversation identity.
-
-The current stdio server ignores initialize client metadata for authorization and
-receives no verified host thread identity. Official [MCP configuration guidance](https://learn.chatgpt.com/docs/extend/mcp)
-describes connection/auth configuration; it does not establish per-conversation
-binding for this server. The App Server's thread-scoped MCP client API does not
-prove that identity is forwarded authentically to an external stdio tool. This
-is an evidence-based integration gap, not a claim that every client lacks it.
-Claude host binding has not been demonstrated either.
-
-Smallest missing integration: capture sanitized real Codex and Claude MCP
-initialize/tools-call envelopes and establish whether the host forwards a verified
-provider/root/thread identity outside model-controlled arguments. If absent,
-provide an independent operator-controlled launch registration and attest its
-association with the actual management conversation, including switch/reconnect
-and model-write restrictions. No new OAuth or signing framework is authorized
-by the cleanup. OAuth account identity alone is not a conversation binding.
-
-| Path audited | Current protection / remaining work |
+| Bound | Value |
 |---|---|
-| Conversational blank/keyword/UUID/archive search | Registered identities filtered before matching/projection in both modes; automatic caller identity absent |
-| Project/content search, rank/page/count/context | Not implemented; same exclusion must precede all these operations |
-| Read-only/support preview and supported prepare | Protected identities refuse; supported path requires registered UserProtected graph roots |
-| CLI planning/approval/execute | Existing roots frozen in original plan, restored and freshly checked; real independent operator/caller deployment still unaccepted |
-| Native/scoped adapter preflight and retained-state verification | Existing exact identity, protected-root/freshness/collateral refusal retained; no new admission |
-| Default MCP workspace_scan/graph/inspect and CLI scan/inspect | Diagnostic read-only inventory can show protected or unbound sessions; no guaranteed management-list policy wired here |
-| Transaction status/recovery | Historical authenticated knowledge, not candidate discovery or permission to retry |
+| Metadata inventory | 10,000 eligible rows; fixed SQL cap after trusted exclusion, before project basename filtering |
+| Scan batch / results | 100 eligible sessions / at most 20 hits per page |
+| Transcript / record / call | 1 MiB / 256 KiB / 32 MiB |
+| Captured records | 4,096 per session |
+| SQLite snapshot | 32 MiB, 3 seconds within the worker deadline |
+| Worker / parent | 8 / 12 seconds; existing MCP deadlines/cancellation also apply |
+| Excerpts | Two per hit, each at most 320 Unicode characters |
+| Additional context | One message, <=512 characters and <=1,024 UTF-8 bytes |
 
-Every future management listing, including generic tools used in that workflow,
-must share verified exclusions or return `caller_identity_required` with zero
-candidates/counts/excerpts. Current general diagnostics must not be relabeled as
-safe management candidate lists. Existing `management_protection_required` is
-the removal service's missing-registration error, not a new authentication proof.
+A large transcript uses half the read budget for the header and half for its tail.
+Clipped boundary records and the omitted middle are not inspected. `record_index`
+is an ordinal within this bounded capture, not the original whole-file line.
+Evidence includes source role, format, capture description, truncation and a sealed
+reference to the exact source stamp/window digest. No source path or full dump is
+exported. Freshness is checked on the open descriptor and a reopened no-follow
+path; context repeats the same windows. Different captures are not a provider-wide
+atomic snapshot. Cursors bind the metadata inventory and revisited batch; later
+batches are observed fresh. Changes may require a new search.
 
-## Next small milestone and acceptance tests
+Every advanced response is Partial, with inspected/eligible counts, bytes,
+unsupported/truncated/suppressed records, reasons and `next_cursor`. Counts exclude
+trusted protected identities before all matching/limits/paging. Follow cursors
+through empty match pages to continue the inventory. Result pages in the same
+batch repeat the same scan and bounds. Do not sum repeated coverage as distinct
+sessions. The 10,000-row cap and selected-root boundary cannot establish absence.
 
-**P0-S1: bounded content evidence with verified management exclusion**, read-only.
-Do not start deletion, Claude mutation, new artifact cleanup or indexing.
+## Independent management registration
 
-1. Establish actual caller evidence first; support one independently verified
-   deployment and explicitly refuse guaranteed workflows without it.
-2. Add only the narrow read port/evidence types needed by one validated Codex
-   transcript representation. Preserve the current metadata API and per-source
-   coverage. Unknown formats and unsupported Claude content report limits.
-3. Add bounded streaming extraction, safe evidence/term ranking and MCP projection;
-   apply shared exact identity exclusion before any limits/counts/context.
-4. Exercise the following deterministic cases and a real read-only Codex client;
-   capture no private transcript payload in repository evidence.
+Current MCP clientInfo, request metadata and environment provide no authenticated
+per-conversation caller binding. A model-selected UUID/title/cwd/archive/activity
+or project cannot establish it. Old trusted `--protect-codex-session` values still
+exclude retained roots but do not by themselves authenticate the current caller.
 
-| Acceptance case | Required result |
-|---|---|
-| Neutral title, Earth/Cesium rendering only in user or assistant text | Exact conversation found with bounded grounded excerpt/source, without title overlap |
-| Misleading title, irrelevant body; duplicate titles and same UUID in another root | Explain source and preserve ambiguity/exact namespaces; no automatic target choice |
-| Management transcript is the strongest match, including archived/project scope | Absent before top-K, pagination, counts and context; no suppressed identity leakage |
-| Missing/spoofed/stale binding, conversation switch or cross-provider host | Guaranteed workflow returns caller_identity_required, zero candidates; stale cursor/context/preview refused |
-| Exact protected selection/preview/plan/execution via previously acquired ref | Refusal survives fresh validation and original-plan recovery; no effects |
-| Secrets, prompt injection, giant/malformed lines, unknown formats, traversal/links | No command execution, secret/path/transcript dump, unbounded allocation or guessed parsing |
-| Thousands of sessions, late match, truncation, changing source, cancellation | Bounded bytes/memory/deadline; explicit Partial and stable/invalidation-tested continuation |
-| Read isolation and old safety suites | No source writes or approval-state access; exact encodings, replay, consumed intent and lost-update regression unchanged |
+Guaranteed `purpose:"management"` requests require a fresh independent registration
+before any provider read. Missing, expired, wrong-instance/root or model-writable
+registration returns `caller_identity_required`, `sessions:[]`, `result_count:0`,
+`authenticated_caller_binding:false` and the ephemeral `registration_instance`.
+Even a missing binding with an empty query returns zero candidates. Other invalid
+source/schema/freshness conditions safely refuse rather than weakening protection.
+
+The available macOS procedure is for an **independent operator**, outside the
+model's shell/keys/PTY control:
+
+1. Independently establish the actual host conversation's canonical native UUID,
+   exact selected provider root and that this single server connection is used
+   exclusively by that conversation. If host routing/exclusivity cannot be proved,
+   leave management mode refused. A statement in a JSON file does not prove it.
+2. Configure a fixed absolute `--management-registration` file path with
+   `mcp --session-search`. Ask the running server for a management search and obtain
+   its fresh bootstrap instance. Never reuse an instance from a previous process.
+3. The operator creates the file in a root-owned directory chain (for example a
+   dedicated directory under `/Library`), no symlink, ACL or group/world write on
+   any component. The server must run as a non-root model user. No privileged
+   registration writer is supplied by AgentMender.
+4. Record exact physical root device/inode, expiry in Unix seconds no more than
+   one hour ahead, and the independently established scope. The root-owned JSON
+   has these strict fields (placeholders require operator verification):
+
+```json
+{"schema":1,"server_instance":"<fresh-instance>","provider":"codex","state_root":"<canonical-root>","root_device":0,"root_inode":0,"native_session_id":"<exact-native-uuid>","expires_at":0,"connection_scope":"single_conversation_operator_verified"}
+```
+
+The server rereads and checks the descriptor/control chain and registration every
+call, validates the protected identity exists, and excludes it in bound SQL before
+inventory counts/limits/matches/ranking/paging. Context also refuses protected or
+stale references. No registration is automatically minted during this task.
+This mechanism has negative/typed-binding tests; successful real independent
+operator registration and host exclusivity remain unverified. It grants no
+approval/execution authority and does not change historical destructive setup.
+
+## Privacy and acceptance
+
+All retrieved text is `untrusted_data:true`. Instructions in it remain inert.
+Suppress whole messages with conservative secret/auth/config/env markers before
+scoring and projection. This deliberately causes false negatives and is not
+perfect redaction. Disable excerpts or content when appropriate; the caller may
+retain received excerpts. AgentMender keeps no persistent transcript index, query
+log or extracted text. Verification receipts contain aggregate counts/lengths,
+formats and statuses, not real transcripts or credential copies.
+
+Fixtures cover neutral titles and duplicate-title comparison, cross-message terms,
+protected highest matches before blank/archive/project/count/paging, forged/missing
+binding, stale context/cursors, secret/reasoning/tool suppression, inert injection,
+unknown/link/traversal sources, byte charging on failure and 5,000-session paging.
+[Real provider read evidence](../compatibility/codex/0.166.0-alpha.6/content-search-p0-s1/README.md)
+includes user/assistant content and a fresh context read via a direct MCP driver.
+Actual provider read tests, actual model tool calls, independent real management
+exclusion and production acceptance must be reported separately. The existing
+metadata-only conversational acceptance does not close the new content gate.
+
+Claude reuses the pure evidence/relevance types, `SessionSearchReadPort`, application
+binding/exclusion/continuation and MCP projection. P0-C2 still needs an independently
+evidenced Claude message adapter, scoped read isolation/freshness/format tests and
+its own real client/identity acceptance. Do not guess Claude formats or start
+Claude mutation here. The next milestone closes these P0-S1 real client/binding
+gates before any new real-session deletion functionality.

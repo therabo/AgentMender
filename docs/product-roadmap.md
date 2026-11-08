@@ -160,9 +160,9 @@ M8.3 multi-session cleanup is not the next implementation priority.
 |---|---|
 | Codex discovery | Real fixed-column metadata search independent of executable hash; separate historical App Server profiles; partial coverage |
 | Claude discovery | Partial observed Desktop sidecars and synthetic transcript fixtures; no general live Code SDK inventory |
-| Search / useful labels | Real conversational metadata search accepted: user-reported 37 MISSION1 records, Partial; title/name/project/UUID matching, available time/archive/parent observations; content search not implemented |
-| Management-session exclusion | Registered identities filtered from both conversational searches and refused at preview/prepare; automatic caller binding incomplete; general diagnostics have no guaranteed management-list policy |
-| MCP | Eight default read-only tools plus five opt-in search/preview/preparation/status/external-handoff tools |
+| Search / useful labels | Real conversational metadata search accepted: user-reported 37 MISSION1 records, Partial; title/name/project/UUID matching, available time/archive/parent observations; bounded content search implemented; updated client acceptance OPEN |
+| Management-session exclusion | Guaranteed management mode refuses without independent exact binding; typed exclusion precedes content/counts/ranking/paging/context; automatic/real binding acceptance OPEN |
+| MCP | Eight default read-only tools plus six opt-in search/context/preview/preparation/status/external-handoff tools |
 | Native Codex | Exact historical unarchive handoff is tested but real plans remain blocked; native archive/delete not executable |
 | Scoped Codex | M8.2 primary cleanup PASS for exact 0.166.0 Darwin arm64 Legacy/WAL profile; schema-3 expanded primary has disposable evidence |
 | Desktop complete removal | Schema-4 candidates 24141/23880 unadmitted; global writer refusal and reconstruction gaps remain |
@@ -180,13 +180,12 @@ Use the [real-session quick start](p0-c1-manual-acceptance.md). The later accept
 real model metadata invocation supersedes the earlier reports' client gap only;
 verified management binding and independent human deletion remain acceptance gates.
 
-Next proposed implementation is **P0-S1: bounded content evidence with verified
-management exclusion**, defined in [ADR-0025](adr/0025-bounded-search-and-management-exclusion.md)
-and the [search contract](session-search.md). Establish one verified identity
-integration, add one evidenced bounded content reader and grounded results, then
-exercise read-only client acceptance. No indexing service, deletion authority,
-Claude mutation, deep-cleanup family or bulk operation is included. Repository
-consolidation prepares this work; it does not start it.
+Current **P0-S1: bounded content evidence with verified management exclusion**
+implements the bounded reader, grounded results and independent-registration
+refusal in [ADR-0026](adr/0026-bounded-conversation-reader-and-independent-registration.md).
+The next work is actual updated conversational use and independently verified real
+host binding/exclusivity. No indexing service, deletion authority, Claude mutation,
+deep-cleanup family or bulk operation is included.
 
 
 Audit baseline readiness: **READY WITH CONSTRAINTS**. Review the
@@ -210,3 +209,19 @@ verified bundle preserve original tips. Changes need relevant targeted tests,
 full locked local gates and exact final three-OS CI. No history rewriting,
 real-user destructive tests or app restarts. Historical ADRs,
 research and PASS/OPEN/BLOCKED receipts remain evidence, read with ADR-0022.
+
+### P0-S1 implementation status
+
+Bounded Codex legacy message and paginated completed-display-item search is now
+implemented with grounded excerpts/context and diagnostic/management separation.
+Known shape contracts are independent of the mutation pin. Missing independent
+caller registration refuses with zero candidates. Neutral-title/ranking/strongest
+protected-match, privacy, source isolation and 5,000-session pagination have fixture
+coverage. See [the current search contract](session-search.md) and
+[ADR-0026](adr/0026-bounded-conversation-reader-and-independent-registration.md).
+
+P0-S1 remains **OPEN** until a genuine Codex conversation uses the updated content
+tool and its real management identity/connection exclusivity are independently
+verified. Close those gates before new deletion functionality; then P0-C2 adds the
+evidenced Claude read adapter and the same acceptance, without inferring mutation
+authority from read support. Historical P0-C1 deletion remains OPEN.

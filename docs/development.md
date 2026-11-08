@@ -23,7 +23,11 @@ management exclusion](session-search.md). Normal tests retain all prior safety r
 The explicit `conversational_removal` CLI integration test uses disposable exact
 provider state and real stdio/worker/CLI effects; its grant is fixture authority.
 Do not count it as an actual Codex conversation or independent human acceptance.
-The final report records those gates separately. No test deletes real sessions.
+The final report records those gates separately. P0-S1 adds bounded content
+fixture/stdio/isolation tests and 5,000-session paging. The current
+[search quick start](session-search.md) defines advanced requests, refusal and the
+independent operator registration procedure. Do not mint a registration from model
+UUID selection or treat a direct protocol driver as actual conversational use. No test deletes real sessions.
 
 
 Start with [AGENTS.md](../AGENTS.md), [architecture](architecture.md),

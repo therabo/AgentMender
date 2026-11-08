@@ -1,5 +1,10 @@
 # Codex compatibility evidence
 
+Current read-only P0-S1 discovery and independent caller-registration limits are
+documented in [the search contract](../../docs/session-search.md). Bounded content reads do not expand
+any approval, mutation profile or recovery authority. Real updated client and
+management-binding acceptance remain OPEN.
+
 ## Current real metadata versus mutation compatibility
 
 Real conversational MCP metadata search is accepted with Partial coverage.

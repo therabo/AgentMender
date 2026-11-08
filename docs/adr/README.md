@@ -46,3 +46,5 @@ read-only authority. The [canonical roadmap](../product-roadmap.md) and
 [ADR-0025](0025-bounded-search-and-management-exclusion.md): bounded conversation
 search and verified management exclusion (accepted requirements, 2026-11-08;
 registered filtering fixed, content/binding implementation deferred).
+
+- [0026 — Bounded conversation reads and independent management registration](0026-bounded-conversation-reader-and-independent-registration.md): implemented read-only search; real updated client/binding gates OPEN.

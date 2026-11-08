@@ -1,0 +1,43 @@
+{
+  "date": "2026-11-08",
+  "platform": "darwin-arm64",
+  "installed_executable_version": "0.166.0-alpha.6",
+  "installed_application_build": 24614,
+  "contract": "codex-paginated-item-completed-message-v1",
+  "binary_hash_is_read_admission_requirement": false,
+  "read_transport": "real local MCP stdio direct protocol driver, fixed kernel-attested worker",
+  "query": "Codex",
+  "eligible_observed": 347,
+  "content_evidence_records": 24,
+  "content_matching_sessions_with_term_absent_from_title": 17,
+  "sources": {
+    "user_message": 5,
+    "assistant_message": 19
+  },
+  "maximum_excerpt_characters": 320,
+  "context": {
+    "error": null,
+    "excerpt_chars": 445,
+    "untrusted": true,
+    "json_bytes": 828
+  },
+  "coverage": "partial: missing rollout locators, bounded header/tail windows, suppressed records and live source changes; no full-history claim",
+  "maximum_batch_bytes_read": 33554432,
+  "missing_management_binding": "caller_identity_required, zero candidates",
+  "actual_conversational_legacy_metadata": {
+    "query": "MISSION1",
+    "include_archived": true,
+    "results": 36,
+    "completeness": "partial",
+    "new_content_schema_exposed": false
+  },
+  "actual_updated_conversational_content_acceptance": false,
+  "real_independent_management_binding_verified": false,
+  "real_management_exclusion_verified": false,
+  "production_guaranteed_mode_accepted": false,
+  "real_sessions_deleted": 0,
+  "provider_application_restarts": 0,
+  "native_delete_admission_changed": false,
+  "mutation_profile_added": false,
+  "privacy": "No real excerpts, UUIDs, tokens, roots, transcript bodies or credentials are stored in this receipt."
+}

@@ -1,5 +1,10 @@
 # Independent local approval
 
+Current read-only P0-S1 discovery and independent caller-registration limits are
+documented in [the search contract](session-search.md). Bounded content reads do not expand
+any approval, mutation profile or recovery authority. Real updated client and
+management-binding acceptance remain OPEN.
+
 ## Read-only real-session deployment
 
 See [the verified-management identity contract](session-search.md). Registered

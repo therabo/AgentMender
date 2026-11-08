@@ -31,18 +31,23 @@ every read adapter. Domain has serialization/hashing dependencies but no I/O.
 verified management exclusion as requirements. Current conversational search
 filters trusted registered identities before matching/sorting/projection and
 refuses protected preview/preparation; it does not authenticate the caller.
-General diagnostic inventory is not a guaranteed management list. The next step
-needs one verified binding and a provider-owned bounded read port for supported
-message text, with pure evidence types and bounded untrusted MCP excerpts. No
-content index, new crate or change to destructive authority is needed or shipped.
+General diagnostic inventory is not a guaranteed management list.
+[ADR-0026](adr/0026-bounded-conversation-reader-and-independent-registration.md)
+implements a provider-neutral `SessionSearchReadPort`, pure relevance/evidence types,
+application binding/exclusion enforcement, Codex-owned bounded message parsing and
+MCP excerpts/context. CLI validates independent operator registration per call.
+Missing identity refuses management requests before provider access. No index, new
+crate or destructive authority is added. Actual updated client and real management
+binding acceptance remain open.
 
 [ADR-0024](adr/0024-adaptive-read-only-metadata.md) separates useful metadata from
 mutation contracts. Explicit `--session-search` uses a fixed-column protected
 source worker and bounded in-memory SQLite snapshot, accepting additive structures
 and unknown producer versions without granting effects. Provider-api confines
 schema generation for the installed executable; provider-codex interprets advertised
-native methods separately from effect admission. No source transcript/auth/config
-is exported. Root identity, optional parent data and Partial coverage survive MCP.
+native methods separately from effect admission. Legacy metadata exports no transcript/auth/config. Explicit content search
+exports only bounded known visible message excerpts; auth/config files remain
+denied and conservative secret/config/env filtering precedes relevance. Root identity, optional parent data and Partial coverage survive MCP.
 The read-mode application dispatcher has no cleanup port or owned state. Its
 preview is a blocked exact-target assessment; other removal calls refuse. The
 existing exact-profile preparation/approval/intent/adapter path remains separate.

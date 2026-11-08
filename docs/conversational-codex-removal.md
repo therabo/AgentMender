@@ -6,21 +6,24 @@ uses the installed Codex, not a synthetic root or historical binary.
 
 Real conversational metadata search is now accepted, separately from the OPEN
 deletion verdict. [Search and management identity](session-search.md) governs
-future content evidence and guaranteed exclusion. Trusted registered identities
+bounded content evidence and guaranteed exclusion under ADR-0026. Trusted registered identities
 are filtered before matching/projection in both modes and refuse preview/prepare;
 automatic caller binding remains incomplete. Unregistered browsing is diagnostic
 metadata access and may include its caller.
 
 ## Current real-session read mode
 
-`agentmender --provider codex mcp --session-search` adds the five conversational
+`agentmender --provider codex mcp --session-search` adds six conversational
 tools to the original eight. It needs no transaction state root or caller UUID.
 It uses the protected `codex-state-threads-columns-v1` reader, not the exact cleanup
 profile: validate fixed required metadata columns/value bounds in an in-memory
 snapshot under kernel source-write denial. Unknown producer versions/additive
 columns can be readable. Display names, title/project basename/UUID, timestamps,
 archive state and optional spawn parent are disclosed; transcripts/auth/config are
-not exported. Coverage/relationships stay partial. Optional labels over 4096 bytes
+not exported by legacy metadata. Explicit bounded content search and signed
+context are separate read-only requests; see [the contract](session-search.md).
+Guaranteed management mode requires independently controlled registration and
+refuses before provider access when absent. Coverage/relationships stay partial. Optional labels over 4096 bytes
 are unavailable; the bounded inventory is at most 500 recent records/96 KiB.
 
 Installed native methods are inspected from generated schemas under isolation.

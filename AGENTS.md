@@ -52,7 +52,9 @@ from a fixture grant. No real-user destructive tests or app restart. Read-only r
 Read [ADR-0024](docs/adr/0024-adaptive-read-only-metadata.md). Real-session
 `mcp --session-search` has no cleanup port, owned state, approval key or caller
 requirement. Fixed-column metadata runs only in the reused kernel-attested worker:
-READ_ONLY/NOFOLLOW, query_only, bounded memory backup; no transcripts/auth/config.
+READ_ONLY/NOFOLLOW, query_only, bounded memory backup; legacy metadata exports no
+transcripts/auth/config. ADR-0026 separately admits fixed bounded rollout reads
+under the same kernel write denial, with auth/config contents still denied.
 Additive schemas/unknown producers may be readable. Generated native method names
 are availability observations only. Read-mode preview stays blocked with no plan;
 prepare/status/execution handoff refuse. Do not turn this reader into raw mutation
@@ -71,11 +73,15 @@ human approval/execution + structural primary/collateral proof + final exact CI.
 
 Read [ADR-0025](docs/adr/0025-bounded-search-and-management-exclusion.md) and the
 [search contract](docs/session-search.md). Real conversational metadata search is
-accepted (the user's 37-record MISSION1 call, Partial); complete transcript search,
-automatic authenticated caller binding and current-version destructive acceptance
-remain open. Exclude registered provider/root/session identities before matching
+accepted (the user's 37-record MISSION1 call, Partial). Read
+[ADR-0026](docs/adr/0026-bounded-conversation-reader-and-independent-registration.md):
+P0-S1 implements bounded known user/assistant message shapes, lexical evidence,
+sealed continuation/context and independent operator registration. Full-history
+search, actual updated conversational content acceptance, real management binding
+and current-version destructive acceptance remain open. Exclude registered provider/root/session identities before matching
 and projection in both conversational modes; refuse protected previews/preparation.
-Future guaranteed management workflows must return caller_identity_required until
+Guaranteed management workflows return caller_identity_required before provider
+access until
 verified host binding or independent protected registration is established. General
 diagnostic inventory is not a guaranteed management candidate list. Never guess
 identity from title/cwd/activity or accept a model-supplied UUID as proof.

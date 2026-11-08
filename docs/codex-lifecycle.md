@@ -1,6 +1,6 @@
 # Codex native lifecycle execution
 
-## Current installed-provider metadata
+## Current installed-provider reads
 
 Use `mcp --session-search` for real metadata, not a historical lifecycle binary.
 [ADR-0024](adr/0024-adaptive-read-only-metadata.md) and the [quick start](p0-c1-manual-acceptance.md)
@@ -10,7 +10,12 @@ update does not automatically block readable compatible columns or admit effects
 Fresh alpha.6 isolated evidence still demonstrates native descendants and partial
 error effects; see [the current evidence](../compatibility/codex/0.166.0-alpha.6/real-world-readonly/evidence.json).
 Native initialization of real state under write denial refused; the fixed reader
-therefore performs current browsing. Historical contracts below retain their scope.
+therefore performs current browsing. P0-S1 additionally reads bounded known
+legacy messages and paginated completed display items under attested denial;
+[the search contract](session-search.md) defines exact shapes, limits and independent
+registration. Missing rollout paths/unknown shapes remain Partial. This does not
+admit a native effect or claim complete history. Historical contracts below retain
+their scope.
 
 
 ## P0-C1 selected operation

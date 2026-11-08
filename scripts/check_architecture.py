@@ -687,4 +687,38 @@ probe = list(method_bodies(production_source((ROOT / 'crates/provider-api/src/pr
 if len(probe) != 1 or 'generate-json-schema' not in probe[0] or re.search(r'\.(?:send|write_all)\s*\(', probe[0]):
     raise SystemExit('native capability inspection acquired dispatch authority')
 
+# ADR-0026: bounded content and caller registration add no write/dispatch port.
+def search_write_violation(source):
+    code = mask_literals(production_source(source))
+    return bool(re.search(
+        r'\b(?:Command|OpenOptions|DurableIntent|TransactionStore|DurableEffectPort)\b|'
+        r'\b(?:remove_file|remove_dir_all|rename|create_dir|write|grant_approval|record_intent)\s*\(|'
+        r'\.dispatch\s*\(', code
+    ) or re.search(r'"(?:DELETE|UPDATE|INSERT|ATTACH|CREATE)\s+', production_source(source), re.I))
+
+for canary in ['fn bad() { fs::write(path, bytes); }',
+               'fn bad() { Command::new(command); }',
+               'fn bad() { db.execute("DELETE FROM threads", []); }',
+               'fn bad() { port.dispatch(intent); }']:
+    assert search_write_violation(canary), 'search write canary failed'
+assert not search_write_violation('fn read() { source.read_to_end(&mut bytes); }')
+content = production_source((ROOT / 'crates/provider-codex/src/content.rs').read_text())
+for relative in ['provider-codex/src/content.rs', 'application/src/session_search.rs', 'cli/src/management.rs']:
+    if search_write_violation((ROOT / 'crates' / relative).read_text()):
+        raise SystemExit('read-only search/registration gained write authority: ' + relative)
+for marker in ['validate_worker_paths', 'SQLITE_OPEN_READ_ONLY', 'SQLITE_OPEN_NOFOLLOW',
+               'PRAGMA query_only=ON', 'bounded_backup', 'open_source_read',
+               'spawn_codex_content_capture', 'SEARCH_BYTES', 'TRANSCRIPT_BYTES',
+               'RECORD_BYTES', 'LIMIT 10001', 'WHERE id NOT IN', 'header_identity_mismatch']:
+    if marker not in content:
+        raise SystemExit('content isolation/identity/bounds lost: ' + marker)
+search_service = (ROOT / 'crates/application/src/session_search.rs').read_text()
+search_body = list(method_bodies(search_service, 'search'))
+if len(search_body) != 1 or not (0 <= search_body[0].find('self.binding(') < search_body[0].find('.search_sessions(')):
+    raise SystemExit('management binding must precede provider search access')
+registration = (ROOT / 'crates/cli/src/management.rs').read_text()
+for marker in ['verify_operator_descriptor', 'root_device', 'root_inode', 'server_instance', 'expires_at', 'single_conversation_operator_verified']:
+    if marker not in registration:
+        raise SystemExit('independent registration boundary lost: ' + marker)
+
 print("Architecture, independent approval, gated Codex and read-only Claude checks passed (8 crates).")
