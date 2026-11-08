@@ -16,6 +16,12 @@ are preserved. No force push, merge, application update or application restart.
 The final delivery SHA, local counts/log hashes and **its own** three-OS CI run
 are recorded after commit in the sibling internal verification receipt, avoiding
 a self-referential source hash. Baseline CI is not substituted for final CI.
+The first remote Windows run passed Rust checks and architecture, then exposed
+newline conversion of the newly hashed evidence directory. A Windows-style
+`core.autocrlf=true` checkout reproduced the exact integrity failure. The new
+directory now has the same byte-preserving Git attributes as historical evidence;
+the same checkout validation passes without normalizing hashes or weakening the
+integrity check. The failed run remains in the external delivery history.
 
 ## Results against the requested product contract
 

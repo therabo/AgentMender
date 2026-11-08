@@ -2,6 +2,7 @@
 # on Windows too; Git newline conversion must not change the evidence bundle.
 /compatibility/codex/0.165.0-alpha.1.2/lifecycle/** -text
 /compatibility/codex/0.166.0/lifecycle-m8-1/** -text
+/compatibility/codex/0.166.0-alpha.6/real-world-readonly/** -text
 # Preserve the exact hashed catalog source windows and schema on all platforms.
 /compatibility/codex/desktop-complete-removal-v1/catalog/** -text
 /compatibility/codex/desktop-complete-removal-v1/catalog/catalog-tombstone-suppression.extracted.js whitespace=-blank-at-eol,-blank-at-eof
