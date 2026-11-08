@@ -82,9 +82,15 @@ complete preapproval scope and postconditions, regardless of method presence.
 
 The real direct MCP driver found 37 MISSION1 matches, preserving each UUID and root
 namespace, with available titles, times, producer versions and parent relationships.
-The query's source DB/WAL/SHM hashes matched before/after and the kernel-attested
-worker independently observed no source change. A later exact-identity blocked
-preview also passed. Private result metadata stays only in the internal project
+The first accepted query/preview's source DB/WAL/SHM hashes matched before/after
+and the kernel-attested worker observed no source change. The final repeated
+query/preview still returned 37 matches and passed the blocked preview, but its
+source hashes differed and it explicitly reported `source_changed_during_capture`.
+The application remained open: these measurements do not attribute concurrent
+source changes to a particular writer. Kernel-enforced worker write denial and
+the isolated byte-preservation test are the reader's non-mutation evidence; do
+not claim that the live source stayed frozen during every run.
+Private result metadata stays only in the internal project
 receipt; it is excluded from Git. No prepare/approval/execution call was made
 against real sessions. The driver is **not** a model/client conversation.
 

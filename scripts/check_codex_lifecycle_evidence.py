@@ -115,6 +115,10 @@ def check_adaptive_read_evidence():
         require(observed[field] is False, "unaccepted real-world gate stays explicit: " + field)
     require(observed["real_metadata_reader"] == "codex-state-threads-columns-v1" and observed["real_metadata_completeness"] == "partial", "bounded read contract")
     require(observed["real_source_file_hashes_equal"] and observed["source_worker_kernel_attested"], "real protected observation")
+    require(observed["real_source_file_hashes_observation"] == "first accepted real query and blocked preview", "unchanged hashes describe only the first observation")
+    require(observed["final_repeat_real_source_file_hashes_equal"] is False and
+            observed["final_repeat_source_changed_during_capture"] is True and
+            observed["final_repeat_matches"] == observed["real_mission1_matches"], "live-source change and repeated metadata results remain explicit")
     require(sha(directory / "native-counterexamples.json") == observed["native_counterexamples_sha256"], "current native evidence integrity")
     for name, digest in observed["selected_schemas"].items():
         require(not Path(name).is_absolute() and ".." not in Path(name).parts and sha(directory / name) == digest, "current selected schema integrity")
