@@ -327,6 +327,56 @@ pub fn spawn_codex_scoped_capture(
     }
 }
 
+/// Fixed metadata-only worker; identical kernel source-write denial to capture.
+pub fn spawn_codex_metadata_capture(
+    helper: &Path,
+    sandbox: &EvidenceSandbox,
+) -> Result<Child, ProviderError> {
+    #[cfg(target_os = "macos")]
+    {
+        evidence_command(helper, sandbox, true)?
+            .arg("--internal-codex-metadata-capture")
+            .spawn()
+            .map_err(|_| ProviderError::CapabilityUnavailable("metadata worker unavailable".into()))
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (helper, sandbox);
+        Err(ProviderError::CapabilityUnavailable(
+            "metadata isolation unsupported on this platform".into(),
+        ))
+    }
+}
+
+/// Observe the installed implementation's advertised methods, not their effects.
+/// The generator can write only to the fresh evidence home and cannot read source
+/// state, auth/configuration or transcripts. No lifecycle request is dispatched.
+pub fn codex_app_server_schema(
+    executable: &Path,
+    sandbox: &EvidenceSandbox,
+) -> Result<Vec<u8>, ProviderError> {
+    #[cfg(target_os = "macos")]
+    {
+        let mut command = evidence_command(executable, sandbox, false)?;
+        command
+            .args(["app-server", "generate-json-schema", "--out"])
+            .arg(sandbox.path().join("schemas"));
+        small_output(command)?;
+        crate::filesystem::read_bounded(
+            sandbox.path(),
+            &sandbox.path().join("schemas/ClientRequest.json"),
+            1024 * 1024,
+        )
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (executable, sandbox);
+        Err(ProviderError::CapabilityUnavailable(
+            "native schema probe isolation unsupported".into(),
+        ))
+    }
+}
+
 /// Fixed Desktop catalog observation worker under the protected evidence sandbox.
 pub fn spawn_codex_catalog_capture(
     helper: &Path,
@@ -411,8 +461,10 @@ pub fn find_executable(kind: ProviderKind) -> Option<std::path::PathBuf> {
         ProviderKind::Codex => "codex",
         ProviderKind::Claude => "claude",
     };
-    let path = std::env::var_os("PATH")?;
-    for directory in std::env::split_paths(&path) {
+    for directory in std::env::var_os("PATH")
+        .into_iter()
+        .flat_map(|p| std::env::split_paths(&p).collect::<Vec<_>>())
+    {
         if !directory.is_absolute() {
             continue;
         }
@@ -421,6 +473,30 @@ pub fn find_executable(kind: ProviderKind) -> Option<std::path::PathBuf> {
         let candidate = candidate.with_extension("exe");
         if candidate.is_file() {
             return Some(candidate);
+        }
+    }
+
+    None
+}
+
+/// Explicit real-session read-mode fallback; isolated legacy scans do not consult
+/// system applications merely because their test PATH is empty.
+pub fn find_codex_desktop_executable() -> Option<std::path::PathBuf> {
+    #[cfg(target_os = "macos")]
+    {
+        let suffix = "ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex";
+        let mut roots = vec![std::path::PathBuf::from("/Applications")];
+        if let Some(home) = std::env::var_os("HOME")
+            .map(std::path::PathBuf::from)
+            .filter(|h| h.is_absolute())
+        {
+            roots.push(home.join("Applications"));
+        }
+        for root in roots {
+            let candidate = root.join(suffix);
+            if candidate.is_file() {
+                return Some(candidate);
+            }
         }
     }
     None

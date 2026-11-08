@@ -24,6 +24,19 @@ The narrow application/Codex dependency on persistence protects the private
 DurableIntent constructor (ADR-0013), rather than exposing write authority through
 every read adapter. Domain has serialization/hashing dependencies but no I/O.
 
+## Adaptive real-session reads
+
+[ADR-0024](adr/0024-adaptive-read-only-metadata.md) separates useful metadata from
+mutation contracts. Explicit `--session-search` uses a fixed-column protected
+source worker and bounded in-memory SQLite snapshot, accepting additive structures
+and unknown producer versions without granting effects. Provider-api confines
+schema generation for the installed executable; provider-codex interprets advertised
+native methods separately from effect admission. No source transcript/auth/config
+is exported. Root identity, optional parent data and Partial coverage survive MCP.
+The read-mode application dispatcher has no cleanup port or owned state. Its
+preview is a blocked exact-target assessment; other removal calls refuse. The
+existing exact-profile preparation/approval/intent/adapter path remains separate.
+
 ## Core session lifecycle versus additional cleanup
 
 The target flow is:

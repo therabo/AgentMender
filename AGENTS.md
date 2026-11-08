@@ -46,9 +46,18 @@ caller identity, Active label or title authenticates the management session. No
 registration means no conversational destructive admission. Same-user shell/PTY,
 configuration or authority-key access does not enforce human independence: retain
 external human approval AND execution, and do not claim production/client acceptance
-from a fixture grant. No real-user tests or app restart.
+from a fixture grant. No real-user destructive tests or app restart. Read-only real metadata checks are explicitly authorized for this milestone.
 
-P0-C1 selects exact stable 0.166.0 Darwin arm64 scoped-cleanup-v1 Legacy/WAL.
+Read [ADR-0024](docs/adr/0024-adaptive-read-only-metadata.md). Real-session
+`mcp --session-search` has no cleanup port, owned state, approval key or caller
+requirement. Fixed-column metadata runs only in the reused kernel-attested worker:
+READ_ONLY/NOFOLLOW, query_only, bounded memory backup; no transcripts/auth/config.
+Additive schemas/unknown producers may be readable. Generated native method names
+are availability observations only. Read-mode preview stays blocked with no plan;
+prepare/status/execution handoff refuse. Do not turn this reader into raw mutation
+or infer caller protection. Synthetic onboarding is development-only.
+
+The existing P0-C1 destructive fallback selects exact stable 0.166.0 Darwin arm64 scoped-cleanup-v1 Legacy/WAL.
 Native delete remains unadmitted; no fallback after unknown native effects. Keep
 schema-3/4, old hashes/journals/outcomes and historical CLI meanings unchanged.
 Protected conversational schema-2 plans have operation-qualified primary reporting.

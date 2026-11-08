@@ -42,3 +42,5 @@ actual client conversation with independent human approval remains an acceptance
 The installed alpha.6 client loaded all 13 MCP schemas; its isolated model request
 stopped at missing authentication. Use the [manual acceptance guide](../p0-c1-manual-acceptance.md)
 to complete actual invocation, management binding and independent human execution.
+
+[Real-world Codex compatibility and integration](p0-c1-real-world-integration.md): OPEN. Real protected metadata reads, installed-interface inspection, exact fixture cleanup and read-only client registration; actual model and independent human deletion gates remain open.

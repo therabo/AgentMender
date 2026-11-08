@@ -183,11 +183,14 @@ fn metadata_inventory(
                 _ => SessionState::Unknown,
             },
             producer_version_matches: version == crate::scoped_profile::SCOPED_CODEX_VERSION,
+            producer_version: None,
+            parent_native_session_id: None,
         });
     }
     Ok(SessionInventory {
         sessions,
         completeness,
+        read_compatibility: None,
     })
 }
 

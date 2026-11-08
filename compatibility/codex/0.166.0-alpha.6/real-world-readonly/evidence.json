@@ -1,0 +1,39 @@
+{
+  "date": "2026-11-08",
+  "platform": "darwin-arm64",
+  "application_version": "26.1029.61003",
+  "application_build": 24614,
+  "executable_version": "0.166.0-alpha.6",
+  "observed_executable_sha256": "508388df35319042107560d095b271a98a512f59a542848c908b23ed1bad4b44",
+  "binary_hash_is_read_admission_requirement": false,
+  "native_methods_advertised": [
+    "thread/archive",
+    "thread/delete",
+    "thread/list",
+    "thread/loaded/list",
+    "thread/read"
+  ],
+  "native_real_root_readonly_initialization": "refused: state runtime initialization requires source writes",
+  "real_metadata_reader": "codex-state-threads-columns-v1",
+  "real_mission1_matches": 37,
+  "real_metadata_completeness": "partial",
+  "real_source_file_hashes_equal": true,
+  "source_worker_kernel_attested": true,
+  "actual_model_tool_invocation": false,
+  "human_approved_real_deletion": false,
+  "native_delete_admitted": false,
+  "scoped_mutation_profile_added": false,
+  "schema4_admission_changed": false,
+  "selected_schemas": {
+    "schemas/v1/InitializeParams.json": "b55124e7c0f36a1789396daa5578217a92be67f053903696236686e59f6f212e",
+    "schemas/v1/InitializeResponse.json": "62ad689c2cb6379913c1d72749cfd8de5089d35760214123518eb92eef11acc9",
+    "schemas/v2/ThreadListParams.json": "e9da2e0bf099d21ab7982210073f927a50370c4e28be7140c314f82c524070bd",
+    "schemas/v2/ThreadListResponse.json": "8ffb6a66d99d98f0c1db0e90ed5c9758ecb600066a1fbf56a50a8c145ab306cf",
+    "schemas/v2/ThreadReadParams.json": "dfe040c6ac71d30795b8be3f3ff232e66f362a37f883b491e5d1ea367f470db4",
+    "schemas/v2/ThreadReadResponse.json": "6eb05cf9bf73d9f873e782868189cd37dc393d12c7a7c49118adb9756b30c485",
+    "schemas/v2/ThreadDeleteParams.json": "0d5425d94af95e3dd20971cee052b2cb8c7d0d23195db1d17fde4e59cfbdec4a",
+    "schemas/v2/ThreadDeleteResponse.json": "333c0c5df96d78d1bcbdb19b57ddfa941de9a02bdae1c29d13c5311c2cdf6527",
+    "schemas/ClientRequest.json": "42caef9e6f7a544f2565d7696b03b34cd77771b91b50e639faed673bb276c262"
+  },
+  "native_counterexamples_sha256": "c10f672faef74ddc0891190ffb7747c3bcca94946aaff3929c506abe42f53992"
+}

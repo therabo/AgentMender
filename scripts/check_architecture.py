@@ -325,6 +325,10 @@ for path in (ROOT / "crates").glob("*/src/**/*.rs"):
                 inspected = inspected.replace(body, '')
             if pattern == patterns[3]:
                 inspected = inspected.replace('"thread/unarchive"', '')
+        if path == ROOT / "crates/provider-codex/src/metadata.rs" and pattern == patterns[3]:
+            # Advertised method names in schema inspection are data, not dispatch.
+            for body in method_bodies(source, "schema_methods"):
+                inspected = inspected.replace(body, "")
         if (re.search(pattern, inspected)
             and not (reviewed_capture and pattern in {patterns[1], patterns[2], patterns[-1]})
             and not (reviewed_owned and pattern in patterns[:3])
@@ -671,4 +675,16 @@ if len(cli_cleanup) != 1 or any(marker not in cli_cleanup[0] for marker in [
     'assess_legacy_session_removal', 'primary_cleanup_outcome', 'product_complete', 'Ok(!product_complete)',
 ]):
     raise SystemExit('CLI cleanup lost primary/product separation')
+
+
+# ADR-0024: adaptive metadata is a fixed read contract, never mutation authority.
+adaptive = production_source((ROOT / 'crates/provider-codex/src/metadata.rs').read_text())
+for marker in ['validate_worker_paths', 'SQLITE_OPEN_READ_ONLY', 'SQLITE_OPEN_NOFOLLOW', 'PRAGMA query_only=ON', 'bounded_backup', 'LIMIT 501']:
+    if marker not in adaptive: raise SystemExit('adaptive metadata isolation/bounds lost: ' + marker)
+if re.search(r'"(?:DELETE|UPDATE|INSERT|ATTACH|CREATE)\s+', adaptive, re.I):
+    raise SystemExit('adaptive metadata must not change source SQL state')
+probe = list(method_bodies(production_source((ROOT / 'crates/provider-api/src/process.rs').read_text()), 'codex_app_server_schema'))
+if len(probe) != 1 or 'generate-json-schema' not in probe[0] or re.search(r'\.(?:send|write_all)\s*\(', probe[0]):
+    raise SystemExit('native capability inspection acquired dispatch authority')
+
 print("Architecture, independent approval, gated Codex and read-only Claude checks passed (8 crates).")

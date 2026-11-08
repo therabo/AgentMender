@@ -323,6 +323,7 @@ async fn opt_in_conversation_registry_metadata_privacy_and_authority_rejection()
         workflow_calls.fetch_add(1, Ordering::SeqCst);
         match request {
             ConversationRequest::Search { .. } => Ok(ConversationResponse::Search {
+                read_compatibility: None,
                 completeness: Completeness::Partial,
                 sessions: vec![SessionMatch {
                     metadata: SessionMetadata {
@@ -342,6 +343,8 @@ async fn opt_in_conversation_registry_metadata_privacy_and_authority_rejection()
                         last_active_at: Some(2),
                         state: SessionState::Archived,
                         producer_version_matches: true,
+                        producer_version: None,
+                        parent_native_session_id: None,
                     },
                     protected: false,
                     can_request_preview: true,

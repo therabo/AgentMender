@@ -1,5 +1,18 @@
 # Codex native lifecycle execution
 
+## Current installed-provider metadata
+
+Use `mcp --session-search` for real metadata, not a historical lifecycle binary.
+[ADR-0024](adr/0024-adaptive-read-only-metadata.md) and the [quick start](p0-c1-manual-acceptance.md)
+separate column-validated read compatibility, installed schema method availability,
+exact operation semantics, scoped local mutation and additional cleanup. A binary
+update does not automatically block readable compatible columns or admit effects.
+Fresh alpha.6 isolated evidence still demonstrates native descendants and partial
+error effects; see [the current evidence](../compatibility/codex/0.166.0-alpha.6/real-world-readonly/evidence.json).
+Native initialization of real state under write denial refused; the fixed reader
+therefore performs current browsing. Historical contracts below retain their scope.
+
+
 ## P0-C1 selected operation
 
 The [conversational slice](conversational-codex-removal.md) selects the exact stable

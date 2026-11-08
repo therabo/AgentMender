@@ -106,5 +106,28 @@ def main():
     print("Codex 0.166.0 evidence guards passed: 24 schemas, exact pins, native counterexamples; no production promotion.")
 
 
+def check_adaptive_read_evidence():
+    directory = ROOT / "compatibility/codex/0.166.0-alpha.6/real-world-readonly"
+    observed = json.loads((directory / "evidence.json").read_text())
+    require(observed["executable_version"] == "0.166.0-alpha.6", "current read evidence version")
+    require(not observed["binary_hash_is_read_admission_requirement"], "observed hash is not read admission")
+    for field in ["native_delete_admitted", "scoped_mutation_profile_added", "schema4_admission_changed", "actual_model_tool_invocation", "human_approved_real_deletion"]:
+        require(observed[field] is False, "unaccepted real-world gate stays explicit: " + field)
+    require(observed["real_metadata_reader"] == "codex-state-threads-columns-v1" and observed["real_metadata_completeness"] == "partial", "bounded read contract")
+    require(observed["real_source_file_hashes_equal"] and observed["source_worker_kernel_attested"], "real protected observation")
+    require(sha(directory / "native-counterexamples.json") == observed["native_counterexamples_sha256"], "current native evidence integrity")
+    for name, digest in observed["selected_schemas"].items():
+        require(not Path(name).is_absolute() and ".." not in Path(name).parts and sha(directory / name) == digest, "current selected schema integrity")
+    native = json.loads((directory / "native-counterexamples.json").read_text())
+    require(native["binary_sha256"] == observed["observed_executable_sha256"] and not native["production_compatibility_promoted"], "native interface evidence grants no authority")
+    cases = {case["case"]: case for case in native["cases"]}
+    partial = cases["delete-denied-root"]
+    require("error_code" in partial["delete"] and partial["before"] != partial["after"], "current native partial effects before error")
+    require(not partial["authoritative_absence_proof"] and cases["delete-mixed-tree"]["retained_fixture_rollouts_unchanged"], "current native proof limits")
+    require(all(v == "DENIED" for v in native["isolation_canaries"].values()), "current native probes remain isolated")
+    print("Adaptive read evidence and current native non-admission checks passed.")
+
+
 if __name__ == "__main__":
     main()
+    check_adaptive_read_evidence()

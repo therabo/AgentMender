@@ -35,7 +35,10 @@ mod desktop_legacy;
 mod desktop_shared;
 pub mod graph;
 mod lifecycle;
+#[cfg_attr(not(target_os = "macos"), allow(dead_code, unused_imports))]
+mod metadata;
 mod planning;
+pub use metadata::run_metadata_capture_worker;
 #[cfg_attr(not(target_os = "macos"), allow(dead_code, unused_imports))]
 mod scoped_capture;
 #[cfg(unix)]

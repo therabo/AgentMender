@@ -83,3 +83,46 @@ fn unavailable() -> ApplicationError {
     )
     .into()
 }
+
+/// Current installation, fixed source root, metadata only. No owned state or
+/// cleanup adapter is constructed by this launch mode.
+pub(super) fn read_only_executor(args: &Args) -> Result<ConversationExecutor, CliError> {
+    if !matches!(args.provider, Some(SelectedProvider::Codex))
+        || args.fixture.is_some()
+        || args.codex_desktop_user_data.is_some()
+        || args.project.is_some()
+        || args.active_only
+    {
+        return Err(CliError::new(
+            ErrorCode::InvalidConfiguration,
+            "session-search requires unfiltered Codex metadata; no fixtures or Desktop mutation configuration",
+        ));
+    }
+    let config = args.clone();
+    let root = config
+        .codex_root
+        .clone()
+        .ok_or_else(|| CliError::new(ErrorCode::InvalidConfiguration, "Codex root unavailable"))?;
+    let helper = std::env::current_exe()
+        .map_err(|_| CliError::new(ErrorCode::InvalidConfiguration, "helper unavailable"))?;
+    let home = std::env::var_os("HOME")
+        .map(std::path::PathBuf::from)
+        .filter(|h| h.is_absolute())
+        .ok_or_else(|| CliError::new(ErrorCode::InvalidConfiguration, "absolute HOME required"))?;
+    Ok(Arc::new(move |request, control| {
+        let adapter = agentmender_provider_codex::CodexAdapter::new(
+            agentmender_provider_api::ProviderLocation {
+                state_root: root.clone(),
+                executable: config.codex_executable.clone(),
+            },
+        )
+        .with_evidence_helper(helper.clone(), home.clone());
+        agentmender_application::conversation::read_only_dispatch(
+            &adapter,
+            &root,
+            &config.protect_codex_session,
+            request,
+            control,
+        )
+    }))
+}

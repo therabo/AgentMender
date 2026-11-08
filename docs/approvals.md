@@ -1,5 +1,16 @@
 # Independent local approval
 
+## Read-only real-session deployment
+
+`mcp --session-search` has no approval key, transaction state root, cleanup port or
+preparation capability. It returns a blocked compatibility assessment for preview;
+other removal calls refuse. No caller UUID is required for browsing, and none is
+inferred. Readability never satisfies management protection or independent human
+approval. The legacy destructive mode retains all exact-profile requirements.
+Same-user shell/PTY/key access still prevents enforced human independence; do not
+approve a real session here until the declared separation is actually established.
+
+
 ## P0-C1 current handoff
 
 Opt-in MCP can prepare the existing durable transaction and read status. It cannot

@@ -1,5 +1,18 @@
 # Codex compatibility evidence
 
+## Current real metadata versus mutation compatibility
+
+`codex-state-threads-columns-v1` validates required metadata columns/values inside
+the protected read-only worker. Additive columns and unknown producer versions
+can be readable without a binary-hash admission list. Its bounded selected-root
+coverage and parent relationships remain partial. Installed native method schemas
+are capability observations only. Current [alpha.6 evidence](0.166.0-alpha.6/real-world-readonly/evidence.json)
+records actual metadata reads and renewed native descendant/partial-error limits.
+No current native delete or raw mutation profile is admitted. The exact stable
+fallback, older App Server discovery and advanced artifact contracts below remain
+independent; a schema/binary match on one axis does not transfer another's authority.
+
+
 ## P0-C1 compatibility axes
 
 Opt-in conversational search uses a new bounded metadata projection of the exact

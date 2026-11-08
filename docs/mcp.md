@@ -1,6 +1,31 @@
 # MCP interface
 
-## P0-C1 opt-in conversational handoff
+## Real-session metadata mode
+
+Normal Codex browsing uses `agentmender --provider codex mcp --session-search`.
+No fixture, historical executable, protected caller UUID or state root is required.
+The explicit mode locates the existing bundled macOS executable without PATH;
+trusted root/executable flags can override selection. See the
+[quick start](p0-c1-manual-acceptance.md) and [ADR-0024](adr/0024-adaptive-read-only-metadata.md).
+
+Its thirteen-tool catalog is unchanged in names. `session_search` uses the bounded
+validated metadata reader; `preview_removal` returns a blocked compatibility
+assessment rather than a Ready plan. Its output schema admits either that typed
+assessment or the historical supported preview. A read-mode assessment has no plan
+or digest and `execution_permitted: false`. Other removal calls fail explicitly
+with `read_only_removal_unavailable`, without initializing/reading owned state.
+`--session-search` and `--session-removal` are mutually exclusive; default remains
+eight tools. Read-only metadata availability never transfers mutation authority.
+
+Search adds optional producer and parent UUID fields plus a capability/coverage
+header. Titles prefer native display names; unavailable/oversized optional labels
+stay null. Real metadata is opt-in, never transcript/preview/first-message export.
+The selected-root recent inventory is at most 500 records/96 KiB; all existing MCP
+budgets and Partial/ambiguity semantics remain. Native methods advertised by the
+installed schema are not equivalent to admitted effects. The separate historical
+`providers`/scan profile catalog keeps its prior meanings.
+
+## P0-C1 separately admitted removal mode
 
 Default launch retains the original eight read-only tools and privacy behavior
 specified below. Explicit session-removal mode adds five tools under
@@ -168,7 +193,9 @@ permission to execute. Ready is not approved. MCP is an interface and is not the
 authorization authority. Tool annotations describe behavior and enforce no permission.
 No execute/approve/archive/delete/purge/restore/repair execution tool or arbitrary
 command/filesystem/SQL primitive exists. M6 durable transaction storage is separate
-from this MCP interface and is neither exposed nor initialized by it.
+from the default eight-tool interface and is neither exposed nor initialized by
+it. The explicit removal mode above may prepare existing durable attempts; the
+real-session read mode cannot open owned state.
 
 ## Cancellation and limitations
 

@@ -40,3 +40,5 @@ read-only authority. The [canonical roadmap](../product-roadmap.md) and
 [audit](../audits/2026-11-07-product-first-audit.md) describe present capability.
 
 - [ADR-0023: Conversational primary-removal handoff](0023-conversational-primary-removal-handoff.md) — accepted bounded preparation/metadata/exclusion design; actual client/human acceptance OPEN.
+
+[ADR-0024](0024-adaptive-read-only-metadata.md): adaptive read-only metadata separate from destructive compatibility (accepted 2026-11-08).

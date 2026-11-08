@@ -24,15 +24,20 @@ struct Client {
 }
 impl Client {
     fn start(root: &Path, owned: &Path, binary: &Path, home: &Path) -> Self {
-        let mut child = base(root, binary, home)
-            .args([
-                "--protect-codex-session",
-                M,
-                "mcp",
-                "--session-removal",
-                "--state-root",
-            ])
-            .arg(owned)
+        Self::connect(
+            base(root, binary, home)
+                .args([
+                    "--protect-codex-session",
+                    M,
+                    "mcp",
+                    "--session-removal",
+                    "--state-root",
+                ])
+                .arg(owned),
+        )
+    }
+    fn connect(command: &mut Command) -> Self {
+        let mut child = command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -69,6 +74,59 @@ impl Client {
         self.input.take();
         assert!(self.child.wait().unwrap().success());
     }
+}
+
+#[test]
+fn adaptive_metadata_search_needs_no_supported_binary_or_approval_root() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().canonicalize().unwrap();
+    let root = path.join("provider");
+    let project = path.join("MISSION1");
+    fs::create_dir(&project).unwrap();
+    seed(&root, &project);
+    let fake = root.join("not-an-executable");
+    fs::write(&fake, b"unsupported provider image; no mutation authority").unwrap();
+    let before = tree_bytes(&root);
+    let home = PathBuf::from(std::env::var_os("HOME").unwrap())
+        .canonicalize()
+        .unwrap();
+    let mut client = Client::connect(base(&root, &fake, &home).args(["mcp", "--session-search"]));
+    let search = client.call(1, "session_search", json!({"query":"MISSION1 README"}));
+    let view = &search["result"]["structuredContent"];
+    let sessions = view["sessions"].as_array().expect("adaptive search");
+    assert_eq!(sessions.len(), 2, "{search}");
+    assert!(
+        sessions
+            .iter()
+            .all(|s| s["exact_profile"] == "no_mutation_profile_selected")
+    );
+    assert!(view["read_compatibility"]["provider_version"].is_null());
+    assert_eq!(
+        view["read_compatibility"]["authenticated_caller_binding"],
+        false
+    );
+    let target = sessions[0]["target"].clone();
+    let preview = client.call(2, "preview_removal", json!({"target":target}));
+    let view = &preview["result"]["structuredContent"];
+    assert_eq!(view["status"], "blocked");
+    assert_eq!(view["execution_permitted"], false);
+    assert!(view.get("review").is_none());
+    let prepared = client.call(
+        3,
+        "prepare_removal",
+        json!({"target":target,"expected_plan_digest":format!("sha256:{}","0".repeat(64))}),
+    );
+    assert_eq!(
+        prepared["result"]["structuredContent"]["error"],
+        "read_only_removal_unavailable"
+    );
+    assert_eq!(
+        client.call(4, "removal_status", json!({}))["result"]["structuredContent"]["error"],
+        "read_only_removal_unavailable"
+    );
+    client.close();
+    assert_eq!(tree_bytes(&root), before);
+    assert!(!path.join("owned").exists());
 }
 impl Drop for Client {
     fn drop(&mut self) {

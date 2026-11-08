@@ -20,6 +20,10 @@ pub enum ApplicationError {
     ProtectedManagementSession,
     #[error("removal preview changed; obtain and review a new exact plan digest")]
     RemovalPlanChanged,
+    #[error(
+        "this read-only deployment cannot prepare or execute removal; review the compatibility assessment"
+    )]
+    ReadOnlyRemovalUnavailable,
     #[error("query cancelled or deadline exceeded")]
     Cancelled,
     #[error(transparent)]
@@ -39,6 +43,7 @@ impl ApplicationError {
             Self::ManagementProtectionUnavailable => "management_protection_required",
             Self::ProtectedManagementSession => "protected_management_session",
             Self::RemovalPlanChanged => "removal_plan_changed",
+            Self::ReadOnlyRemovalUnavailable => "read_only_removal_unavailable",
             Self::Cancelled => "cancelled",
             Self::UnknownEntity(_) => "target_not_observed",
             Self::AmbiguousEntity(_) => "ambiguous_target",

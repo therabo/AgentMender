@@ -407,15 +407,27 @@ fn capture_database(
 
 #[cfg(target_os = "macos")]
 pub(super) fn validate_worker_request(request: &CaptureRequest) -> Result<(), ProviderError> {
+    validate_worker_paths(
+        &request.source_root,
+        &request.mirror_root,
+        &request.probe_path,
+    )
+}
+
+#[cfg(target_os = "macos")]
+pub(super) fn validate_worker_paths(
+    source_root: &Path,
+    mirror_root: &Path,
+    probe_path: &Path,
+) -> Result<(), ProviderError> {
     use std::os::unix::fs::{MetadataExt, PermissionsExt};
     let canonical =
         |path: &Path| path.is_absolute() && path.canonicalize().is_ok_and(|p| p == path);
-    let mirror_meta = fs::symlink_metadata(&request.mirror_root)
+    let mirror_meta = fs::symlink_metadata(mirror_root)
         .map_err(|_| unavailable("private evidence home unavailable"))?;
-    let source_meta = fs::symlink_metadata(&request.source_root)
-        .map_err(|_| unavailable("source root unavailable"))?;
-    let parent = request
-        .probe_path
+    let source_meta =
+        fs::symlink_metadata(source_root).map_err(|_| unavailable("source root unavailable"))?;
+    let parent = probe_path
         .parent()
         .ok_or_else(|| unavailable("probe parent missing"))?;
     let probe_meta =
@@ -425,8 +437,8 @@ pub(super) fn validate_worker_request(request: &CaptureRequest) -> Result<(), Pr
             .and_then(|n| n.to_str())
             .is_some_and(|n| n.starts_with(expected))
     };
-    if !canonical(&request.source_root)
-        || !canonical(&request.mirror_root)
+    if !canonical(source_root)
+        || !canonical(mirror_root)
         || !canonical(parent)
         || !mirror_meta.is_dir()
         || mirror_meta.file_type().is_symlink()
@@ -437,30 +449,30 @@ pub(super) fn validate_worker_request(request: &CaptureRequest) -> Result<(), Pr
         || mirror_meta.permissions().mode() & 0o777 != 0o700
         || probe_meta.permissions().mode() & 0o777 != 0o700
         || mirror_meta.uid() != probe_meta.uid()
-        || request.mirror_root.parent() != Some(Path::new("/private/tmp"))
+        || mirror_root.parent() != Some(Path::new("/private/tmp"))
         || parent.parent() != Some(Path::new("/private/tmp"))
-        || !prefix(&request.mirror_root, "agentmender-evidence-")
+        || !prefix(mirror_root, "agentmender-evidence-")
         || !prefix(parent, "agentmender-denial-")
-        || request.probe_path.file_name() != Some(std::ffi::OsStr::new("must-remain-absent"))
-        || request.probe_path.exists()
-        || request.mirror_root.starts_with(&request.source_root)
-        || request.source_root.starts_with(&request.mirror_root)
-        || parent == request.mirror_root
-        || std::env::var_os("HOME").as_deref() != Some(request.mirror_root.as_os_str())
-        || std::env::var_os("CODEX_HOME").as_deref() != Some(request.mirror_root.as_os_str())
-        || std::env::var_os("TMPDIR").as_deref() != Some(request.mirror_root.as_os_str())
-        || fs::read_dir(&request.mirror_root)
+        || probe_path.file_name() != Some(std::ffi::OsStr::new("must-remain-absent"))
+        || probe_path.exists()
+        || mirror_root.starts_with(source_root)
+        || source_root.starts_with(mirror_root)
+        || parent == mirror_root
+        || std::env::var_os("HOME").as_deref() != Some(mirror_root.as_os_str())
+        || std::env::var_os("CODEX_HOME").as_deref() != Some(mirror_root.as_os_str())
+        || std::env::var_os("TMPDIR").as_deref() != Some(mirror_root.as_os_str())
+        || fs::read_dir(mirror_root)
             .map_err(|_| unavailable("mirror cannot be inspected"))?
             .next()
             .is_some()
     {
         return Err(unavailable("internal capture capability paths rejected"));
     }
-    agentmender_provider_api::process::verify_source_write_denial(&request.source_root)?;
+    agentmender_provider_api::process::verify_source_write_denial(source_root)?;
     match fs::OpenOptions::new()
         .write(true)
         .create_new(true)
-        .open(&request.probe_path)
+        .open(probe_path)
     {
         Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => Ok(()),
         _ => Err(unavailable("OS evidence write-denial canary failed")),

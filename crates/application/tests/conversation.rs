@@ -7,6 +7,7 @@ impl SessionMetadataReadPort for Metadata {
     fn session_metadata(&self) -> Result<SessionInventory, ProviderError> {
         Ok(SessionInventory {
             completeness: Completeness::Partial,
+            read_compatibility: None,
             sessions: [
                 (
                     "/a",
@@ -65,6 +66,8 @@ impl SessionMetadataReadPort for Metadata {
                     last_active_at: None,
                     state,
                     producer_version_matches: version,
+                    producer_version: None,
+                    parent_native_session_id: None,
                 },
             )
             .collect(),
@@ -92,6 +95,7 @@ fn ambiguous_metadata_partial_coverage_and_root_identity_never_authorize() {
     let ConversationResponse::Search {
         sessions,
         completeness,
+        ..
     } = service
         .dispatch(
             ConversationRequest::Search {

@@ -95,6 +95,9 @@ impl From<PlanIntent> for LifecycleIntent {
 enum Action {
     Providers,
     Mcp {
+        /// Opt in to real-session metadata search and non-authorizing assessment.
+        #[arg(long, conflicts_with = "session_removal")]
+        session_search: bool,
         /// Opt in to metadata disclosure and durable primary-removal preparation.
         #[arg(long)]
         session_removal: bool,
@@ -237,7 +240,8 @@ impl From<ApplicationError> for CliError {
         match error {
             ApplicationError::ManagementProtectionUnavailable
             | ApplicationError::ProtectedManagementSession
-            | ApplicationError::RemovalPlanChanged => {
+            | ApplicationError::RemovalPlanChanged
+            | ApplicationError::ReadOnlyRemovalUnavailable => {
                 Self::new(ErrorCode::InvalidScope, error.to_string())
             }
             ApplicationError::Provider(error) => error.into(),
@@ -633,6 +637,7 @@ fn run(args: Args) -> Result<bool, CliError> {
         ));
     }
     if let Action::Mcp {
+        session_search,
         session_removal,
         state_root,
     } = &args.command
@@ -649,7 +654,14 @@ fn run(args: Args) -> Result<bool, CliError> {
                 config.codex_root = Some(root(config.codex_root.clone(), "CODEX_HOME", ".codex")?);
                 config.codex_executable = config
                     .codex_executable
-                    .or_else(|| find_executable(ProviderKind::Codex));
+                    .or_else(|| find_executable(ProviderKind::Codex))
+                    .or_else(|| {
+                        if *session_search {
+                            agentmender_provider_api::process::find_codex_desktop_executable()
+                        } else {
+                            None
+                        }
+                    });
             }
             if !matches!(config.provider, Some(SelectedProvider::Codex)) {
                 let default_desktop = cfg!(target_os = "macos")
@@ -687,7 +699,15 @@ fn run(args: Args) -> Result<bool, CliError> {
             home: env::var_os("HOME").map(PathBuf::from),
             helper: env::current_exe().ok(),
         };
-        let conversation = if *session_removal {
+        let conversation = if *session_search {
+            if state_root.is_some() {
+                return Err(CliError::new(
+                    ErrorCode::InvalidArguments,
+                    "read-only session search does not use a transaction state root",
+                ));
+            }
+            Some(conversation::read_only_executor(&config)?)
+        } else if *session_removal {
             Some(conversation::executor(&config, state_root.as_deref())?)
         } else {
             if state_root.is_some() {
@@ -1002,6 +1022,15 @@ fn run(args: Args) -> Result<bool, CliError> {
 }
 fn main() -> ExitCode {
     let raw_args: Vec<_> = env::args_os().collect();
+    if raw_args.len() == 2 && raw_args[1] == "--internal-codex-metadata-capture" {
+        return match agentmender_provider_codex::run_metadata_capture_worker() {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(_) => {
+                eprintln!("internal metadata evidence capture failed");
+                ExitCode::from(2)
+            }
+        };
+    }
     #[cfg(unix)]
     if raw_args.len() == 2 && raw_args[1] == "--internal-codex-catalog-evidence-capture" {
         return match agentmender_provider_codex::run_catalog_evidence_worker() {

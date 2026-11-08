@@ -150,9 +150,9 @@ M8.3 multi-session cleanup is not the next implementation priority.
 
 | Area | Current state |
 |---|---|
-| Codex discovery | Partial, exact historical App Server profiles; generic unknown releases are metadata-audit-only |
+| Codex discovery | Real fixed-column metadata search independent of executable hash; separate historical App Server profiles; partial coverage |
 | Claude discovery | Partial observed Desktop sidecars and synthetic transcript fixtures; no general live Code SDK inventory |
-| Search / useful labels | Opt-in stable-profile title/project/UUID metadata search, archive/time/protection and ambiguity; no content index |
+| Search / useful labels | Real bounded title/name/project/UUID/time/archive/parent metadata; unknown producers can be readable; no content index |
 | MCP | Eight default read-only tools plus five opt-in search/preview/preparation/status/external-handoff tools |
 | Native Codex | Exact historical unarchive handoff is tested but real plans remain blocked; native archive/delete not executable |
 | Scoped Codex | M8.2 primary cleanup PASS for exact 0.166.0 Darwin arm64 Legacy/WAL profile; schema-3 expanded primary has disposable evidence |
@@ -165,9 +165,11 @@ P0-C1 delivery: **OPEN**. See [the current report](milestones/p0-c1-conversation
 and [operating contract](conversational-codex-removal.md). Metadata, protected
 preparation and provider execution components are implemented; an actual Codex
 conversation with independently operated human approval remains unaccepted.
-The [2026-11-08 client review](milestones/p0-c1-client-acceptance.md) verifies actual
-13-tool catalog loading, not model invocation: the isolated client needs login.
-The [manual acceptance guide](p0-c1-manual-acceptance.md) records the exact user gates.
+The [real-world integration report](milestones/p0-c1-real-world-integration.md)
+records real read-only discovery and the current-version native counterexamples.
+Use the [real-session quick start](p0-c1-manual-acceptance.md). Actual model invocation,
+verified management binding and independent human deletion remain acceptance gates.
+
 
 Audit baseline readiness: **READY WITH CONSTRAINTS**. Review the
 [proposed bounded vertical slices](audits/2026-11-07-product-first-audit.md#proposed-next-implementation-milestones)

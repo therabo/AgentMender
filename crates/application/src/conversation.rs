@@ -35,10 +35,16 @@ pub enum ConversationResponse {
     Search {
         sessions: Vec<SessionMatch>,
         completeness: Completeness,
+        read_compatibility: Option<SessionReadCompatibility>,
     },
     Preview {
         session: SessionMetadata,
         inputs: Box<ApprovalInputs>,
+    },
+    ReadOnlyPreview {
+        session: SessionMetadata,
+        compatibility: SessionReadCompatibility,
+        protected: bool,
     },
     Transactions(Vec<RemovalStatus>),
 }
@@ -190,46 +196,16 @@ impl ConversationService<'_> {
                 query,
                 include_archived,
             } => {
-                if query.len() > 256 || query.chars().any(char::is_control) {
-                    return Err(unavailable());
-                }
                 let inventory = self.metadata.session_metadata()?;
-                let words: Vec<_> = query.split_whitespace().map(str::to_lowercase).collect();
-                let mut sessions: Vec<_> = inventory
-                    .sessions
-                    .into_iter()
-                    .filter(|s| {
-                        let haystack = format!(
-                            "{} {} {}",
-                            s.title.as_deref().unwrap_or(""),
-                            s.project_label.as_deref().unwrap_or(""),
-                            s.native_session_id
-                        )
-                        .to_lowercase();
-                        (include_archived || s.state != SessionState::Archived)
-                            && words.iter().all(|w| haystack.contains(w))
-                    })
-                    .map(|s| {
-                        let protected = self.protected_sessions.contains(&s.native_session_id);
-                        let can_request_preview = !self.protected_sessions.is_empty()
-                            && !protected
-                            && s.identity.provider == ProviderKind::Codex
-                            && s.identity.state_root == self.provider_root
-                            && s.producer_version_matches
-                            && s.state != SessionState::Unknown;
-                        SessionMatch {
-                            metadata: s,
-                            protected,
-                            can_request_preview,
-                        }
-                    })
-                    .collect();
-                sessions.sort_by(|a, b| a.metadata.identity.cmp(&b.metadata.identity));
-                control.check()?;
-                Ok(ConversationResponse::Search {
-                    sessions,
-                    completeness: inventory.completeness,
-                })
+                search_inventory(
+                    inventory,
+                    &query,
+                    include_archived,
+                    self.protected_sessions,
+                    self.provider_root,
+                    true,
+                    &control,
+                )
             }
             ConversationRequest::Preview { target } => {
                 let (session, inputs) = self.resolve(&target)?;
@@ -327,5 +303,106 @@ impl ConversationService<'_> {
             return Err(unavailable());
         }
         Ok(ConversationResponse::Transactions(statuses))
+    }
+}
+
+fn search_inventory(
+    inventory: SessionInventory,
+    query: &str,
+    include_archived: bool,
+    protected_sessions: &[String],
+    provider_root: &std::path::Path,
+    primary: bool,
+    control: &QueryControl,
+) -> Result<ConversationResponse, ApplicationError> {
+    if query.len() > 256 || query.chars().any(char::is_control) {
+        return Err(unavailable());
+    }
+    let words: Vec<_> = query.split_whitespace().map(str::to_lowercase).collect();
+    let mut sessions: Vec<_> = inventory
+        .sessions
+        .into_iter()
+        .filter(|s| {
+            let haystack = format!(
+                "{} {} {}",
+                s.title.as_deref().unwrap_or(""),
+                s.project_label.as_deref().unwrap_or(""),
+                s.native_session_id
+            )
+            .to_lowercase();
+            (include_archived || s.state != SessionState::Archived)
+                && words.iter().all(|w| haystack.contains(w))
+        })
+        .map(|s| {
+            let protected = protected_sessions.contains(&s.native_session_id);
+            let can_request_preview = (!primary || !protected_sessions.is_empty())
+                && !protected
+                && s.identity.provider == ProviderKind::Codex
+                && s.identity.state_root == provider_root
+                && (!primary || s.producer_version_matches)
+                && s.state != SessionState::Unknown;
+            SessionMatch {
+                metadata: s,
+                protected,
+                can_request_preview,
+            }
+        })
+        .collect();
+    sessions.sort_by(|a, b| a.metadata.identity.cmp(&b.metadata.identity));
+
+    control.check()?;
+    Ok(ConversationResponse::Search {
+        sessions,
+        completeness: inventory.completeness,
+        read_compatibility: inventory.read_compatibility,
+    })
+}
+
+/// Useful discovery/assessment without any grant, durable preparation or cleanup
+/// port. Caller registration is optional for reading and never inferred.
+pub fn read_only_dispatch(
+    metadata: &dyn SessionMetadataReadPort,
+    provider_root: &std::path::Path,
+    protected_sessions: &[String],
+    request: ConversationRequest,
+    control: QueryControl,
+) -> Result<ConversationResponse, ApplicationError> {
+    control.check()?;
+    match request {
+        ConversationRequest::Search {
+            query,
+            include_archived,
+        } => search_inventory(
+            metadata.session_metadata()?,
+            &query,
+            include_archived,
+            protected_sessions,
+            provider_root,
+            false,
+            &control,
+        ),
+        ConversationRequest::Preview { target } => {
+            let inventory = metadata.session_metadata()?;
+            let mut matches = inventory
+                .sessions
+                .into_iter()
+                .filter(|s| target(&s.identity));
+            let session = matches.next().ok_or_else(unavailable)?;
+            if matches.next().is_some()
+                || session.identity.provider != ProviderKind::Codex
+                || session.identity.class != GraphNodeKind::Session
+                || session.identity.state_root != provider_root
+            {
+                return Err(unavailable());
+            }
+            let protected = protected_sessions.contains(&session.native_session_id);
+            control.check()?;
+            Ok(ConversationResponse::ReadOnlyPreview {
+                session,
+                compatibility: inventory.read_compatibility.ok_or_else(unavailable)?,
+                protected,
+            })
+        }
+        _ => Err(ApplicationError::ReadOnlyRemovalUnavailable),
     }
 }

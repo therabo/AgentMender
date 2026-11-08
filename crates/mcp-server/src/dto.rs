@@ -693,6 +693,7 @@ pub enum ErrorCode {
     ManagementProtectionRequired,
     ProtectedManagementSession,
     RemovalPlanChanged,
+    ReadOnlyRemovalUnavailable,
     Busy,
     Cancelled,
     DeadlineExceeded,

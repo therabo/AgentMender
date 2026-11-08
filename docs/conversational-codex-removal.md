@@ -1,12 +1,28 @@
 # Conversational Codex primary-session removal (P0-C1)
 
-Status: **OPEN**. The bounded components and disposable workflow are implemented.
-Actual Codex conversational acceptance with independently operated human approval
-has not passed. No real user session is used for development tests.
-Follow the [manual acceptance guide](p0-c1-manual-acceptance.md) and the
-[2026-11-08 client review](milestones/p0-c1-client-acceptance.md). The actual alpha.6
-client loaded all 13 schemas; its isolated natural-language probe required login
-and invoked no tool. Catalog discovery alone is not conversational acceptance.
+Status: **OPEN**. Start with the [real-session quick start](p0-c1-manual-acceptance.md)
+and [real-world report](milestones/p0-c1-real-world-integration.md). Normal browsing
+uses the installed Codex, not a synthetic root or historical binary.
+
+## Current real-session read mode
+
+`agentmender --provider codex mcp --session-search` adds the five conversational
+tools to the original eight. It needs no transaction state root or caller UUID.
+It uses the protected `codex-state-threads-columns-v1` reader, not the exact cleanup
+profile: validate fixed required metadata columns/value bounds in an in-memory
+snapshot under kernel source-write denial. Unknown producer versions/additive
+columns can be readable. Display names, title/project basename/UUID, timestamps,
+archive state and optional spawn parent are disclosed; transcripts/auth/config are
+not exported. Coverage/relationships stay partial. Optional labels over 4096 bytes
+are unavailable; the bounded inventory is at most 500 recent records/96 KiB.
+
+Installed native methods are inspected from generated schemas under isolation.
+Advertisement does not establish effects. Read-mode `preview_removal` is an exact
+selected-identity blocked assessment, with no plan digest or execution authority.
+Preparation/status/handoff refuse with `read_only_removal_unavailable`; this mode
+has no cleanup port, approval key or owned state. Caller binding is not inferred.
+[ADR-0024](adr/0024-adaptive-read-only-metadata.md) separates these capabilities.
+The following exact contract applies to the **existing destructive fallback**.
 
 ## Supported boundary
 
@@ -26,7 +42,7 @@ inventory and this stable exact-schema metadata reader have separate compatibili
 Current native `thread/delete` is not dispatched; see retained
 [native evidence](../compatibility/codex/0.166.0/lifecycle-m8-1/README.md).
 
-## Trusted setup and management protection
+## Advanced fallback setup and management protection
 
 A human or trusted host must independently obtain the exact management UUID and
 register it before launching the server. Registration is an exclusion contract,
@@ -43,7 +59,7 @@ read the authority key or synthesize terminal input, same-user authentication do
 not enforce independence. This local development environment has those capabilities;
 its tests do not establish a strongly isolated production deployment.
 
-A stdio launcher configuration for a separately prepared disposable test profile:
+A separately configured stable-profile fallback launcher (not normal read-only onboarding):
 
 ```toml
 [mcp_servers.agentmender]

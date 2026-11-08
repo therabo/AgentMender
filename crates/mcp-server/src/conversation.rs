@@ -65,6 +65,10 @@ struct SessionLabelView {
     state: String,
     exact_profile: &'static str,
     producer_version_matches: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    producer_version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    parent_native_session_id: Option<String>,
     protected: bool,
     can_request_preview: bool,
     removal_eligibility: &'static str,
@@ -74,6 +78,66 @@ struct SearchView {
     sessions: Vec<SessionLabelView>,
     completeness: String,
     search_basis: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    read_compatibility: Option<ReadCompatibilityView>,
+}
+#[derive(Serialize, JsonSchema)]
+struct ReadCompatibilityView {
+    metadata_contract: String,
+    provider_version: Option<String>,
+    app_server_methods: Vec<String>,
+    native_interface_status: String,
+    native_delete_admission: String,
+    scoped_fallback_admission: String,
+    additional_cleanup_admission: String,
+    coverage: String,
+    relationship_coverage: String,
+    source_changed_during_capture: bool,
+    authenticated_caller_binding: bool,
+}
+impl From<&agentmender_domain::SessionReadCompatibility> for ReadCompatibilityView {
+    fn from(c: &agentmender_domain::SessionReadCompatibility) -> Self {
+        Self {
+            metadata_contract: c.metadata_contract.clone(),
+            provider_version: c.provider_version.clone(),
+            app_server_methods: c.app_server_methods.clone(),
+            native_interface_status: c.native_interface_status.clone(),
+            native_delete_admission: c.native_delete_admission.clone(),
+            scoped_fallback_admission: c.scoped_fallback_admission.clone(),
+            additional_cleanup_admission: c.additional_cleanup_admission.clone(),
+            coverage: c.coverage.clone(),
+            relationship_coverage: serde_json::to_value(c.relationship_coverage)
+                .expect("coverage")
+                .as_str()
+                .expect("enum")
+                .into(),
+            source_changed_during_capture: c.source_changed_during_capture,
+            authenticated_caller_binding: false,
+        }
+    }
+}
+#[derive(Serialize, JsonSchema)]
+#[serde(untagged)]
+enum PreviewOutput {
+    Supported(PreviewView),
+    ReadOnly(ReadOnlyPreviewView),
+}
+#[derive(Serialize, JsonSchema)]
+struct ReadOnlyPreviewView {
+    session: SessionLabelView,
+    compatibility: ReadCompatibilityView,
+    operation: &'static str,
+    status: &'static str,
+    execution_permitted: bool,
+    affected_session_ids: Vec<String>,
+    affected_set_complete: bool,
+    descendant_effects: &'static str,
+    irreversible_effects: &'static str,
+    residuals: &'static str,
+    writer_prerequisites: &'static str,
+    verification_postconditions: &'static str,
+    independent_human_approval_required: bool,
+    blockers: Vec<&'static str>,
 }
 #[derive(Serialize, JsonSchema)]
 struct PreviewView {
@@ -135,7 +199,7 @@ struct TransactionsView {
 pub(super) fn tools() -> Vec<Tool> {
     [
         ("session_search", "Search opt-in title/project metadata; return all possible matches, never select by title", schema::<SearchInput>(), schema::<SearchView>(), true),
-        ("preview_removal", "Fresh exact stable-profile primary-removal preview; protected management identities are excluded", schema::<PreviewInput>(), schema::<PreviewView>(), true),
+        ("preview_removal", "Fresh removal review when admitted; read-only deployments return a compatibility assessment without a plan or execution authority", schema::<PreviewInput>(), schema::<PreviewOutput>(), true),
         ("prepare_removal", "Persist the exact reviewed plan and recovery metadata; never grant human approval or delete", schema::<PrepareInput>(), schema::<TransactionsView>(), false),
         ("removal_status", "Recover durable primary-removal results across client disconnect or restart; no redispatch", schema::<StatusInput>(), schema::<TransactionsView>(), true),
         ("request_removal_execution", "Return transaction status and trusted external-terminal handoff; this deployment cannot execute via MCP", schema::<HandoffInput>(), schema::<TransactionsView>(), true),
@@ -231,6 +295,7 @@ fn label(
     s: &agentmender_domain::SessionMetadata,
     protected: bool,
     can_preview: bool,
+    assessment: bool,
 ) -> SessionLabelView {
     let title = s.title.as_deref().map(safe);
     SessionLabelView {
@@ -250,12 +315,20 @@ fn label(
             .as_str()
             .expect("state enum")
             .into(),
-        exact_profile: "codex-0.166.0-darwin-arm64-scoped-cleanup-v1",
+        exact_profile: if assessment {
+            "no_mutation_profile_selected"
+        } else {
+            "codex-0.166.0-darwin-arm64-scoped-cleanup-v1"
+        },
         producer_version_matches: s.producer_version_matches,
+        producer_version: s.producer_version.clone(),
+        parent_native_session_id: s.parent_native_session_id.clone(),
         protected,
         can_request_preview: can_preview,
         removal_eligibility: if protected {
             "protected"
+        } else if assessment {
+            "read_only_assessment_no_execution"
         } else if !can_preview {
             "unavailable"
         } else {
@@ -272,10 +345,11 @@ pub(super) fn project(
         ConversationResponse::Search {
             sessions,
             completeness,
+            read_compatibility,
         } => serde_json::to_value(SearchView {
             sessions: sessions
                 .into_iter()
-                .map(|s| label(projector, &s.metadata, s.protected, s.can_request_preview))
+                .map(|s| label(projector, &s.metadata, s.protected, s.can_request_preview, read_compatibility.is_some()))
                 .collect(),
             completeness: serde_json::to_value(completeness)
                 .expect("coverage")
@@ -283,7 +357,20 @@ pub(super) fn project(
                 .expect("coverage enum")
                 .into(),
             search_basis: "metadata_only_all_terms_no_transcript_search",
+            read_compatibility: read_compatibility.as_ref().map(ReadCompatibilityView::from),
         }),
+        ConversationResponse::ReadOnlyPreview {session, compatibility, protected} => serde_json::to_value(PreviewOutput::ReadOnly(ReadOnlyPreviewView {
+            session:label(projector,&session,protected,!protected,true),compatibility:ReadCompatibilityView::from(&compatibility),
+            operation:"not_admitted",status:"blocked",execution_permitted:false,
+            affected_session_ids:vec![session.native_session_id],affected_set_complete:false,
+            descendant_effects:"native_delete_may_include_spawned_descendants; complete effect closure is unverified",
+            irreversible_effects:"a future admitted delete would remove provider history; this assessment changes nothing",
+            residuals:"not_assessed; no artifact erasure or physical reclaim claim",
+            writer_prerequisites:"an admitted operation must prove its own concurrency and active-session contract",
+            verification_postconditions:"a future operation must prove target primary absence and unrelated-session preservation",
+            independent_human_approval_required:true,
+            blockers:vec!["no_admitted_operation_selected","native_effect_contract_unverified","management_caller_not_authenticated","independent_approval_deployment_not_verified"],
+        })),
         ConversationResponse::Preview { session, inputs } => {
             let c = inputs.plan.content();
             let m = c
@@ -333,14 +420,14 @@ pub(super) fn project(
                     .map(|v| enum_name(serde_json::to_value(v).expect("blocker")))
                     .collect(),
             };
-            serde_json::to_value(PreviewView {
-                session: label(projector, &session, false, true),
+            serde_json::to_value(PreviewOutput::Supported(PreviewView {
+                session: label(projector, &session, false, true, false),
                 review,
                 operation: "scoped_primary_cleanup_v1",
                 irreversible: true,
                 recovery: "reconciliation_metadata_only_no_payload_restore",
                 execution_channel: "trusted_external_terminal",
-            })
+            }))
         }
         ConversationResponse::Transactions(statuses) => {
             let statuses =

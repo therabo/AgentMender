@@ -1,5 +1,18 @@
 # Development and verification
 
+## Real-session versus regression acceptance
+
+Normal onboarding starts with the existing installation and
+`agentmender --provider codex mcp --session-search`; see the
+[quick start](p0-c1-manual-acceptance.md). The
+`prepare_p0_c1_readonly_fixture.py` helper is **development-only** and accepts no
+existing provider path. Preserve it and all deterministic CI/security fixtures.
+The new normal macOS stdio test proves readable unknown binaries, blocked preview,
+preparation refusal, no owned-state creation and unchanged fixture bytes. Real
+metadata checks are separate from private-data-free CI and from actual model use,
+human approval, real deletion and optional GUI confirmation.
+
+
 ## P0-C1 verification
 
 Current work is the bounded [conversational primary handoff](conversational-codex-removal.md),

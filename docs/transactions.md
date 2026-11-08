@@ -1,5 +1,14 @@
 # Durable transactions and restart recovery
 
+## Real-session reading does not initialize authority
+
+The `mcp --session-search` deployment reads fixed metadata under isolation without
+opening/creating the owned transaction store or an approval key. Its preview is a
+blocked assessment, not a durable plan. Preparation/status/execution-handoff tools
+refuse in that mode. The existing separately configured destructive workflow and
+all historical plan/journal/recovery encodings retain their exact meanings.
+
+
 ## P0-C1 durable handoff
 
 Opt-in MCP prepares existing schema-2 primary attempts through application
