@@ -118,9 +118,15 @@ it enumerates rather than silently returning Top-K. Follow all `next_cursor`
 values, including empty result pages, to finish the eligible inventory.
 
 Cursors are HMAC sealed and bind parameters, root, exclusions, binding revision,
-metadata corpus fingerprint, inventory window and source progress. Any metadata
-insertion/change invalidates pagination, including an insertion before the keyset
-boundary. Transcript revisions are frozen within each inventory window, while a
+query-scoped cohort fingerprint, inventory window and source progress. ADR-0028
+pins eligible identities, predicate leaf truth, lexical facts and sort keys.
+Unrelated excluded-project activity and unused display timestamps do not discard
+progress. Matching additions/removals, relevant truth/order changes and source
+revision changes still refuse, including before keyset boundaries. Display-only
+facts are read fresh: this is not an immutable metadata snapshot. New matching
+identities require a new query rather than silent merging. Raw bounded inventory
+window shifts may still conservatively refuse. Transcript revisions are frozen
+within each inventory window, while a
 later window reads its sources fresh. There is no atomic global transcript snapshot.
 Source changes can require restarting retrieval. Tokens expire on server restart;
 changing a query, purpose or root requires a new search. Each finalized session
@@ -233,3 +239,22 @@ Context and another occurrence:
 For another occurrence replace `window` with
 `{"direction":"occurrences","query":"resolved","max_bytes":8192}`. Follow
 returned suggestions rather than inventing offsets or paths.
+
+## P0-SR1 source and navigation diagnostics
+
+[ADR-0028](adr/0028-search-reliability-and-scoped-freshness.md) reserves positive
+next-reference offsets for unfinished messages. Completed messages use zero-offset
+anchors with forward/occurrence traversal. Exhausted sources have no next ref.
+Identical ref/window pairs refuse rather than loop.
+
+Closed path-free content_status failure codes: locator_missing, source_missing,
+source_outside_allowed_root, permission_denied, source_link_refused,
+source_link_or_scope_refused, source_identity_mismatch, source_ambiguous,
+format_unsupported and conservative source_unavailable. Legacy aggregate
+unsupported/unreadable counters remain for compatibility. No OS error text or raw
+locator is exported. Only fixed active/archive counterparts of an absent locator
+are tried. Ambiguity, links, shared/nonregular sources and foreign headers refuse.
+There is no recursive discovery, root widening or credential/transport impersonation.
+The additive content_coverage is complete, partial, not_requested or
+unavailable_or_partial. Empty excerpts cannot prove absence; physical EOF of inline
+paginated history remains Partial. Missing real MISSION1 sources remain OPEN.

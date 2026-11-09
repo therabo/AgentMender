@@ -1,5 +1,9 @@
 # AgentMender engineering constraints
 
+## P0-SR1 reliability constraints
+
+Follow [ADR-0028](docs/adr/0028-search-reliability-and-scoped-freshness.md). Cursor fingerprints bind eligible identities, predicate leaf truth, lexical facts and sort keys; unused display facts are read fresh. Relevant membership/order and selected source changes still refuse. Only fixed active/archive counterparts of missing locators may be tried, with exact header UUID, NOFOLLOW, single-link and revision checks. No recursive scanner or root widening. Positive next offsets mean unfinished messages; completed messages advance. Reject identical continuation pairs. Session-wide semantic negatives require trusted complete coverage, fresh source/filter validation and parent-vetted negative evidence. Keep real receipts outside Git. No management admission is added.
+
 ## Current product direction
 
 Read [ADR-0022](docs/adr/0022-product-first-session-lifecycle.md), the

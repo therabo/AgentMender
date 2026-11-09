@@ -1,5 +1,9 @@
 # AgentMender
 
+## P0-SR1 search reliability
+
+P0-SR1 hardens query-scoped cursor freshness, completed-message continuation, fixed active/archive source recovery and path-free diagnostics. Semantic validation rejects negatives from incomplete evidence. Real MISSION1 backing sources remain missing, and authenticated caller routing remains unavailable: production acceptance is OPEN. See [current hardening status](docs/milestones/p0-sr1-search-reliability.md) and [ADR-0028](docs/adr/0028-search-reliability-and-scoped-freshness.md).
+
 AgentMender is an **MCP-native session lifecycle manager for AI coding agents**.
 Its initial target providers are **OpenAI Codex and Anthropic Claude Code**.
 It aims to help users find and safely manage old conversations through a

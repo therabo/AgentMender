@@ -1,5 +1,9 @@
 # MCP interface
 
+## P0-SR1 refinement
+
+The existing tools gain query-scoped freshness, completed-message progress and closed path-free source-failure codes; see [ADR-0028](adr/0028-search-reliability-and-scoped-freshness.md). Hits add content_coverage; legacy aggregate counters remain. A long-running parent MCP process can reuse newly built capture workers, but only refreshing the AgentMender connection loads its additive parent schema and no-progress guard. A rebuilt binary alone is not proof of refreshed client catalog. Never restart Codex automatically.
+
 ## Real-session incremental read mode
 
 Historical real conversational metadata search is accepted (37 MISSION1 records,

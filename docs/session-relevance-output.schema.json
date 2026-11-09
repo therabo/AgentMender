@@ -29,6 +29,7 @@
         "native_session_id": {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"},
         "assessment": {"enum": ["relevant", "not_relevant", "insufficient"]},
         "confidence": {"enum": ["strong", "moderate", "limited"]},
+        "evidence_basis": {"enum": ["positive_support", "explicit_contradiction", "complete_absence", "insufficient"]},
         "supporting_evidence_refs": {"type": "array", "maxItems": 20, "uniqueItems": true, "items": {"type": "string", "minLength": 1, "maxLength": 4096}},
         "explanation": {"type": "string", "maxLength": 2048},
         "missing_evidence": {"type": "array", "maxItems": 20, "items": {"type": "string", "maxLength": 512}},

@@ -325,7 +325,7 @@ pub fn open_source_read(root: &Path, path: &Path) -> Result<fs::File, ProviderEr
             OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
             Mode::empty(),
         )
-        .map_err(|_| ProviderError::CapabilityUnavailable("source directory unavailable".into()))?;
+        .map_err(source_open_error)?;
         for component in &components[..components.len() - 1] {
             directory = openat(
                 &directory,
@@ -333,9 +333,7 @@ pub fn open_source_read(root: &Path, path: &Path) -> Result<fs::File, ProviderEr
                 OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
                 Mode::empty(),
             )
-            .map_err(|_| {
-                ProviderError::CapabilityUnavailable("source ancestor unavailable".into())
-            })?;
+            .map_err(source_open_error)?;
         }
         let fd = openat(
             &directory,
@@ -343,18 +341,7 @@ pub fn open_source_read(root: &Path, path: &Path) -> Result<fs::File, ProviderEr
             OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::NONBLOCK | OFlags::CLOEXEC,
             Mode::empty(),
         )
-        .map_err(|e| {
-            ProviderError::CapabilityUnavailable(
-                if e == rustix::io::Errno::NOENT {
-                    "source file missing"
-                } else if e == rustix::io::Errno::LOOP {
-                    "source file linked"
-                } else {
-                    "source file unavailable"
-                }
-                .into(),
-            )
-        })?;
+        .map_err(source_open_error)?;
         let file = fs::File::from(fd);
         let metadata = file.metadata().map_err(|e| io_error(path, e))?;
         use std::os::unix::fs::MetadataExt;
@@ -372,6 +359,21 @@ pub fn open_source_read(root: &Path, path: &Path) -> Result<fs::File, ProviderEr
             "descriptor source reads unsupported".into(),
         ))
     }
+}
+
+/// Closed, path-free source diagnostics; never export the OS error's text.
+#[cfg(unix)]
+fn source_open_error(error: rustix::io::Errno) -> ProviderError {
+    use rustix::io::Errno;
+    ProviderError::CapabilityUnavailable(
+        match error {
+            Errno::NOENT => "source file missing",
+            Errno::ACCESS | Errno::PERM => "source read permission denied",
+            Errno::LOOP | Errno::NOTDIR => "source file linked or non-directory",
+            _ => "source file unavailable",
+        }
+        .into(),
+    )
 }
 
 /// Narrow independent-operator registration admission; no credential creation.

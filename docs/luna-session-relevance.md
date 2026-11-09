@@ -1,5 +1,9 @@
 # Luna session relevance
 
+## P0-SR1 result-acceptance guard
+
+Shape validity alone does not establish semantic reliability. Trusted candidate handoffs may add content_coverage, hard_filters_verified, source_revalidated and negative_evidence_refs. Missing coverage defaults to unknown. A session-wide not_relevant judgment requires complete coverage, both fresh-validation flags and a supporting parent-vetted negative ref. Otherwise return insufficient with specific missing evidence, regardless of confidence. Physical EOF of paginated inline text is Partial. A contradictory passage can reject a proposed fix while the conversation remains relevant. The additive evidence_basis is positive_support, explicit_contradiction, complete_absence or insufficient, and is required for accepted negatives. Existing positive/insufficient v1 receipts remain readable; historical output is not rewritten. The parent must freshly reissue original filters, validate source refs, then rerun the checker with the updated trusted handoff. Handoff flags are not authentication or destructive authority. The checker does not itself read providers. Native custom-agent discovery remains separate from explicit model overrides and mediated MCP context.
+
 The project custom agent is [session_relevance](../.codex/agents/session-relevance.toml),
 using `gpt-6-luna` with `model_reasoning_effort = "medium"`. The
 [versioned JSON result contract](session-relevance-output.schema.json) uses

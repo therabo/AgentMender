@@ -2,7 +2,7 @@
 use crate::{ContextReference, ConversationEvidence};
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MessagePosition {
     pub byte_offset: u64,
@@ -39,7 +39,7 @@ pub struct TranscriptCheckpoint {
     pub text_matches: Vec<String>,
 }
 
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ContextDirection {
     #[default]
@@ -50,7 +50,7 @@ pub enum ContextDirection {
     Occurrences,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ContextOptions {
     /// UTF-8 byte offset within the authenticated parent message.

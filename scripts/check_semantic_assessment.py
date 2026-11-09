@@ -88,7 +88,21 @@ def main():
         allowed = next((c for c in candidates if c['target'] == assessment['target'] and c['native_session_id'] == assessment['native_session_id']), None)
         if allowed is None or not set(assessment['supporting_evidence_refs']).issubset(allowed['evidence_refs']):
             raise ValueError('candidate or evidence not in trusted handoff')
-    print(json.dumps({'schema_valid': True, 'candidate_allowlist_valid': True,
+        refs = set(assessment['supporting_evidence_refs'])
+        if assessment['assessment'] == 'relevant' and not refs:
+            raise ValueError('positive relevance needs supporting evidence')
+        if assessment['assessment'] == 'not_relevant':
+            # Coverage and negative proof are parent-supplied facts, never model
+            # assertions. Physical traversal of paginated inline text is partial.
+            if (allowed.get('content_coverage', 'unknown') != 'complete'
+                    or allowed.get('hard_filters_verified') is not True
+                    or allowed.get('source_revalidated') is not True
+                    or assessment.get('evidence_basis') not in ('complete_absence', 'explicit_contradiction')
+                    or not refs.intersection(allowed.get('negative_evidence_refs', []))):
+                raise ValueError('session-wide negative lacks trusted complete coverage, fresh filters or negative proof; use insufficient')
+        if assessment['assessment'] == 'insufficient' and not assessment['missing_evidence']:
+            raise ValueError('insufficient assessment must identify missing evidence')
+    print(json.dumps({'schema_valid': True, 'candidate_allowlist_valid': True, 'incomplete_evidence_guard_valid': True,
                       'assessments': len(result['assessments']), 'source_revalidation_required': True,
                       'destructive_authority': False}))
 

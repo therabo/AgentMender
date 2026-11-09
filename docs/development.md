@@ -1,5 +1,9 @@
 # Development and verification
 
+## P0-SR1 regression gates
+
+Read [ADR-0028](adr/0028-search-reliability-and-scoped-freshness.md). Tests cover source errors/relocation/ambiguity/links, chunks followed by more messages, exact boundaries/EOF/no-progress, unrelated writer activity, relevant membership/order changes and semantic negatives from incomplete evidence. Compare identical recorded UUID cohorts before/after, not changing live inventory percentages. Keep private receipts outside Git. Distinguish current parent from newly built worker behavior; only an AgentMender connection refresh loads a new parent. No unisolated App Server startup or Codex restart is permitted.
+
 ## Real-session versus regression acceptance
 
 Normal onboarding starts with the existing installation and

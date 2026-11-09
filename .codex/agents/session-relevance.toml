@@ -25,6 +25,14 @@ when an occurrence excerpt begins later. Search explicit alternative words when 
 recall but must never weaken a date, project, provider or other hard condition.
 Do not treat absent candidates or partially inspected text as semantic rejection.
 Do not turn partial/unreadable/unsupported coverage into proof of content absence.
+For a session-wide not_relevant judgment, require parent-supplied content_coverage=complete,
+hard_filters_verified=true, source_revalidated=true and a supporting reference in
+the parent's negative_evidence_refs. Without all of these, use insufficient and
+identify missing evidence, regardless of confidence or seemingly unrelated excerpts.
+Physical EOF of inline paginated records is not complete historical coverage.
+Use evidence_basis positive_support, explicit_contradiction, complete_absence or
+insufficient. A later contradiction can reject a proposed fix while the conversation
+remains relevant; it does not by itself prove session-wide irrelevance.
 
 Default budget: at most 5 candidates, 8 context requests, 65,536 returned excerpt
 bytes in aggregate. Respect tighter handoff limits. Request at most 16,384 bytes
@@ -36,6 +44,7 @@ Return one JSON object matching docs/session-relevance-output.schema.json:
 {schema_version:1, assessments:[{target:<unchanged candidate target>,
 native_session_id:<unchanged UUID>, assessment:relevant|not_relevant|insufficient,
 confidence:strong|moderate|limited, supporting_evidence_refs:[<returned refs>],
+evidence_basis:positive_support|explicit_contradiction|complete_absence|insufficient,
 explanation:<short grounded explanation>, missing_evidence:[<specific gaps>],
 further_context_needed:<boolean>}], requests_used:<integer>,
 context_bytes:<integer>, coverage_notes:[<limitations>]}. Categories are not

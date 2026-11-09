@@ -77,6 +77,21 @@ pub(super) struct FileFingerprint {
     record: Option<FileRecord>,
     stable_read: bool,
 }
+
+#[cfg(target_os = "macos")]
+pub(super) fn same_primary_identity(before: &[FileFingerprint], after: &[FileFingerprint]) -> bool {
+    match (before.first(), after.first()) {
+        (Some(a), Some(b))
+            if a.name == "state_5.sqlite" && b.name == a.name && a.stable_read && b.stable_read =>
+        {
+            match (&a.record, &b.record) {
+                (Some(a), Some(b)) => (a.device, a.inode, a.mode) == (b.device, b.inode, b.mode),
+                _ => false,
+            }
+        }
+        _ => false,
+    }
+}
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct FileRecord {
@@ -678,5 +693,23 @@ mod tests {
         insert(&writer, "changed", "fixture");
         let after = fingerprints(root.path()).unwrap();
         assert!(fingerprints_changed(&before, &after));
+    }
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn scoped_revalidation_allows_activity_but_refuses_identical_replacement() {
+        let root = tempfile::tempdir().unwrap();
+        let writer = database(root.path(), ExactProfile::V164);
+        let before = fingerprints(root.path()).unwrap();
+        insert(&writer, "activity", "fixture");
+        let after = fingerprints(root.path()).unwrap();
+        assert!(fingerprints_changed(&before, &after));
+        assert!(same_primary_identity(&before, &after));
+        drop(writer);
+        let original = root.path().join("state_5.sqlite");
+        let retained = root.path().join("retained.sqlite");
+        fs::rename(&original, &retained).unwrap();
+        fs::copy(&retained, &original).unwrap();
+        let replaced = fingerprints(root.path()).unwrap();
+        assert!(!same_primary_identity(&after, &replaced));
     }
 }

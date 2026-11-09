@@ -1,5 +1,9 @@
 # Codex compatibility evidence
 
+## P0-SR1 current read reliability
+
+CLI 0.167.0-alpha.3.2 is observed separately from historical mutation profiles. Missing backing sources are source_missing rather than format incompatibility. Fixed active/archive counterparts stay within existing roots and require UUID/physical validation. Paginated inline display items remain Partial. Documented non-resuming thread/read, thread/turns/list and thread/items/list do not alone establish write-denied startup or a trusted existing-client transport. No credentials are copied and no client is impersonated. Native coverage and caller routing stay OPEN. See [current status](../../docs/milestones/p0-sr1-search-reliability.md).
+
 Current read-only retrieval and host-binding limits are documented in
 [the search contract](../../docs/session-search.md). Content reads do not expand
 any approval, mutation profile or recovery authority. Real updated client and

@@ -81,6 +81,29 @@ fn stale() -> ProviderError {
 fn content_limit(code: &'static str) -> ProviderError {
     ProviderError::CapabilityUnavailable(code.into())
 }
+// A closed diagnostic vocabulary, not arbitrary provider/OS error messages.
+fn content_failure(error: &ProviderError) -> &'static str {
+    match error {
+        ProviderError::CapabilityUnavailable(code) => match code.as_str() {
+            "missing_supported_rollout_locator" => "locator_missing",
+            "source file missing" => "source_missing",
+            "source read permission denied" => "permission_denied",
+            "rollout_locator_outside_root" | "unsupported_rollout_location" => {
+                "source_outside_allowed_root"
+            }
+            "source file linked or non-directory" => "source_link_refused",
+            "header_not_session_meta"
+            | "header_producer_missing"
+            | "unknown_history_mode"
+            | "bounded_session_header_unavailable" => "format_unsupported",
+            "header_identity_mismatch" => "source_identity_mismatch",
+            "ambiguous_rollout_counterparts" => "source_ambiguous",
+            _ => "source_unavailable",
+        },
+        ProviderError::InvalidScope(_) => "source_link_or_scope_refused",
+        _ => "source_unavailable",
+    }
+}
 fn hash(bytes: &[u8]) -> String {
     format!(
         "sha256:{}",
@@ -152,6 +175,116 @@ struct Candidate {
     metadata: SessionMetadata,
     path: Option<PathBuf>,
 }
+fn candidate_row(row: &rusqlite::Row<'_>, root: &Path) -> Result<Candidate, ProviderError> {
+    let id: String = row.get(0).map_err(|_| unavailable())?;
+    if !metadata::uuid(&id) {
+        return Err(unavailable());
+    }
+    let optional = |i| -> Result<Option<String>, ProviderError> {
+        Ok(row
+            .get::<_, Option<String>>(i)
+            .map_err(|_| unavailable())?
+            .filter(|v| v.len() <= 4096))
+    };
+    let title = optional(1)?.filter(|v| !v.trim().is_empty() && safe_conversation_text(v));
+    let cwd = optional(2)?;
+    let project_label = cwd
+        .and_then(|v| {
+            Path::new(&v)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .map(str::to_owned)
+        })
+        .filter(|v| safe_conversation_text(v));
+    let state = match row.get::<_, i64>(5).map_err(|_| unavailable())? {
+        0 => SessionState::Active,
+        1 => SessionState::Archived,
+        _ => SessionState::Unknown,
+    };
+    let version = optional(6)?.filter(|v| v.len() <= 128);
+    let path = optional(7)?.map(PathBuf::from);
+    let metadata = SessionMetadata {
+        identity: identity(root, &id)?,
+        native_session_id: id,
+        title,
+        project_label,
+        created_at: row
+            .get::<_, Option<i64>>(3)
+            .map_err(|_| unavailable())?
+            .filter(|v| *v >= 0),
+        last_active_at: row
+            .get::<_, Option<i64>>(4)
+            .map_err(|_| unavailable())?
+            .filter(|v| *v >= 0),
+        state,
+        producer_version_matches: version.as_deref() == Some("0.166.0"),
+        producer_version: version,
+        parent_native_session_id: None,
+    };
+    Ok(Candidate { metadata, path })
+}
+fn candidate_eligible(candidate: &Candidate, p: &SearchParameters) -> bool {
+    p.project_label
+        .as_ref()
+        .is_none_or(|label| candidate.metadata.project_label.as_ref() == Some(label))
+        && p.structured
+            .as_ref()
+            .is_none_or(|q| q.filter.metadata_truth(&candidate.metadata) != Truth::False)
+}
+// Only query-relevant facts participate; display-only fields are read fresh.
+fn query_metadata_facts(query: &QueryExpr, metadata: &SessionMetadata) -> serde_json::Value {
+    use serde_json::json;
+    match query {
+        QueryExpr::And { args } | QueryExpr::Or { args } => json!(
+            args.iter()
+                .map(|q| query_metadata_facts(q, metadata))
+                .collect::<Vec<_>>()
+        ),
+        QueryExpr::Not { arg } => query_metadata_facts(arg, metadata),
+        // Membership facts are leaf truth values. A timestamp may change inside
+        // the same range without changing membership; sort keys are pinned below.
+        _ => json!(query.metadata_truth(metadata)),
+    }
+}
+fn metadata_fingerprint(
+    metadata: &SessionMetadata,
+    path: &Option<PathBuf>,
+    p: &SearchParameters,
+    root: &Path,
+    source_revision: bool,
+) -> Result<Vec<u8>, ProviderError> {
+    let sort = p.structured.as_ref().map(|q| q.sort);
+    let facts = p
+        .structured
+        .as_ref()
+        .map(|q| query_metadata_facts(&q.filter, metadata));
+    let ranking = !p.ranking_terms().is_empty();
+    let revision = if source_revision && p.reads_content() {
+        open_transcript(
+            &Candidate {
+                metadata: metadata.clone(),
+                path: path.clone(),
+            },
+            root,
+        )
+        .ok()
+        .and_then(|(f, _)| f.metadata().ok())
+        .map(|m| stamp(&m))
+    } else {
+        None
+    };
+    serde_json::to_vec(&(
+        metadata.native_session_id.as_str(),
+        facts,
+        (sort == Some(SearchSort::Created)).then_some(metadata.created_at),
+        (sort == Some(SearchSort::LastActive)).then_some(metadata.last_active_at),
+        ranking.then_some((&metadata.title, &metadata.project_label)),
+        p.reads_content().then_some(path),
+        revision,
+    ))
+    .map_err(|_| unavailable())
+}
+
 struct Inventory {
     batch: Vec<Candidate>,
     fingerprint: String,
@@ -245,7 +378,7 @@ fn inventory(
         .query(params![excluded, p.include_archived])
         .map_err(|_| unavailable())?;
     let mut corpus = Sha256::new();
-    corpus.update(b"agentmender/search-corpus/v2\0");
+    corpus.update(b"agentmender/search-corpus/v3\0");
     let mut previous_id = None;
     while let Some(row) = corpus_rows.next().map_err(|_| unavailable())? {
         deadline(end)?;
@@ -254,29 +387,15 @@ fn inventory(
             return Err(unavailable());
         }
         previous_id = Some(id);
-        for column in 0..8 {
-            use rusqlite::types::ValueRef;
-            match row.get_ref(column).map_err(|_| unavailable())? {
-                ValueRef::Null => corpus.update([0]),
-                ValueRef::Integer(v) => {
-                    corpus.update([1]);
-                    corpus.update(v.to_le_bytes());
-                }
-                ValueRef::Real(v) => {
-                    corpus.update([2]);
-                    corpus.update(v.to_bits().to_le_bytes());
-                }
-                ValueRef::Text(v) => {
-                    corpus.update([3]);
-                    corpus.update((v.len() as u64).to_le_bytes());
-                    corpus.update(v);
-                }
-                ValueRef::Blob(v) => {
-                    corpus.update([4]);
-                    corpus.update((v.len() as u64).to_le_bytes());
-                    corpus.update(v);
-                }
-            }
+        let candidate = candidate_row(row, root)?;
+        if candidate_eligible(&candidate, p) {
+            corpus.update(metadata_fingerprint(
+                &candidate.metadata,
+                &candidate.path,
+                p,
+                root,
+                false,
+            )?);
         }
     }
     let corpus_fingerprint = hash(&corpus.finalize());
@@ -311,7 +430,7 @@ fn inventory(
         .map_err(|_| unavailable())?;
     let mut boundary = None;
     let mut digest = Sha256::new();
-    digest.update(b"agentmender/search-inventory/v1\0");
+    digest.update(b"agentmender/search-inventory/v2\0");
     let mut seen = BTreeSet::new();
     let mut eligible = 0;
     let mut observed = 0;
@@ -332,12 +451,6 @@ fn inventory(
         if !metadata::uuid(&id) || !seen.insert(id.clone()) {
             return Err(unavailable());
         }
-        let optional = |i| -> Result<Option<String>, ProviderError> {
-            Ok(row
-                .get::<_, Option<String>>(i)
-                .map_err(|_| unavailable())?
-                .filter(|v| v.len() <= 4096))
-        };
         boundary = Some(InventoryBoundary {
             native_session_id: id.clone(),
             sort_value: match time_column {
@@ -352,66 +465,20 @@ fn inventory(
                 _ => None,
             },
         });
-        let title = optional(1)?.filter(|v| !v.trim().is_empty() && safe_conversation_text(v));
-        let cwd = optional(2)?;
-        let project_label = cwd
-            .and_then(|v| {
-                Path::new(&v)
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .map(str::to_owned)
-            })
-            .filter(|v| safe_conversation_text(v));
+        let Candidate { metadata, path } = candidate_row(row, root)?;
         if p.project_label
             .as_ref()
-            .is_some_and(|label| project_label.as_ref() != Some(label))
+            .is_some_and(|label| metadata.project_label.as_ref() != Some(label))
         {
             continue;
         }
-        let state = match row.get::<_, i64>(5).map_err(|_| unavailable())? {
-            0 => SessionState::Active,
-            1 => SessionState::Archived,
-            _ => SessionState::Unknown,
-        };
-        let version = optional(6)?.filter(|v| v.len() <= 128);
-        let path = optional(7)?.map(PathBuf::from);
-        let metadata = SessionMetadata {
-            identity: identity(root, &id)?,
-            native_session_id: id,
-            title,
-            project_label,
-            created_at: row
-                .get::<_, Option<i64>>(3)
-                .map_err(|_| unavailable())?
-                .filter(|v| *v >= 0),
-            last_active_at: row
-                .get::<_, Option<i64>>(4)
-                .map_err(|_| unavailable())?
-                .filter(|v| *v >= 0),
-            state,
-            producer_version_matches: version.as_deref() == Some("0.166.0"),
-            producer_version: version,
-            parent_native_session_id: None,
-        };
         if p.structured
             .as_ref()
             .is_some_and(|q| q.filter.metadata_truth(&metadata) == Truth::False)
         {
             continue;
         }
-        digest.update(serde_json::to_vec(&(&metadata, &path)).map_err(|_| unavailable())?);
-        if p.include_content
-            || p.structured
-                .as_ref()
-                .is_some_and(|q| q.filter.needs_content())
-        {
-            let revision = path
-                .as_ref()
-                .and_then(|p| filesystem::open_source_read(root, p).ok())
-                .and_then(|f| f.metadata().ok())
-                .map(|m| stamp(&m));
-            digest.update(serde_json::to_vec(&revision).map_err(|_| unavailable())?);
-        }
+        digest.update(metadata_fingerprint(&metadata, &path, p, root, true)?);
         if eligible >= request.continuation.start && eligible < stop {
             batch.push(Candidate { metadata, path });
         }
@@ -520,11 +587,60 @@ fn open_transcript(
         .map_err(|_| content_limit("rollout_locator_outside_root"))?;
     if !matches!(relative.components().next(),Some(Component::Normal(n)) if n=="sessions" || n=="archived_sessions")
         || path.extension().is_none_or(|v| v != "jsonl")
+        || relative
+            .components()
+            .any(|c| !matches!(c, Component::Normal(_)))
     {
         return Err(content_limit("unsupported_rollout_location"));
     }
-    let file = filesystem::open_source_read(root, path)?;
-    Ok((file, path.clone()))
+    match filesystem::open_source_read(root, path) {
+        Ok(file) => return Ok((file, path.clone())),
+        Err(ProviderError::CapabilityUnavailable(code)) if code == "source file missing" => {}
+        Err(error) => return Err(error),
+    }
+    // Fixed counterparts only: no recursive scan, root widening or auth lookup.
+    let name = path.file_name().ok_or_else(unavailable)?;
+    let rest: PathBuf = relative.components().skip(1).collect();
+    let mut alternatives = BTreeSet::from([
+        root.join("archived_sessions").join(name),
+        root.join("archived_sessions").join(&rest),
+        root.join("sessions").join(&rest),
+    ]);
+    if let Some(date) = name
+        .to_str()
+        .and_then(|n| n.strip_prefix("rollout-"))
+        .and_then(|n| n.get(..10))
+        && date.bytes().enumerate().all(|(i, b)| {
+            if i == 4 || i == 7 {
+                b == b'-'
+            } else {
+                b.is_ascii_digit()
+            }
+        })
+    {
+        alternatives.insert(
+            root.join("sessions")
+                .join(&date[..4])
+                .join(&date[5..7])
+                .join(&date[8..10])
+                .join(name),
+        );
+    }
+    alternatives.remove(path);
+    let mut found = None;
+    for alternative in alternatives {
+        match filesystem::open_source_read(root, &alternative) {
+            Ok(file) => {
+                if found.is_some() {
+                    return Err(content_limit("ambiguous_rollout_counterparts"));
+                }
+                found = Some((file, alternative));
+            }
+            Err(ProviderError::CapabilityUnavailable(code)) if code == "source file missing" => {}
+            Err(error) => return Err(error),
+        }
+    }
+    found.ok_or_else(|| content_limit("source file missing"))
 }
 fn transcript_stream(
     candidate: &Candidate,
@@ -1231,8 +1347,9 @@ fn search(
                     }
                     coverage.unsupported_sessions += 1;
                     coverage.unreadable_sessions += 1;
-                    status = "unsupported_or_unreadable";
-                    batch_digest.update(b"unsupported_or_unreadable");
+                    status = content_failure(&error);
+                    coverage.reasons.push(status.into());
+                    batch_digest.update(status.as_bytes());
                 }
             }
         }
@@ -1339,6 +1456,8 @@ fn search(
             .reasons
             .push("unknown_conditions_are_unresolved_not_matches".into());
     }
+    coverage.reasons.sort();
+    coverage.reasons.dedup();
     let actual_end = request.continuation.start + inspected;
     let next = if pending.is_some() || actual_end < inventory.eligible {
         Some(SearchContinuation {
@@ -1795,7 +1914,15 @@ fn context_window(
         if at_end {
             None
         } else {
-            messages.last().map(|m| message_reference(reference, m))
+            messages.last().map(|m| {
+                let mut next = message_reference(reference, m);
+                // A completed chunk anchors traversal *after* its parent message.
+                // Positive offsets are reserved for an unfinished message.
+                if let Some(position) = &mut next.position {
+                    position.chunk_offset = 0;
+                }
+                next
+            })
         }
     });
     if next.is_none()
@@ -1845,6 +1972,50 @@ fn context(
     evidence.truncated |= truncated;
     evidence.excerpt = Some(excerpt);
     Ok(evidence)
+}
+
+#[cfg(target_os = "macos")]
+fn read_snapshot(root: &Path, end: Instant) -> Result<Connection, ProviderError> {
+    let source = Connection::open_with_flags(
+        root.join("state_5.sqlite"),
+        OpenFlags::SQLITE_OPEN_READ_ONLY
+            | OpenFlags::SQLITE_OPEN_NO_MUTEX
+            | OpenFlags::SQLITE_OPEN_NOFOLLOW,
+    )
+    .map_err(|_| unavailable())?;
+    capture::configure(&source)?;
+    source
+        .execute_batch("PRAGMA query_only=ON")
+        .map_err(|_| unavailable())?;
+    let mut memory = Connection::open_in_memory().map_err(|_| unavailable())?;
+    capture::configure(&memory)?;
+    capture::bounded_backup(
+        &source,
+        &mut memory,
+        end.min(Instant::now() + Duration::from_secs(3)),
+    )?;
+    Ok(memory)
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn revalidate_search_snapshot(
+    db: &Connection,
+    root: &Path,
+    query: &SearchReadRequest,
+    page: &SessionSearchPage,
+    end: Instant,
+) -> Result<(), ProviderError> {
+    let fresh = inventory(db, root, query, end)?;
+    if fresh.fingerprint != page.inventory_fingerprint
+        || page
+            .next
+            .as_ref()
+            .is_some_and(|next| next.corpus_fingerprint != fresh.corpus_fingerprint)
+        || (page.next.is_none() && fresh.limited)
+    {
+        return Err(stale());
+    }
+    Ok(())
 }
 
 pub fn run_content_capture_worker() -> Result<(), ProviderError> {
@@ -1925,9 +2096,26 @@ pub fn run_content_capture_worker() -> Result<(), ProviderError> {
                     end,
                 )?),
             };
-            if capture::fingerprints_changed(&before, &capture::fingerprints(&request.source_root)?)
-            {
-                return Err(stale());
+            // The staged bounded output owns its data; release the first backup
+            // before any fresh backup so their page caches do not accumulate.
+            drop(memory);
+            let after = capture::fingerprints(&request.source_root)?;
+            if capture::fingerprints_changed(&before, &after) {
+                if let (Operation::Search(query), Response::Search(page)) =
+                    (&request.operation, &result)
+                    && capture::same_primary_identity(&before, &after)
+                {
+                    let fresh = read_snapshot(&request.source_root, end)?;
+                    revalidate_search_snapshot(&fresh, &request.source_root, query, page, end)?;
+                    if !capture::same_primary_identity(
+                        &after,
+                        &capture::fingerprints(&request.source_root)?,
+                    ) {
+                        return Err(stale());
+                    }
+                } else {
+                    return Err(stale());
+                }
             }
             Ok(result)
         })()
@@ -2591,6 +2779,10 @@ mod tests {
         q.continuation = page.next.unwrap();
         db.execute("UPDATE threads SET updated_at=3 WHERE id=?1", [id(1)])
             .unwrap();
+        // Activity is display-only in this identity/lexical-title query.
+        assert!(search(&db, root, &q, until()).is_ok());
+        db.execute("UPDATE threads SET title='different' WHERE id=?1", [id(1)])
+            .unwrap();
         assert!(search(&db, root, &q, until()).is_err());
         q.continuation = Default::default();
         db.execute(
@@ -3054,7 +3246,287 @@ mod tests {
         assert_eq!(next.sessions.len(), 1);
         assert_eq!(next.sessions[0].metadata.native_session_id, id(10001));
         assert!(next.next.is_none());
-        db.execute("INSERT INTO threads VALUES(?1,'inserted earlier','/fixture/project',1,2,0,'future',NULL,NULL)",[id(0)]).unwrap();
+        db.execute("INSERT INTO threads VALUES(?1,'inserted earlier','/fixture/project',10000,2,0,'future',NULL,NULL)",[id(0)]).unwrap();
         assert!(search(&db, root, &q, until()).is_err());
+    }
+    #[test]
+    fn scoped_cursor_survives_unrelated_writer_activity_but_refuses_membership_drift() {
+        let mut db = db();
+        let root = Path::new("/fixture");
+        for n in 1..=8 {
+            db.execute("INSERT INTO threads VALUES(?1,'neutral','/fixture/MISSION1',1,2,0,'future',NULL,NULL)", [id(n)]).unwrap();
+        }
+        db.execute(
+            "INSERT INTO threads VALUES(?1,'other','/fixture/elsewhere',1,2,0,'future',NULL,NULL)",
+            [id(99)],
+        )
+        .unwrap();
+        let mut q = request("");
+        q.parameters.include_content = false;
+        q.parameters.project_label = Some("MISSION1".into());
+        q.parameters.page_size = 1;
+        let staged = search(&db, root, &q, until()).unwrap();
+        db.execute("UPDATE threads SET updated_at=9 WHERE id=?1", [id(99)])
+            .unwrap();
+        revalidate_search_snapshot(&db, root, &q, &staged, until()).unwrap();
+        db.execute(
+            "UPDATE threads SET cwd='/fixture/MISSION1' WHERE id=?1",
+            [id(99)],
+        )
+        .unwrap();
+        assert!(revalidate_search_snapshot(&db, root, &q, &staged, until()).is_err());
+        db.execute(
+            "UPDATE threads SET cwd='/fixture/elsewhere' WHERE id=?1",
+            [id(99)],
+        )
+        .unwrap();
+        let mut seen = BTreeSet::new();
+        loop {
+            let page = search(&db, root, &q, until()).unwrap();
+            for h in page.sessions {
+                assert!(seen.insert(h.metadata.native_session_id));
+            }
+            let Some(next) = page.next else { break };
+            q.continuation = next;
+            // A concurrent writer commits between the reader's bounded snapshots.
+            db = std::thread::spawn(move || {
+                db.execute(
+                    "UPDATE threads SET updated_at=updated_at+1,title='new activity' WHERE id=?1",
+                    [id(99)],
+                )
+                .unwrap();
+                db
+            })
+            .join()
+            .unwrap();
+        }
+        assert_eq!(seen.len(), 8);
+        q.continuation = Default::default();
+        q.continuation = search(&db, root, &q, until()).unwrap().next.unwrap();
+        db.execute(
+            "UPDATE threads SET cwd='/fixture/MISSION1' WHERE id=?1",
+            [id(99)],
+        )
+        .unwrap();
+        assert!(search(&db, root, &q, until()).is_err());
+        db.execute(
+            "UPDATE threads SET cwd='/fixture/elsewhere' WHERE id=?1",
+            [id(99)],
+        )
+        .unwrap();
+        q.continuation = Default::default();
+        q.continuation = search(&db, root, &q, until()).unwrap().next.unwrap();
+        db.execute("DELETE FROM threads WHERE id=?1", [id(1)])
+            .unwrap();
+        assert!(search(&db, root, &q, until()).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn missing_sources_have_closed_diagnostics_and_fixed_archive_relocation() {
+        let root = tempfile::tempdir().unwrap();
+        let db = db();
+        let path = seed(
+            &db,
+            root.path(),
+            1,
+            "neutral",
+            &[message("user", "Cesium camera")],
+        );
+        fs::create_dir(root.path().join("archived_sessions")).unwrap();
+        let moved = root
+            .path()
+            .join("archived_sessions")
+            .join(path.file_name().unwrap());
+        fs::rename(&path, &moved).unwrap();
+        let q = request("Cesium");
+        let page = search(&db, root.path(), &q, until()).unwrap();
+        assert_eq!(page.sessions.len(), 1);
+        let r = evidence_reference(1, &page.sessions[0].evidence[0]);
+        assert!(
+            context(&db, root.path(), &r, &[], until())
+                .unwrap()
+                .excerpt
+                .unwrap()
+                .contains("Cesium")
+        );
+        fs::remove_file(&moved).unwrap();
+        let page = search(&db, root.path(), &q, until()).unwrap();
+        assert_eq!(page.unresolved[0].content_status, "source_missing");
+        db.execute("UPDATE threads SET rollout_path=NULL", [])
+            .unwrap();
+        assert_eq!(
+            search(&db, root.path(), &q, until()).unwrap().unresolved[0].content_status,
+            "locator_missing"
+        );
+        db.execute(
+            "UPDATE threads SET rollout_path='/private/outside.jsonl'",
+            [],
+        )
+        .unwrap();
+        assert_eq!(
+            search(&db, root.path(), &q, until()).unwrap().unresolved[0].content_status,
+            "source_outside_allowed_root"
+        );
+        assert_eq!(
+            content_failure(&content_limit("source read permission denied")),
+            "permission_denied"
+        );
+        assert_eq!(
+            content_failure(&content_limit("private unexpected error with /secret/path")),
+            "source_unavailable"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn chunk_continuation_advances_to_following_messages_and_exhaustion() {
+        for length in [180, 181, 360, 1224] {
+            let root = tempfile::tempdir().unwrap();
+            let db = db();
+            seed(
+                &db,
+                root.path(),
+                1,
+                "neutral",
+                &[
+                    message("user", &"x".repeat(length)),
+                    message("assistant", "following message"),
+                ],
+            );
+            let page = search(&db, root.path(), &request("x"), until()).unwrap();
+            let mut reference = evidence_reference(1, &page.sessions[0].evidence[0]);
+            let mut options = ContextOptions {
+                max_messages: 1,
+                max_bytes: 180,
+                ..Default::default()
+            };
+            let mut seen = BTreeSet::new();
+            let mut reconstructed = String::new();
+            for _ in 0..20 {
+                assert!(
+                    seen.insert(serde_json::to_string(&(&reference, &options)).unwrap()),
+                    "no progress"
+                );
+                let window =
+                    context_window(&db, root.path(), &reference, &options, &[], until()).unwrap();
+                let message = &window.messages[0];
+                if message.record_index == 2 {
+                    reconstructed.push_str(message.excerpt.as_ref().unwrap());
+                }
+                if window.at_end {
+                    assert!(window.next.is_none());
+                    assert_eq!(message.excerpt.as_deref(), Some("following message"));
+                    reference = evidence_reference(1, message);
+                    break;
+                }
+                reference = window.next.unwrap();
+                options.direction = if reference.position.as_ref().unwrap().chunk_offset > 0 {
+                    ContextDirection::Around
+                } else {
+                    ContextDirection::Forward
+                };
+            }
+            assert_eq!(reconstructed, "x".repeat(length));
+            let exhausted = context_window(
+                &db,
+                root.path(),
+                &reference,
+                &ContextOptions {
+                    direction: ContextDirection::Forward,
+                    ..Default::default()
+                },
+                &[],
+                until(),
+            )
+            .unwrap();
+            assert!(exhausted.messages.is_empty() && exhausted.at_end && exhausted.next.is_none());
+        }
+    }
+    #[test]
+    fn time_filter_membership_is_stable_but_sort_changes_refuse() {
+        let db = db();
+        let root = Path::new("/fixture");
+        for n in 1..=3 {
+            db.execute("INSERT INTO threads VALUES(?1,'neutral','/fixture/project',1,2,0,'future',NULL,NULL)", [id(n)]).unwrap();
+        }
+        let mut q = request("");
+        q.parameters.include_content = false;
+        q.parameters.page_size = 1;
+        q.parameters.structured = Some(StructuredQuery {
+            filter: QueryExpr::LastActive {
+                range: QueryRange::Utc(TimeRange {
+                    start: Some(1),
+                    end: None,
+                }),
+            },
+            mode: SearchMode::Exhaustive,
+            sort: SearchSort::Identity,
+            coverage: CoverageRequirement::BestEffort,
+        });
+        q.continuation = search(&db, root, &q, until()).unwrap().next.unwrap();
+        db.execute("UPDATE threads SET updated_at=3 WHERE id=?1", [id(2)])
+            .unwrap();
+        assert!(search(&db, root, &q, until()).is_ok());
+        q.continuation = Default::default();
+        q.parameters.structured.as_mut().unwrap().sort = SearchSort::LastActive;
+        q.continuation = search(&db, root, &q, until()).unwrap().next.unwrap();
+        db.execute("UPDATE threads SET updated_at=4 WHERE id=?1", [id(2)])
+            .unwrap();
+        assert!(search(&db, root, &q, until()).is_err());
+        q.continuation = Default::default();
+        q.continuation = search(&db, root, &q, until()).unwrap().next.unwrap();
+        db.execute("UPDATE threads SET updated_at=0 WHERE id=?1", [id(2)])
+            .unwrap();
+        assert!(search(&db, root, &q, until()).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn relocated_sources_refuse_ambiguity_links_and_foreign_header() {
+        let root = tempfile::tempdir().unwrap();
+        let db = db();
+        let path = seed(&db, root.path(), 1, "neutral", &[message("user", "Cesium")]);
+        let nested = root.path().join("sessions/2026/10/15");
+        fs::create_dir_all(&nested).unwrap();
+        let stale = nested.join("rollout-2026-10-15T00-00-00-fixture.jsonl");
+        db.execute(
+            "UPDATE threads SET rollout_path=?1",
+            [stale.to_str().unwrap()],
+        )
+        .unwrap();
+        let flat = root.path().join("archived_sessions");
+        fs::create_dir(&flat).unwrap();
+        let moved = flat.join(stale.file_name().unwrap());
+        fs::rename(&path, &moved).unwrap();
+        let q = request("Cesium");
+        assert_eq!(
+            search(&db, root.path(), &q, until())
+                .unwrap()
+                .sessions
+                .len(),
+            1
+        );
+        let other = flat.join("2026/10/15");
+        fs::create_dir_all(&other).unwrap();
+        let other = other.join(stale.file_name().unwrap());
+        fs::copy(&moved, &other).unwrap();
+        assert_eq!(
+            search(&db, root.path(), &q, until()).unwrap().unresolved[0].content_status,
+            "source_ambiguous"
+        );
+        fs::remove_file(&other).unwrap();
+        let wrong = fs::read_to_string(&moved).unwrap().replace(&id(1), &id(2));
+        fs::write(&moved, wrong).unwrap();
+        assert_eq!(
+            search(&db, root.path(), &q, until()).unwrap().unresolved[0].content_status,
+            "source_identity_mismatch"
+        );
+        fs::remove_file(&moved).unwrap();
+        std::os::unix::fs::symlink(&path, &moved).unwrap();
+        assert_eq!(
+            search(&db, root.path(), &q, until()).unwrap().unresolved[0].content_status,
+            "source_link_refused"
+        );
     }
 }

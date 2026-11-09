@@ -166,7 +166,7 @@ pub struct SessionSearchPage {
     pub next: Option<SearchContinuation>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ContextReference {
     pub native_session_id: String,

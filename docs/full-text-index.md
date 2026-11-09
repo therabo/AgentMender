@@ -1,5 +1,9 @@
 # Local full-text index
 
+## P0-SR1 source reliability
+
+Persistence remains opt-in and FTS5/cache ownership is unchanged. Indexing cannot repair missing source history. Cached facts require source revalidation; query-scoped metadata freshness never permits stale source reuse. Fixed active/archive counterparts retain exact identity and revision checks. See [ADR-0028](adr/0028-search-reliability-and-scoped-freshness.md).
+
 [ADR-0027](adr/0027-intelligent-session-retrieval.md) selects existing bundled
 SQLite FTS5 instead of another engine/database. `unicode61` postings and BM25
 rank lexical passages; typed exact filters remain domain/application decisions.

@@ -50,3 +50,5 @@ registered filtering fixed, content/binding implementation deferred).
 - [0026 — Bounded conversation reads and independent management registration](0026-bounded-conversation-reader-and-independent-registration.md): implemented read-only search; real updated client/binding gates OPEN.
 
 - [ADR-0027: Structured queries and incremental conversation retrieval](0027-intelligent-session-retrieval.md) — Accepted; extends search without lifecycle authority.
+
+- [ADR-0028: Search reliability and query-scoped freshness](0028-search-reliability-and-scoped-freshness.md) — Accepted; P0-SR1 source diagnostics, scoped revalidation, context progress and incomplete-evidence acceptance.

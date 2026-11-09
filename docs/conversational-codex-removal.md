@@ -22,8 +22,10 @@ columns can be readable. Display names, title/project basename/UUID, timestamps,
 archive state and optional spawn parent are disclosed; transcripts/auth/config are
 not exported by legacy metadata. Explicit bounded content search and signed
 context are separate read-only requests; see [the contract](session-search.md).
-Guaranteed management mode requires independently controlled registration and
-refuses before provider access when absent. Coverage/relationships stay partial. Optional labels over 4096 bytes
+Guaranteed management mode requires enforceable host binding and refuses before
+provider access while it is unavailable. Production operator-file assertions
+cannot admit it; retained launch protections are a separate contract. ADR-0027/0028
+supersede the historical registration wording for search. Coverage/relationships stay partial. Optional labels over 4096 bytes
 are unavailable; the bounded inventory is at most 500 recent records/96 KiB.
 
 Installed native methods are inspected from generated schemas under isolation.

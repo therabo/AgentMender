@@ -338,6 +338,7 @@ struct EvidenceHitView {
     matched_terms: Vec<String>,
     match_sources: Vec<String>,
     content_status: String,
+    content_coverage: &'static str,
     hard_filters_verified: bool,
     evidence: Vec<EvidenceView>,
 }
@@ -765,6 +766,7 @@ pub(super) fn project(
         ConversationResponse::EvidenceSearch(result) => {
             let management = result.parameters.purpose == agentmender_domain::SearchPurpose::Management;
             let project_hit = |hit: agentmender_domain::SessionSearchHit, verified: bool| {
+                let content_coverage = if hit.content_complete { "complete" } else if !result.parameters.reads_content() { "not_requested" } else if hit.evidence.is_empty() { "unavailable_or_partial" } else { "partial" };
                 let evidence = hit.evidence.into_iter().map(|e| {
                     let reference = agentmender_domain::ContextReference {
                         native_session_id: hit.metadata.native_session_id.clone(),
@@ -784,6 +786,7 @@ pub(super) fn project(
                     matched_terms: hit.matched_terms,
                     match_sources: hit.match_sources,
                     content_status: hit.content_status,
+                    content_coverage,
                     hard_filters_verified: verified,
                     evidence,
                 }
@@ -827,7 +830,7 @@ pub(super) fn project(
                     .map_err(|_| ProjectionError::ResponseTooLarge)
             };
             let next_window = result.window.next.as_ref().map(|next| {
-                let direction = if next.position.as_ref().is_some_and(|p| p.chunk_offset > 0) {
+                let direction = if next.position.as_ref().is_some_and(|p| p.chunk_offset > 0 && p.chunk_offset < p.chunk_total) {
                     agentmender_domain::ContextDirection::Around
                 } else if matches!(result.options.direction, agentmender_domain::ContextDirection::Occurrences) {
                     agentmender_domain::ContextDirection::Occurrences
@@ -840,6 +843,12 @@ pub(super) fn project(
                     options
                 })
             }).transpose()?;
+            if result.window.next.as_ref() == Some(&result.reference)
+                && next_window.as_ref().is_some_and(|next|
+                    serde_json::to_value(next).ok() == serde_json::to_value(&result.options).ok())
+            {
+                return Err(ProjectionError::StaleCursor);
+            }
             let previous_window = result.window.previous.as_ref().map(|_|
                 suggested_window(agentmender_domain::ContextDirection::Backward)).transpose()?;
             let messages = result.window.messages.into_iter().map(|e| {
@@ -1109,6 +1118,7 @@ mod search_tests {
         let projector = Projector::new([9; 32]);
         let mut next = reference();
         next.position.as_mut().unwrap().chunk_offset = 8192;
+        next.position.as_mut().unwrap().chunk_total = 16384;
         let response = ConversationResponse::ContextWindow(
             agentmender_application::session_search::ContextWindowResult {
                 reference: reference(),
@@ -1132,5 +1142,29 @@ mod search_tests {
         assert_eq!(view["next_window"]["direction"], "around");
         assert_eq!(view["next_window"]["before"], 0);
         assert_eq!(view["next_window"]["after"], 0);
+    }
+    #[test]
+    fn identical_forward_continuation_pair_is_refused() {
+        let projector = Projector::new([9; 32]);
+        let result = agentmender_application::session_search::ContextWindowResult {
+            reference: reference(),
+            options: agentmender_domain::ContextOptions {
+                direction: agentmender_domain::ContextDirection::Forward,
+                ..Default::default()
+            },
+            window: agentmender_domain::ContextWindow {
+                messages: vec![],
+                previous: None,
+                next: Some(reference()),
+                at_start: false,
+                at_end: false,
+                partial: true,
+                bytes_read: 0,
+            },
+        };
+        assert!(matches!(
+            project(ConversationResponse::ContextWindow(result), &projector),
+            Err(crate::projection::ProjectionError::StaleCursor)
+        ));
     }
 }

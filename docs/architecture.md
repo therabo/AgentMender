@@ -1,5 +1,9 @@
 # Architecture and capability boundaries
 
+## P0-SR1 reliability refinement
+
+[ADR-0028](adr/0028-search-reliability-and-scoped-freshness.md) refines query-scoped cursor validation, fixed locator counterparts, forward context progress and incomplete-evidence semantic acceptance in the same read ports/layers. It adds no crate, source writer, native startup admission, persistent index default or lifecycle authority.
+
 Current direction: [ADR-0022](adr/0022-product-first-session-lifecycle.md) and the
 [product roadmap](product-roadmap.md). The [audit](audits/2026-11-07-product-first-audit.md)
 distinguishes executable behavior from design, tests and deferred research.
