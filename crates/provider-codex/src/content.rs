@@ -10,7 +10,7 @@ use sha2::{Digest, Sha256};
 use std::{
     collections::BTreeSet,
     fs,
-    io::{Read, Seek, SeekFrom, Write},
+    io::{BufRead, BufReader, Read, Seek, SeekFrom, Write},
     path::{Component, Path, PathBuf},
     time::{Duration, Instant},
 };
@@ -33,11 +33,44 @@ enum Operation {
         reference: ContextReference,
         excluded: Vec<ArtifactId>,
     },
+    Window {
+        reference: ContextReference,
+        options: ContextOptions,
+        excluded: Vec<ArtifactId>,
+    },
+    Transcript {
+        reference: ContextReference,
+        checkpoint: Option<TranscriptCheckpoint>,
+        excluded: Vec<ArtifactId>,
+    },
 }
 #[derive(Serialize, Deserialize)]
 enum Response {
+    Error(ContentReadError),
     Search(SessionSearchPage),
     Context(ConversationEvidence),
+    Window(ContextWindow),
+    Transcript(TranscriptPage),
+}
+#[derive(Serialize, Deserialize)]
+enum ContentReadError {
+    Stale,
+    Unavailable,
+}
+fn read_error_response(error: ProviderError) -> Response {
+    Response::Error(match error {
+        ProviderError::InvalidScope(reason) if reason == "stale_search_evidence" => {
+            ContentReadError::Stale
+        }
+        _ => ContentReadError::Unavailable,
+    })
+}
+fn validate_worker_response(response: Response) -> Result<Response, ProviderError> {
+    match response {
+        Response::Error(ContentReadError::Stale) => Err(stale()),
+        Response::Error(ContentReadError::Unavailable) => Err(unavailable()),
+        response => Ok(response),
+    }
 }
 fn unavailable() -> ProviderError {
     ProviderError::CapabilityUnavailable("bounded conversation read unavailable".into())
@@ -124,6 +157,8 @@ struct Inventory {
     fingerprint: String,
     eligible: usize,
     limited: bool,
+    corpus_fingerprint: String,
+    next_window: Option<InventoryBoundary>,
 }
 fn inventory(
     db: &Connection,
@@ -193,14 +228,88 @@ fn inventory(
     };
     let producer = if version { "cli_version" } else { "NULL" };
     let path = if rollout { "rollout_path" } else { "NULL" };
-    let sql = format!(
-        "SELECT id,{title},cwd,created_at,updated_at,archived,{producer},{path} FROM threads WHERE id NOT IN (SELECT value FROM json_each(?1)) AND (?2 OR archived=0) ORDER BY id LIMIT 10001"
-    );
-    let mut statement = db.prepare(&sql).map_err(|_| unavailable())?;
+    let time_column = match p.structured.as_ref().map(|q| q.sort) {
+        Some(SearchSort::Created) => Some("created_at"),
+        Some(SearchSort::LastActive) => Some("updated_at"),
+        _ => None,
+    };
     let excluded = serde_json::to_string(&excluded).map_err(|_| unavailable())?;
-    let mut rows = statement
+    // Hash the fixed metadata inventory with constant auxiliary memory. This is
+    // independent of the current 10,000-row window and rejects insertions or
+    // reorderings anywhere in the corpus before reusing a keyset boundary.
+    let corpus_sql = format!(
+        "SELECT id,{title},cwd,created_at,updated_at,archived,{producer},{path} FROM threads WHERE id NOT IN (SELECT value FROM json_each(?1)) AND (?2 OR archived=0) ORDER BY id"
+    );
+    let mut corpus_statement = db.prepare(&corpus_sql).map_err(|_| unavailable())?;
+    let mut corpus_rows = corpus_statement
         .query(params![excluded, p.include_archived])
         .map_err(|_| unavailable())?;
+    let mut corpus = Sha256::new();
+    corpus.update(b"agentmender/search-corpus/v2\0");
+    let mut previous_id = None;
+    while let Some(row) = corpus_rows.next().map_err(|_| unavailable())? {
+        deadline(end)?;
+        let id: String = row.get(0).map_err(|_| unavailable())?;
+        if !metadata::uuid(&id) || previous_id.as_ref() == Some(&id) {
+            return Err(unavailable());
+        }
+        previous_id = Some(id);
+        for column in 0..8 {
+            use rusqlite::types::ValueRef;
+            match row.get_ref(column).map_err(|_| unavailable())? {
+                ValueRef::Null => corpus.update([0]),
+                ValueRef::Integer(v) => {
+                    corpus.update([1]);
+                    corpus.update(v.to_le_bytes());
+                }
+                ValueRef::Real(v) => {
+                    corpus.update([2]);
+                    corpus.update(v.to_bits().to_le_bytes());
+                }
+                ValueRef::Text(v) => {
+                    corpus.update([3]);
+                    corpus.update((v.len() as u64).to_le_bytes());
+                    corpus.update(v);
+                }
+                ValueRef::Blob(v) => {
+                    corpus.update([4]);
+                    corpus.update((v.len() as u64).to_le_bytes());
+                    corpus.update(v);
+                }
+            }
+        }
+    }
+    let corpus_fingerprint = hash(&corpus.finalize());
+    if !request.continuation.corpus_fingerprint.is_empty()
+        && request.continuation.corpus_fingerprint != corpus_fingerprint
+    {
+        return Err(stale());
+    }
+    let after = request.continuation.inventory_after.as_ref();
+    if after.is_some_and(|a| !metadata::uuid(&a.native_session_id)) {
+        return Err(stale());
+    }
+    let after_id = after.map(|a| a.native_session_id.as_str());
+    let after_time = after.and_then(|a| a.sort_value);
+    let (order, keyset) = if let Some(column) = time_column {
+        let value = format!("CASE WHEN {column}>=0 THEN {column} END");
+        (
+            format!("({value}) IS NULL,({value}),id"),
+            format!(
+                "(?3 IS NULL OR (?4 IS NULL AND ({value}) IS NULL AND id>?3) OR (?4 IS NOT NULL AND (({value}) IS NULL OR ({value})>?4 OR (({value})=?4 AND id>?3))))"
+            ),
+        )
+    } else {
+        ("id".into(), "(?3 IS NULL OR id>?3) AND (?4 IS NULL)".into())
+    };
+    let sql = format!(
+        "SELECT id,{title},cwd,created_at,updated_at,archived,{producer},{path} FROM threads WHERE id NOT IN (SELECT value FROM json_each(?1)) AND (?2 OR archived=0) AND {keyset} ORDER BY {order} LIMIT 10001"
+    );
+    let mut statement = db.prepare(&sql).map_err(|_| unavailable())?;
+    let mut rows = statement
+        .query(params![excluded, p.include_archived, after_id, after_time])
+        .map_err(|_| unavailable())?;
+    let mut boundary = None;
     let mut digest = Sha256::new();
     digest.update(b"agentmender/search-inventory/v1\0");
     let mut seen = BTreeSet::new();
@@ -229,6 +338,20 @@ fn inventory(
                 .map_err(|_| unavailable())?
                 .filter(|v| v.len() <= 4096))
         };
+        boundary = Some(InventoryBoundary {
+            native_session_id: id.clone(),
+            sort_value: match time_column {
+                Some("created_at") => row
+                    .get::<_, Option<i64>>(3)
+                    .map_err(|_| unavailable())?
+                    .filter(|v| *v >= 0),
+                Some("updated_at") => row
+                    .get::<_, Option<i64>>(4)
+                    .map_err(|_| unavailable())?
+                    .filter(|v| *v >= 0),
+                _ => None,
+            },
+        });
         let title = optional(1)?.filter(|v| !v.trim().is_empty() && safe_conversation_text(v));
         let cwd = optional(2)?;
         let project_label = cwd
@@ -270,7 +393,25 @@ fn inventory(
             producer_version: version,
             parent_native_session_id: None,
         };
+        if p.structured
+            .as_ref()
+            .is_some_and(|q| q.filter.metadata_truth(&metadata) == Truth::False)
+        {
+            continue;
+        }
         digest.update(serde_json::to_vec(&(&metadata, &path)).map_err(|_| unavailable())?);
+        if p.include_content
+            || p.structured
+                .as_ref()
+                .is_some_and(|q| q.filter.needs_content())
+        {
+            let revision = path
+                .as_ref()
+                .and_then(|p| filesystem::open_source_read(root, p).ok())
+                .and_then(|f| f.metadata().ok())
+                .map(|m| stamp(&m));
+            digest.update(serde_json::to_vec(&revision).map_err(|_| unavailable())?);
+        }
         if eligible >= request.continuation.start && eligible < stop {
             batch.push(Candidate { metadata, path });
         }
@@ -294,6 +435,8 @@ fn inventory(
         fingerprint,
         eligible,
         limited,
+        corpus_fingerprint,
+        next_window: limited.then_some(boundary).flatten(),
     })
 }
 
@@ -301,6 +444,7 @@ struct Message {
     source: &'static str,
     index: usize,
     text: String,
+    position: MessagePosition,
 }
 struct Transcript {
     messages: Vec<Message>,
@@ -309,7 +453,11 @@ struct Transcript {
     bytes: usize,
     suppressed: usize,
     format: &'static str,
+    next: Option<TranscriptCheckpoint>,
+    end: TranscriptCheckpoint,
+    partial: bool,
 }
+#[cfg(test)]
 fn transcript(
     candidate: &Candidate,
     root: &Path,
@@ -317,6 +465,52 @@ fn transcript(
     bytes_read: &mut usize,
     end: Instant,
 ) -> Result<Transcript, ProviderError> {
+    transcript_stream(candidate, root, source_limit, bytes_read, end, None)
+}
+
+const STREAM_RECORD_BYTES: usize = 8 * 1024 * 1024;
+const SESSION_SLICE_BYTES: usize = 12 * 1024 * 1024;
+fn message_position(
+    record: &serde_json::Value,
+    offset: u64,
+    length: u64,
+    ordinal: usize,
+) -> MessagePosition {
+    let text = |v: Option<&serde_json::Value>| {
+        v.and_then(|v| v.as_str())
+            .filter(|s| {
+                !s.is_empty()
+                    && s.len() <= 128
+                    && s.bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_'))
+                    && safe_conversation_text(s)
+            })
+            .map(str::to_owned)
+    };
+    let payload = &record["payload"];
+    MessagePosition {
+        byte_offset: offset,
+        byte_length: length,
+        ordinal,
+        message_id: text(
+            payload
+                .get("id")
+                .or_else(|| payload.get("item").and_then(|i| i.get("id"))),
+        ),
+        turn_id: text(payload.get("turn_id")),
+        timestamp: record
+            .get("timestamp")
+            .and_then(|v| v.as_str())
+            .filter(|s| parse_message_timestamp(s).is_some())
+            .map(str::to_owned),
+        chunk_offset: 0,
+        chunk_total: 0,
+    }
+}
+fn open_transcript(
+    candidate: &Candidate,
+    root: &Path,
+) -> Result<(fs::File, PathBuf), ProviderError> {
     let path = candidate
         .path
         .as_ref()
@@ -329,109 +523,165 @@ fn transcript(
     {
         return Err(content_limit("unsupported_rollout_location"));
     }
-    let mut file = filesystem::open_source_read(root, path).map_err(|e| match e {
-        ProviderError::CapabilityUnavailable(ref text) if text == "source file missing" => {
-            content_limit("source_file_missing")
-        }
-        ProviderError::CapabilityUnavailable(ref text) if text == "source file linked" => {
-            content_limit("source_file_linked")
-        }
-        ProviderError::CapabilityUnavailable(ref text)
-            if text == "source directory unavailable" =>
-        {
-            content_limit("source_root_open_refused")
-        }
-        ProviderError::CapabilityUnavailable(ref text) if text == "source ancestor unavailable" => {
-            content_limit("source_ancestor_open_refused")
-        }
-        ProviderError::CapabilityUnavailable(ref text) if text == "source file unavailable" => {
-            content_limit("source_file_open_refused")
-        }
-        ProviderError::InvalidScope(_) => content_limit("nonregular_or_shared_source_refused"),
-        _ => content_limit("no_follow_source_open_refused"),
-    })?;
+    let file = filesystem::open_source_read(root, path)?;
+    Ok((file, path.clone()))
+}
+fn transcript_stream(
+    candidate: &Candidate,
+    root: &Path,
+    source_limit: usize,
+    bytes_read: &mut usize,
+    end: Instant,
+    checkpoint: Option<&TranscriptCheckpoint>,
+) -> Result<Transcript, ProviderError> {
+    transcript_stream_limited(
+        candidate,
+        root,
+        source_limit,
+        bytes_read,
+        end,
+        checkpoint,
+        usize::MAX,
+    )
+}
+fn transcript_stream_limited(
+    candidate: &Candidate,
+    root: &Path,
+    source_limit: usize,
+    bytes_read: &mut usize,
+    end: Instant,
+    checkpoint: Option<&TranscriptCheckpoint>,
+    output_bytes: usize,
+) -> Result<Transcript, ProviderError> {
+    let (file, path) = open_transcript(candidate, root)?;
     let before = file.metadata().map_err(|_| unavailable())?;
-    let limit = TRANSCRIPT_BYTES
-        .min(source_limit)
-        .min(SEARCH_BYTES.saturating_sub(*bytes_read));
-    if limit == 0 {
+    stream_transcript(
+        file,
+        before,
+        candidate,
+        root,
+        &path,
+        source_limit,
+        bytes_read,
+        end,
+        checkpoint,
+        output_bytes,
+    )
+}
+#[allow(clippy::too_many_arguments)]
+fn stream_transcript(
+    mut file: fs::File,
+    before: fs::Metadata,
+    candidate: &Candidate,
+    root: &Path,
+    path: &Path,
+    source_limit: usize,
+    bytes_read: &mut usize,
+    end: Instant,
+    checkpoint: Option<&TranscriptCheckpoint>,
+    output_bytes: usize,
+) -> Result<Transcript, ProviderError> {
+    let work_start = *bytes_read;
+    let available = source_limit.min(SEARCH_BYTES.saturating_sub(work_start));
+    if available == 0 {
         return Err(unavailable());
     }
-    // Keep the identity header and recent messages without an unbounded scan of
-    // large histories. The omitted middle and both clipped record boundaries
-    // are never parsed. Context repeats these exact windows, sealed by their
-    // bytes and the physical file stamp.
-    let clipped = before.len() > limit as u64;
-    let prefix_limit = if clipped { limit / 2 } else { limit };
-    let mut prefix = Vec::new();
-    let read = Read::by_ref(&mut file)
-        .take(prefix_limit as u64)
-        .read_to_end(&mut prefix);
-    *bytes_read += prefix.len();
-    read.map_err(|_| unavailable())?;
-    let mut tail = Vec::new();
-    if clipped {
-        let tail_limit = limit - prefix_limit;
-        file.seek(SeekFrom::Start(before.len() - tail_limit as u64))
-            .map_err(|_| unavailable())?;
-        let read = Read::by_ref(&mut file)
-            .take(tail_limit as u64)
-            .read_to_end(&mut tail);
-        *bytes_read += tail.len();
-        read.map_err(|_| unavailable())?;
-    }
-    deadline(end)?;
-    if stamp(&before) != stamp(&file.metadata().map_err(|_| unavailable())?)
-        || stamp(&before)
-            != stamp(
-                &filesystem::open_source_read(root, path)?
-                    .metadata()
-                    .map_err(|_| unavailable())?,
-            )
-    {
+    let revision = hash(stamp(&before).as_bytes());
+    if checkpoint.is_some_and(|c| {
+        c.native_session_id != candidate.metadata.native_session_id
+            || c.source_fingerprint != revision
+            || c.byte_offset > before.len()
+            || c.record_index == 0
+    }) {
         return Err(stale());
     }
-    let fingerprint = hash(
-        &serde_json::to_vec(&(stamp(&before), hash(&prefix), hash(&tail)))
-            .map_err(|_| unavailable())?,
-    );
-    let source_bytes = prefix.len() + tail.len();
-    if clipped {
-        prefix.truncate(
-            prefix
-                .iter()
-                .rposition(|b| *b == b'\n')
-                .map_or(0, |i| i + 1),
-        );
-        let start = tail
-            .iter()
-            .position(|b| *b == b'\n')
-            .map_or(tail.len(), |i| i + 1);
-        prefix.extend_from_slice(&tail[start..]);
+    let mut reader = BufReader::with_capacity(8192, &mut file);
+    let mut header_bytes = Vec::new();
+    let count = reader
+        .by_ref()
+        .take((RECORD_BYTES + 1) as u64)
+        .read_until(b'\n', &mut header_bytes)
+        .map_err(|_| unavailable())?;
+    *bytes_read = bytes_read.saturating_add(count);
+    if count == 0 || count > RECORD_BYTES {
+        return Err(content_limit("bounded_session_header_unavailable"));
     }
-    let mut messages = vec![];
-    let mut partial = clipped;
+    let record: serde_json::Value = serde_json::from_slice(&header_bytes)
+        .map_err(|_| content_limit("header_not_session_meta"))?;
+    if record["type"] != "session_meta" {
+        return Err(content_limit("header_not_session_meta"));
+    }
+    let payload = &record["payload"];
+    if payload["id"].as_str() != Some(&candidate.metadata.native_session_id) {
+        return Err(content_limit("header_identity_mismatch"));
+    }
+    if payload["cli_version"]
+        .as_str()
+        .is_none_or(|s| s.is_empty() || s.len() > 128)
+    {
+        return Err(content_limit("header_producer_missing"));
+    }
+    let format = match payload.get("history_mode").and_then(|v| v.as_str()) {
+        None | Some("legacy") => FORMAT,
+        Some("paginated") => PAGINATED_INLINE_FORMAT,
+        _ => return Err(content_limit("unknown_history_mode")),
+    };
+    let mut offset = checkpoint.map_or(count as u64, |c| c.byte_offset);
+    if offset < count as u64 {
+        return Err(stale());
+    }
+    reader
+        .seek(SeekFrom::Start(offset))
+        .map_err(|_| unavailable())?;
+    let mut index = checkpoint.map_or(1, |c| c.record_index);
+    let mut partial = checkpoint.is_some_and(|c| c.partial) || format == PAGINATED_INLINE_FORMAT;
     let mut suppressed = 0;
-    let mut header = false;
+    let mut messages = vec![];
     let mut recognized = false;
-    let mut format = FORMAT;
-    let lines = prefix.split(|b| *b == b'\n');
-    let mut index = 0;
-    for line in lines {
-        deadline(end)?;
-        index += 1;
-        if index > 4096 {
-            partial = true;
+    let mut captured_bytes = 0usize;
+    let mut skipping = checkpoint.is_some_and(|c| c.skipping_record);
+    let starting_bytes = *bytes_read;
+    let limit = available.saturating_sub(starting_bytes.saturating_sub(work_start));
+    while offset < before.len() && bytes_read.saturating_sub(starting_bytes) < limit {
+        if Instant::now() >= end || captured_bytes >= output_bytes {
             break;
         }
-        if line.is_empty() {
-            continue;
+        let remaining = limit.saturating_sub(bytes_read.saturating_sub(starting_bytes));
+        // A bounded per-record buffer, even for malformed multi-gigabyte lines.
+        let mut line = Vec::new();
+        let read = reader
+            .by_ref()
+            .take(remaining.min(STREAM_RECORD_BYTES + 1) as u64)
+            .read_until(b'\n', &mut line)
+            .map_err(|_| unavailable())?;
+        if read == 0 {
+            break;
         }
-        if line.len() > RECORD_BYTES {
+        *bytes_read += read;
+        let complete_line = line.last() == Some(&b'\n') || offset + read as u64 == before.len();
+        if !complete_line {
+            if line.len() <= STREAM_RECORD_BYTES && !skipping {
+                // Revisit this record with a fresh work budget. No bytes are lost.
+                break;
+            }
             partial = true;
+            skipping = true;
+            offset += read as u64;
             continue;
         }
-        let record: serde_json::Value = match serde_json::from_slice(line) {
+        let current_offset = offset;
+        offset += read as u64;
+        index += 1;
+        if skipping || line.len() > STREAM_RECORD_BYTES {
+            partial = true;
+            skipping = false;
+            continue;
+        }
+        let offset = current_offset;
+        if line.iter().all(u8::is_ascii_whitespace) {
+            continue;
+        }
+        let record: serde_json::Value = match serde_json::from_slice(&line) {
             Ok(v) => v,
             Err(_) => {
                 partial = true;
@@ -440,34 +690,6 @@ fn transcript(
         };
         let kind = record.get("type").and_then(|v| v.as_str());
         let payload = record.get("payload").unwrap_or(&serde_json::Value::Null);
-        if !header {
-            if kind != Some("session_meta") {
-                return Err(content_limit("header_not_session_meta"));
-            }
-            if payload.get("id").and_then(|v| v.as_str())
-                != Some(&candidate.metadata.native_session_id)
-            {
-                return Err(content_limit("header_identity_mismatch"));
-            }
-            if payload
-                .get("cli_version")
-                .and_then(|v| v.as_str())
-                .is_none_or(|v| v.is_empty() || v.len() > 128)
-            {
-                return Err(content_limit("header_producer_missing"));
-            }
-            match payload.get("history_mode") {
-                None => {}
-                Some(v) if v == "legacy" => {}
-                Some(v) if v == "paginated" => {
-                    partial = true;
-                    format = PAGINATED_INLINE_FORMAT;
-                }
-                _ => return Err(content_limit("unknown_history_mode")),
-            }
-            header = true;
-            continue;
-        }
         match kind {
             Some("response_item") => {
                 // Paginated history persists both model and display views. Use
@@ -538,16 +760,19 @@ fn transcript(
                         partial = true;
                     }
                 }
+                text.pop();
                 recognized = true;
                 if !safe_conversation_text(&text) {
                     suppressed += 1;
                     continue;
                 }
                 if !text.trim().is_empty() {
+                    captured_bytes = captured_bytes.saturating_add(text.len());
                     messages.push(Message {
                         source,
                         index,
                         text,
+                        position: message_position(&record, offset, line.len() as u64, index),
                     });
                 }
             }
@@ -586,39 +811,104 @@ fn transcript(
                         text.push(' ');
                     }
                 }
+                text.pop();
                 recognized = true;
                 if !safe_conversation_text(&text) {
                     suppressed += 1;
                 } else if !text.trim().is_empty() {
+                    captured_bytes = captured_bytes.saturating_add(text.len());
                     messages.push(Message {
                         source,
                         index,
                         text,
+                        position: message_position(&record, offset, line.len() as u64, index),
                     });
                 }
             }
-            Some("turn_context" | "event_msg") => {}
+            Some("turn_context") => {}
+            Some("event_msg") => {
+                if !matches!(
+                    payload.get("type").and_then(|v| v.as_str()),
+                    Some(
+                        "token_count"
+                            | "task_started"
+                            | "task_complete"
+                            | "turn_aborted"
+                            | "agent_reasoning"
+                            | "agent_reasoning_raw_content"
+                            | "agent_reasoning_section_break"
+                            | "agent_reasoning_raw_content_section_break"
+                            | "exec_command_begin"
+                            | "exec_command_end"
+                            | "patch_apply_begin"
+                            | "patch_apply_end"
+                    )
+                ) {
+                    partial = true;
+                }
+            }
             _ => partial = true,
         }
     }
-    if !header {
-        return Err(content_limit("bounded_session_header_unavailable"));
+    drop(reader);
+    if stamp(&before) != stamp(&file.metadata().map_err(|_| unavailable())?)
+        || stamp(&before)
+            != stamp(
+                &filesystem::open_source_read(root, path)?
+                    .metadata()
+                    .map_err(|_| unavailable())?,
+            )
+    {
+        return Err(stale());
     }
-    let status = if !recognized {
-        "no_supported_messages"
-    } else if partial {
+    partial |= suppressed > 0;
+    let progress = TranscriptCheckpoint {
+        native_session_id: candidate.metadata.native_session_id.clone(),
+        source_fingerprint: revision.clone(),
+        byte_offset: offset,
+        record_index: index,
+        history_mode: format.into(),
+        partial,
+        skipping_record: skipping,
+        ..Default::default()
+    };
+    let next = (offset < before.len()).then(|| progress.clone());
+    let status = if next.is_some() {
+        "scanning"
+    } else if partial || suppressed > 0 {
         "partial"
+    } else if !recognized && checkpoint.is_none() {
+        "no_supported_messages"
     } else {
         "supported"
     };
     Ok(Transcript {
         messages,
-        fingerprint,
+        fingerprint: revision,
         status,
-        bytes: source_bytes,
+        bytes: before.len().try_into().map_err(|_| unavailable())?,
         suppressed,
         format,
+        next,
+        end: progress,
+        partial,
     })
+}
+
+fn legacy_truth(parameters: &SearchParameters, matched: bool, complete: bool) -> Truth {
+    if matched {
+        Truth::True
+    } else if !complete
+        && (parameters.include_content
+            || parameters
+                .structured
+                .as_ref()
+                .is_some_and(|q| q.filter.needs_content()))
+    {
+        Truth::Unknown
+    } else {
+        Truth::False
+    }
 }
 
 fn search(
@@ -627,199 +917,453 @@ fn search(
     request: &SearchReadRequest,
     end: Instant,
 ) -> Result<SessionSearchPage, ProviderError> {
+    if request.cached.len() > 10 {
+        return Err(unavailable());
+    }
     let inventory = inventory(db, root, request, end)?;
+    if request.continuation.result_offset != 0 {
+        return Err(stale());
+    }
     let mut coverage = SearchCoverage {
         eligible_observed: inventory.eligible,
         ..Default::default()
     };
-    let mut hits = vec![];
+    let mut hits = Vec::new();
+    let mut unresolved = Vec::new();
     let mut batch_digest = Sha256::new();
     let mut inspected = 0;
-    let terms = request.parameters.terms();
+    let mut pending = None;
+    let mut terms = request.parameters.terms();
+    if let Some(q) = &request.parameters.structured {
+        terms.extend(q.filter.text_terms());
+    }
+    terms.sort();
+    terms.dedup();
     for candidate in &inventory.batch {
-        if Instant::now() >= end || coverage.bytes_read >= SEARCH_BYTES {
-            if request.continuation.end.is_some() {
-                return Err(unavailable());
-            }
-            coverage.reasons.push("scan_budget_exhausted".into());
+        if Instant::now() >= end
+            || coverage.bytes_read >= SEARCH_BYTES
+            || hits.len() + unresolved.len() >= request.parameters.page_size
+        {
             break;
         }
-        let mut relevance = SearchRelevance::new(&request.parameters);
-        if let Some(title) = &candidate.metadata.title {
-            relevance.observe("title", title);
+        let prior = if inspected == 0 {
+            request.continuation.stream.as_ref()
+        } else {
+            None
+        };
+        if prior.is_some_and(|p| p.native_session_id != candidate.metadata.native_session_id) {
+            return Err(stale());
         }
-        if let Some(project) = &candidate.metadata.project_label {
-            relevance.observe("metadata", project);
+        let mut rank = SearchRelevance::new(&request.parameters);
+        if prior.is_none() {
+            if let Some(title) = &candidate.metadata.title {
+                rank.observe("title", title);
+            }
+            if let Some(project) = &candidate.metadata.project_label {
+                rank.observe("metadata", project);
+            }
+            rank.observe("metadata", &candidate.metadata.native_session_id);
         }
-        relevance.observe("metadata", &candidate.metadata.native_session_id);
-        let mut evidence = vec![];
-        let mut status = "not_requested";
-        if request.parameters.include_content {
-            match transcript(
-                candidate,
-                root,
-                TRANSCRIPT_BYTES,
-                &mut coverage.bytes_read,
-                end,
-            ) {
-                Ok(observation) => {
-                    coverage.suppressed_records += observation.suppressed;
-                    status = observation.status;
-                    if status != "supported" {
+        let mut evidence = prior.map_or_else(Vec::new, |p| p.evidence.clone());
+        let mut query_observation =
+            prior.map_or_else(QueryObservation::default, |p| p.query_observation.clone());
+        if request
+            .parameters
+            .structured
+            .as_ref()
+            .is_some_and(|q| !q.filter.observation_valid(&query_observation))
+        {
+            return Err(stale());
+        }
+        if prior.is_none()
+            && let Some(cached) = request.cached.iter().find(|c| {
+                c.native_session_id == candidate.metadata.native_session_id
+                    && c.query_scope == request.continuation.scope
+                    && !c.source_fingerprint.is_empty()
+            })
+        {
+            let probe = open_transcript(candidate, root)
+                .ok()
+                .and_then(|(file, _)| file.metadata().ok())
+                .map(|m| TranscriptCheckpoint {
+                    native_session_id: candidate.metadata.native_session_id.clone(),
+                    source_fingerprint: cached.source_fingerprint.clone(),
+                    byte_offset: m.len(),
+                    record_index: 1,
+                    ..Default::default()
+                });
+            if let Some(probe) = probe
+                && let Ok(observation) = transcript_stream(
+                    candidate,
+                    root,
+                    RECORD_BYTES,
+                    &mut coverage.bytes_read,
+                    end,
+                    Some(&probe),
+                )
+            {
+                let valid = cached.evidence.len() <= 2
+                    && cached.evidence.iter().all(|e| {
+                        e.source_fingerprint == observation.fingerprint
+                            && e.source_bytes == observation.bytes
+                            && e.excerpt.as_ref().is_none_or(|v| {
+                                v.chars().count() <= 320 && safe_conversation_text(v)
+                            })
+                    })
+                    && request
+                        .parameters
+                        .structured
+                        .as_ref()
+                        .is_none_or(|q| q.filter.observation_valid(&cached.query_observation));
+                if valid {
+                    let (base_score, mut matched_terms, mut match_sources) = rank.facts();
+                    matched_terms.extend(cached.matched_terms.clone());
+                    matched_terms.sort();
+                    matched_terms.dedup();
+                    match_sources.extend(cached.match_sources.clone());
+                    match_sources.sort();
+                    match_sources.dedup();
+                    let truth = request
+                        .parameters
+                        .structured
+                        .as_ref()
+                        .map_or(Truth::True, |q| {
+                            q.filter.evaluate_observed(
+                                &candidate.metadata,
+                                &cached.query_observation,
+                                cached.content_complete,
+                            )
+                        });
+                    let legacy_match = request
+                        .parameters
+                        .terms()
+                        .iter()
+                        .all(|t| matched_terms.contains(t));
+                    let truth = truth.and(legacy_truth(
+                        &request.parameters,
+                        legacy_match,
+                        cached.content_complete,
+                    ));
+                    inspected += 1;
+                    coverage.fully_traversed_sessions += usize::from(cached.content_complete);
+                    if !cached.content_complete {
                         coverage.truncated_sessions += 1;
                     }
-                    batch_digest.update(observation.fingerprint.as_bytes());
-                    for message in observation.messages {
-                        let count = relevance.observe(message.source, &message.text);
-                        if count > 0 {
-                            let (excerpt, truncated) = bounded_excerpt(&message.text, &terms, 320);
-                            evidence.push((
-                                count,
-                                ConversationEvidence {
-                                    source: message.source.into(),
-                                    record_index: message.index,
-                                    excerpt: request.parameters.excerpts.then_some(excerpt),
-                                    truncated,
-                                    source_fingerprint: observation.fingerprint.clone(),
-                                    source_bytes: observation.bytes,
-                                    format: observation.format.into(),
-                                },
-                            ));
-                            evidence.sort_by(|a, b| {
-                                b.0.cmp(&a.0)
-                                    .then_with(|| a.1.record_index.cmp(&b.1.record_index))
-                            });
-                            evidence.truncate(2);
+                    if truth == Truth::Unknown {
+                        coverage.unresolved_sessions += 1;
+                    }
+                    if truth != Truth::False {
+                        let mut evidence = cached.evidence.clone();
+                        if !request.parameters.excerpts {
+                            for e in &mut evidence {
+                                e.excerpt = None;
+                            }
                         }
+                        let hit = SessionSearchHit {
+                            metadata: candidate.metadata.clone(),
+                            score: base_score.saturating_add(cached.score),
+                            matched_terms,
+                            match_sources,
+                            evidence,
+                            content_status: if cached.content_complete {
+                                "indexed_supported"
+                            } else {
+                                "indexed_partial"
+                            }
+                            .into(),
+                            query_observation: cached.query_observation.clone(),
+                            content_complete: cached.content_complete,
+                        };
+                        if truth == Truth::Unknown {
+                            unresolved.push(hit);
+                        } else {
+                            hits.push(hit);
+                        }
+                    }
+                    if !coverage
+                        .reasons
+                        .iter()
+                        .any(|r| r == "fresh_source_validated_index_cache")
+                    {
+                        coverage
+                            .reasons
+                            .push("fresh_source_validated_index_cache".into());
+                    }
+                    batch_digest.update(observation.fingerprint.as_bytes());
+                    continue;
+                }
+            }
+        }
+        let mut status = "not_requested";
+        let mut content_complete = false;
+        if request.parameters.include_content
+            || request
+                .parameters
+                .structured
+                .as_ref()
+                .is_some_and(|q| q.filter.needs_content())
+        {
+            let limit = SESSION_SLICE_BYTES.min(SEARCH_BYTES.saturating_sub(coverage.bytes_read));
+            match transcript_stream(candidate, root, limit, &mut coverage.bytes_read, end, prior) {
+                Ok(observation) => {
+                    status = observation.status;
+                    coverage.suppressed_records += observation.suppressed;
+                    content_complete = status == "supported";
+                    batch_digest.update(observation.fingerprint.as_bytes());
+                    let mut fts = agentmender_persistence::SearchTextIndex::memory()
+                        .map_err(|_| unavailable())?;
+                    for message in &observation.messages {
+                        let mut chunk_start = 0;
+                        let mut chunk = 0;
+                        while chunk_start < message.text.len() {
+                            if Instant::now() >= end {
+                                break;
+                            }
+                            let mut chunk_end = (chunk_start + 64 * 1024).min(message.text.len());
+                            while !message.text.is_char_boundary(chunk_end) {
+                                chunk_end -= 1;
+                            }
+                            fts.add_chunk(
+                                message.index as u64,
+                                chunk,
+                                &message.text[chunk_start..chunk_end],
+                            )
+                            .map_err(|_| unavailable())?;
+                            if chunk_end == message.text.len() {
+                                break;
+                            }
+                            chunk_start = chunk_end.saturating_sub(128);
+                            while !message.text.is_char_boundary(chunk_start) {
+                                chunk_start += 1;
+                            }
+                            chunk += 1;
+                        }
+                        let count = rank.observe(message.source, &message.text);
+                        if let Some(q) = &request.parameters.structured {
+                            q.filter.observe(
+                                &mut query_observation,
+                                &QueryText {
+                                    text: &message.text,
+                                    timestamp: message
+                                        .position
+                                        .timestamp
+                                        .as_deref()
+                                        .and_then(parse_message_timestamp),
+                                },
+                            );
+                        }
+                        let structured_match = terms
+                            .iter()
+                            .any(|term| message.text.to_lowercase().contains(term));
+                        if count > 0 || structured_match {
+                            let (excerpt, truncated) = bounded_excerpt(&message.text, &terms, 320);
+                            evidence.push(ConversationEvidence {
+                                source: message.source.into(),
+                                record_index: message.index,
+                                position: Some(message.position.clone()),
+                                excerpt: request.parameters.excerpts.then_some(excerpt),
+                                truncated,
+                                source_fingerprint: observation.fingerprint.clone(),
+                                source_bytes: observation.bytes,
+                                format: observation.format.into(),
+                            });
+                        }
+                    }
+                    let mut ranking_query = String::new();
+                    for term in terms.iter().take(64) {
+                        if ranking_query.len() + term.len() + 1 > 4096 {
+                            break;
+                        }
+                        if !ranking_query.is_empty() {
+                            ranking_query.push(' ');
+                        }
+                        ranking_query.push_str(term);
+                    }
+                    let ranked = if ranking_query.is_empty() {
+                        vec![]
+                    } else {
+                        fts.rank(&ranking_query, 100).unwrap_or_default()
+                    };
+                    evidence.sort_by(|a, b| {
+                        let order = |e: &ConversationEvidence| {
+                            ranked
+                                .iter()
+                                .position(|(i, _)| *i == e.record_index as u64)
+                                .unwrap_or(usize::MAX)
+                        };
+                        order(a)
+                            .cmp(&order(b))
+                            .then_with(|| a.record_index.cmp(&b.record_index))
+                    });
+                    evidence.dedup_by_key(|e| e.record_index);
+                    evidence.truncate(2);
+                    if let Some(mut next) = observation.next {
+                        let (score, matched, sources) = rank.facts();
+                        next.score = score.saturating_add(prior.map_or(0, |p| p.score));
+                        next.matched_terms = matched;
+                        next.match_sources = sources;
+                        if let Some(p) = prior {
+                            next.matched_terms.extend(p.matched_terms.clone());
+                            next.match_sources.extend(p.match_sources.clone());
+                        }
+                        next.matched_terms.sort();
+                        next.matched_terms.dedup();
+                        next.match_sources.sort();
+                        next.match_sources.dedup();
+                        next.evidence = evidence;
+                        next.query_observation = query_observation;
+                        next.suppressed_records =
+                            observation.suppressed + prior.map_or(0, |p| p.suppressed_records);
+                        next.partial |= next.suppressed_records > 0;
+                        pending = Some(next);
+                        coverage.reasons.push("transcript_scan_continues".into());
+                        break;
+                    }
+                    coverage.fully_traversed_sessions += 1;
+                    if !content_complete {
+                        coverage.truncated_sessions += 1;
                     }
                 }
                 Err(error) => {
-                    status = "unsupported_or_unreadable";
-                    coverage.unsupported_sessions += 1;
-                    if let ProviderError::CapabilityUnavailable(code) = error
-                        && [
-                            "missing_supported_rollout_locator",
-                            "rollout_locator_outside_root",
-                            "unsupported_rollout_location",
-                            "source_file_missing",
-                            "source_file_linked",
-                            "no_follow_source_open_refused",
-                            "source_root_open_refused",
-                            "source_ancestor_open_refused",
-                            "source_file_open_refused",
-                            "nonregular_or_shared_source_refused",
-                            "header_not_session_meta",
-                            "header_identity_mismatch",
-                            "header_producer_missing",
-                            "unknown_history_mode",
-                            "bounded_session_header_unavailable",
-                        ]
-                        .contains(&code.as_str())
-                        && !coverage.reasons.contains(&code)
+                    if matches!(&error, ProviderError::InvalidScope(s) if s=="stale_search_evidence")
                     {
-                        coverage.reasons.push(code);
+                        return Err(error);
                     }
+                    coverage.unsupported_sessions += 1;
+                    coverage.unreadable_sessions += 1;
+                    status = "unsupported_or_unreadable";
                     batch_digest.update(b"unsupported_or_unreadable");
                 }
             }
         }
         inspected += 1;
-        if relevance.matches() {
-            let (score, matched_terms, match_sources) = relevance.facts();
-            hits.push(SessionSearchHit {
+        let (score, mut matched_terms, mut match_sources) = rank.facts();
+        let score = score.saturating_add(prior.map_or(0, |p| p.score));
+        if let Some(p) = prior {
+            matched_terms.extend(p.matched_terms.clone());
+            match_sources.extend(p.match_sources.clone());
+        }
+        matched_terms.sort();
+        matched_terms.dedup();
+        match_sources.sort();
+        match_sources.dedup();
+        let legacy_match = request
+            .parameters
+            .terms()
+            .iter()
+            .all(|term| matched_terms.contains(term));
+        let truth = request
+            .parameters
+            .structured
+            .as_ref()
+            .map_or(Truth::True, |q| {
+                q.filter.evaluate_observed(
+                    &candidate.metadata,
+                    &query_observation,
+                    content_complete,
+                )
+            });
+        let truth = truth.and(legacy_truth(
+            &request.parameters,
+            legacy_match,
+            content_complete,
+        ));
+        if truth == Truth::Unknown {
+            coverage.unresolved_sessions += 1;
+        }
+        if truth != Truth::False {
+            let hit = SessionSearchHit {
                 metadata: candidate.metadata.clone(),
                 score,
                 matched_terms,
                 match_sources,
-                evidence: evidence.into_iter().map(|(_, e)| e).collect(),
+                evidence,
                 content_status: status.into(),
-            });
+                query_observation,
+                content_complete,
+            };
+            if truth == Truth::Unknown {
+                unresolved.push(hit);
+            } else {
+                hits.push(hit);
+            }
         }
     }
-    let batch_fingerprint = format!(
-        "sha256:{}",
-        batch_digest
-            .finalize()
-            .iter()
-            .map(|b| format!("{b:02x}"))
-            .collect::<String>()
-    );
-    if request
-        .continuation
-        .batch_fingerprint
-        .as_ref()
-        .is_some_and(|f| *f != batch_fingerprint)
-    {
-        return Err(stale());
+    let batch_fingerprint = hash(&batch_digest.finalize());
+    if let Some(q) = &request.parameters.structured {
+        hits.sort_by(|a, b| q.compare(a, b));
+    } else {
+        hits.sort_by(|a, b| {
+            b.score
+                .cmp(&a.score)
+                .then_with(|| a.metadata.identity.cmp(&b.metadata.identity))
+        });
     }
-    hits.sort_by(|a, b| {
-        b.score
-            .cmp(&a.score)
-            .then_with(|| a.metadata.identity.cmp(&b.metadata.identity))
-    });
     coverage.sessions_inspected = inspected;
     coverage.matched_in_batch = hits.len();
     coverage
         .reasons
-        .push("selected_root_bounded_read_only_evidence".into());
+        .push("selected_root_read_only_evidence".into());
+    coverage
+        .reasons
+        .push("ranking_is_scanned_page_local_not_global".into());
     if inventory.limited {
-        coverage.reasons.push("metadata_inventory_limit".into());
+        coverage
+            .reasons
+            .push("metadata_inventory_window_continues".into());
     }
     if coverage.unsupported_sessions > 0 {
         coverage
             .reasons
             .push("unsupported_or_unreadable_content".into());
     }
-    if coverage.truncated_sessions > 0 {
-        coverage.reasons.push("partial_or_truncated_content".into());
-    }
-    if hits.iter().any(|h| {
-        h.evidence
-            .iter()
-            .any(|e| e.format == PAGINATED_INLINE_FORMAT)
-    }) {
+    if hits
+        .iter()
+        .flat_map(|h| &h.evidence)
+        .any(|e| e.format == PAGINATED_INLINE_FORMAT)
+    {
         coverage
             .reasons
             .push("paginated_display_items_only_no_history_hydration".into());
+    }
+    if coverage.truncated_sessions > 0 {
+        coverage.reasons.push("partial_or_truncated_content".into());
     }
     if coverage.suppressed_records > 0 {
         coverage
             .reasons
             .push("sensitive_records_suppressed_redaction_not_perfect".into());
     }
-    let offset = request.continuation.result_offset;
-    if offset > hits.len() {
-        return Err(stale());
+    if coverage.unresolved_sessions > 0 {
+        coverage
+            .reasons
+            .push("unknown_conditions_are_unresolved_not_matches".into());
     }
-    let sessions: Vec<_> = hits
-        .into_iter()
-        .skip(offset)
-        .take(request.parameters.page_size)
-        .collect();
     let actual_end = request.continuation.start + inspected;
-    let next = if offset + sessions.len() < coverage.matched_in_batch {
+    let next = if pending.is_some() || actual_end < inventory.eligible {
         Some(SearchContinuation {
             scope: String::new(),
             inventory_fingerprint: inventory.fingerprint.clone(),
-            batch_fingerprint: Some(batch_fingerprint.clone()),
-            start: request.continuation.start,
-            end: Some(actual_end),
-            result_offset: offset + sessions.len(),
-        })
-    } else if actual_end < inventory.eligible && inspected > 0 {
-        Some(SearchContinuation {
-            scope: String::new(),
-            inventory_fingerprint: inventory.fingerprint.clone(),
+            corpus_fingerprint: inventory.corpus_fingerprint.clone(),
+            inventory_after: request.continuation.inventory_after.clone(),
             batch_fingerprint: None,
             start: actual_end,
             end: None,
             result_offset: 0,
+            stream: pending,
+        })
+    } else if let Some(boundary) = inventory.next_window {
+        Some(SearchContinuation {
+            corpus_fingerprint: inventory.corpus_fingerprint.clone(),
+            inventory_after: Some(boundary),
+            ..Default::default()
         })
     } else {
         None
     };
     Ok(SessionSearchPage {
-        sessions,
+        unresolved,
+        sessions: hits,
         coverage,
         inventory_fingerprint: inventory.fingerprint,
         batch_fingerprint,
@@ -827,13 +1371,13 @@ fn search(
     })
 }
 
-fn context(
+fn context_candidate(
     db: &Connection,
     root: &Path,
     reference: &ContextReference,
     excluded: &[ArtifactId],
-    end: Instant,
-) -> Result<ConversationEvidence, ProviderError> {
+    bootstrap: bool,
+) -> Result<Candidate, ProviderError> {
     if reference.purpose == SearchPurpose::Management {
         for id in excluded_ids(excluded, root)? {
             if db
@@ -848,12 +1392,12 @@ fn context(
         }
     }
     if !metadata::uuid(&reference.native_session_id)
-        || reference.source_bytes == 0
-        || reference.source_bytes > TRANSCRIPT_BYTES
         || reference.local_id != identity(root, &reference.native_session_id)?.local_id
-        || reference.record_index == 0
-        || reference.record_index > 4096
         || excluded_ids(excluded, root)?.contains(&reference.native_session_id)
+        || (!bootstrap
+            && (reference.source_fingerprint.is_empty()
+                || reference.source_bytes == 0
+                || reference.record_index == 0))
     {
         return Err(unavailable());
     }
@@ -875,49 +1419,432 @@ fn context(
             |r| r.get(0),
         )
         .map_err(|_| unavailable())?;
-    let metadata = SessionMetadata {
-        identity: identity(root, &reference.native_session_id)?,
-        native_session_id: reference.native_session_id.clone(),
-        title: None,
-        project_label: None,
-        created_at: None,
-        last_active_at: None,
-        state: SessionState::Unknown,
-        producer_version_matches: false,
-        producer_version: None,
-        parent_native_session_id: None,
-    };
-    let candidate = Candidate {
-        metadata,
+    Ok(Candidate {
+        metadata: SessionMetadata {
+            identity: identity(root, &reference.native_session_id)?,
+            native_session_id: reference.native_session_id.clone(),
+            title: None,
+            project_label: None,
+            created_at: None,
+            last_active_at: None,
+            state: SessionState::Unknown,
+            producer_version_matches: false,
+            producer_version: None,
+            parent_native_session_id: None,
+        },
         path: path.filter(|v| v.len() <= 4096).map(PathBuf::from),
-    };
-    let observation = transcript(&candidate, root, reference.source_bytes, &mut 0, end)?;
-    if observation.fingerprint != reference.source_fingerprint {
-        return Err(stale());
+    })
+}
+fn checkpoint_at(reference: &ContextReference, position: &MessagePosition) -> TranscriptCheckpoint {
+    TranscriptCheckpoint {
+        native_session_id: reference.native_session_id.clone(),
+        source_fingerprint: reference.source_fingerprint.clone(),
+        byte_offset: position.byte_offset,
+        record_index: position.ordinal.saturating_sub(1),
+        chunk_offset: position.chunk_offset,
+        ..Default::default()
     }
-    let message = observation
-        .messages
-        .into_iter()
-        .find(|m| m.index == reference.record_index)
-        .ok_or_else(unavailable)?;
-    let (excerpt, mut truncated) = bounded_excerpt(&message.text, &[], 512);
-    let mut bounded = String::new();
-    for c in excerpt.chars() {
-        if bounded.len() + c.len_utf8() > 1024 {
-            truncated = true;
-            break;
-        }
-        bounded.push(c);
-    }
-    Ok(ConversationEvidence {
+}
+fn evidence_for(
+    message: &Message,
+    observation: &Transcript,
+    text: String,
+    offset: usize,
+    truncated: bool,
+) -> ConversationEvidence {
+    let mut position = message.position.clone();
+    position.chunk_offset = offset;
+    position.chunk_total = message.text.len();
+    ConversationEvidence {
         source: message.source.into(),
         record_index: message.index,
-        excerpt: Some(bounded),
+        position: Some(position),
+        excerpt: Some(text),
         truncated,
-        source_fingerprint: observation.fingerprint,
+        source_fingerprint: observation.fingerprint.clone(),
         source_bytes: observation.bytes,
         format: observation.format.into(),
+    }
+}
+fn message_reference(
+    reference: &ContextReference,
+    evidence: &ConversationEvidence,
+) -> ContextReference {
+    let mut result = reference.clone();
+    result.record_index = evidence.record_index;
+    result.position = evidence.position.clone();
+    result.source_fingerprint = evidence.source_fingerprint.clone();
+    result.source_bytes = evidence.source_bytes;
+    result
+}
+fn occurrence_offset(text: &str, query: &str) -> usize {
+    let lower = text.to_lowercase();
+    let matched = query
+        .split_whitespace()
+        .filter_map(|q| lower.find(&q.to_lowercase()))
+        .min()
+        .unwrap_or(0);
+    let mut folded = 0;
+    let at = text
+        .char_indices()
+        .find_map(|(byte, c)| {
+            let here = folded;
+            folded += c.to_lowercase().map(char::len_utf8).sum::<usize>();
+            (here >= matched).then_some(byte)
+        })
+        .unwrap_or(0);
+    let mut start = at.saturating_sub(80);
+    while !text.is_char_boundary(start) {
+        start += 1;
+    }
+    start
+}
+fn safe_chunk(text: &str, offset: usize, bytes: usize) -> Result<(String, usize), ProviderError> {
+    if offset > text.len() || !text.is_char_boundary(offset) {
+        return Err(stale());
+    }
+    let mut end = (offset + bytes).min(text.len());
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    if end == offset && offset < text.len() {
+        return Err(content_limit("context_budget_cannot_fit_codepoint"));
+    }
+    let result: String = text[offset..end]
+        .chars()
+        .map(|c| {
+            if c.is_control() || matches!(c, '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}') {
+                ' '
+            } else {
+                c
+            }
+        })
+        .collect();
+    Ok((result, end))
+}
+fn transcript_page(
+    db: &Connection,
+    root: &Path,
+    reference: &ContextReference,
+    checkpoint: Option<&TranscriptCheckpoint>,
+    excluded: &[ArtifactId],
+    end: Instant,
+) -> Result<TranscriptPage, ProviderError> {
+    let candidate = context_candidate(db, root, reference, excluded, true)?;
+    let seed = checkpoint.cloned().or_else(|| {
+        reference
+            .position
+            .as_ref()
+            .map(|p| checkpoint_at(reference, p))
+    });
+    let mut bytes_read = 0;
+    let observation = transcript_stream_limited(
+        &candidate,
+        root,
+        SESSION_SLICE_BYTES,
+        &mut bytes_read,
+        end,
+        seed.as_ref(),
+        16 * 1024,
+    )?;
+    if !reference.source_fingerprint.is_empty()
+        && observation.fingerprint != reference.source_fingerprint
+    {
+        return Err(stale());
+    }
+    if reference.source_bytes != 0 && observation.bytes != reference.source_bytes {
+        return Err(stale());
+    }
+    let mut messages = Vec::new();
+    let mut remaining = 16 * 1024;
+    let mut next = observation.next.clone();
+    for message in &observation.messages {
+        let offset = if seed
+            .as_ref()
+            .is_some_and(|s| s.byte_offset == message.position.byte_offset)
+        {
+            seed.as_ref().map_or(0, |s| s.chunk_offset)
+        } else {
+            0
+        };
+        if remaining == 0 {
+            next = Some(TranscriptCheckpoint {
+                native_session_id: reference.native_session_id.clone(),
+                source_fingerprint: observation.fingerprint.clone(),
+                byte_offset: message.position.byte_offset,
+                record_index: message.index - 1,
+                partial: observation.partial || seed.as_ref().is_some_and(|s| s.partial),
+                ..Default::default()
+            });
+            break;
+        }
+        let (text, consumed) = safe_chunk(&message.text, offset, remaining)?;
+        remaining = remaining.saturating_sub(text.len());
+        let truncated = consumed < message.text.len();
+        messages.push(TranscriptMessage {
+            evidence: evidence_for(message, &observation, text.clone(), offset, truncated),
+            text: message.text[offset..consumed].to_owned(),
+        });
+        if truncated {
+            next = Some(TranscriptCheckpoint {
+                native_session_id: reference.native_session_id.clone(),
+                source_fingerprint: observation.fingerprint.clone(),
+                byte_offset: message.position.byte_offset,
+                record_index: message.index - 1,
+                chunk_offset: consumed,
+                partial: observation.partial || seed.as_ref().is_some_and(|s| s.partial),
+                ..Default::default()
+            });
+            break;
+        }
+    }
+    let complete = next.is_none() && observation.status == "supported";
+    Ok(TranscriptPage {
+        end: next.clone().unwrap_or(observation.end),
+        messages,
+        next,
+        complete,
+        source_revision: observation.fingerprint,
+        bytes_read,
     })
+}
+fn context_window(
+    db: &Connection,
+    root: &Path,
+    reference: &ContextReference,
+    options: &ContextOptions,
+    excluded: &[ArtifactId],
+    end: Instant,
+) -> Result<ContextWindow, ProviderError> {
+    if !options.valid() {
+        return Err(unavailable());
+    }
+    let candidate = context_candidate(db, root, reference, excluded, false)?;
+    let mut seed = reference
+        .position
+        .as_ref()
+        .map(|p| checkpoint_at(reference, p));
+    let needs_before = matches!(
+        options.direction,
+        ContextDirection::Backward | ContextDirection::Turn
+    ) || options.before > 0;
+    let mut backward_clipped = false;
+    if needs_before {
+        if let Some(position) = &reference.position {
+            let (mut file, _) = open_transcript(&candidate, root)?;
+            let length = position.byte_offset.min(STREAM_RECORD_BYTES as u64);
+            let start = position.byte_offset - length;
+            file.seek(SeekFrom::Start(start))
+                .map_err(|_| unavailable())?;
+            let mut before = Vec::new();
+            file.take(length)
+                .read_to_end(&mut before)
+                .map_err(|_| unavailable())?;
+            let clip = if start == 0 {
+                0
+            } else {
+                before
+                    .iter()
+                    .position(|b| *b == b'\n')
+                    .map_or(before.len(), |p| p + 1)
+            };
+            let lines = before[clip..].iter().filter(|b| **b == b'\n').count();
+            let offset = start + clip as u64;
+            if offset == 0 {
+                seed = None;
+            } else {
+                seed = Some(TranscriptCheckpoint {
+                    native_session_id: reference.native_session_id.clone(),
+                    source_fingerprint: reference.source_fingerprint.clone(),
+                    byte_offset: offset,
+                    record_index: position.ordinal.saturating_sub(lines + 1),
+                    ..Default::default()
+                });
+            }
+            backward_clipped = offset != 0;
+        } else {
+            seed = None;
+        }
+    }
+    let mut bytes_read = 0;
+    let observation = transcript_stream(
+        &candidate,
+        root,
+        SEARCH_BYTES,
+        &mut bytes_read,
+        end,
+        seed.as_ref(),
+    )?;
+    if observation.fingerprint != reference.source_fingerprint
+        || observation.bytes != reference.source_bytes
+    {
+        return Err(stale());
+    }
+    let anchor = observation
+        .messages
+        .iter()
+        .position(|m| m.index == reference.record_index);
+    let mut selected: Vec<&Message> = match options.direction {
+        ContextDirection::Occurrences => {
+            let terms: Vec<_> = options
+                .query
+                .as_deref()
+                .unwrap_or_default()
+                .split_whitespace()
+                .map(str::to_lowercase)
+                .collect();
+            observation
+                .messages
+                .iter()
+                .filter(|m| {
+                    m.index > reference.record_index
+                        && terms.iter().all(|q| m.text.to_lowercase().contains(q))
+                })
+                .collect()
+        }
+        ContextDirection::Forward => observation
+            .messages
+            .iter()
+            .filter(|m| m.index > reference.record_index)
+            .collect(),
+        ContextDirection::Backward => observation
+            .messages
+            .iter()
+            .filter(|m| m.index < reference.record_index)
+            .rev()
+            .collect(),
+        ContextDirection::Turn => {
+            let at = anchor.ok_or_else(stale)?;
+            let turn = observation.messages[at].position.turn_id.as_ref();
+            observation
+                .messages
+                .iter()
+                .filter(|m| {
+                    turn.is_some() && m.position.turn_id.as_ref() == turn
+                        || m.index == reference.record_index
+                })
+                .collect()
+        }
+        ContextDirection::Around => {
+            let at = anchor.ok_or_else(stale)?;
+            observation
+                .messages
+                .iter()
+                .skip(at.saturating_sub(options.before))
+                .take(options.before.min(at) + 1 + options.after)
+                .collect()
+        }
+    };
+    selected.truncate(options.max_messages);
+    if matches!(options.direction, ContextDirection::Backward) {
+        selected.reverse();
+    }
+    let mut messages = Vec::new();
+    let mut remaining = options.max_bytes;
+    let mut message_continuation = None;
+    for message in selected {
+        if remaining == 0 {
+            break;
+        }
+        let offset = if message.index == reference.record_index {
+            options
+                .message_offset
+                .unwrap_or_else(|| reference.position.as_ref().map_or(0, |p| p.chunk_offset))
+        } else if matches!(options.direction, ContextDirection::Occurrences) {
+            occurrence_offset(&message.text, options.query.as_deref().unwrap_or_default())
+        } else {
+            0
+        };
+        let (text, consumed) = safe_chunk(&message.text, offset, remaining)?;
+        remaining = remaining.saturating_sub(text.len());
+        let truncated = consumed < message.text.len();
+        let evidence = evidence_for(message, &observation, text, offset, truncated);
+        if truncated {
+            let mut next = message_reference(reference, &evidence);
+            if let Some(position) = &mut next.position {
+                position.chunk_offset = consumed;
+            }
+            message_continuation = Some(next);
+        }
+        messages.push(evidence);
+        if truncated {
+            break;
+        }
+    }
+    let first = messages.first().map(|m| m.record_index);
+    let last = messages.last().map(|m| m.record_index);
+    let at_start = !backward_clipped
+        && seed.is_none()
+        && (first.is_some_and(|i| observation.messages.first().is_some_and(|m| m.index == i))
+            || (messages.is_empty() && anchor == Some(0)));
+
+    let at_end = observation.next.is_none()
+        && message_continuation.is_none()
+        && (last.is_some_and(|i| observation.messages.last().is_some_and(|m| m.index == i))
+            || (messages.is_empty()
+                && matches!(
+                    options.direction,
+                    ContextDirection::Forward | ContextDirection::Occurrences
+                )));
+    let previous = if at_start {
+        None
+    } else {
+        messages.first().map(|m| message_reference(reference, m))
+    };
+    let mut next = message_continuation.or_else(|| {
+        if at_end {
+            None
+        } else {
+            messages.last().map(|m| message_reference(reference, m))
+        }
+    });
+    if next.is_none()
+        && !at_end
+        && let Some(progress) = &observation.next
+    {
+        let mut r = reference.clone();
+        r.position = Some(MessagePosition {
+            byte_offset: progress.byte_offset,
+            ordinal: progress.record_index + 1,
+            ..Default::default()
+        });
+        r.record_index = progress.record_index;
+        next = Some(r);
+    }
+    Ok(ContextWindow {
+        messages,
+        previous,
+        next,
+        at_start,
+        at_end,
+        partial: observation.partial || observation.next.is_some() || backward_clipped,
+        bytes_read,
+    })
+}
+fn context(
+    db: &Connection,
+    root: &Path,
+    reference: &ContextReference,
+    excluded: &[ArtifactId],
+    end: Instant,
+) -> Result<ConversationEvidence, ProviderError> {
+    let window = context_window(
+        db,
+        root,
+        reference,
+        &ContextOptions {
+            max_bytes: 1024,
+            ..Default::default()
+        },
+        excluded,
+        end,
+    )?;
+    let mut evidence = window.messages.into_iter().next().ok_or_else(unavailable)?;
+    let text = evidence.excerpt.take().ok_or_else(unavailable)?;
+    let (excerpt, truncated) = bounded_excerpt(&text, &[], 512);
+    evidence.truncated |= truncated;
+    evidence.excerpt = Some(excerpt);
+    Ok(evidence)
 }
 
 pub fn run_content_capture_worker() -> Result<(), ProviderError> {
@@ -958,32 +1885,53 @@ pub fn run_content_capture_worker() -> Result<(), ProviderError> {
             end.min(Instant::now() + Duration::from_secs(3)),
         )?;
         drop(source);
-        let mut result = match request.operation {
-            Operation::Search(ref query) => {
-                Response::Search(search(&memory, &request.source_root, query, end)?)
-            }
-            Operation::Context {
-                ref reference,
-                ref excluded,
-            } => Response::Context(context(
-                &memory,
-                &request.source_root,
-                reference,
-                excluded,
-                end,
-            )?),
-        };
-        if capture::fingerprints_changed(&before, &capture::fingerprints(&request.source_root)?) {
-            match &mut result {
-                Response::Search(page) => {
-                    page.coverage
-                        .reasons
-                        .push("source_changed_during_capture".into());
-                    page.next = None;
+        let result = (|| -> Result<Response, ProviderError> {
+            let result = match request.operation {
+                Operation::Search(ref query) => {
+                    Response::Search(search(&memory, &request.source_root, query, end)?)
                 }
-                Response::Context(_) => return Err(stale()),
+                Operation::Window {
+                    ref reference,
+                    ref options,
+                    ref excluded,
+                } => Response::Window(context_window(
+                    &memory,
+                    &request.source_root,
+                    reference,
+                    options,
+                    excluded,
+                    end,
+                )?),
+                Operation::Transcript {
+                    ref reference,
+                    ref checkpoint,
+                    ref excluded,
+                } => Response::Transcript(transcript_page(
+                    &memory,
+                    &request.source_root,
+                    reference,
+                    checkpoint.as_ref(),
+                    excluded,
+                    end,
+                )?),
+                Operation::Context {
+                    ref reference,
+                    ref excluded,
+                } => Response::Context(context(
+                    &memory,
+                    &request.source_root,
+                    reference,
+                    excluded,
+                    end,
+                )?),
+            };
+            if capture::fingerprints_changed(&before, &capture::fingerprints(&request.source_root)?)
+            {
+                return Err(stale());
             }
-        }
+            Ok(result)
+        })()
+        .unwrap_or_else(read_error_response);
         let encoded = serde_json::to_vec(&result).map_err(|_| unavailable())?;
         if encoded.len() > MAX_OUTPUT {
             return Err(unavailable());
@@ -1049,10 +1997,65 @@ impl CodexAdapter {
                 _ => return Err(unavailable()),
             }
         }
-        serde_json::from_slice(&bytes).map_err(|_| unavailable())
+        validate_worker_response(serde_json::from_slice(&bytes).map_err(|_| unavailable())?)
     }
 }
 impl SessionSearchReadPort for CodexAdapter {
+    fn transcript_page(
+        &self,
+        reference: &ContextReference,
+        checkpoint: Option<TranscriptCheckpoint>,
+        excluded: &[ArtifactId],
+    ) -> Result<TranscriptPage, ProviderError> {
+        let Response::Transcript(page) = self.content_worker(Operation::Transcript {
+            reference: reference.clone(),
+            checkpoint,
+            excluded: excluded.to_vec(),
+        })?
+        else {
+            return Err(unavailable());
+        };
+        if page.messages.iter().any(|m| {
+            !safe_conversation_text(&m.text)
+                || m.text.len() > 16 * 1024
+                || m.evidence.source_fingerprint != page.source_revision
+        }) {
+            return Err(unavailable());
+        }
+        Ok(page)
+    }
+    fn session_context_window(
+        &self,
+        reference: &ContextReference,
+        options: &ContextOptions,
+        excluded: &[ArtifactId],
+    ) -> Result<ContextWindow, ProviderError> {
+        let Response::Window(window) = self.content_worker(Operation::Window {
+            reference: reference.clone(),
+            options: options.clone(),
+            excluded: excluded.to_vec(),
+        })?
+        else {
+            return Err(unavailable());
+        };
+        if window.messages.len() > options.max_messages
+            || window.messages.iter().any(|m| {
+                m.excerpt
+                    .as_ref()
+                    .is_none_or(|s| !safe_conversation_text(s))
+            })
+            || window
+                .messages
+                .iter()
+                .filter_map(|m| m.excerpt.as_ref())
+                .map(String::len)
+                .sum::<usize>()
+                > options.max_bytes
+        {
+            return Err(unavailable());
+        }
+        Ok(window)
+    }
     fn search_sessions(
         &self,
         request: &SearchReadRequest,
@@ -1061,8 +2064,8 @@ impl SessionSearchReadPort for CodexAdapter {
         else {
             return Err(unavailable());
         };
-        if page.sessions.len() > 20
-            || page.sessions.iter().any(|h| {
+        if page.sessions.len() + page.unresolved.len() > 20
+            || page.sessions.iter().chain(&page.unresolved).any(|h| {
                 h.metadata.identity.state_root != self.location.state_root
                     || h.metadata.identity.provider != ProviderKind::Codex
                     || h.metadata.identity.class != GraphNodeKind::Session
@@ -1109,6 +2112,25 @@ impl SessionSearchReadPort for CodexAdapter {
 mod tests {
     use super::*;
     use serde_json::json;
+    #[test]
+    fn worker_staleness_is_typed_and_never_exports_provider_error_paths() {
+        let response = read_error_response(stale());
+        let encoded = serde_json::to_vec(&response).unwrap();
+        assert_eq!(
+            String::from_utf8(encoded.clone()).unwrap(),
+            "{\"Error\":\"Stale\"}"
+        );
+        assert!(
+            matches!(validate_worker_response(serde_json::from_slice(&encoded).unwrap()),Err(ProviderError::InvalidScope(code)) if code=="stale_search_evidence")
+        );
+        let response =
+            read_error_response(ProviderError::PermissionDenied("/private/source".into()));
+        assert!(
+            !serde_json::to_string(&response)
+                .unwrap()
+                .contains("private")
+        );
+    }
     fn db() -> Connection {
         let db = Connection::open_in_memory().unwrap();
         db.execute_batch("CREATE TABLE threads(id TEXT,title TEXT,cwd TEXT,created_at INTEGER,updated_at INTEGER,archived INTEGER,cli_version TEXT,rollout_path TEXT,first_user_message TEXT);").unwrap();
@@ -1127,9 +2149,11 @@ mod tests {
                 purpose: SearchPurpose::Diagnostic,
                 page_size: 20,
                 excerpts: true,
+                structured: None,
             },
             excluded: vec![],
             management_session: None,
+            cached: vec![],
             continuation: Default::default(),
         }
     }
@@ -1198,7 +2222,7 @@ mod tests {
         let page = search(&db, root.path(), &query, until()).unwrap();
         assert_eq!(page.sessions.len(), 1);
         assert_eq!(page.sessions[0].metadata.native_session_id, id(1));
-        assert_eq!(page.coverage.matched_in_batch, 2);
+        assert_eq!(page.coverage.matched_in_batch, 1);
         assert_eq!(page.sessions[0].evidence.len(), 2);
         assert!(page.sessions[0].score > 8);
         assert_eq!(page.sessions[0].content_status, "supported");
@@ -1212,6 +2236,7 @@ mod tests {
             native_session_id: id(1),
             local_id: identity(root.path(), &id(1)).unwrap().local_id,
             record_index: evidence.record_index,
+            position: evidence.position.clone(),
             source_fingerprint: evidence.source_fingerprint.clone(),
             source_bytes: evidence.source_bytes,
             purpose: SearchPurpose::Diagnostic,
@@ -1235,7 +2260,7 @@ mod tests {
     }
     #[cfg(unix)]
     #[test]
-    fn paginated_inline_tail_is_grounded_bounded_and_revalidated_without_reading_middle() {
+    fn paginated_inline_full_stream_is_grounded_and_source_revalidated() {
         let root = tempfile::tempdir().unwrap();
         let db = db();
         let path = seed(&db, root.path(), 1, "neutral", &[]);
@@ -1271,7 +2296,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(page.sessions.len(), 1);
-        assert_eq!(page.coverage.bytes_read, TRANSCRIPT_BYTES);
+        assert_eq!(page.coverage.bytes_read, bytes.len());
         assert_eq!(page.coverage.truncated_sessions, 1);
         assert_eq!(page.coverage.suppressed_records, 1);
         assert!(
@@ -1292,6 +2317,7 @@ mod tests {
             native_session_id: id(1),
             local_id: identity(root.path(), &id(1)).unwrap().local_id,
             record_index: evidence.record_index,
+            position: evidence.position.clone(),
             source_fingerprint: evidence.source_fingerprint.clone(),
             source_bytes: evidence.source_bytes,
             purpose: SearchPurpose::Diagnostic,
@@ -1361,7 +2387,7 @@ mod tests {
             )
             .is_err()
         );
-        assert_eq!(charged, SEARCH_BYTES);
+        assert!(charged > SEARCH_BYTES - 101 && charged <= SEARCH_BYTES);
     }
     #[cfg(unix)]
     #[test]
@@ -1430,7 +2456,10 @@ mod tests {
                 q.management_session = Some(id(0));
                 let page = search(&db, root.path(), &q, until()).unwrap();
                 assert_eq!(page.coverage.eligible_observed, 101);
-                assert_eq!(page.coverage.sessions_inspected, 100);
+                assert_eq!(
+                    page.coverage.sessions_inspected,
+                    if term == id(0) { 100 } else { 20 }
+                );
                 assert!(
                     page.sessions
                         .iter()
@@ -1569,6 +2598,463 @@ mod tests {
             params![id(0), id(1)],
         )
         .unwrap();
+        assert!(search(&db, root, &q, until()).is_err());
+    }
+    fn evidence_reference(n: u32, evidence: &ConversationEvidence) -> ContextReference {
+        ContextReference {
+            native_session_id: id(n),
+            local_id: EntityId::new(format!("codex:session:{}", id(n))).unwrap(),
+            record_index: evidence.record_index,
+            position: evidence.position.clone(),
+            source_fingerprint: evidence.source_fingerprint.clone(),
+            source_bytes: evidence.source_bytes,
+            purpose: SearchPurpose::Diagnostic,
+            binding_revision: "fixture".into(),
+        }
+    }
+    #[cfg(unix)]
+    #[test]
+    fn full_stream_continues_past_work_budget_and_preserves_cross_page_conditions() {
+        let root = tempfile::tempdir().unwrap();
+        let db = db();
+        let path = seed(
+            &db,
+            root.path(),
+            1,
+            "unrelated",
+            &[message("user", "Cesium investigation begins")],
+        );
+        let mut file = fs::OpenOptions::new().append(true).open(&path).unwrap();
+        let filler = "ordinary filler ".repeat(65_536);
+        for n in 0..34 {
+            let text = if n == 17 {
+                format!("{filler}MongoDB middle decision")
+            } else {
+                filler.clone()
+            };
+            writeln!(file, "{}", message("assistant", &text)).unwrap();
+        }
+        writeln!(
+            file,
+            "{}",
+            message("assistant", "PostgreSQL resolution verified")
+        )
+        .unwrap();
+        drop(file);
+        assert!(fs::metadata(&path).unwrap().len() > SEARCH_BYTES as u64);
+        let mut q = request("Cesium PostgreSQL");
+        q.parameters.structured = Some(StructuredQuery {
+            filter: QueryExpr::And {
+                args: vec![
+                    QueryExpr::Text {
+                        value: "Cesium".into(),
+                        kind: TextMatch::Contains,
+                        alternatives: vec![],
+                    },
+                    QueryExpr::Text {
+                        value: "PostgreSQL".into(),
+                        kind: TextMatch::Contains,
+                        alternatives: vec![],
+                    },
+                    QueryExpr::Not {
+                        arg: Box::new(QueryExpr::Text {
+                            value: "Docker".into(),
+                            kind: TextMatch::Contains,
+                            alternatives: vec![],
+                        }),
+                    },
+                ],
+            },
+            mode: SearchMode::Ranked,
+            sort: SearchSort::Relevance,
+            coverage: CoverageRequirement::BestEffort,
+        });
+        let first = search(&db, root.path(), &q, until()).unwrap();
+        assert!(first.sessions.is_empty());
+        assert!(first.coverage.bytes_read <= SEARCH_BYTES);
+        let next = first.next.unwrap();
+        assert!(next.stream.as_ref().unwrap().byte_offset > TRANSCRIPT_BYTES as u64);
+        assert!(
+            next.stream
+                .as_ref()
+                .unwrap()
+                .matched_terms
+                .contains(&"cesium".into())
+        );
+        q.continuation = next;
+        let mut steps = 1;
+        let second = loop {
+            let page = search(&db, root.path(), &q, until()).unwrap();
+            assert!(page.coverage.bytes_read <= SEARCH_BYTES);
+            steps += 1;
+            if !page.sessions.is_empty() {
+                break page;
+            }
+            q.continuation = page.next.unwrap();
+            assert!(steps < 10);
+        };
+        assert_eq!(second.sessions.len(), 1);
+        assert!(second.sessions[0].content_complete);
+        assert!(second.next.is_none());
+        assert!(second.coverage.bytes_read <= SEARCH_BYTES);
+        let anchor = second.sessions[0]
+            .evidence
+            .iter()
+            .find(|e| e.record_index == 2)
+            .unwrap();
+        let r = evidence_reference(1, anchor);
+        let window = context_window(
+            &db,
+            root.path(),
+            &r,
+            &ContextOptions {
+                direction: ContextDirection::Occurrences,
+                query: Some("MongoDB".into()),
+                ..Default::default()
+            },
+            &[],
+            until(),
+        )
+        .unwrap();
+        assert_eq!(window.messages.len(), 1);
+        assert!(
+            window.messages[0]
+                .excerpt
+                .as_ref()
+                .unwrap()
+                .contains("MongoDB")
+        );
+        assert!(
+            window.messages[0].position.as_ref().unwrap().byte_offset > TRANSCRIPT_BYTES as u64
+        );
+        let mut changed = fs::OpenOptions::new().append(true).open(&path).unwrap();
+        writeln!(changed, " ").unwrap();
+        assert!(search(&db, root.path(), &q, until()).is_err());
+        assert!(
+            context_window(
+                &db,
+                root.path(),
+                &r,
+                &ContextOptions::default(),
+                &[],
+                until()
+            )
+            .is_err()
+        );
+    }
+    #[cfg(unix)]
+    #[test]
+    fn context_windows_find_later_rejection_resolution_turns_and_message_chunks() {
+        let root = tempfile::tempdir().unwrap();
+        let db = db();
+        let mut rows = vec![
+            message("user", "rendering problem needs investigation"),
+            message("assistant", "initial proposed cache"),
+        ];
+        for _ in 0..110 {
+            rows.push(message("assistant", "unrelated intervening work"));
+        }
+        let mut rejected = message("user", "rejected cache proposal after measurement");
+        rejected["payload"]["turn_id"] = json!("resolution-turn");
+        rows.push(rejected);
+        let mut resolution = message("assistant", "final resolution reduces camera updates");
+        resolution["payload"]["turn_id"] = json!("resolution-turn");
+        rows.push(resolution);
+        seed(&db, root.path(), 1, "neutral", &rows);
+        let page = search(&db, root.path(), &request("problem"), until()).unwrap();
+        let r = evidence_reference(1, &page.sessions[0].evidence[0]);
+        let after = context_window(
+            &db,
+            root.path(),
+            &r,
+            &ContextOptions {
+                direction: ContextDirection::Forward,
+                max_messages: 2,
+                ..Default::default()
+            },
+            &[],
+            until(),
+        )
+        .unwrap();
+        assert_eq!(after.messages.len(), 2);
+        assert!(
+            after.messages[0]
+                .excerpt
+                .as_ref()
+                .unwrap()
+                .contains("proposed")
+        );
+        let occurrences = context_window(
+            &db,
+            root.path(),
+            &r,
+            &ContextOptions {
+                direction: ContextDirection::Occurrences,
+                query: Some("final resolution".into()),
+                ..Default::default()
+            },
+            &[],
+            until(),
+        )
+        .unwrap();
+        assert_eq!(occurrences.messages.len(), 1);
+        let resolved = evidence_reference(1, &occurrences.messages[0]);
+        let before = context_window(
+            &db,
+            root.path(),
+            &resolved,
+            &ContextOptions {
+                direction: ContextDirection::Backward,
+                max_messages: 1,
+                ..Default::default()
+            },
+            &[],
+            until(),
+        )
+        .unwrap();
+        assert!(
+            before.messages[0]
+                .excerpt
+                .as_ref()
+                .unwrap()
+                .contains("rejected")
+        );
+        let turn = context_window(
+            &db,
+            root.path(),
+            &resolved,
+            &ContextOptions {
+                direction: ContextDirection::Turn,
+                ..Default::default()
+            },
+            &[],
+            until(),
+        )
+        .unwrap();
+        assert_eq!(turn.messages.len(), 2);
+        assert!(turn.at_end);
+        let around = context_window(
+            &db,
+            root.path(),
+            &resolved,
+            &ContextOptions {
+                before: 1,
+                after: 1,
+                ..Default::default()
+            },
+            &[],
+            until(),
+        )
+        .unwrap();
+        assert_eq!(around.messages.len(), 2);
+        let huge = "🪐".repeat(10_000);
+        seed(&db, root.path(), 2, "huge", &[message("user", &huge)]);
+        let page = search(&db, root.path(), &request("🪐"), until()).unwrap();
+        let mut large = evidence_reference(2, &page.sessions[0].evidence[0]);
+        let mut joined = String::new();
+        loop {
+            let window = context_window(
+                &db,
+                root.path(),
+                &large,
+                &ContextOptions {
+                    max_bytes: 4097,
+                    ..Default::default()
+                },
+                &[],
+                until(),
+            )
+            .unwrap();
+            assert_eq!(window.messages.len(), 1);
+            joined.push_str(window.messages[0].excerpt.as_ref().unwrap());
+            if window.messages[0].truncated {
+                large = window.next.unwrap();
+            } else {
+                assert!(window.at_end);
+                break;
+            }
+        }
+        assert_eq!(joined, huge);
+    }
+    #[cfg(unix)]
+    #[test]
+    fn transcript_pages_reassemble_utf8_and_report_canonical_unsupported_eof() {
+        let root = tempfile::tempdir().unwrap();
+        let db = db();
+        let text = "Cesium 🪐\n".repeat(6000);
+        let path = seed(&db, root.path(), 1, "neutral", &[message("user", &text)]);
+        let mut f = fs::OpenOptions::new().append(true).open(&path).unwrap();
+        writeln!(f, "{{\"type\":\"future_record\"}}").unwrap();
+        drop(f);
+        let reference = ContextReference {
+            native_session_id: id(1),
+            local_id: identity(root.path(), &id(1)).unwrap().local_id,
+            record_index: 0,
+            position: None,
+            source_fingerprint: String::new(),
+            source_bytes: 0,
+            purpose: SearchPurpose::Diagnostic,
+            binding_revision: "fixture".into(),
+        };
+        let mut checkpoint = None;
+        let mut joined = String::new();
+        let mut pages = 0;
+        loop {
+            let page = transcript_page(
+                &db,
+                root.path(),
+                &reference,
+                checkpoint.as_ref(),
+                &[],
+                until(),
+            )
+            .unwrap();
+            assert!(page.messages.iter().map(|m| m.text.len()).sum::<usize>() <= 16384);
+            for m in &page.messages {
+                assert_eq!(m.evidence.record_index, 2);
+                joined.push_str(&m.text);
+            }
+            pages += 1;
+            if page.next.is_none() {
+                assert!(!page.complete);
+                assert!(page.end.partial);
+                assert_eq!(page.end.byte_offset, fs::metadata(&path).unwrap().len());
+                assert_eq!(page.end.record_index, 3);
+                break;
+            }
+            assert_eq!(
+                page.end.byte_offset,
+                page.next.as_ref().unwrap().byte_offset
+            );
+            checkpoint = page.next;
+            assert!(pages < 20);
+        }
+        assert_eq!(joined, text);
+        assert!(pages > 1);
+    }
+    #[cfg(unix)]
+    #[test]
+    fn negative_content_unknowns_and_cache_scope_revision_are_revalidated() {
+        let root = tempfile::tempdir().unwrap();
+        let db = db();
+        let path = seed(
+            &db,
+            root.path(),
+            1,
+            "neutral",
+            &[message("user", "Cesium camera")],
+        );
+        let mut q = request("Cesium");
+        q.continuation.scope = "fixture-query-scope".into();
+        let first = search(&db, root.path(), &q, until()).unwrap();
+        let hit = &first.sessions[0];
+        q.cached = vec![CachedSessionSearch {
+            native_session_id: id(1),
+            source_fingerprint: hit.evidence[0].source_fingerprint.clone(),
+            query_scope: q.continuation.scope.clone(),
+            score: 4,
+            matched_terms: vec!["cesium".into()],
+            match_sources: vec!["user_message".into()],
+            evidence: hit.evidence.clone(),
+            query_observation: QueryObservation::default(),
+            content_complete: true,
+        }];
+        let warm = search(&db, root.path(), &q, until()).unwrap();
+        assert_eq!(warm.sessions.len(), 1);
+        assert!(
+            warm.coverage
+                .reasons
+                .iter()
+                .any(|r| r == "fresh_source_validated_index_cache")
+        );
+        assert!(warm.coverage.bytes_read < first.coverage.bytes_read);
+        q.cached[0].query_scope = "different".into();
+        let wrong = search(&db, root.path(), &q, until()).unwrap();
+        assert!(
+            !wrong
+                .coverage
+                .reasons
+                .iter()
+                .any(|r| r == "fresh_source_validated_index_cache")
+        );
+        q.cached[0].query_scope = q.continuation.scope.clone();
+        let changed = fs::read_to_string(&path)
+            .unwrap()
+            .replace("Cesium camera", "ordinary lunch");
+        fs::write(&path, changed).unwrap();
+        let changed = search(&db, root.path(), &q, until()).unwrap();
+        assert!(changed.sessions.is_empty());
+        assert!(
+            !changed
+                .coverage
+                .reasons
+                .iter()
+                .any(|r| r == "fresh_source_validated_index_cache")
+        );
+        let mut negative = request("");
+        negative.parameters.structured = Some(StructuredQuery {
+            filter: QueryExpr::Not {
+                arg: Box::new(QueryExpr::Text {
+                    value: "Cesium".into(),
+                    kind: TextMatch::Contains,
+                    alternatives: vec![],
+                }),
+            },
+            mode: SearchMode::Exhaustive,
+            sort: SearchSort::Identity,
+            coverage: CoverageRequirement::BestEffort,
+        });
+        assert_eq!(
+            search(&db, root.path(), &negative, until())
+                .unwrap()
+                .sessions
+                .len(),
+            1
+        );
+        let mut f = fs::OpenOptions::new().append(true).open(&path).unwrap();
+        writeln!(f, "{{\"type\":\"event_msg\",\"payload\":{{\"type\":\"future_human_message\",\"message\":\"Cesium\"}}}}").unwrap();
+        drop(f);
+        let unknown = search(&db, root.path(), &negative, until()).unwrap();
+        assert!(unknown.sessions.is_empty());
+        assert_eq!(unknown.coverage.unresolved_sessions, 1);
+        assert_eq!(unknown.unresolved.len(), 1);
+    }
+    #[test]
+    fn inventory_keyset_exhausts_more_than_ten_thousand_and_rejects_earlier_insertions() {
+        let db = db();
+        let root = Path::new("/fixture");
+        for n in 1..=10_001 {
+            db.execute("INSERT INTO threads VALUES(?1,'neutral','/fixture/project',?2,2,0,'future',NULL,NULL)",params![id(n),if n==10001 {10001}else{1}]).unwrap();
+        }
+        let mut q = request("");
+        q.parameters.include_content = false;
+        q.parameters.structured = Some(StructuredQuery {
+            filter: QueryExpr::Created {
+                range: QueryRange::Utc(TimeRange {
+                    start: Some(10000),
+                    end: None,
+                }),
+            },
+            mode: SearchMode::Exhaustive,
+            sort: SearchSort::Created,
+            coverage: CoverageRequirement::BestEffort,
+        });
+        let first = search(&db, root, &q, until()).unwrap();
+        assert!(first.sessions.is_empty());
+        q.continuation = first.next.unwrap();
+        assert_eq!(
+            q.continuation
+                .inventory_after
+                .as_ref()
+                .unwrap()
+                .native_session_id,
+            id(10000)
+        );
+        let next = search(&db, root, &q, until()).unwrap();
+        assert_eq!(next.sessions.len(), 1);
+        assert_eq!(next.sessions[0].metadata.native_session_id, id(10001));
+        assert!(next.next.is_none());
+        db.execute("INSERT INTO threads VALUES(?1,'inserted earlier','/fixture/project',1,2,0,'future',NULL,NULL)",[id(0)]).unwrap();
         assert!(search(&db, root, &q, until()).is_err());
     }
 }

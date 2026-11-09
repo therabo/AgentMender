@@ -302,6 +302,7 @@ patterns = [
 for path in (ROOT / "crates").glob("*/src/**/*.rs"):
     source = production_source(path.read_text(encoding="utf-8"))
     code = mask_literals(source)
+    reviewed_search_index = path == ROOT / "crates/persistence/src/search_index.rs"
     reviewed_capture = path == ROOT / "crates/provider-codex/src/capture.rs"
     reviewed_lifecycle = path == ROOT / "crates/provider-codex/src/lifecycle.rs"
     reviewed_scoped = path in {ROOT / f"crates/provider-codex/src/{name}.rs" for name in ["scoped_cleanup", "scoped_unsupported", "desktop_cleanup"]}
@@ -329,6 +330,11 @@ for path in (ROOT / "crates").glob("*/src/**/*.rs"):
             # Advertised method names in schema inspection are data, not dispatch.
             for body in method_bodies(source, "schema_methods"):
                 inspected = inspected.replace(body, "")
+        if reviewed_search_index and pattern == patterns[0]:
+            # ADR-0027: only explicit offline rebuild may unlink the two fixed
+            # derived files inside a validated OwnedStateRoot; checked below.
+            for body in method_bodies(source, 'rebuild_search_index'):
+                inspected = inspected.replace(body, '')
         if (re.search(pattern, inspected)
             and not (reviewed_capture and pattern in {patterns[1], patterns[2], patterns[-1]})
             and not (reviewed_owned and pattern in patterns[:3])
@@ -336,7 +342,8 @@ for path in (ROOT / "crates").glob("*/src/**/*.rs"):
             and not (reviewed_scoped_files and pattern == patterns[-2])
             and not (reviewed_desktop_catalog and pattern == patterns[-1])
             and not (reviewed_desktop_shared and pattern == patterns[-2])
-            and not (crate_name == "persistence" and path.name == "store.rs" and pattern == patterns[-1])):
+            and not (crate_name == "persistence" and path.name == "store.rs" and pattern == patterns[-1])
+            and not (reviewed_search_index and pattern == patterns[-1])):
             errors.append(f"possible provider mutation: {path.relative_to(ROOT)}: {pattern}")
     if path != ROOT / "crates/provider-api/src/macos_sandbox.rs" and (re.search(r"\bunsafe\b", code) or re.search(r"allow\s*\(\s*unsafe_code", code)):
         errors.append(f"unsafe code outside reviewed OS boundary: {path.relative_to(ROOT)}")
@@ -384,13 +391,16 @@ for path in (ROOT / "crates").glob("*/src/**/*.rs"):
             if len(re.findall(stage_cleanup, mutation_code)) != 1:
                 errors.append("reviewed recovery staging cleanup contract changed")
             mutation_code = re.sub(stage_cleanup, "stage_cleanup", mutation_code)
+        if reviewed_search_index:
+            for body in method_bodies(source, 'rebuild_search_index'):
+                mutation_code = mutation_code.replace(mask_literals(body), '')
         if re.search(r"\b(?:remove_file|remove_dir|remove_dir_all|rename|copy|set_len|truncate)\s*\(", mutation_code):
             errors.append(f"persistent history or recovery rewrite/removal: {path.relative_to(ROOT)}")
         if path.name == "recovery.rs" and not all(marker in source for marker in ["RecoveryManifest", "create_recovery_stage", "publish_recovery", "sync_all", "verify"]):
             errors.append("typed durable recovery storage contract missing")
-        if path.name not in {"owned.rs", "recovery.rs", "store.rs", "windows_permissions.rs", "lib.rs", "handoff.rs"}:
+        if path.name not in {"owned.rs", "recovery.rs", "store.rs", "windows_permissions.rs", "lib.rs", "handoff.rs", "search_index.rs"}:
             errors.append(f"unreviewed persistence module: {path.relative_to(ROOT)}")
-        if "Connection::" in code and path.name != "store.rs":
+        if "Connection::" in code and path.name not in {"store.rs", "search_index.rs"}:
             errors.append(f"SQLite outside owned journal module: {path.relative_to(ROOT)}")
     # ADR-0023 admits only durable preparation in the application handoff;
     # MCP still cannot access persistence, grants, keys or a dispatch gate.
@@ -448,6 +458,37 @@ for path in (ROOT / "crates").glob("*/src/**/*.rs"):
             methods = set(re.findall(r"\bfn\s+(\w+)\s*\(", code[trait.end():index]))
             if methods != {"kind", "detect", "discover", "build_graph", "integrity_context", "planning_context"}:
                 errors.append(f"unreviewed provider port methods: {sorted(methods)}")
+
+# ADR-0027 reviewed derived index: no journal/history names, authority, provider
+# access, arbitrary filenames or SQL accepted from inbound tools.
+def search_index_boundary_violation(source):
+    source = production_source(source)
+    code = mask_literals(source)
+    if re.search(r'\b(?:TransactionStore|RecoveryStore|DurableIntent|ApprovalGrant|Command|ProviderAdapter|SessionSearchReadPort)\b', code):
+        return True
+    if any(name not in {'search_sources','search_documents','search_source_state','search_terms'}
+           for name in re.findall(r'(?:INSERT INTO|DELETE FROM|UPDATE(?!\s+SET\b)|CREATE TABLE IF NOT EXISTS|CREATE VIRTUAL TABLE IF NOT EXISTS)\s+(\w+)', source)):
+        return True
+    return bool(re.search(r'"(?:transactions\.(?:sqlite3|journal|lock)|authority\.key|recovery-[^"\n]*)"', source))
+assert search_index_boundary_violation('db.execute("DELETE FROM threads", []);')
+assert search_index_boundary_violation('db.execute("UPDATE transactions SET state=1", []);')
+assert search_index_boundary_violation('fn acquire() { store.record_intent(); let x: DurableIntent; }')
+assert not search_index_boundary_violation('db.execute("DELETE FROM search_sources WHERE source=?1", [source]);')
+index_source = production_source((ROOT / 'crates/persistence/src/search_index.rs').read_text(encoding='utf-8'))
+if search_index_boundary_violation(index_source):
+    errors.append('derived search index crosses provider/authority/history boundary')
+rebuild = list(method_bodies(index_source, 'rebuild_search_index'))
+if len(rebuild) != 1 or not all(marker in rebuild[0] for marker in [
+        'OwnedStateRoot::open', 'validate_sidecars', 'try_lock()',
+        '["search.sqlite3-journal", "search.sqlite3"]',
+        'open_child_existing', 'same_file', 'root.revalidate()', 'remove_file(target)']):
+    errors.append('derived index offline rebuild lost its fixed private scope')
+if len(re.findall(r'\bremove_file\s*\(', mask_literals(index_source))) != 1:
+    errors.append('derived index removal escaped explicit fixed rebuild')
+for marker in ['SQLITE_OPEN_NOFOLLOW','search_index_path','PRAGMA secure_delete=ON',
+               "contentless_delete=1", 'try_lock_shared()', '262144']:
+    if marker not in index_source:
+        errors.append('derived search index privacy/resource boundary lost: ' + marker)
 
 if errors:
     print("\n".join(errors), file=sys.stderr)
@@ -708,7 +749,7 @@ for relative in ['provider-codex/src/content.rs', 'application/src/session_searc
         raise SystemExit('read-only search/registration gained write authority: ' + relative)
 for marker in ['validate_worker_paths', 'SQLITE_OPEN_READ_ONLY', 'SQLITE_OPEN_NOFOLLOW',
                'PRAGMA query_only=ON', 'bounded_backup', 'open_source_read',
-               'spawn_codex_content_capture', 'SEARCH_BYTES', 'TRANSCRIPT_BYTES',
+               'spawn_codex_content_capture', 'SEARCH_BYTES', 'SESSION_SLICE_BYTES', 'STREAM_RECORD_BYTES',
                'RECORD_BYTES', 'LIMIT 10001', 'WHERE id NOT IN', 'header_identity_mismatch']:
     if marker not in content:
         raise SystemExit('content isolation/identity/bounds lost: ' + marker)
@@ -722,3 +763,7 @@ for marker in ['verify_operator_descriptor', 'root_device', 'root_inode', 'serve
         raise SystemExit('independent registration boundary lost: ' + marker)
 
 print("Architecture, independent approval, gated Codex and read-only Claude checks passed (8 crates).")
+
+# Evolved transcript bounds remain explicit, not unlimited memory allocation.
+assert "const STREAM_RECORD_BYTES: usize = 8 * 1024 * 1024;" in content
+assert "const SESSION_SLICE_BYTES: usize = 12 * 1024 * 1024;" in content

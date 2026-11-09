@@ -374,7 +374,11 @@ async fn opt_in_conversation_registry_metadata_privacy_and_authority_rejection()
     )
     .await;
     assert_eq!(list["result"]["tools"].as_array().unwrap().len(), 14);
-    assert!(serde_json::to_vec(&list).unwrap().len() + 64 * 1024 + 128 <= 256 * 1024);
+    assert!(
+        serde_json::to_vec(&list).unwrap().len() + 64 * 1024 + 128 <= 256 * 1024,
+        "registry bytes: {}",
+        serde_json::to_vec(&list).unwrap().len()
+    );
     let call = |id, name, args| json!({"jsonrpc":"2.0","id":id,"method":"tools/call","params":{"_meta":meta,"name":name,"arguments":args}});
     let result = exchange(
         &mut cr,

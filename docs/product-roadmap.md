@@ -79,6 +79,21 @@ metadata, registered exclusions and MCP preparation/status. Actual caller/client
 validation and independently operated human approval/execution remain open. Exhaustive Desktop projections, caches and bulk work are not dependencies.
 No local LLM or new natural-language interpretation service is required.
 
+## Intelligent retrieval delivery — current checkpoint
+
+[ADR-0027](adr/0027-intelligent-session-retrieval.md) extends P0 search with typed
+nested filters, UTC/calendar dates, unknown-safe negative conditions, full supported
+stream traversal, source-bound context windows, FTS5 and opt-in private indexing.
+[Search](session-search.md), [indexing](full-text-index.md), [Luna](luna-session-relevance.md)
+and the [implementation report](milestones/intelligent-search-implementation.md)
+are canonical. These features do not complete deletion or the two-provider MVP.
+
+Remaining mandatory acceptance is explicit: enforceable real caller routing,
+updated actual conversational client/custom-agent acceptance, and documented
+provider/format/coverage limits. Guaranteed production management requests refuse
+without that host capability; a privileged registration file cannot substitute.
+No speculative embeddings or GraphRAG milestone blocks useful local retrieval.
+
 ## P1 — Provider coverage and native lifecycle operations
 
 Expand the same workflow across selected Codex and Claude versions, session types

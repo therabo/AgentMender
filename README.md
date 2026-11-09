@@ -18,24 +18,20 @@ verified results. It protects other sessions and shared state throughout.
 > the trusted human channel. After execution and structural verification, the
 > agent explains the result and any remaining artifacts.
 
-P0-C1 deletion is **OPEN**. Real conversational MCP metadata search is **accepted**:
-the user's Codex invoked `session_search(query="MISSION1", include_archived=true)`
-and received 37 real records with Partial coverage. P0-S1 bounded content search and guaranteed-mode refusal are implemented and
-fixture-tested; actual updated conversational acceptance and independent protection
-of the real management chat remain **OPEN**. Automatic caller binding is incomplete.
-Guaranteed management searches require independent registration or return
-`caller_identity_required` with zero candidates; diagnostic browsing has no caller
-exclusion guarantee. Current-version destructive Codex
-deletion is not accepted, and Claude mutation remains a later milestone.
+P0-C1 deletion is **OPEN**. Real conversational metadata search was accepted in
+P0-S1. Intelligent retrieval now adds typed Boolean/date/project queries,
+three-valued negatives, complete supported transcript traversal with continuation,
+source-bound context navigation, FTS5 and opt-in private indexing. Fixture and
+real-provider/client acceptance are separate; see the
+[implementation report](docs/milestones/intelligent-search-implementation.md).
+Automatic caller identity remains **OPEN**. Production guaranteed management
+search returns `caller_identity_required` with zero candidates because the installed
+MCP transport does not attest exclusive chat routing. A privileged declaration
+alone cannot admit it. Diagnostic browsing is not a manageable deletion list.
 
-Real Codex session search uses bounded, protected metadata and known visible
-message readers independent of the historical cleanup binary. The existing
-installation supplies runtime version/interface observations; deletion admission
-remains separate. Search mode can assess an exact target but cannot prepare or
-execute removal. Human/client destructive acceptance remains open.
-See the [real-session quick start](docs/p0-c1-manual-acceptance.md) and
-[operating contract](docs/conversational-codex-removal.md). Cross-provider deletion
-is not implemented.
+Read-only search remains independent of destructive compatibility. No current
+native delete or Claude mutation profile is added; approval/recovery semantics
+and all historical removal evidence are preserved.
 
 ## What works today
 
@@ -45,8 +41,8 @@ is not implemented.
 | Codex inventory | Real metadata search with validated column/value contract; historical App Server scans remain separate |
 | Claude inventory | Partial observed Desktop sidecar metadata; synthetic Code fixtures; no general live SDK inventory |
 | MCP | Eight default read-only tools; six opt-in Codex search/context/preview/preparation/status/external-handoff tools |
-| Session search | Accepted real conversational metadata; opt-in bounded user/assistant text, lexical ranking, excerpts/context and Partial coverage; updated client acceptance OPEN |
-| Management-session exclusion | Management mode requires independent exact registration or refuses with zero candidates; exclusion precedes counts/ranking/paging/context; automatic binding and real acceptance OPEN |
+| Session search | Typed Boolean/time/project queries, unknown-safe negatives, sequential full supported content, FTS5 passages, bounded continuation and source-validated cache; updated client acceptance reported separately |
+| Management-session exclusion | Guaranteed real mode refuses with zero candidates until enforceable host binding exists; typed fixture exclusion precedes counts/ranking/paging/context; launch-protected diagnostic identities stay excluded |
 | Human approval and durable transactions | Implemented local terminal review, one-shot authenticated grants, journal and read-only reconciliation |
 | Codex primary cleanup | M8.2 PASS for exact 0.166.0/macOS arm64, unshared Legacy plain history and reviewed WAL schema |
 | Native Codex mutation | Conditional historical unarchive handoff; real native plans remain blocked; archive/delete unsupported |
@@ -102,6 +98,10 @@ command is the absolute AgentMender executable and arguments are:
 --provider codex mcp --session-search
 ```
 
+Search examples and semantics are in [session search](docs/session-search.md);
+[private indexing](docs/full-text-index.md) is optional and explicitly stores message
+text/terms, while [Luna Medium](docs/luna-session-relevance.md) analyzes bounded evidence.
+
 This mode uses the selected/default Codex home and locates the existing macOS
 bundled executable even without `codex` in PATH. No historical binary, synthetic
 provider root, approval store or caller UUID is needed to browse. Use explicit
@@ -122,7 +122,7 @@ records code/test retention decisions and the verification boundary.
 
 Current documentation: this README for capability status; [architecture](docs/architecture.md)
 for boundaries; [roadmap](docs/product-roadmap.md) for sequencing;
-[search and management identity](docs/session-search.md) for the implemented bounded read-only
+[search and management identity](docs/session-search.md) for the implemented incremental read-only
 contract; [MCP](docs/mcp.md) for tools; [development](docs/development.md) for checks.
 Dated audits, milestone receipts and research are historical evidence, not competing
 roadmaps. [ADR-0025](docs/adr/0025-bounded-search-and-management-exclusion.md)

@@ -21,6 +21,8 @@ pub enum SearchPurpose {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SearchParameters {
+    #[serde(default)]
+    pub structured: Option<crate::StructuredQuery>,
     pub query: String,
     pub include_archived: bool,
     pub include_content: bool,
@@ -31,7 +33,10 @@ pub struct SearchParameters {
 }
 impl SearchParameters {
     pub fn valid(&self) -> bool {
-        self.query.len() <= 256
+        self.structured
+            .as_ref()
+            .is_none_or(crate::StructuredQuery::valid)
+            && self.query.len() <= 256
             && !self.query.chars().any(char::is_control)
             && self.query.split_whitespace().count() <= 16
             && (1..=20).contains(&self.page_size)
@@ -39,6 +44,22 @@ impl SearchParameters {
                 .project_label
                 .as_ref()
                 .is_none_or(|p| !p.is_empty() && p.len() <= 256 && !p.chars().any(char::is_control))
+    }
+    pub fn reads_content(&self) -> bool {
+        self.include_content
+            || self
+                .structured
+                .as_ref()
+                .is_some_and(|q| q.filter.needs_content())
+    }
+    pub fn ranking_terms(&self) -> Vec<String> {
+        let mut terms = self.terms();
+        if let Some(q) = &self.structured {
+            terms.extend(q.filter.text_terms());
+        }
+        terms.sort();
+        terms.dedup();
+        terms
     }
     pub fn terms(&self) -> Vec<String> {
         self.query
@@ -63,15 +84,23 @@ pub struct ManagementIdentity {
 pub struct SearchContinuation {
     pub scope: String,
     pub inventory_fingerprint: String,
+    #[serde(default)]
+    pub corpus_fingerprint: String,
+    #[serde(default)]
+    pub inventory_after: Option<crate::InventoryBoundary>,
     pub batch_fingerprint: Option<String>,
     pub start: usize,
     pub end: Option<usize>,
     pub result_offset: usize,
+    #[serde(default)]
+    pub stream: Option<crate::TranscriptCheckpoint>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SearchReadRequest {
+    #[serde(default)]
+    pub cached: Vec<crate::CachedSessionSearch>,
     pub parameters: SearchParameters,
     pub excluded: Vec<ArtifactId>,
     pub management_session: Option<String>,
@@ -83,6 +112,8 @@ pub struct SearchReadRequest {
 pub struct ConversationEvidence {
     pub source: String,
     pub record_index: usize,
+    #[serde(default)]
+    pub position: Option<crate::MessagePosition>,
     pub excerpt: Option<String>,
     pub truncated: bool,
     pub source_fingerprint: String,
@@ -93,6 +124,10 @@ pub struct ConversationEvidence {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SessionSearchHit {
+    #[serde(default)]
+    pub query_observation: crate::QueryObservation,
+    #[serde(default)]
+    pub content_complete: bool,
     pub metadata: SessionMetadata,
     pub score: u32,
     pub matched_terms: Vec<String>,
@@ -106,6 +141,10 @@ pub struct SessionSearchHit {
 pub struct SearchCoverage {
     pub eligible_observed: usize,
     pub sessions_inspected: usize,
+    #[serde(default)]
+    pub unresolved_sessions: usize,
+    #[serde(default)]
+    pub fully_traversed_sessions: usize,
     pub bytes_read: usize,
     pub matched_in_batch: usize,
     pub unsupported_sessions: usize,
@@ -118,6 +157,8 @@ pub struct SearchCoverage {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SessionSearchPage {
+    #[serde(default)]
+    pub unresolved: Vec<SessionSearchHit>,
     pub sessions: Vec<SessionSearchHit>,
     pub coverage: SearchCoverage,
     pub inventory_fingerprint: String,
@@ -131,6 +172,8 @@ pub struct ContextReference {
     pub native_session_id: String,
     pub local_id: crate::EntityId,
     pub record_index: usize,
+    #[serde(default)]
+    pub position: Option<crate::MessagePosition>,
     pub source_fingerprint: String,
     pub source_bytes: usize,
     pub purpose: SearchPurpose,
@@ -227,6 +270,7 @@ pub fn bounded_excerpt(text: &str, terms: &[String], max: usize) -> (String, boo
 
 /// Explainable lexical evidence; messages are never interpreted as instructions.
 pub struct SearchRelevance {
+    required: Vec<String>,
     terms: Vec<String>,
     matched: BTreeSet<String>,
     sources: BTreeSet<String>,
@@ -235,7 +279,8 @@ pub struct SearchRelevance {
 impl SearchRelevance {
     pub fn new(parameters: &SearchParameters) -> Self {
         Self {
-            terms: parameters.terms(),
+            required: parameters.terms(),
+            terms: parameters.ranking_terms(),
             matched: BTreeSet::new(),
             sources: BTreeSet::new(),
             score: 0,
@@ -266,7 +311,7 @@ impl SearchRelevance {
         hits
     }
     pub fn matches(&self) -> bool {
-        self.matched.len() == self.terms.len()
+        self.required.iter().all(|term| self.matched.contains(term))
     }
     pub fn facts(self) -> (u32, Vec<String>, Vec<String>) {
         (
@@ -292,6 +337,7 @@ mod tests {
     #[test]
     fn secret_records_do_not_contribute_matches_and_lexical_terms_cross_messages() {
         let p = SearchParameters {
+            structured: None,
             query: "Earth CESIUM earth".into(),
             include_archived: true,
             include_content: true,

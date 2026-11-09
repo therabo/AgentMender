@@ -200,6 +200,83 @@ fn content_search_stdio_is_grounded_and_management_requires_independent_binding(
             .len()
             <= 2048
     );
+    let window = client.call(
+        20,
+        "session_context",
+        json!({
+            "target":target,"evidence_ref":evidence,
+            "window":{"before":1,"after":2,"max_messages":10,"max_bytes":4096}
+        }),
+    );
+    let w = &window["result"]["structuredContent"];
+    assert!(
+        w["messages"].as_array().is_some_and(|m| !m.is_empty()),
+        "{window}"
+    );
+    assert!(w["messages"].as_array().unwrap().iter().all(|e| e["untrusted_data"] == true && !e["evidence_ref"].as_str().unwrap().is_empty()));
+    assert!(!window.to_string().contains("PRIVATE"));
+    let occurrence = client.call(
+        21,
+        "session_context",
+        json!({
+            "target":target,"evidence_ref":evidence,
+            "window":{"direction":"occurrences","query":"tuning","max_messages":10}
+        }),
+    );
+    assert!(
+        occurrence["result"]["structuredContent"]["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|e| e["excerpt"].as_str().unwrap().contains("tuning")),
+        "{occurrence}"
+    );
+    let temporal = client.call(
+        22,
+        "session_search",
+        json!({"page_size":1,"structured":{"filter":{"op":"created","range":{"start":0,"end":2}}}}),
+    );
+    let tv = &temporal["result"]["structuredContent"];
+    assert_eq!(tv["result_count"], 1, "{temporal}");
+    assert!(tv["query_interpretation"].is_object());
+    assert!(tv["next_cursor"].is_string(), "{temporal}");
+    let next = client.call(23,"session_search",json!({"page_size":1,"structured":{"filter":{"op":"created","range":{"start":0,"end":2}}},"cursor":tv["next_cursor"]}));
+    assert_eq!(
+        next["result"]["structuredContent"]["result_count"], 1,
+        "{next}"
+    );
+    assert_ne!(
+        next["result"]["structuredContent"]["sessions"][0]["native_session_id"],
+        tv["sessions"][0]["native_session_id"]
+    );
+    let negative = client.call(
+        24,
+        "session_search",
+        json!({"structured":{"filter":{"op":"not","arg":{"op":"project","values":["MISSION1"]}}}}),
+    );
+    assert_eq!(
+        negative["result"]["structuredContent"]["result_count"], 0,
+        "{negative}"
+    );
+    let unknown = client.call(25,"session_search",json!({"structured":{"filter":{"op":"not","arg":{"op":"project","values":["MISSION1"],"source":"verified_label"}}}}));
+    assert_eq!(
+        unknown["result"]["structuredContent"]["result_count"], 0,
+        "{unknown}"
+    );
+    assert_eq!(
+        unknown["result"]["structuredContent"]["coverage"]["unresolved_sessions"], 2,
+        "{unknown}"
+    );
+    let unresolved = unknown["result"]["structuredContent"]["unresolved_candidates"]
+        .as_array()
+        .unwrap();
+    assert_eq!(unresolved.len(), 2);
+    assert!(
+        unresolved
+            .iter()
+            .all(|candidate| candidate["hard_filters_verified"] == false
+                && candidate["can_request_preview"] == false)
+    );
     let legacy = client.call(3, "session_search", json!({"query":"README"}));
     let other = legacy["result"]["structuredContent"]["sessions"]
         .as_array()

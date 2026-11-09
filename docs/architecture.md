@@ -52,6 +52,30 @@ The read-mode application dispatcher has no cleanup port or owned state. Its
 preview is a blocked exact-target assessment; other removal calls refuse. The
 existing exact-profile preparation/approval/intent/adapter path remains separate.
 
+## Intelligent retrieval extension
+
+[ADR-0027](adr/0027-intelligent-session-retrieval.md) evolves the same read-only
+pipeline. Domain owns typed AST, calendar normalization and incremental three-valued
+query observations. The Codex worker streams bounded source records with stable
+positions and checkpoints, rather than only head/tail windows. Provider-api adds
+bounded transcript/context page methods without mutation authority. Application
+revalidates exact conditions, output partitions and exclusions; optional indexed
+composition supplies query-scoped facts that the worker freshness-checks again.
+
+Persistence adds a separate derived FTS5 store under an explicit OwnedStateRoot,
+with private files, contentless postings, opted-in safe text, source/chunk keys,
+transactions and fixed offline rebuild. It never reads providers. The ownership
+graph and lifecycle journal are unchanged. Message adjacency is a retrieval
+structure, not destructive ownership. MCP retains the existing search/context
+surface; CLI alone supplies persistent index paths and maintenance controls.
+
+Production management registration files now remain inadmissible as caller proof;
+only a future enforceable host transport can enable that guarantee. Missing binding
+refuses before source access. [Current search](session-search.md) supersedes the
+historical bounded-reader feature limits above; historical receipts retain their
+original results. [Index privacy](full-text-index.md) and [Luna](luna-session-relevance.md)
+document data flow and limitations.
+
 ## Core session lifecycle versus additional cleanup
 
 The target flow is:

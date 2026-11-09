@@ -92,3 +92,28 @@ does not satisfy this gate. No whole-history squash, history rewrite or force
 push. Keep historical receipts immutable and record current status in the
 canonical roadmap/audit. Final verification receipts can be retained externally
 to bind the final commit without a self-referential commit hash.
+
+## Intelligent search development
+
+Read [ADR-0027](adr/0027-intelligent-session-retrieval.md) and the
+[current search/index contracts](session-search.md). New deterministic tests cover
+query/DST/unknown logic, streaming progress and middle messages, chunk/context
+navigation, source mutation, private cache/rebuild and missing host binding.
+The [benchmark receipt](research/intelligent-search-benchmark.md) includes exact
+reproduction and limitations. Run the unchanged locked workspace gates plus:
+
+```sh
+cargo test --locked -p agentmender-domain --test session_query
+cargo test --locked -p agentmender-application --test indexed_search --test context_navigation
+cargo test --locked -p agentmender-provider-codex content::tests
+cargo test --locked -p agentmender --test search_index
+cargo run --locked -p agentmender-persistence --example search_benchmark
+```
+
+On disk-constrained local machines use `CARGO_PROFILE_DEV_DEBUG=0`,
+`CARGO_PROFILE_TEST_DEBUG=0` and `CARGO_INCREMENTAL=0`; these reduce generated
+artifacts without changing checked-in profiles or weakening CI. Live read probes
+are explicit and aggregate-only, separate from portable sanitized tests.
+
+CI also runs `python3 scripts/test_semantic_assessment.py` for the versioned
+model-output contract and exact candidate/evidence allowlist.

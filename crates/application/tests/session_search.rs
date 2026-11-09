@@ -18,6 +18,7 @@ fn artifact(provider: ProviderKind, root: &str, id: &str) -> ArtifactId {
 }
 fn parameters(purpose: SearchPurpose) -> SearchParameters {
     SearchParameters {
+        structured: None,
         query: "Cesium camera".into(),
         include_archived: true,
         include_content: true,
@@ -45,6 +46,8 @@ impl SessionSearchReadPort for Reader {
             .unwrap()
             .clone()
             .map(|id| SessionSearchHit {
+                query_observation: Default::default(),
+                content_complete: false,
                 metadata: SessionMetadata {
                     identity: id,
                     native_session_id: "candidate".into(),
@@ -66,6 +69,7 @@ impl SessionSearchReadPort for Reader {
             .into_iter()
             .collect();
         Ok(SessionSearchPage {
+            unresolved: vec![],
             sessions,
             coverage: Default::default(),
             inventory_fingerprint: "snapshot".into(),
@@ -248,6 +252,7 @@ fn protected_or_stale_context_never_reaches_reader_and_provider_boundaries_are_n
         instance: "fixture",
     };
     let reference = ContextReference {
+        position: None,
         native_session_id: "management".into(),
         local_id: binding.identity.local_id.clone(),
         record_index: 2,

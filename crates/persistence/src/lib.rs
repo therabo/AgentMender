@@ -2,7 +2,9 @@
 mod handoff;
 mod owned;
 mod recovery;
+pub mod search_index;
 mod store;
+pub use search_index::*;
 #[cfg(windows)]
 mod windows_permissions;
 pub use handoff::*;

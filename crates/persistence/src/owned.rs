@@ -330,6 +330,9 @@ impl FixedFile {
     }
 }
 impl OwnedStateRoot {
+    pub(crate) fn search_index_path(&self) -> PathBuf {
+        self.path.join("search.sqlite3")
+    }
     pub fn create(path: &Path, protected: &[PathBuf]) -> io::Result<Self> {
         Self::check_overlap(path, protected)?;
         #[cfg(unix)]

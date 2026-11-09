@@ -120,6 +120,11 @@ pub(super) fn read_only_executor(
         .filter(|h| h.is_absolute())
         .ok_or_else(|| CliError::new(ErrorCode::InvalidConfiguration, "absolute HOME required"))?;
     let registration = registration.map(Path::to_path_buf);
+    let index = args
+        .search_index_root
+        .as_deref()
+        .map(|path| super::search_index::open(args, path))
+        .transpose()?;
     let mut nonce = [0u8; 16];
     getrandom::fill(&mut nonce)
         .map_err(|_| unavailable())
@@ -150,8 +155,19 @@ pub(super) fn read_only_executor(
                     .expect("validated launch UUID"),
             })
             .collect();
+        let indexed = index.as_ref().map(|index| {
+            agentmender_application::indexed_search::IndexedSearchReader {
+                reader: &adapter,
+                index: index.clone(),
+                root: &root,
+            }
+        });
+        let reader: &dyn agentmender_provider_api::SessionSearchReadPort = indexed.as_ref().map_or(
+            &adapter as &dyn agentmender_provider_api::SessionSearchReadPort,
+            |i| i,
+        );
         let service = agentmender_application::session_search::SessionSearchService {
-            reader: &adapter,
+            reader,
             provider_root: &root,
             provider: agentmender_domain::ProviderKind::Codex,
             management: management.as_ref(),
@@ -163,9 +179,22 @@ pub(super) fn read_only_executor(
                 parameters,
                 continuation,
             } => {
-                return service.search(parameters, continuation, control).map(
-                    agentmender_application::conversation::ConversationResponse::EvidenceSearch,
-                );
+                return service
+                    .search(parameters, continuation.map(|c| *c), control)
+                    .map(
+                        agentmender_application::conversation::ConversationResponse::EvidenceSearch,
+                    );
+            }
+            ConversationRequest::ContextWindow {
+                reference,
+                target,
+                options,
+            } => {
+                return service
+                    .context_window(reference, target, options, control)
+                    .map(
+                        agentmender_application::conversation::ConversationResponse::ContextWindow,
+                    );
             }
             ConversationRequest::Context { reference, target } => {
                 return service

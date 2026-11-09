@@ -69,6 +69,33 @@ Do not start Claude deletion, bulk/project cleanup, Desktop global mutation or
 additional artifact families. Full P0-C1 PASS needs actual Codex client + independent
 human approval/execution + structural primary/collateral proof + final exact CI.
 
+## Intelligent retrieval (ADR-0027)
+
+Read [ADR-0027](docs/adr/0027-intelligent-session-retrieval.md), the current
+[search contract](docs/session-search.md), [index contract](docs/full-text-index.md)
+and [implementation report](docs/milestones/intelligent-search-implementation.md).
+Extend the same read ports/tools, never a parallel provider scanner. Pure typed
+queries use three-valued logic; missing/suppressed/unsupported content cannot
+prove absence. Calendar dates require explicit zones and half-open UTC bounds.
+Sequential source-bound positions replace head/tail-only discovery. Preserve
+bounded work, continuations, source freshness, exact exclusions and inert evidence.
+
+FTS5 memory scoring and explicit private persistent cache belong in existing layers.
+Persistent mode stores safe visible message text as well as sensitive terms; require
+an explicit launch/CLI root, private permissions, provider disjointness and tested
+fixed-file rebuild. Never copy auth/config or let the source worker write an index
+outside its owned evidence boundary. Semantic adjacency grants no artifact ownership.
+No embeddings/cloud/vector/graph service is required. Luna Medium is optional Codex
+orchestration, not an authority or security boundary.
+
+Production file-only management admission is disabled: a root-owned assertion does
+not prove actual host routing. Until an enforceable host binding exists, guaranteed
+management search refuses before source access with zero candidates. Typed fixtures
+may exercise exclusion; do not claim real binding from them. Diagnostic launch
+protections remain effective but are not automatic caller authentication. Historical
+ADR-0026/P0-S1 statements below describe their earlier implementation; ADR-0027 and
+the current contract govern this extension. No lifecycle admission changes.
+
 ## Architecture
 
 Read [ADR-0025](docs/adr/0025-bounded-search-and-management-exclusion.md) and the

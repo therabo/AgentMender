@@ -254,3 +254,22 @@ original plan commitments, Ready/Blocked/Unsupported, uncertainty, pagination/li
 stale cursors, cancellation/deadlines/busy/drain and unchanged fixture bytes. Installed
 providers are not required. Remote Linux/macOS/Windows evidence is recorded separately
 for the exact final commit; local tests do not substitute for that gate.
+
+## Intelligent search extension (ADR-0027)
+
+The same `session_search` accepts optional typed `structured` predicates, mode,
+sort and coverage policy. `query_interpretation.filter_json` returns the validated
+canonical condition; verified and unresolved results are distinct. Follow sealed
+cursors to continue source/inventory work, including empty pages. Ranking is
+scanned-page-local and all provider gaps remain explicit. `session_context`
+accepts optional bounded `window` with around/forward/backward/turn/occurrences,
+returns individual source-bound evidence refs and continuation suggestions.
+See [complete schemas/examples/limits](session-search.md).
+
+Index maintenance stays CLI-only: [private index operations](full-text-index.md).
+No new MCP filesystem, SQL, destructive or approval endpoint is added. The
+optional persistent cache explicitly stores safe message text and terms.
+Production guaranteed management search refuses because the installed transport
+cannot attest per-chat routing. A root-owned file alone cannot grant that status;
+diagnostic mode has no automatic caller guarantee. [Luna](luna-session-relevance.md)
+can analyze bounded evidence but cannot override conditions or authorize effects.

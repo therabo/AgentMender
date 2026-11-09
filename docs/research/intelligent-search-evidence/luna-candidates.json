@@ -1,0 +1,29 @@
+[
+  {
+    "target": {
+      "provider": "codex",
+      "class": "session",
+      "token": "fixture-target-A"
+    },
+    "native_session_id": "00000000-0000-4000-8000-00000000000a",
+    "evidence_refs": [
+      "A125",
+      "A140",
+      "A220",
+      "A400",
+      "A401",
+      "A402"
+    ]
+  },
+  {
+    "target": {
+      "provider": "codex",
+      "class": "session",
+      "token": "fixture-target-B"
+    },
+    "native_session_id": "00000000-0000-4000-8000-00000000000b",
+    "evidence_refs": [
+      "B5"
+    ]
+  }
+]

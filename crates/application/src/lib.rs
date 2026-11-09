@@ -1,5 +1,6 @@
 //! Query use cases shared by CLI and the read-only MCP interface.
 pub mod conversation;
+pub mod indexed_search;
 pub mod lifecycle;
 pub mod session_search;
 pub mod transactions;

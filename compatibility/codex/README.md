@@ -7,12 +7,13 @@ management-binding acceptance remain OPEN.
 
 ## Current real metadata versus mutation compatibility
 
-Real conversational MCP metadata search is accepted with Partial coverage.
-Transcript-content search has no admitted reader yet; automatic management caller
-binding is incomplete. Registered exact identities are excluded by the application,
-independently of metadata readability or mutation compatibility. See the
-[canonical search contract](../../docs/session-search.md) for the source/identity
-admission and future bounded-read acceptance requirements.
+Intelligent read-only retrieval extends P0-S1 with sequential supported transcript
+traversal, structured queries, context and optional private FTS5 caching. See the
+[implementation report](../../docs/milestones/intelligent-search-implementation.md)
+for separate fixture, real-provider and actual-client acceptance. Automatic caller
+binding remains unavailable; production file-only declarations cannot admit it.
+Guaranteed management requests refuse with zero candidates. Explicit diagnostic
+protections remain separate from caller authentication and mutation admission.
 
 `codex-state-threads-columns-v1` validates required metadata columns/values inside
 the protected read-only worker. Additive columns and unknown producer versions

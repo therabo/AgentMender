@@ -8,11 +8,16 @@ use serde::Serialize;
 pub enum ConversationRequest {
     EvidenceSearch {
         parameters: SearchParameters,
-        continuation: Option<SearchContinuation>,
+        continuation: Option<Box<SearchContinuation>>,
     },
     Context {
         reference: ContextReference,
         target: TargetSelector,
+    },
+    ContextWindow {
+        reference: ContextReference,
+        target: TargetSelector,
+        options: ContextOptions,
     },
     Search {
         query: String,
@@ -41,6 +46,7 @@ pub struct SessionMatch {
 pub enum ConversationResponse {
     EvidenceSearch(crate::session_search::SearchResult),
     Context(crate::session_search::ContextResult),
+    ContextWindow(crate::session_search::ContextWindowResult),
     Search {
         sessions: Vec<SessionMatch>,
         completeness: Completeness,
@@ -207,9 +213,9 @@ impl ConversationService<'_> {
                     instance: "management_registration_requires_read_mode".into(),
                 })
             }
-            ConversationRequest::EvidenceSearch { .. } | ConversationRequest::Context { .. } => {
-                Err(unavailable())
-            }
+            ConversationRequest::EvidenceSearch { .. }
+            | ConversationRequest::Context { .. }
+            | ConversationRequest::ContextWindow { .. } => Err(unavailable()),
             ConversationRequest::Search {
                 query,
                 include_archived,

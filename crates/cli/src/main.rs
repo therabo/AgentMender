@@ -21,6 +21,7 @@ mod approvals;
 mod conversation;
 mod lifecycle;
 mod management;
+mod search_index;
 mod transactions;
 
 #[derive(Clone, Parser)]
@@ -63,6 +64,9 @@ struct Args {
     max_entries: usize,
     #[arg(long, global = true)]
     active_only: bool,
+    /// Opt in to a dedicated private cache storing message text and search terms.
+    #[arg(long, global = true, value_parser = absolute_path)]
+    search_index_root: Option<PathBuf>,
     #[command(subcommand)]
     command: Action,
 }
@@ -94,6 +98,13 @@ impl From<PlanIntent> for LifecycleIntent {
 }
 #[derive(Clone, Subcommand)]
 enum Action {
+    /// Build, inspect or reset explicitly configured private derived search storage.
+    SearchIndex {
+        #[arg(long, value_parser = absolute_path)]
+        root: PathBuf,
+        #[command(subcommand)]
+        action: search_index::IndexAction,
+    },
     Providers,
     Mcp {
         /// Opt in to bounded real-session metadata/content reads and blocked assessment.
@@ -625,6 +636,9 @@ fn adapters(
     Ok(adapters)
 }
 fn run(args: Args) -> Result<bool, CliError> {
+    if let Action::SearchIndex { root, action } = &args.command {
+        return search_index::run(&args, root, action);
+    }
     if let Action::Transactions { state_root, action } = &args.command {
         if matches!(
             action,
@@ -802,6 +816,7 @@ fn run(args: Args) -> Result<bool, CliError> {
     }
     match args.command {
         Action::Mcp { .. }
+        | Action::SearchIndex { .. }
         | Action::Transactions { .. }
         | Action::Plans { .. }
         | Action::Approve { .. }

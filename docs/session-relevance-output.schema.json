@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AgentMender semantic relevance assessment v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "assessments", "requests_used", "context_bytes", "coverage_notes"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "assessments": {"type": "array", "maxItems": 5, "items": {"$ref": "#/$defs/assessment"}},
+    "requests_used": {"type": "integer", "minimum": 0, "maximum": 8},
+    "context_bytes": {"type": "integer", "minimum": 0, "maximum": 65536},
+    "coverage_notes": {"type": "array", "maxItems": 20, "items": {"type": "string", "maxLength": 512}}
+  },
+  "$defs": {
+    "target": {
+      "type": "object", "additionalProperties": false,
+      "required": ["provider", "class", "token"],
+      "properties": {
+        "provider": {"enum": ["codex", "claude"]},
+        "class": {"const": "session"},
+        "token": {"type": "string", "minLength": 1, "maxLength": 4096}
+      }
+    },
+    "assessment": {
+      "type": "object", "additionalProperties": false,
+      "required": ["target", "native_session_id", "assessment", "confidence", "supporting_evidence_refs", "explanation", "missing_evidence", "further_context_needed"],
+      "properties": {
+        "target": {"$ref": "#/$defs/target"},
+        "native_session_id": {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"},
+        "assessment": {"enum": ["relevant", "not_relevant", "insufficient"]},
+        "confidence": {"enum": ["strong", "moderate", "limited"]},
+        "supporting_evidence_refs": {"type": "array", "maxItems": 20, "uniqueItems": true, "items": {"type": "string", "minLength": 1, "maxLength": 4096}},
+        "explanation": {"type": "string", "maxLength": 2048},
+        "missing_evidence": {"type": "array", "maxItems": 20, "items": {"type": "string", "maxLength": 512}},
+        "further_context_needed": {"type": "boolean"}
+      }
+    }
+  }
+}

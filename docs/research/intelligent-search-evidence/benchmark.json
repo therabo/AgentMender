@@ -1,0 +1,61 @@
+{
+  "dataset": {
+    "input_text_bytes": 15860370,
+    "messages": 40000,
+    "position_note": "middle and later occurrences; provider scanner separately tests full byte budgets",
+    "privacy": "generated synthetic text only",
+    "relevant_sessions": [
+      0,
+      100,
+      200,
+      300,
+      400,
+      500,
+      600,
+      700,
+      800,
+      900
+    ],
+    "sessions": 1000
+  },
+  "limits": [
+    "microbenchmark; no production latency guarantee",
+    "not a multilingual or general semantic recall evaluation",
+    "BM25 candidate ranking; exact filters and coverage separately tested",
+    "includes opted-in safe plaintext plus contentless FTS postings"
+  ],
+  "measurements": {
+    "incremental_append_us": 1718.9589999999998,
+    "index_disk_bytes": 22872064,
+    "initial_build_ms": 5030.3385,
+    "lexical_query_us": 1078.0
+  },
+  "quality": {
+    "explicit_lexical_expansion": {
+      "false_negative_rate": 0.0,
+      "mrr": 1.0,
+      "precision_at_5": 1.0,
+      "recall_at_10": 1.0
+    },
+    "fts5_lexical": {
+      "false_negative_rate": 0.0,
+      "mrr": 1.0,
+      "precision_at_5": 1.0,
+      "recall_at_10": 1.0
+    },
+    "literal_semantic_wording": {
+      "false_negative_rate": 1.0,
+      "mrr": 0.0,
+      "precision_at_5": 0.0,
+      "recall_at_10": 0.0
+    },
+    "luna_rerank": "separate bounded synthetic subagent acceptance; no statistical quality claim",
+    "p0_s1": "provider fixture tests compare old head/tail omission; no fabricated benchmark number"
+  },
+  "runtime": {
+    "arch": "aarch64",
+    "os": "macos",
+    "profile": "debug/no-debuginfo",
+    "sqlite": "3.54.1"
+  }
+}

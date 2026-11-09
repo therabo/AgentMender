@@ -1,187 +1,235 @@
-# Session search and management protection
+# Intelligent session search
 
-P0-S1 implements bounded Codex content evidence and fail-closed guaranteed-mode
-search. Verdict **OPEN**: actual updated conversational client acceptance and
-independently verified protection of the real management conversation remain open.
-See [ADR-0026](adr/0026-bounded-conversation-reader-and-independent-registration.md).
-The earlier actual `session_search(query="MISSION1", include_archived=true)` call
-returned 37 real metadata records, Partial. That legacy call stays supported;
-changing live counts are not a frozen inventory or a deletion proof.
+Current implementation contract, 2026-11-09. [ADR-0027](adr/0027-intelligent-session-retrieval.md)
+extends the historical P0-S1 reader. The [implementation report](milestones/intelligent-search-implementation.md)
+separates fixtures, real reads and actual conversational acceptance. Lifecycle
+admission, approval and transaction semantics are unchanged.
 
-## Modes and tools
+## Execution and compatibility
 
-Launch `agentmender --provider codex mcp --session-search`. Default plain `mcp`
-keeps eight tools; opt-in conversational mode exposes fourteen. No approval store
-is initialized by read mode. Preview remains blocked without a plan; prepare,
-status and execution handoff refuse `read_only_removal_unavailable`.
+`session_search` and `session_context` remain the retrieval tools. The calling
+agent translates language into validated JSON, AgentMender applies deterministic
+conditions, and optional [Luna analysis](luna-session-relevance.md) interprets
+bounded quoted evidence. A model cannot change a hard condition or grant deletion.
 
-`session_search` accepts strict fields:
+The existing eight crates remain: domain owns pure queries/evidence; provider-api
+owns read ports; provider-codex owns parsing in the attested worker; application
+owns binding, result validation and the optional cache coordinator; persistence
+owns derived private SQLite; CLI composes capabilities; MCP projects bounded
+outputs. Claude retains its existing metadata adapter, with no general transcript
+reader or mutation profile. A provider filter does not manufacture Claude support.
 
-| Field | Default and bound |
-|---|---|
-| `query` | Empty; <=256 UTF-8 bytes, <=16 whitespace terms; no controls |
-| `include_archived` | true |
-| `include_content` | false; opt in to supported human-visible text |
-| `purpose` | `diagnostic`; use `management` for a guaranteed candidate list |
-| `project_label` | Optional exact project basename, <=256 bytes |
-| `page_size` | Optional 1..20, advanced default 20 |
-| `cursor` | Optional process-bound authenticated continuation, <=4096 bytes |
-| `excerpts` | true; false suppresses text projection |
+Codex reads `state_5.sqlite` through READ_ONLY/NOFOLLOW, query_only and bounded
+in-memory backup in the existing kernel-attested worker. Rollout paths come from
+validated metadata inside the selected root. Only ordinary unshared files below
+`sessions` and `archived_sessions` are admitted. Header UUID must match the exact
+metadata identity. No raw paths or SQL are accepted or exported by MCP. No source
+writes, session resume, historical tool execution, auth/config copying, network
+upload or application restart is performed. Live worker isolation remains macOS;
+portable fixtures do not prove Linux/Windows live admission.
 
-Calls using only the original query/archive inputs retain the existing metadata
-response, recent inventory bound (500/96 KiB), labels/timestamps/optional parents,
-duplicates and Partial coverage. They are labeled diagnostic with
-`registered_only_no_caller_guarantee`. Explicit advanced fields select the new
-bounded path. Diagnostic results, including content results, are never a guaranteed
-management list. Do not turn a diagnostic result into proof of safe selection.
+Supported visible text is legacy `response_item/message` user input_text and
+assistant output_text (final/commentary only), plus paginated completed display
+UserMessage/AgentMessage items. Analysis, system/developer instructions and tool
+payloads are excluded. Paginated inline evidence remains Partial: missing external
+history is not hydrated. Unknown shapes, malformed/oversized records, suppressed
+sensitive messages and unavailable files prevent proof of content absence.
 
-Example guaranteed request (refuses until independently bound):
+## Query contract
 
-```json
-{"query":"Earth rendering performance Cesium camera","include_archived":true,"include_content":true,"purpose":"management","page_size":20}
-```
+Legacy calls retain `query`, `include_archived`, opt-in `include_content`, exact
+observed `project_label`, `purpose`, `page_size`, `cursor` and `excerpts`. Query
+words are Unicode-lowercase substrings, all required across metadata/messages;
+maximum 256 bytes and sixteen whitespace terms. `page_size` is 1–20.
 
-For read-only troubleshooting, deliberately select `purpose:"diagnostic"` and
-retain its `not_guaranteed_diagnostic` label. No caller UUID, raw source path,
-provider SQL, shell command, principal or registration proof is a tool input.
-
-`session_context` takes the exact returned `target` and `evidence_ref`, retrieving
-one prior supported message under fresh binding, exclusion, identity and source
-checks. It is not an arbitrary transcript endpoint. Tokens are HMAC authenticated,
-kind-separated and process-local; changed filters/query/root/registration or a
-restarted server invalidate them. A stale source refuses; reacquire search evidence.
-Context returns no new context chain.
-
-## Supported Codex reads
-
-The current macOS implementation uses the existing kernel-attested helper with
-source writes, network, auth/configuration and process spawning denied. SQLite is
-READ_ONLY/NOFOLLOW/query_only and copied only to bounded memory. Only fixed DB
-columns are interpreted. A rollout locator must be within the selected root's
-`sessions` or `archived_sessions`, with no symlink/hardlink/shared-file traversal,
-and an exact session header. Stale missing locators remain explicitly unreadable;
-there is no unrestricted filesystem fallback or filename ownership inference.
-No native session resume, model execution or provider/application restart occurs.
-
-| Contract | Supported visible data |
-|---|---|
-| `codex-rollout-response-item-message-v1` | Header history mode absent/legacy; `response_item` message user `input_text` and assistant `output_text`, known visible phase/channel only |
-| `codex-paginated-item-completed-message-v1` | Paginated header; `event_msg/item_completed` with exact thread ID and `UserMessage` text or `AgentMessage` Text parts; skip duplicate model view |
-
-System/developer text, reasoning, tool calls/results, inter-agent messages,
-attachments and unrelated file/config/env data are not extracted. Unknown record
-shapes are not guessed. Additive DB schemas and unknown producer versions can be
-readable when these exact shape contracts hold; this is separate from mutation
-admission. The alpha.6 protocol/persistence references are linked in ADR-0026.
-Paginated support reads known display items in the bounded source windows only;
-it does not hydrate complete provider history or inspect a separate history store.
-Live source changes and unsupported/oversized/malformed records reduce coverage.
-Linux/Windows fixture coverage does not provide a live isolation backend.
-
-## Matching, evidence and limits
-
-Apply exact trusted exclusions first, then archive/project filters and content
-reads. Query terms never gate transcript reads through title matches. Lowercase
-substring terms must all occur in the union of eligible metadata and safe messages.
-Every term hit adds user 4, assistant 3, title 2 or other metadata 1 per message/
-field. Return score and match sources; sort within the inspected batch, then by
-exact identity. There is no semantic claim, global top-K or silent deduplication.
-
-| Bound | Value |
-|---|---|
-| Metadata inventory | 10,000 eligible rows; fixed SQL cap after trusted exclusion, before project basename filtering |
-| Scan batch / results | 100 eligible sessions / at most 20 hits per page |
-| Transcript / record / call | 1 MiB / 256 KiB / 32 MiB |
-| Captured records | 4,096 per session |
-| SQLite snapshot | 32 MiB, 3 seconds within the worker deadline |
-| Worker / parent | 8 / 12 seconds; existing MCP deadlines/cancellation also apply |
-| Excerpts | Two per hit, each at most 320 Unicode characters |
-| Additional context | One message, <=512 characters and <=1,024 UTF-8 bytes |
-
-A large transcript uses half the read budget for the header and half for its tail.
-Clipped boundary records and the omitted middle are not inspected. `record_index`
-is an ordinal within this bounded capture, not the original whole-file line.
-Evidence includes source role, format, capture description, truncation and a sealed
-reference to the exact source stamp/window digest. No source path or full dump is
-exported. Freshness is checked on the open descriptor and a reopened no-follow
-path; context repeats the same windows. Different captures are not a provider-wide
-atomic snapshot. Cursors bind the metadata inventory and revisited batch; later
-batches are observed fresh. Changes may require a new search.
-
-Every advanced response is Partial, with inspected/eligible counts, bytes,
-unsupported/truncated/suppressed records, reasons and `next_cursor`. Counts exclude
-trusted protected identities before all matching/limits/paging. Follow cursors
-through empty match pages to continue the inventory. Result pages in the same
-batch repeat the same scan and bounds. Do not sum repeated coverage as distinct
-sessions. The 10,000-row cap and selected-root boundary cannot establish absence.
-
-## Independent management registration
-
-Current MCP clientInfo, request metadata and environment provide no authenticated
-per-conversation caller binding. A model-selected UUID/title/cwd/archive/activity
-or project cannot establish it. Old trusted `--protect-codex-session` values still
-exclude retained roots but do not by themselves authenticate the current caller.
-
-Guaranteed `purpose:"management"` requests require a fresh independent registration
-before any provider read. Missing, expired, wrong-instance/root or model-writable
-registration returns `caller_identity_required`, `sessions:[]`, `result_count:0`,
-`authenticated_caller_binding:false` and the ephemeral `registration_instance`.
-Even a missing binding with an empty query returns zero candidates. Other invalid
-source/schema/freshness conditions safely refuse rather than weakening protection.
-
-The available macOS procedure is for an **independent operator**, outside the
-model's shell/keys/PTY control:
-
-1. Independently establish the actual host conversation's canonical native UUID,
-   exact selected provider root and that this single server connection is used
-   exclusively by that conversation. If host routing/exclusivity cannot be proved,
-   leave management mode refused. A statement in a JSON file does not prove it.
-2. Configure a fixed absolute `--management-registration` file path with
-   `mcp --session-search`. Ask the running server for a management search and obtain
-   its fresh bootstrap instance. Never reuse an instance from a previous process.
-3. The operator creates the file in a root-owned directory chain (for example a
-   dedicated directory under `/Library`), no symlink, ACL or group/world write on
-   any component. The server must run as a non-root model user. No privileged
-   registration writer is supplied by AgentMender.
-4. Record exact physical root device/inode, expiry in Unix seconds no more than
-   one hour ahead, and the independently established scope. The root-owned JSON
-   has these strict fields (placeholders require operator verification):
+`structured` adds a typed AST independent of any model:
 
 ```json
-{"schema":1,"server_instance":"<fresh-instance>","provider":"codex","state_root":"<canonical-root>","root_device":0,"root_inode":0,"native_session_id":"<exact-native-uuid>","expires_at":0,"connection_scope":"single_conversation_operator_verified"}
+{"filter":{"op":"and","args":[
+  {"op":"provider","values":["codex"]},
+  {"op":"not","arg":{"op":"project","values":["MISSION1"],"source":"observed_label"}},
+  {"op":"created","range":{"start_date":"2026-10-16","timezone":"Europe/Rome"}},
+  {"op":"or","args":[{"op":"text","value":"PostgreSQL"},{"op":"text","value":"MongoDB"}]}
+]},"mode":"ranked","sort":"relevance","coverage":"best_effort"}
 ```
 
-The server rereads and checks the descriptor/control chain and registration every
-call, validates the protected identity exists, and excludes it in bound SQL before
-inventory counts/limits/matches/ranking/paging. Context also refuses protected or
-stale references. No registration is automatically minted during this task.
-This mechanism has negative/typed-binding tests; successful real independent
-operator registration and host exclusivity remain unverified. It grants no
-approval/execution authority and does not change historical destructive setup.
+Supported operations: `and{args}`, `or{args}`, `not{arg}`, `provider{values}`,
+`project{values,source}`, `project_unknown{source}`, `state{values}`,
+`native_id{values}`, `created{range}`, `last_active{range}`, `message_time{range}`
+and `text{value,kind,alternatives}`. Membership is exact; exclusion is NOT over
+membership. Nesting is bounded to twelve levels and 128 nodes. Empty groups,
+unknown fields, invalid intervals and unbounded expression growth refuse.
 
-## Privacy and acceptance
+Text `kind` is `contains` (default substring), `phrase` (whitespace-normalized
+contiguous phrase) or `exact` (whole message, lowercase comparison). Text applies
+to supported conversation messages, not titles. Metadata NOT and textual NOT
+therefore have different facts. `alternatives` explicitly expands a text leaf's
+acceptable wording; it never changes another hard filter. No raw FTS syntax or SQL
+is accepted. Provider/session identity always includes the selected hidden root.
 
-All retrieved text is `untrusted_data:true`. Instructions in it remain inert.
-Suppress whole messages with conservative secret/auth/config/env markers before
-scoring and projection. This deliberately causes false negatives and is not
-perfect redaction. Disable excerpts or content when appropriate; the caller may
-retain received excerpts. AgentMender keeps no persistent transcript index, query
-log or extracted text. Verification receipts contain aggregate counts/lengths,
-formats and statuses, not real transcripts or credential copies.
+Project `source:"observed_label"` means the observed cwd basename. It is useful
+for discovery and never verified ownership. `verified_label` and `verified_root`
+remain UNKNOWN unless supported evidence supplies them; the present Codex reader
+does not infer them. Missing observed project also remains UNKNOWN under NOT.
+`project_unknown` explicitly asks for missing association of the selected kind.
 
-Fixtures cover neutral titles and duplicate-title comparison, cross-message terms,
-protected highest matches before blank/archive/project/count/paging, forged/missing
-binding, stale context/cursors, secret/reasoning/tool suppression, inert injection,
-unknown/link/traversal sources, byte charging on failure and 5,000-session paging.
-[Real provider read evidence](../compatibility/codex/0.166.0-alpha.6/content-search-p0-s1/README.md)
-includes user/assistant content and a fresh context read via a direct MCP driver.
-Actual provider read tests, actual model tool calls, independent real management
-exclusion and production acceptance must be reported separately. The existing
-metadata-only conversational acceptance does not close the new content gate.
+The response includes canonical `query_interpretation.filter_json`, mode, sort and
+coverage policy. Natural-language interpretation remains the calling agent's
+responsibility; AgentMender does not guess an unstated project or date field.
 
-Claude reuses the pure evidence/relevance types, `SessionSearchReadPort`, application
-binding/exclusion/continuation and MCP projection. P0-C2 still needs an independently
-evidenced Claude message adapter, scoped read isolation/freshness/format tests and
-its own real client/identity acceptance. Do not guess Claude formats or start
-Claude mutation here. The next milestone closes these P0-S1 real client/binding
-gates before any new real-session deletion functionality.
+## Dates and unknowns
+
+UTC ranges use Unix-second `{"start":...,"end":...}` with inclusive start and
+exclusive end. Calendar ranges use `start_date`, inclusive `end_date`, and an
+explicit IANA `timezone`. At least one boundary is required. Each local midnight
+is normalized separately; Rome's 23/25-hour DST days are tested. Invalid zones,
+nonexistent/ambiguous midnight, reversed and empty ranges refuse. Missing provider
+timestamps remain UNKNOWN, never substituted with file mtime.
+
+Default language interpretation is creation time unless the user says last
+activity. “Before October 15” ends at the start of October 15; “after October 15”
+starts October 16 (after that complete calendar date). Ask if a time-of-day meaning
+is intended. “October 10 through October 20” includes both dates.
+
+Strong Kleene logic applies: NOT UNKNOWN = UNKNOWN, FALSE AND UNKNOWN = FALSE,
+TRUE OR UNKNOWN = TRUE. A positive observed text occurrence can be TRUE in a
+partial source. Absence becomes FALSE only after complete readable supported
+coverage with no suppression. Strict negative content queries cannot turn partial,
+unknown or unreadable history into verified matches. Unknown candidates and counts
+are reported separately from verified matches.
+
+## Streaming, pagination and ranking
+
+The reader sequentially traverses whole supported files, including the middle.
+It retains bounded records/messages rather than a multi-gigabyte transcript.
+A call reads at most 32 MiB aggregate; one source slice is at most 12 MiB. The
+record parser admits up to 8 MiB, with a separate bounded header. Larger records
+are skipped incrementally and explicitly Partial. Work checkpoints preserve byte
+offset, whole-source logical ordinal, history mode, oversize-skip state, suppressed
+counts, matched terms and bounded per-query leaf observations. Cross-page AND and
+NOT do not require retaining old raw text. Stop by cancellation/deadline or simply
+do not follow the cursor. Worker deadline is eight seconds; parent twelve seconds.
+
+Metadata inventory uses bounded 10,000-row keyset windows and 100 eligible sessions
+per scan batch, without a terminal 10,000-session corpus cutoff. Sort is ascending
+identity/created/last_active (missing times last), or relevance within a scanned
+page. Exact identity breaks ties. Exhaustive mode cannot select relevance sort;
+it enumerates rather than silently returning Top-K. Follow all `next_cursor`
+values, including empty result pages, to finish the eligible inventory.
+
+Cursors are HMAC sealed and bind parameters, root, exclusions, binding revision,
+metadata corpus fingerprint, inventory window and source progress. Any metadata
+insertion/change invalidates pagination, including an insertion before the keyset
+boundary. Transcript revisions are frozen within each inventory window, while a
+later window reads its sources fresh. There is no atomic global transcript snapshot.
+Source changes can require restarting retrieval. Tokens expire on server restart;
+changing a query, purpose or root requires a new search. Each finalized session
+appears once in a traversal; incomplete source work resumes before advancing it.
+
+FTS5 unicode61 and BM25 choose lexical passages; lower BM25 scores rank first.
+Deterministic user/assistant/title/metadata term contributions explain session
+scores. Search result ranking is explicitly scanned-page-local, not a global
+semantic ranking, even with a persistent cache. Unicode61 is not universal
+multilingual segmentation and there is no automatic semantic recall guarantee.
+Explicit alternatives, broad enumeration and iterative context exploration improve
+candidate recall. Luna cannot recover sessions excluded by literal candidate terms.
+
+Coverage exposes eligible observed, sessions inspected, bytes read, fully traversed,
+unsupported, unreadable, truncated, suppressed and unresolved counts/reasons.
+`completeness:"partial"` preserves the provider/snapshot boundary.
+`coverage_requirement_met` reports whether the requested policy is proven; for
+`complete` it is conservative and requires a single response to attest the whole
+eligible inventory with no gaps. Multi-page traversal can finish without this flag
+becoming TRUE; pages do not accumulate a durable completeness certificate. Best
+effort policy satisfaction is not proof of global completeness. Empty cache or
+zero returned matches alone never establish absence.
+
+## Context and source references
+
+Evidence binds exact session/root/provider, source revision and logical record
+position. Revision includes physical file identity, size, mtime and ctime with
+nanoseconds where supported; it does not trust size/mtime alone. Descriptor and
+path identity are rechecked around source reads. Append, replacement or changed
+metadata invalidates old references rather than resolving them against new text.
+
+Default `session_context` preserves the prior bounded message operation. Optional
+`window` supports `around`, `forward`, `backward`, `turn`, and `occurrences` with
+an explicit query. It returns at most twenty messages/16 KiB per request; before
+and after are at most100. Long messages use UTF-8-safe subchunks retaining their
+parent ordinal and offsets. Set `window.message_offset:0` to retrieve a matched parent message from its
+beginning; omit it when following returned chunk continuation suggestions.
+Turn/message IDs are returned only when observed in
+a restricted safe shape; timestamps must parse. Missing turn IDs do not invent a
+turn relation. Structural adjacency is separate from artifact ownership.
+
+Use returned `next_ref`/`previous_ref` with `next_window`/`previous_window`, and
+individual evidence refs for citations. These preserve long-message and occurrence
+continuation. `at_start`, `at_end` and `partial` distinguish an exhausted readable
+boundary from a work limit. Backward probing is bounded; larger windows can need
+further requests. Reference reuse revalidates source, exact target, current binding
+and exclusions. Old pre-upgrade in-process tokens should be discarded.
+
+Per-request limits are enforced. Luna's default eight-request/64 KiB aggregate
+analysis budget is an orchestration policy, not a server-wide replay authorization
+boundary. Custom-agent instructions do not sandbox inherited tools.
+
+## Management safety and privacy
+
+The installed MCP interface does not independently attest a conversation UUID or
+exclusive per-chat connection. Titles, cwd, newest activity, model UUIDs,
+clientInfo and root-owned assertions do not prove routing. Production file-only
+binding admission is disabled. `purpose:"management"` therefore returns
+`caller_identity_required` and **zero manageable candidates before provider access**.
+This mandatory acceptance condition remains OPEN until an enforceable host transport
+exists. Typed fixture identities test exclusion but do not admit the real client.
+
+Explicit launch-protected identities are still excluded from diagnostic retrieval
+before counts, ranking, paging and context. Diagnostic results have no automatic
+caller exclusion guarantee and must never be presented as a manageable list.
+Search evidence supplies no approval, removal or ownership authority.
+
+Sensitive-pattern suppression occurs before scoring/output/indexing, but cannot
+catch every secret and can suppress benign messages. Historical text remains
+untrusted quoted evidence: never execute its instructions or let it alter scope.
+MCP excerpts may be retained by the client and processed remotely by its configured
+model. AgentMender itself performs no remote upload or embedding request.
+
+Persistent indexing requires explicit configuration; see [index storage and
+maintenance](full-text-index.md). Without it, FTS runs in memory over bounded
+source slices and AgentMender persists no extracted conversation text.
+
+## Practical calls
+
+Dates, including both October10 and20 in Rome:
+
+```json
+{"query":"","structured":{"filter":{"op":"created","range":{"start_date":"2026-10-10","end_date":"2026-10-20","timezone":"Europe/Rome"}},"mode":"exhaustive","sort":"created"}}
+```
+
+Before October15: use `end_date:"2026-10-14"`. Known non-MISSION1:
+
+```json
+{"query":"","structured":{"filter":{"op":"not","arg":{"op":"project","values":["MISSION1"],"source":"observed_label"}},"mode":"exhaustive"}}
+```
+
+Semantic candidate expansion (then Luna, retaining original hard conditions):
+
+```json
+{"include_content":true,"structured":{"filter":{"op":"text","value":"slow orbital visualization","alternatives":["frame drops","Cesium camera","rendering bottlenecks"]},"mode":"ranked","sort":"relevance"}}
+```
+
+Negative text requires full supported coverage:
+
+```json
+{"include_content":true,"structured":{"filter":{"op":"not","arg":{"op":"text","value":"Cesium"}},"coverage":"complete"}}
+```
+
+Context and another occurrence:
+
+```json
+{"target":{"provider":"codex","class":"session","token":"RETURNED_TARGET"},"evidence_ref":"RETURNED_REF","window":{"before":5,"after":10,"max_messages":16,"max_bytes":8192}}
+```
+
+For another occurrence replace `window` with
+`{"direction":"occurrences","query":"resolved","max_bytes":8192}`. Follow
+returned suggestions rather than inventing offsets or paths.

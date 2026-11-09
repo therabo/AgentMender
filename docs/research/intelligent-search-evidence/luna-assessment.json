@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "assessments": [
+    {
+      "target": {
+        "provider": "codex",
+        "class": "session",
+        "token": "fixture-target-A"
+      },
+      "native_session_id": "00000000-0000-4000-8000-00000000000a",
+      "assessment": "relevant",
+      "confidence": "strong",
+      "supporting_evidence_refs": [
+        "A125",
+        "A140",
+        "A220",
+        "A400",
+        "A401"
+      ],
+      "explanation": "A125 describes frame drops in Cesium during camera movement. A140 proposes disabling clouds, but A220 explicitly rejects that because fidelity is required. A400 reports batching camera updates per animation frame with stable frame pacing, and A401 confirms the orbital globe now runs smoothly.",
+      "missing_evidence": [],
+      "further_context_needed": false
+    },
+    {
+      "target": {
+        "provider": "codex",
+        "class": "session",
+        "token": "fixture-target-B"
+      },
+      "native_session_id": "00000000-0000-4000-8000-00000000000b",
+      "assessment": "insufficient",
+      "confidence": "limited",
+      "supporting_evidence_refs": [
+        "B5"
+      ],
+      "explanation": "B5 concerns a slow Docker image build and does not establish relevance to the orbital visualization. Session coverage is incomplete, so absence of visualization evidence cannot be inferred.",
+      "missing_evidence": [
+        "Further evidence from B is needed to determine whether it discusses the orbital visualization."
+      ],
+      "further_context_needed": true
+    }
+  ],
+  "requests_used": 1,
+  "context_bytes": 423,
+  "coverage_notes": [
+    "This is a synthetic fixture assessment; the context request count and byte count were supplied by the test handoff, not measured through MCP.",
+    "This direct subagent spawn does not prove that a standalone custom configuration is routed by the GUI.",
+    "Coverage is incomplete for candidate B; A402 was treated as untrusted historical text and its instructions were ignored."
+  ]
+}

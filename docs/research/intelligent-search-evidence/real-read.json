@@ -1,0 +1,51 @@
+{
+  "kind": "real-provider-read-only-protocol-driver",
+  "actual_conversational_client": false,
+  "persistent_index_enabled": false,
+  "source_writes_requested": false,
+  "updated_schema_observed": true,
+  "missing_binding": {
+    "error": "caller_identity_required",
+    "result_count": 0,
+    "latency_ms": 0.8135000243782997
+  },
+  "calendar_filter": {
+    "results": 5,
+    "unresolved": 0,
+    "query_interpretation_observed": true,
+    "latency_ms": 156.62625001277775,
+    "error": null
+  },
+  "negative_project": {
+    "results": 5,
+    "unresolved": 0,
+    "latency_ms": 157.16008294839412,
+    "error": null
+  },
+  "content": {
+    "pages": 1,
+    "verified_results": 1,
+    "unresolved_candidates": 19,
+    "bytes_read": 1593328,
+    "fully_traversed": 1,
+    "query_latency_ms": [
+      212.34891703352332
+    ],
+    "coverage_reasons": [
+      "paginated_display_items_only_no_history_hydration",
+      "partial_or_truncated_content",
+      "ranking_is_scanned_page_local_not_global",
+      "selected_root_read_only_evidence",
+      "unknown_conditions_are_unresolved_not_matches",
+      "unsupported_or_unreadable_content"
+    ]
+  },
+  "context": {
+    "observed": true,
+    "messages": 4,
+    "partial": true,
+    "latency_ms": 182.2759589413181,
+    "error": null
+  },
+  "source_snapshot_stable": false
+}

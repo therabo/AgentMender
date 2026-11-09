@@ -1,8 +1,10 @@
-//! Independent operator registration. No registration writer or tool argument.
-//! Current host authentication is not inferred from environment/clientInfo.
+//! Validate independent operator declarations without admitting caller identity.
+//! A privileged file does not prove actual MCP conversation routing. The installed
+//! client supplies no enforceable exclusive per-conversation binding, so guaranteed
+//! management requests remain fail-closed. No registration writer or tool argument.
 use agentmender_domain::ManagementIdentity;
 #[cfg(unix)]
-use agentmender_domain::{ArtifactId, EntityId, GraphNodeKind, ProviderKind};
+use agentmender_domain::ProviderKind;
 #[cfg(unix)]
 use serde::Deserialize;
 use std::path::Path;
@@ -22,9 +24,18 @@ struct Registration {
     connection_scope: String,
 }
 
-/// Only an independently controlled root-owned chain can register this exact
-/// running server instance. A model-writable file or a previous process refuses.
+/// File validation is retained for operator diagnostics, never host admission.
 pub(super) fn read(path: Option<&Path>, instance: &str, root: &Path) -> Option<ManagementIdentity> {
+    admit_file_declaration(validate_declaration(path, instance, root))
+}
+
+fn admit_file_declaration(_validated: Option<()>) -> Option<ManagementIdentity> {
+    // No attested host transport/routing capability exists in this deployment.
+    // Even a valid root-owned declaration cannot prove an exclusive connection.
+    None
+}
+
+fn validate_declaration(path: Option<&Path>, instance: &str, root: &Path) -> Option<()> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::{MetadataExt, PermissionsExt};
@@ -77,32 +88,10 @@ pub(super) fn read(path: Option<&Path>, instance: &str, root: &Path) -> Option<M
         {
             return None;
         }
-        // The fresh file bytes and physical root are part of continuation/context
-        // freshness. This digest is not a signature or destructive authority.
-        let revision = agentmender_domain::search_scope(
-            &agentmender_domain::SearchParameters {
-                query: String::new(),
-                include_archived: true,
-                include_content: false,
-                project_label: None,
-                purpose: agentmender_domain::SearchPurpose::Management,
-                page_size: 1,
-                excerpts: false,
-            },
-            root,
-            &[],
-            &String::from_utf8(bytes).ok()?,
-        );
-        Some(ManagementIdentity {
-            identity: ArtifactId {
-                provider: r.provider,
-                state_root: r.state_root,
-                class: GraphNodeKind::Session,
-                local_id: EntityId::new(format!("codex:session:{}", r.native_session_id)).ok()?,
-            },
-            native_session_id: r.native_session_id,
-            revision,
-        })
+        // The declaration is well formed and independently owned. This proves
+        // neither the actual caller nor single_conversation_operator_verified
+        // routing. Never construct ManagementIdentity from these bytes.
+        Some(())
     }
     #[cfg(not(unix))]
     {
@@ -113,6 +102,11 @@ pub(super) fn read(path: Option<&Path>, instance: &str, root: &Path) -> Option<M
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn even_validated_independent_file_cannot_attest_actual_connection_routing() {
+        assert!(super::admit_file_declaration(Some(())).is_none());
+        assert!(super::admit_file_declaration(None).is_none());
+    }
     #[test]
     fn absent_model_owned_and_arbitrary_registration_never_bind() {
         use std::path::Path;

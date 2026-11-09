@@ -38,6 +38,26 @@ pub trait SessionSearchReadPort {
         &self,
         request: &agentmender_domain::SearchReadRequest,
     ) -> Result<agentmender_domain::SessionSearchPage, ProviderError>;
+    fn transcript_page(
+        &self,
+        _reference: &agentmender_domain::ContextReference,
+        _checkpoint: Option<agentmender_domain::TranscriptCheckpoint>,
+        _excluded: &[agentmender_domain::ArtifactId],
+    ) -> Result<agentmender_domain::TranscriptPage, ProviderError> {
+        Err(ProviderError::CapabilityUnavailable(
+            "transcript paging unavailable".into(),
+        ))
+    }
+    fn session_context_window(
+        &self,
+        _reference: &agentmender_domain::ContextReference,
+        _options: &agentmender_domain::ContextOptions,
+        _excluded: &[agentmender_domain::ArtifactId],
+    ) -> Result<agentmender_domain::ContextWindow, ProviderError> {
+        Err(ProviderError::CapabilityUnavailable(
+            "context navigation unavailable".into(),
+        ))
+    }
     fn session_context(
         &self,
         reference: &agentmender_domain::ContextReference,
