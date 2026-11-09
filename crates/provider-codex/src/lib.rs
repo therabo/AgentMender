@@ -39,6 +39,7 @@ pub mod graph;
 mod lifecycle;
 #[cfg_attr(not(target_os = "macos"), allow(dead_code, unused_imports))]
 mod metadata;
+mod rollout_reader;
 pub use content::run_content_capture_worker;
 mod planning;
 pub use metadata::run_metadata_capture_worker;

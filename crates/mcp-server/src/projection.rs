@@ -8,6 +8,9 @@ use sha2::Sha256;
 use std::sync::Arc;
 
 type HmacSha256 = Hmac<Sha256>;
+// A pending transcript checkpoint includes bounded evidence and query facts.
+// Its signed hex encoding can exceed 4 KiB even for one ordinary real message.
+const SEARCH_TOKEN_BYTES: usize = 32 * 1024;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProjectionError {
     InvalidCursor,
@@ -71,7 +74,7 @@ impl Projector {
         kind: &[u8],
         token: &str,
     ) -> Option<T> {
-        if token.len() > 4096 || !token.is_ascii() {
+        if token.len() > SEARCH_TOKEN_BYTES || !token.is_ascii() {
             return None;
         }
         let (data, tag) = token.split_once('.')?;
@@ -1113,6 +1116,22 @@ mod tests {
         assert!(
             projector
                 .open_search::<serde_json::Value>(b"cursor", std::str::from_utf8(&forged).unwrap())
+                .is_none()
+        );
+    }
+    #[test]
+    fn evidence_bearing_search_cursor_round_trips_with_a_bounded_input() {
+        let projector = Projector::new([1; 32]);
+        let value = serde_json::json!({"pending": {"evidence": ["città camera ".repeat(320)]}});
+        let token = projector.seal_search(b"cursor", &value);
+        assert!(token.len() > 4096 && token.len() < SEARCH_TOKEN_BYTES);
+        assert_eq!(
+            projector.open_search::<serde_json::Value>(b"cursor", &token),
+            Some(value)
+        );
+        assert!(
+            projector
+                .open_search::<serde_json::Value>(b"cursor", &"a".repeat(SEARCH_TOKEN_BYTES + 1))
                 .is_none()
         );
     }

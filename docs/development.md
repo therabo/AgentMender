@@ -1,5 +1,15 @@
 # Development and verification
 
+## P0-SR2 verification
+
+Compressed fixtures cover decoding, decoded-offset continuation, context/chunks,
+occurrences, corruption/truncation, expansion/window/file/deadline limits, exact
+identity, links, relocation ambiguity and source replacement. MCP tests cover
+large evidence-bearing signed cursor round trips and oversized input refusal.
+No private history/credentials enter standard CI. Keep real measurements and
+new output paths outside Git, compare the exact330 identities and distinguish
+current worker from retained parent. See [ADR-0029](adr/0029-compressed-rollout-history.md).
+
 ## P0-SR1 regression gates
 
 Read [ADR-0028](adr/0028-search-reliability-and-scoped-freshness.md). Tests cover source errors/relocation/ambiguity/links, chunks followed by more messages, exact boundaries/EOF/no-progress, unrelated writer activity, relevant membership/order changes and semantic negatives from incomplete evidence. Compare identical recorded UUID cohorts before/after, not changing live inventory percentages. Keep private receipts outside Git. Distinguish current parent from newly built worker behavior; only an AgentMender connection refresh loads a new parent. No unisolated App Server startup or Codex restart is permitted.

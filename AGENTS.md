@@ -1,5 +1,19 @@
 # AgentMender engineering constraints
 
+## P0-SR2 compressed history
+
+Follow [ADR-0029](docs/adr/0029-compressed-rollout-history.md). Missing plain
+locators may use their exact `.jsonl.zst` counterpart before fixed relocation.
+Decode only in the existing attested worker; never materialize into provider
+state or start App Server for content. Decoded offsets differ from physical
+source size/revision. Preserve explicit compressed evidence formats, decoder
+window/file/replay/deadline bounds, header UUID, NOFOLLOW/unshared identity and
+source revalidation. Corruption/work limits cannot prove absence. History SQL,
+host/model transcript ingestion and imports are not admitted. Signed search
+tokens admit at most 32 KiB; retain HMAC kind/process binding and frame limits.
+Private receipt paths must be new per milestone; never run a historical driver
+unchanged when its output directory is fixed to an earlier acceptance folder.
+
 ## P0-SR1 reliability constraints
 
 Follow [ADR-0028](docs/adr/0028-search-reliability-and-scoped-freshness.md). Cursor fingerprints bind eligible identities, predicate leaf truth, lexical facts and sort keys; unused display facts are read fresh. Relevant membership/order and selected source changes still refuse. Only fixed active/archive counterparts of missing locators may be tried, with exact header UUID, NOFOLLOW, single-link and revision checks. No recursive scanner or root widening. Positive next offsets mean unfinished messages; completed messages advance. Reject identical continuation pairs. Session-wide semantic negatives require trusted complete coverage, fresh source/filter validation and parent-vetted negative evidence. Keep real receipts outside Git. No management admission is added.

@@ -1,5 +1,7 @@
 # Architecture decisions
 
+- [ADR-0029: Compressed native rollout history](0029-compressed-rollout-history.md) — Accepted; bounded local representation decoding in the existing isolated reader, without native startup or host transcript ingestion.
+
 [ADR-0022](0022-product-first-session-lifecycle.md) governs current product
 sequencing and separates primary/native lifecycle from deep cleanup. Older ADRs
 retain their operation-specific safety contracts and historical evidence.

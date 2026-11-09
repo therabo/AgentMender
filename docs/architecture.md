@@ -1,5 +1,14 @@
 # Architecture and capability boundaries
 
+## P0-SR2 native history representation
+
+[ADR-0029](adr/0029-compressed-rollout-history.md) adds bounded Zstandard rollout
+decoding within provider-codex's existing attested content worker. The same read
+port/application/MCP pipeline receives decoded messages, positions and explicit
+transport formats. No new service, SQL store, caller proof or native startup is
+admitted. [Native history](native-history.md) records the proven local source,
+rejected alternatives, provenance and resource/privacy limits.
+
 ## P0-SR1 reliability refinement
 
 [ADR-0028](adr/0028-search-reliability-and-scoped-freshness.md) refines query-scoped cursor validation, fixed locator counterparts, forward context progress and incomplete-evidence semantic acceptance in the same read ports/layers. It adds no crate, source writer, native startup admission, persistent index default or lifecycle authority.

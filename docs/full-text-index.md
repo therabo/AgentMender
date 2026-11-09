@@ -1,5 +1,14 @@
 # Local full-text index
 
+## P0-SR2 source representation
+
+The same read port supplies bounded decoded `.jsonl.zst` messages and explicit
+compressed format tags to FTS5/cache coordination. Positions are decoded offsets;
+source size/revision remain physical. No second index or history database reader
+is introduced. Representation replacement invalidates old source refs/cache facts.
+Decoder limits and Partial paginated coverage still prevent negative proof.
+See [native history](native-history.md).
+
 ## P0-SR1 source reliability
 
 Persistence remains opt-in and FTS5/cache ownership is unchanged. Indexing cannot repair missing source history. Cached facts require source revalidation; query-scoped metadata freshness never permits stale source reuse. Fixed active/archive counterparts retain exact identity and revision checks. See [ADR-0028](adr/0028-search-reliability-and-scoped-freshness.md).

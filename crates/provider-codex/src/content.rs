@@ -1,5 +1,5 @@
 //! Fixed bounded conversation reader. Source I/O runs only in the attested worker.
-use crate::{CodexAdapter, Guard, capture, metadata};
+use crate::{CodexAdapter, Guard, capture, metadata, rollout_reader::RolloutReader};
 use agentmender_domain::*;
 use agentmender_provider_api::{
     ProviderError, SessionSearchReadPort, evidence::EvidenceSandbox, filesystem, process,
@@ -17,6 +17,8 @@ use std::{
 
 const FORMAT: &str = "codex-rollout-response-item-message-v1";
 const PAGINATED_INLINE_FORMAT: &str = "codex-paginated-item-completed-message-v1";
+const ZSTD_FORMAT: &str = "codex-rollout-response-item-message-zstd-v1";
+const ZSTD_PAGINATED_FORMAT: &str = "codex-paginated-item-completed-message-zstd-v1";
 const MAX_OUTPUT: usize = 128 * 1024;
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -98,10 +100,36 @@ fn content_failure(error: &ProviderError) -> &'static str {
             | "bounded_session_header_unavailable" => "format_unsupported",
             "header_identity_mismatch" => "source_identity_mismatch",
             "ambiguous_rollout_counterparts" => "source_ambiguous",
+            "compressed_source_invalid" => "compressed_source_invalid",
+            "compressed_source_limit" => "compressed_source_limit",
+            "compressed_work_limit" => "compressed_work_limit",
             _ => "source_unavailable",
         },
         ProviderError::InvalidScope(_) => "source_link_or_scope_refused",
         _ => "source_unavailable",
+    }
+}
+fn rollout_io(error: std::io::Error) -> ProviderError {
+    match error.to_string().as_str() {
+        "compressed_source_invalid" => content_limit("compressed_source_invalid"),
+        "compressed_source_limit" => content_limit("compressed_source_limit"),
+        "compressed_work_limit" => content_limit("compressed_work_limit"),
+        "compressed_seek_past_end" => stale(),
+        _ => unavailable(),
+    }
+}
+fn compressed_path(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|n| n.to_str())
+        .is_some_and(|n| n.ends_with(".jsonl.zst"))
+}
+fn other_representation(path: &Path) -> PathBuf {
+    if compressed_path(path) {
+        path.with_extension("")
+    } else {
+        let mut name = path.as_os_str().to_os_string();
+        name.push(".zst");
+        PathBuf::from(name)
     }
 }
 fn hash(bytes: &[u8]) -> String {
@@ -586,7 +614,7 @@ fn open_transcript(
         .strip_prefix(root)
         .map_err(|_| content_limit("rollout_locator_outside_root"))?;
     if !matches!(relative.components().next(),Some(Component::Normal(n)) if n=="sessions" || n=="archived_sessions")
-        || path.extension().is_none_or(|v| v != "jsonl")
+        || (path.extension().is_none_or(|v| v != "jsonl") && !compressed_path(path))
         || relative
             .components()
             .any(|c| !matches!(c, Component::Normal(_)))
@@ -595,6 +623,14 @@ fn open_transcript(
     }
     match filesystem::open_source_read(root, path) {
         Ok(file) => return Ok((file, path.clone())),
+        Err(ProviderError::CapabilityUnavailable(code)) if code == "source file missing" => {}
+        Err(error) => return Err(error),
+    }
+    // Codex compresses selected rollouts without updating legacy metadata locators.
+    // Prefer only the exact alternate representation before fixed relocations.
+    let counterpart = other_representation(path);
+    match filesystem::open_source_read(root, &counterpart) {
+        Ok(file) => return Ok((file, counterpart)),
         Err(ProviderError::CapabilityUnavailable(code)) if code == "source file missing" => {}
         Err(error) => return Err(error),
     }
@@ -627,6 +663,13 @@ fn open_transcript(
         );
     }
     alternatives.remove(path);
+    alternatives.extend(
+        alternatives
+            .iter()
+            .map(|p| other_representation(p))
+            .collect::<Vec<_>>(),
+    );
+    alternatives.remove(&counterpart);
     let mut found = None;
     for alternative in alternatives {
         match filesystem::open_source_read(root, &alternative) {
@@ -686,7 +729,7 @@ fn transcript_stream_limited(
 }
 #[allow(clippy::too_many_arguments)]
 fn stream_transcript(
-    mut file: fs::File,
+    file: fs::File,
     before: fs::Metadata,
     candidate: &Candidate,
     root: &Path,
@@ -703,21 +746,25 @@ fn stream_transcript(
         return Err(unavailable());
     }
     let revision = hash(stamp(&before).as_bytes());
+    let compressed = compressed_path(path);
     if checkpoint.is_some_and(|c| {
         c.native_session_id != candidate.metadata.native_session_id
             || c.source_fingerprint != revision
-            || c.byte_offset > before.len()
+            || (!compressed && c.byte_offset > before.len())
             || c.record_index == 0
     }) {
         return Err(stale());
     }
-    let mut reader = BufReader::with_capacity(8192, &mut file);
+    let mut reader = BufReader::with_capacity(
+        8192,
+        RolloutReader::new(&file, compressed, end).map_err(rollout_io)?,
+    );
     let mut header_bytes = Vec::new();
     let count = reader
         .by_ref()
         .take((RECORD_BYTES + 1) as u64)
         .read_until(b'\n', &mut header_bytes)
-        .map_err(|_| unavailable())?;
+        .map_err(rollout_io)?;
     *bytes_read = bytes_read.saturating_add(count);
     if count == 0 || count > RECORD_BYTES {
         return Err(content_limit("bounded_session_header_unavailable"));
@@ -746,9 +793,7 @@ fn stream_transcript(
     if offset < count as u64 {
         return Err(stale());
     }
-    reader
-        .seek(SeekFrom::Start(offset))
-        .map_err(|_| unavailable())?;
+    reader.seek(SeekFrom::Start(offset)).map_err(rollout_io)?;
     let mut index = checkpoint.map_or(1, |c| c.record_index);
     let mut partial = checkpoint.is_some_and(|c| c.partial) || format == PAGINATED_INLINE_FORMAT;
     let mut suppressed = 0;
@@ -758,7 +803,9 @@ fn stream_transcript(
     let mut skipping = checkpoint.is_some_and(|c| c.skipping_record);
     let starting_bytes = *bytes_read;
     let limit = available.saturating_sub(starting_bytes.saturating_sub(work_start));
-    while offset < before.len() && bytes_read.saturating_sub(starting_bytes) < limit {
+    let mut reached_eof = false;
+    while (compressed || offset < before.len()) && bytes_read.saturating_sub(starting_bytes) < limit
+    {
         if Instant::now() >= end || captured_bytes >= output_bytes {
             break;
         }
@@ -769,12 +816,15 @@ fn stream_transcript(
             .by_ref()
             .take(remaining.min(STREAM_RECORD_BYTES + 1) as u64)
             .read_until(b'\n', &mut line)
-            .map_err(|_| unavailable())?;
+            .map_err(rollout_io)?;
         if read == 0 {
+            reached_eof = true;
             break;
         }
         *bytes_read += read;
-        let complete_line = line.last() == Some(&b'\n') || offset + read as u64 == before.len();
+        let complete_line = line.last() == Some(&b'\n')
+            || (!compressed && offset + read as u64 == before.len())
+            || (compressed && read < remaining.min(STREAM_RECORD_BYTES + 1));
         if !complete_line {
             if line.len() <= STREAM_RECORD_BYTES && !skipping {
                 // Revisit this record with a fresh work budget. No bytes are lost.
@@ -966,11 +1016,17 @@ fn stream_transcript(
             _ => partial = true,
         }
     }
+    if compressed && !reached_eof {
+        // EOF verifies frame termination and any advertised checksum; corruption cannot turn
+        // a valid prefix into complete negative evidence.
+        reached_eof = reader.fill_buf().map_err(rollout_io)?.is_empty();
+    }
     drop(reader);
     if stamp(&before) != stamp(&file.metadata().map_err(|_| unavailable())?)
         || stamp(&before)
             != stamp(
-                &filesystem::open_source_read(root, path)?
+                &open_transcript(candidate, root)?
+                    .0
                     .metadata()
                     .map_err(|_| unavailable())?,
             )
@@ -988,7 +1044,12 @@ fn stream_transcript(
         skipping_record: skipping,
         ..Default::default()
     };
-    let next = (offset < before.len()).then(|| progress.clone());
+    let next = (if compressed {
+        !reached_eof
+    } else {
+        offset < before.len()
+    })
+    .then(|| progress.clone());
     let status = if next.is_some() {
         "scanning"
     } else if partial || suppressed > 0 {
@@ -1004,7 +1065,15 @@ fn stream_transcript(
         status,
         bytes: before.len().try_into().map_err(|_| unavailable())?,
         suppressed,
-        format,
+        format: if compressed {
+            if format == PAGINATED_INLINE_FORMAT {
+                ZSTD_PAGINATED_FORMAT
+            } else {
+                ZSTD_FORMAT
+            }
+        } else {
+            format
+        },
         next,
         end: progress,
         partial,
@@ -1750,15 +1819,16 @@ fn context_window(
     let mut backward_clipped = false;
     if needs_before {
         if let Some(position) = &reference.position {
-            let (mut file, _) = open_transcript(&candidate, root)?;
+            let (file, path) = open_transcript(&candidate, root)?;
+            let mut file =
+                RolloutReader::new(&file, compressed_path(&path), end).map_err(rollout_io)?;
             let length = position.byte_offset.min(STREAM_RECORD_BYTES as u64);
             let start = position.byte_offset - length;
-            file.seek(SeekFrom::Start(start))
-                .map_err(|_| unavailable())?;
+            file.seek(SeekFrom::Start(start)).map_err(rollout_io)?;
             let mut before = Vec::new();
             file.take(length)
                 .read_to_end(&mut before)
-                .map_err(|_| unavailable())?;
+                .map_err(rollout_io)?;
             let clip = if start == 0 {
                 0
             } else {
@@ -2374,6 +2444,248 @@ mod tests {
     }
     fn until() -> Instant {
         Instant::now() + Duration::from_secs(30)
+    }
+
+    fn compress_fixture(path: &Path) -> PathBuf {
+        let compressed = other_representation(path);
+        let mut encoder =
+            zstd::stream::write::Encoder::new(fs::File::create(&compressed).unwrap(), 1).unwrap();
+        encoder.include_checksum(true).unwrap();
+        std::io::copy(&mut fs::File::open(path).unwrap(), &mut encoder).unwrap();
+        encoder.finish().unwrap();
+        fs::remove_file(path).unwrap();
+        compressed
+    }
+
+    #[test]
+    fn compressed_legacy_context_occurrences_and_source_changes() {
+        let root = tempfile::tempdir().unwrap();
+        let db = db();
+        let path = seed(
+            &db,
+            root.path(),
+            1,
+            "neutral",
+            &[
+                message("user", "Cesium camera start"),
+                message("assistant", &"UTF8 città camera. ".repeat(100)),
+                message("user", "Cesium camera next"),
+            ],
+        );
+        let compressed = compress_fixture(&path);
+        let page = search(&db, root.path(), &request("Cesium"), until()).unwrap();
+        assert_eq!(page.sessions.len(), 1);
+        let hit = &page.sessions[0];
+        assert!(hit.content_complete);
+        assert_eq!(hit.evidence[0].format, ZSTD_FORMAT);
+        let r = evidence_reference(1, &hit.evidence[0]);
+        let around = context_window(
+            &db,
+            root.path(),
+            &r,
+            &ContextOptions {
+                before: 1,
+                after: 1,
+                max_messages: 3,
+                max_bytes: 4096,
+                ..Default::default()
+            },
+            &[],
+            until(),
+        )
+        .unwrap();
+        assert!(around.messages.len() >= 2);
+        let occurrences = context_window(
+            &db,
+            root.path(),
+            &r,
+            &ContextOptions {
+                direction: ContextDirection::Occurrences,
+                query: Some("Cesium".into()),
+                ..Default::default()
+            },
+            &[],
+            until(),
+        )
+        .unwrap();
+        assert!(
+            occurrences
+                .messages
+                .iter()
+                .any(|m| m.record_index > r.record_index)
+        );
+        let mut next = Some(r.clone());
+        let mut options = ContextOptions {
+            max_bytes: 180,
+            max_messages: 1,
+            ..Default::default()
+        };
+        let mut seen = BTreeSet::new();
+        for _ in 0..30 {
+            let reference = next.take().unwrap();
+            let window =
+                context_window(&db, root.path(), &reference, &options, &[], until()).unwrap();
+            for m in &window.messages {
+                let p = m.position.as_ref().unwrap();
+                assert!(seen.insert((p.ordinal, p.chunk_offset)));
+            }
+            next = window.next;
+            if next.is_none() {
+                assert!(window.at_end);
+                break;
+            }
+            options.direction = if next
+                .as_ref()
+                .unwrap()
+                .position
+                .as_ref()
+                .is_some_and(|p| p.chunk_offset > 0)
+            {
+                ContextDirection::Around
+            } else {
+                ContextDirection::Forward
+            };
+        }
+        assert!(next.is_none());
+        assert!(seen.iter().any(|(n, _)| *n == 4));
+        let bytes = fs::read(&compressed).unwrap();
+        fs::remove_file(&compressed).unwrap();
+        fs::write(&compressed, bytes).unwrap();
+        assert!(context(&db, root.path(), &r, &[], until()).is_err());
+    }
+
+    #[test]
+    fn compressed_stream_continuation_uses_decoded_offsets_and_partial_paginated_eof() {
+        let root = tempfile::tempdir().unwrap();
+        let db = db();
+        let path = seed(
+            &db,
+            root.path(),
+            1,
+            "neutral",
+            &[
+                message("user", "Cesium early"),
+                message("assistant", &"ordinary filler ".repeat(65_536)),
+                message("user", "PostgreSQL later"),
+            ],
+        );
+        let compressed = compress_fixture(&path);
+        let candidate = Candidate {
+            metadata: search(&db, root.path(), &request("Cesium"), until())
+                .unwrap()
+                .sessions[0]
+                .metadata
+                .clone(),
+            path: Some(path.clone()),
+        };
+        let mut checkpoint = None;
+        let mut ordinals = vec![];
+        for _ in 0..8 {
+            let t = transcript_stream(
+                &candidate,
+                root.path(),
+                1100 * 1024,
+                &mut 0,
+                until(),
+                checkpoint.as_ref(),
+            )
+            .unwrap();
+            ordinals.extend(t.messages.iter().map(|m| m.index));
+            checkpoint = t.next;
+            if checkpoint.is_none() {
+                break;
+            }
+        }
+        assert!(checkpoint.is_none());
+        assert_eq!(ordinals, vec![2, 3, 4]);
+        // An explicit compressed locator is supported too.
+        db.execute(
+            "UPDATE threads SET rollout_path=?1",
+            [compressed.to_str().unwrap()],
+        )
+        .unwrap();
+        assert_eq!(
+            search(&db, root.path(), &request("PostgreSQL"), until())
+                .unwrap()
+                .sessions
+                .len(),
+            1
+        );
+        fs::remove_file(compressed).unwrap();
+        fs::write(&path, format!("{}\n{}\n", json!({"type":"session_meta","payload":{"id":id(1),"cli_version":"fixture","history_mode":"paginated"}}), completed("AgentMessage", "Cesium display item"))).unwrap();
+        compress_fixture(&path);
+        let page = search(&db, root.path(), &request("Cesium"), until()).unwrap();
+        assert_eq!(page.sessions[0].evidence[0].format, ZSTD_PAGINATED_FORMAT);
+        assert!(!page.sessions[0].content_complete);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn compressed_sources_refuse_corruption_foreign_identity_links_and_ambiguity() {
+        let root = tempfile::tempdir().unwrap();
+        let db = db();
+        let path = seed(&db, root.path(), 1, "neutral", &[message("user", "Cesium")]);
+        let compressed = compress_fixture(&path);
+        let bytes = fs::read(&compressed).unwrap();
+        fs::write(&compressed, &bytes[..bytes.len() - 3]).unwrap();
+        assert_eq!(
+            search(&db, root.path(), &request("Cesium"), until())
+                .unwrap()
+                .unresolved[0]
+                .content_status,
+            "compressed_source_invalid"
+        );
+        fs::remove_file(&compressed).unwrap();
+        fs::write(
+            &path,
+            format!(
+                "{}\n",
+                json!({"type":"session_meta","payload":{"id":id(2),"cli_version":"fixture"}})
+            ),
+        )
+        .unwrap();
+        compress_fixture(&path);
+        assert_eq!(
+            search(&db, root.path(), &request("Cesium"), until())
+                .unwrap()
+                .unresolved[0]
+                .content_status,
+            "source_identity_mismatch"
+        );
+        fs::remove_file(&compressed).unwrap();
+        let elsewhere = root.path().join("unadmitted.zst");
+        fs::write(&elsewhere, &bytes).unwrap();
+        std::os::unix::fs::symlink(&elsewhere, &compressed).unwrap();
+        assert!(
+            search(&db, root.path(), &request("Cesium"), until())
+                .unwrap()
+                .sessions
+                .is_empty()
+        );
+        fs::remove_file(&compressed).unwrap();
+        fs::create_dir_all(root.path().join("archived_sessions/split")).unwrap();
+        let moved = root
+            .path()
+            .join("archived_sessions")
+            .join(compressed.file_name().unwrap());
+        fs::write(&moved, &bytes).unwrap();
+        assert_eq!(
+            search(&db, root.path(), &request("Cesium"), until())
+                .unwrap()
+                .sessions
+                .len(),
+            1
+        );
+        // Same fixed location has two candidate representations: do not merge.
+        let plain = other_representation(&moved);
+        fs::write(plain, "not selected").unwrap();
+        assert_eq!(
+            search(&db, root.path(), &request("Cesium"), until())
+                .unwrap()
+                .unresolved[0]
+                .content_status,
+            "source_ambiguous"
+        );
     }
 
     #[cfg(unix)]

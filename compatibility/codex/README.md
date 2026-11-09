@@ -1,5 +1,15 @@
 # Codex compatibility evidence
 
+## P0-SR2 current history representation
+
+Desktop26.1103.41825/build25679, CLI0.167.0-alpha.3.2: all four nominated missing
+plain paths have exact compressed counterparts. Their visible messages now pass
+AgentMender MCP search/context. The reader supports bounded `.jsonl.zst` legacy
+and paginated inline records within the existing kernel isolation; native RPC
+startup and direct history-projection SQL remain unadmitted. Partial coverage,
+replay limits and caller-binding refusal remain. See [source evidence and
+limitations](../../docs/native-history.md) and [SR2 acceptance](../../docs/milestones/p0-sr2-native-history.md).
+
 ## P0-SR1 current read reliability
 
 CLI 0.167.0-alpha.3.2 is observed separately from historical mutation profiles. Missing backing sources are source_missing rather than format incompatibility. Fixed active/archive counterparts stay within existing roots and require UUID/physical validation. Paginated inline display items remain Partial. Documented non-resuming thread/read, thread/turns/list and thread/items/list do not alone establish write-denied startup or a trusted existing-client transport. No credentials are copied and no client is impersonated. Native coverage and caller routing stay OPEN. See [current status](../../docs/milestones/p0-sr1-search-reliability.md).

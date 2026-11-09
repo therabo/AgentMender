@@ -1,5 +1,14 @@
 # MCP interface
 
+## P0-SR2 history reads
+
+The same search/context tools now consume bounded compressed rollouts through
+the existing worker. Evidence `format` identifies legacy/paginated Zstandard;
+positions are decoded, while the sealed source revision/size bind physical bytes.
+No new tool, import endpoint, host attestation or destructive authority is added.
+Search token input is bounded at32KiB so emitted evidence-bearing cursors can be
+read back. See [native history and actual-parent distinction](native-history.md).
+
 ## P0-SR1 refinement
 
 The existing tools gain query-scoped freshness, completed-message progress and closed path-free source-failure codes; see [ADR-0028](adr/0028-search-reliability-and-scoped-freshness.md). Hits add content_coverage; legacy aggregate counters remain. A long-running parent MCP process can reuse newly built capture workers, but only refreshing the AgentMender connection loads its additive parent schema and no-progress guard. A rebuilt binary alone is not proof of refreshed client catalog. Never restart Codex automatically.

@@ -81,6 +81,12 @@ No local LLM or new natural-language interpretation service is required.
 
 ## Intelligent retrieval delivery — current checkpoint
 
+P0-SR2 recovers exact compressed Codex rollouts through the existing isolated
+reader. All four MISSION1 acceptance targets now return content/context; see
+[current evidence](milestones/p0-sr2-native-history.md). Preserve bounded/Partial
+coverage and finish actual-parent/host-binding/CI acceptance before claiming
+production management. This adds no semantic infrastructure or deletion scope.
+
 [ADR-0027](adr/0027-intelligent-session-retrieval.md) extends P0 search with typed
 nested filters, UTC/calendar dates, unknown-safe negative conditions, full supported
 stream traversal, source-bound context windows, FTS5 and opt-in private indexing.

@@ -7,6 +7,25 @@ admission, approval and transaction semantics are unchanged.
 
 ## Execution and compatibility
 
+P0-SR2 also reads compressed native rollouts; see [source coverage and transport
+boundaries](native-history.md) and [ADR-0029](adr/0029-compressed-rollout-history.md).
+After an exact plain locator is missing, its `.jsonl.zst` counterpart is preferred
+before fixed active/archive relocation. Explicit compressed locators are supported.
+No recursive discovery, native startup, provider materialization or history DB
+ingestion is added. Existing selected representations take precedence; histories
+are never merged. Evidence format ends in `message-zstd-v1` for compressed legacy
+or paginated display text. Paginated EOF still remains Partial.
+
+Compressed positions/checkpoints use decoded JSONL offsets; source length and
+revision bind the physical file. Seek/backward navigation replays bounded decoding.
+Limits are 64 MiB compressed file, 8 MiB decoder window and 128 MiB decoded work
+per reader, including replay, under the same deadline. Parser slice/aggregate
+bounds remain 12/32 MiB. `bytes_read` counts parsed decoded JSONL, excluding
+decoder read-ahead/replay and physical compressed I/O. Exceeding decoding bounds
+or detecting corruption is unavailable/UNKNOWN, never negative evidence.
+Signed search tokens accept at most32KiB; HMAC, kind/process binding and64KiB
+request/80KiB projection limits remain. Large evidence-bearing cursors round-trip.
+
 `session_search` and `session_context` remain the retrieval tools. The calling
 agent translates language into validated JSON, AgentMender applies deterministic
 conditions, and optional [Luna analysis](luna-session-relevance.md) interprets
