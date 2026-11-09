@@ -126,7 +126,8 @@ for boundaries; [roadmap](docs/product-roadmap.md) for sequencing;
 contract; [MCP](docs/mcp.md) for tools; [development](docs/development.md) for checks.
 Dated audits, milestone receipts and research are historical evidence, not competing
 roadmaps. [ADR-0025](docs/adr/0025-bounded-search-and-management-exclusion.md)
-records the search/exclusion requirement; [ADR-0026](docs/adr/0026-bounded-conversation-reader-and-independent-registration.md) records its bounded implementation and remaining acceptance gates.
+records the search/exclusion requirement; [ADR-0026](docs/adr/0026-bounded-conversation-reader-and-independent-registration.md) records the historical bounded reader, extended by
+[ADR-0027](docs/adr/0027-intelligent-session-retrieval.md) for the current implementation.
 
 Use Rust 1.89 or newer and the checked-in Cargo.lock. CI also tests current stable
 on Linux, macOS and Windows. Live provider isolation and mutation have narrower

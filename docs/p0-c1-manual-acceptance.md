@@ -77,17 +77,21 @@ In a dedicated management conversation, ask:
 Require an actual `session_search` call and grounded output. The configured server
 exposes fourteen tools; the original default launch still exposes eight.
 The legacy call uses all-term title/display-name/project-basename/UUID matching.
-For bounded content use `include_content:true`, an explicit purpose and paging;
+For incremental content use `include_content:true`, an explicit purpose and paging;
 [the search contract](session-search.md) gives full inputs/limits. Management mode
-requires independent registration or refuses with zero candidates; diagnostic
-mode may include the calling chat. Additional context requires returned sealed
-evidence. Complete transcript search is not claimed. Native display names take precedence over first-prompt titles.
+requires enforceable host binding (currently unavailable) or refuses with zero
+candidates; file-only declarations are inadmissible. Diagnostic mode may include
+the calling chat. Additional context requires returned sealed
+evidence. Supported transcript traversal is incremental and source-bound; unknown
+formats remain Partial. Optional private indexing/context examples are in the
+current search contract. Native display names take precedence over first-prompt titles.
 Missing or oversized labels are null/UUID fallbacks, not invented titles. Times
 are Unix seconds and may be unavailable. `active` means non-archived in this DB;
 it does not prove runtime activity. Parent metadata is partial, not descendant
 closure. Names/paths and relationships never establish destructive ownership.
 
-The most recent at most 500 records and 96 KiB of metadata are observed. Coverage
+The legacy metadata call observes at most500 recent records/96KiB. Advanced
+structured/content calls offer explicit source/inventory continuation beyond that limit. Coverage
 is explicitly partial and limited to the selected root DB. A response over MCP's
 budget fails rather than silently dropping matches; narrow the query. Absence
 under partial coverage is not proof of absence. Opaque targets and namespace refs

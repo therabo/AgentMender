@@ -1,7 +1,7 @@
 # Codex compatibility evidence
 
-Current read-only P0-S1 discovery and independent caller-registration limits are
-documented in [the search contract](../../docs/session-search.md). Bounded content reads do not expand
+Current read-only retrieval and host-binding limits are documented in
+[the search contract](../../docs/session-search.md). Content reads do not expand
 any approval, mutation profile or recovery authority. Real updated client and
 management-binding acceptance remain OPEN.
 
@@ -28,10 +28,10 @@ independent; a schema/binary match on one axis does not transfer another's autho
 
 ## P0-C1 compatibility axes
 
-Opt-in conversational search uses a new bounded metadata projection of the exact
-stable 0.166.0 state schema through the protected worker. This is separate from
-historical App Server discovery. It does not admit Desktop alpha.5.1/24141 or an
-unknown producer. Preview/execution retain scoped-cleanup-v1's exact binary,
+Historical P0-C1 removal composition uses the exact stable0.166.0 metadata
+profile through the protected worker. Current read-only search separately admits
+validated additive metadata without transferring that destructive profile.
+Readability never admits Desktop alpha.5.1/24141 or unknown producers for effects. Preview/execution retain scoped-cleanup-v1's exact binary,
 Legacy/WAL/config/physical/dependency/writer gates; search eligibility is no grant.
 Native delete remains unsupported. Human approval/execution remain external and
 full actual-client/human acceptance remains OPEN. See

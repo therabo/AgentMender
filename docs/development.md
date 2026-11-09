@@ -18,16 +18,16 @@ human approval, real deletion and optional GUI confirmation.
 
 The [conversational primary handoff](conversational-codex-removal.md) is implemented
 with destructive acceptance still OPEN. Real conversational metadata search is
-accepted; the next proposed read-only step is [bounded content search and verified
-management exclusion](session-search.md). Normal tests retain all prior safety regressions.
+accepted; current [intelligent content search](session-search.md) is implemented
+with updated client and real caller-binding acceptance still open. Normal tests retain all prior safety regressions.
 The explicit `conversational_removal` CLI integration test uses disposable exact
 provider state and real stdio/worker/CLI effects; its grant is fixture authority.
 Do not count it as an actual Codex conversation or independent human acceptance.
 The final report records those gates separately. P0-S1 adds bounded content
 fixture/stdio/isolation tests and 5,000-session paging. The current
 [search quick start](session-search.md) defines advanced requests, refusal and the
-independent operator registration procedure. Do not mint a registration from model
-UUID selection or treat a direct protocol driver as actual conversational use. No test deletes real sessions.
+failure behavior. Production file-only declarations are not caller proof. Do not
+infer binding from model UUID selection or treat a protocol driver as conversational use. No test deletes real sessions.
 
 
 Start with [AGENTS.md](../AGENTS.md), [architecture](architecture.md),

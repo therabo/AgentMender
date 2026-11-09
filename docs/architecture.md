@@ -26,19 +26,15 @@ every read adapter. Domain has serialization/hashing dependencies but no I/O.
 
 ## Adaptive real-session reads
 
-[ADR-0025](adr/0025-bounded-search-and-management-exclusion.md) and the
-[canonical search contract](session-search.md) add content evidence and mandatory
-verified management exclusion as requirements. Current conversational search
-filters trusted registered identities before matching/sorting/projection and
-refuses protected preview/preparation; it does not authenticate the caller.
-General diagnostic inventory is not a guaranteed management list.
-[ADR-0026](adr/0026-bounded-conversation-reader-and-independent-registration.md)
-implements a provider-neutral `SessionSearchReadPort`, pure relevance/evidence types,
-application binding/exclusion enforcement, Codex-owned bounded message parsing and
-MCP excerpts/context. CLI validates independent operator registration per call.
-Missing identity refuses management requests before provider access. No index, new
-crate or destructive authority is added. Actual updated client and real management
-binding acceptance remain open.
+[ADR-0025](adr/0025-bounded-search-and-management-exclusion.md) defines content
+evidence and mandatory management exclusion. [ADR-0026](adr/0026-bounded-conversation-reader-and-independent-registration.md)
+introduced the provider-neutral read port, pure relevance types and the initial
+bounded Codex worker. Current [ADR-0027](adr/0027-intelligent-session-retrieval.md)
+extends these same components as described below. Launch-protected identities
+are excluded before retrieval/counts/projection. Production guaranteed mode
+refuses before provider access until enforceable host binding exists; a privileged
+registration assertion cannot prove routing. Actual updated conversational client
+and real management binding remain open. No new destructive authority is added.
 
 [ADR-0024](adr/0024-adaptive-read-only-metadata.md) separates useful metadata from
 mutation contracts. Explicit `--session-search` uses a fixed-column protected
@@ -72,7 +68,7 @@ surface; CLI alone supplies persistent index paths and maintenance controls.
 Production management registration files now remain inadmissible as caller proof;
 only a future enforceable host transport can enable that guarantee. Missing binding
 refuses before source access. [Current search](session-search.md) supersedes the
-historical bounded-reader feature limits above; historical receipts retain their
+historical bounded-reader feature limits; historical receipts retain their
 original results. [Index privacy](full-text-index.md) and [Luna](luna-session-relevance.md)
 document data flow and limitations.
 

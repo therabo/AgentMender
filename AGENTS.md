@@ -98,20 +98,19 @@ the current contract govern this extension. No lifecycle admission changes.
 
 ## Architecture
 
-Read [ADR-0025](docs/adr/0025-bounded-search-and-management-exclusion.md) and the
-[search contract](docs/session-search.md). Real conversational metadata search is
-accepted (the user's 37-record MISSION1 call, Partial). Read
-[ADR-0026](docs/adr/0026-bounded-conversation-reader-and-independent-registration.md):
-P0-S1 implements bounded known user/assistant message shapes, lexical evidence,
-sealed continuation/context and independent operator registration. Full-history
-search, actual updated conversational content acceptance, real management binding
-and current-version destructive acceptance remain open. Exclude registered provider/root/session identities before matching
-and projection in both conversational modes; refuse protected previews/preparation.
-Guaranteed management workflows return caller_identity_required before provider
-access until
-verified host binding or independent protected registration is established. General
-diagnostic inventory is not a guaranteed management candidate list. Never guess
-identity from title/cwd/activity or accept a model-supplied UUID as proof.
+Read [ADR-0025](docs/adr/0025-bounded-search-and-management-exclusion.md),
+[ADR-0026](docs/adr/0026-bounded-conversation-reader-and-independent-registration.md)
+and current [ADR-0027](docs/adr/0027-intelligent-session-retrieval.md).
+P0-S1 supplied bounded parsing, lexical evidence and sealed references. ADR-0027
+extends supported full-stream traversal, typed queries, contextual navigation
+and optional private indexing. Actual updated conversational client acceptance,
+real management binding and current-version destructive acceptance remain open.
+Exclude launch-protected provider/root/session identities before retrieval,
+counts and projection; refuse protected preview/preparation. Guaranteed management
+workflows require enforceable host binding and otherwise return
+caller_identity_required before provider access. Root-owned declarations alone
+are inadmissible. Diagnostic inventory is not a manageable candidate list.
+Never infer caller identity from title/cwd/activity or model-supplied UUIDs.
 
 Keep the eight crates. Domain is pure and owns shared approval eligibility.
 Provider-api has read-only ports and protected observation helpers. Provider
