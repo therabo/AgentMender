@@ -1,5 +1,15 @@
 # Luna session relevance
 
+## P0-SR4 discovery handoff
+
+Use `session_discover` in the originating chat for ordinary candidate
+retrieval. Hand off only returned candidates, their existing evidence, hard
+filters and coverage. The originating chat fetches any further discovery
+context and revalidates final candidates with `session_discover`. A separate
+Luna thread may receive a different caller ID and cannot replay the parent's
+discovery references. If context is unavailable, report insufficient evidence.
+Do not switch to diagnostic search to get around a refused reference.
+
 ## P0-SR3 navigation and authority
 
 Luna may use `start`, repeated forward/backward windows, occurrences, turns and
@@ -43,10 +53,8 @@ Ask it to use `session_relevance` for semantic analysis only when useful. Exact
 UUID, date, archive and project queries do not need delegation.
 
 1. Interpret creation/activity explicitly, choose a timezone and preserve the
-   original hard filters. Use `purpose:"management"` only with trusted binding;
-   `caller_identity_required` means zero manageable candidates, not permission to
-   retry diagnostically and call those results manageable.
-2. Retrieve candidates through `session_search`, following signed cursors until
+   original hard filters. Authenticated management has its own trust gate.
+2. Retrieve read-only candidates through `session_discover`, following signed cursors until
    the desired coverage or work budget is reached. A partial page is not a global
    semantic ranking. Consider explicit alternatives such as `frame drops`,
    `rendering`, `Cesium`, `camera updates` for “slow orbital visualization”.
@@ -59,7 +67,8 @@ UUID, date, archive and project queries do not need delegation.
    > for rejected proposals. Use at most eight context requests and 64 KiB of
    > returned excerpt bytes. Return the version-1 JSON assessment.
 
-4. Luna uses only exact signed references, for example:
+4. For discovery evidence, the originating chat uses only exact signed references,
+   for example:
 
    ```json
    {"target":{"provider":"codex","class":"session","token":"RETURNED_TARGET"},
@@ -77,7 +86,7 @@ UUID, date, archive and project queries do not need delegation.
    source or restarted MCP process invalidates old refs; rerun retrieval.
 5. Validate the assessment against the schema and the original candidate allowlist.
    Reissue the original deterministic query with an additional exact `native_id`
-   condition for the selected candidates, preserving `purpose` and original filters.
+   condition for the selected candidates, preserving the original route and filters.
    Follow its continuation as needed. Only identities verified in this fresh result
    can be presented as matches. A semantic judgment never removes a hard condition.
 6. Present supporting refs, unresolved context and coverage. Distinguish a proposed

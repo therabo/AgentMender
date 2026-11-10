@@ -1,5 +1,5 @@
 //! Bounded read evidence only. No caller, ownership, approval or effect authority.
-use crate::{ArtifactId, SessionMetadata};
+use crate::{ArtifactId, EntityId, GraphNodeKind, ProviderKind, SessionMetadata};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
@@ -16,6 +16,44 @@ pub enum SearchPurpose {
     #[default]
     Diagnostic,
     Management,
+    Discovery,
+}
+
+/// A caller claimed by MCP routing metadata. This carries only read exclusion.
+#[derive(Clone)]
+pub struct ApparentCodexCaller(String);
+
+impl ApparentCodexCaller {
+    pub fn from_metadata(thread: &str, session: Option<&str>) -> Option<Self> {
+        if thread.len() != 36
+            || !thread.bytes().enumerate().all(|(i, b)| match i {
+                8 | 13 | 18 | 23 => b == b'-',
+                _ => b.is_ascii_digit() || (b'a'..=b'f').contains(&b),
+            })
+            || session.is_some_and(|id| id != thread)
+        {
+            return None;
+        }
+        Some(Self(thread.into()))
+    }
+
+    pub fn native_id(&self) -> &str {
+        &self.0
+    }
+
+    pub fn identity(&self, root: &std::path::Path) -> ArtifactId {
+        ArtifactId {
+            provider: ProviderKind::Codex,
+            state_root: root.into(),
+            class: GraphNodeKind::Session,
+            local_id: EntityId::new(format!("codex:session:{}", self.0)).expect("validated UUID"),
+        }
+    }
+}
+
+pub fn discovery_binding(id: &ArtifactId) -> String {
+    let bytes = serde_json::to_vec(&("agentmender/discovery/v1", id)).expect("identity serializes");
+    search_digest(&bytes)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -105,6 +143,8 @@ pub struct SearchReadRequest {
     pub parameters: SearchParameters,
     pub excluded: Vec<ArtifactId>,
     pub management_session: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub discovery_session: Option<String>,
     pub continuation: SearchContinuation,
 }
 
@@ -195,6 +235,10 @@ pub fn search_scope(
 ) -> String {
     let bytes = serde_json::to_vec(&(parameters, root, excluded, revision))
         .expect("search values serialize");
+    search_digest(&bytes)
+}
+
+fn search_digest(bytes: &[u8]) -> String {
     format!(
         "sha256:{}",
         Sha256::digest(bytes)

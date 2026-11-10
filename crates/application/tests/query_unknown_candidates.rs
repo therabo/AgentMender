@@ -90,6 +90,7 @@ fn unknown_project_is_returned_separately_and_cannot_be_promoted_or_leak_exclusi
         provider_root: Path::new("/provider"),
         provider: ProviderKind::Codex,
         management: None,
+        apparent_caller: None,
         registered: &[],
         instance: "fixture",
     };

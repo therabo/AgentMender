@@ -1,5 +1,15 @@
 # AgentMender
 
+## Find conversations without including this chat
+
+With `mcp --session-search`, ask Codex “Find my conversations about MISSION1”
+or “Find conversations about MISSION1 that I could delete.” Ordinary requests
+use `session_discover` and omit the apparent calling chat automatically.
+Discovery results are read-only. They carry metadata-derived caller exclusion
+and no removal eligibility. Guaranteed management remains a separate route
+that requires verified host identity. See the [search contract](docs/session-search.md)
+and [SR4 acceptance](docs/milestones/p0-sr4-implicit-caller-discovery.md).
+
 ## P0-SR3 progressive history
 
 Compressed sources are no longer refused because their total size exceeds 64 MiB.
@@ -10,7 +20,7 @@ verified jumps and explicit replay continuations use the existing tools.
 See [traversal and operational limits](docs/progressive-history.md) and
 [live Desktop MCP acceptance](docs/milestones/p0-sr3-live-mcp-acceptance.md).
 
-New MCP parents default search to management and refuse with zero candidates
+`session_search` defaults to management and refuses with zero candidates
 until an authenticated host route exists. Diagnostics require explicit
 `purpose:"diagnostic"`; they are not manageable-session lists. Real caller
 identification remains **OPEN**; [the missing host contract](docs/mcp-caller-identity.md)
@@ -122,10 +132,8 @@ This mode uses the selected/default Codex home and locates the existing macOS
 bundled executable even without `codex` in PATH. Explicit developer diagnostics need no historical binary, synthetic
 provider root, approval store or caller UUID; specify `purpose:"diagnostic"`. Use explicit
 root/executable paths when configuring a particular installation. Refresh only
-that MCP connection in the actual Codex client, then ask it to call
-`session_search` with explicit `purpose:"diagnostic"` for a developer read test.
-An ordinary management request cannot fall back to diagnostics. A registration in another application's web
-Plugins screen is not proof that this chat has the tool.
+that MCP connection in Codex and verify the chat can call `session_discover`.
+A failed discovery or management request has no automatic diagnostic fallback.
 
 [Setup, current limits and human acceptance](docs/p0-c1-manual-acceptance.md).
 

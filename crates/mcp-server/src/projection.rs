@@ -119,6 +119,19 @@ impl Projector {
             token: self.opaque(b"agentmender/entity/v1\0", id),
         }
     }
+    pub(crate) fn discovery_ref(&self, id: &d::ArtifactId, binding: &str) -> EntityRef {
+        EntityRef {
+            provider: id.provider.into(),
+            class: id.class.into(),
+            token: self.opaque(b"agentmender/discovery-target/v1\0", &(id, binding)),
+        }
+    }
+    pub(crate) fn discovery_selector(&self, target: &EntityRef, binding: &str) -> TargetSelector {
+        let this = self.clone();
+        let target = target.clone();
+        let binding = binding.to_owned();
+        Arc::new(move |id| this.discovery_ref(id, &binding) == target)
+    }
     pub fn validate_cursor(&self, cursor: &str) -> bool {
         if cursor.len() > 256 || !cursor.is_ascii() {
             return false;

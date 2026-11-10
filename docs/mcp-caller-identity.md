@@ -1,5 +1,27 @@
 # MCP caller identity: management admission remains OPEN
 
+## P0-SR4 apparent caller for read-only discovery
+
+`session_discover` reads `threadId` and optional `sessionId` from
+RMCP's `RequestContext.meta`. The persisted Codex identity is the exact
+native thread row keyed by `threads.id` in the configured root. That UUID
+forms the Codex session artifact identity. App Server describes its session
+ID as the live session tree root. Root threads use the same UUID. Forked
+threads can carry a different tree root UUID, so the current implementation
+refuses a discordant pair. A thread-only call is supported when its exact
+canonical row exists. The caller's existence is rechecked in the confined
+worker for discovery and context. The worker reads no caller body.
+
+Discovery binds its cursors and context to that apparent caller, exact
+provider/root and the existing process-local signatures. Discovery target
+tokens also have a separate namespace from general entity and lifecycle
+targets. Explicit diagnostics retain their separate behavior. An arbitrary
+client can misrepresent its own apparent caller through spoofed metadata.
+This mode has no authenticated host claim and no removal authority.
+
+The [SR4 receipt](milestones/p0-sr4-implicit-caller-discovery.md) records
+actual client observations and the manual two-chat procedure.
+
 P0-SR3 investigated desktop 26.1103.60933/build 25894 and CLI
 0.167.0-alpha.3.2. These differ from SR2's observed desktop build 25679.
 No installed application bundle, credential store, session or MCP configuration
@@ -73,11 +95,11 @@ fixtures, not real management self-exclusion acceptance. Launch-protected
 identities remain excluded in diagnostics and preview/preparation. No lifecycle
 admission, approval authority or destructive operation was added.
 
-Actual conversational MCP management refusal passes on the restarted connection
+SR3 conversational MCP management refusal passed on the restarted connection
 for default search and an exact target. A cursor and an evidence reference from
 the earlier instance were refused after reconnect. Real authenticated caller
-identification, automatic self-exclusion and two-chat routing acceptance remain
-OPEN. See the [live acceptance receipt](milestones/p0-sr3-live-mcp-acceptance.md).
+identification and authenticated two-chat routing remain OPEN. See the
+[SR3 live acceptance receipt](milestones/p0-sr3-live-mcp-acceptance.md).
 
 Sources: [Codex MCP configuration](https://learn.chatgpt.com/docs/extend/mcp),
 [App Server and dynamic tools](https://learn.chatgpt.com/docs/app-server),

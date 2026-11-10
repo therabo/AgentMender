@@ -47,6 +47,10 @@ Acceptance criteria:
   text when query words are absent from title/project, with bounded excerpts,
   match provenance and explicit Partial coverage. The
   [search contract](session-search.md) defines privacy, limits and acceptance.
+- Ordinary read-only discovery should omit the apparent calling conversation
+  without a user instruction. `session_discover` supplies that behavior
+  for supported Codex metadata and returns discovery candidates. See
+  [P0-SR4](milestones/p0-sr4-implicit-caller-discovery.md).
 - Identify and protect the active management session and other unsupported active
   targets before approval and again at dispatch. An unknown caller binding cannot
   be treated as an exclusion proof.

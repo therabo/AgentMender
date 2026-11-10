@@ -319,7 +319,7 @@ async fn opt_in_conversation_registry_metadata_privacy_and_authority_rejection()
     use agentmender_domain::*;
     let calls = Arc::new(AtomicUsize::new(0));
     let workflow_calls = calls.clone();
-    let workflow: agentmender_mcp_server::ConversationExecutor = Arc::new(move |request, _| {
+    let workflow: agentmender_mcp_server::ConversationExecutor = Arc::new(move |request, _, _| {
         workflow_calls.fetch_add(1, Ordering::SeqCst);
         match request {
             ConversationRequest::Search { .. } => Ok(ConversationResponse::Search {

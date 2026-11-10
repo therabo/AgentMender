@@ -59,3 +59,7 @@ Current read-only work: [P0-S1 content search implementation, OPEN acceptance](p
 [P0-SR3 live MCP acceptance](p0-sr3-live-mcp-acceptance.md): restarted Desktop
 connection and bounded real retrieval verified. Authenticated caller identity
 and automatic self-exclusion remain OPEN.
+
+[P0-SR4 implicit caller discovery](p0-sr4-implicit-caller-discovery.md): live
+read-only exclusion verified in one Codex chat. Authenticated management
+remains OPEN.

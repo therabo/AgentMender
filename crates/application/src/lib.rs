@@ -18,6 +18,8 @@ use thiserror::Error;
 pub enum ApplicationError {
     #[error("independently verified management identity required")]
     CallerIdentityRequired { instance: String },
+    #[error("implicit caller exclusion could not be established")]
+    DiscoveryCallerUnavailable,
     #[error("invalid bounded search request or provider response")]
     InvalidSearch,
     #[error("search continuation or conversation evidence changed")]
@@ -49,6 +51,7 @@ impl ApplicationError {
     pub fn public_code(&self) -> &'static str {
         match self {
             Self::CallerIdentityRequired { .. } => "caller_identity_required",
+            Self::DiscoveryCallerUnavailable => "discovery_caller_unavailable",
             Self::InvalidSearch => "invalid_scope",
             Self::StaleSearchEvidence => "stale_search_evidence",
             Self::ManagementProtectionUnavailable => "management_protection_required",

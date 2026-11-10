@@ -8,6 +8,9 @@ fn reader_error(error: ProviderError) -> ApplicationError {
         ProviderError::InvalidScope(ref reason) if reason == "stale_search_evidence" => {
             ApplicationError::StaleSearchEvidence
         }
+        ProviderError::InvalidScope(ref reason) if reason == "discovery_caller_unavailable" => {
+            ApplicationError::DiscoveryCallerUnavailable
+        }
         _ => error.into(),
     }
 }
@@ -36,13 +39,20 @@ pub struct SessionSearchService<'a> {
     pub provider_root: &'a Path,
     pub provider: ProviderKind,
     pub management: Option<&'a ManagementIdentity>,
+    pub apparent_caller: Option<&'a ApparentCodexCaller>,
     pub registered: &'a [ArtifactId],
     pub instance: &'a str,
 }
 impl SessionSearchService<'_> {
     fn binding(&self, purpose: SearchPurpose) -> Result<String, ApplicationError> {
-        if purpose == SearchPurpose::Diagnostic {
-            return Ok("diagnostic_no_caller_guarantee".into());
+        match purpose {
+            SearchPurpose::Diagnostic => return Ok("diagnostic_no_caller_guarantee".into()),
+            SearchPurpose::Discovery => {
+                return Ok(discovery_binding(
+                    &self.discovery_caller()?.identity(self.provider_root),
+                ));
+            }
+            SearchPurpose::Management => {}
         }
         let required = || ApplicationError::CallerIdentityRequired {
             instance: self.instance.into(),
@@ -58,10 +68,18 @@ impl SessionSearchService<'_> {
         }
         Ok(identity.revision.clone())
     }
-    fn excluded(&self) -> Result<Vec<ArtifactId>, ApplicationError> {
+    fn discovery_caller(&self) -> Result<&ApparentCodexCaller, ApplicationError> {
+        self.apparent_caller
+            .filter(|_| self.provider == ProviderKind::Codex)
+            .ok_or(ApplicationError::DiscoveryCallerUnavailable)
+    }
+    fn excluded(&self, purpose: SearchPurpose) -> Result<Vec<ArtifactId>, ApplicationError> {
         let mut ids = self.registered.to_vec();
         if let Some(binding) = self.management {
             ids.push(binding.identity.clone());
+        }
+        if purpose == SearchPurpose::Discovery {
+            ids.push(self.discovery_caller()?.identity(self.provider_root));
         }
         ids.sort();
         ids.dedup();
@@ -82,7 +100,7 @@ impl SessionSearchService<'_> {
         if !parameters.valid() {
             return Err(ApplicationError::InvalidSearch);
         }
-        let excluded = self.excluded()?;
+        let excluded = self.excluded(parameters.purpose)?;
         let scope = search_scope(&parameters, self.provider_root, &excluded, &revision);
         let mut continuation = continuation.unwrap_or_default();
         if !continuation.scope.is_empty() && continuation.scope != scope {
@@ -95,6 +113,12 @@ impl SessionSearchService<'_> {
             excluded: excluded.clone(),
             management_session: (parameters.purpose == SearchPurpose::Management)
                 .then(|| self.management.expect("checked").native_session_id.clone()),
+            discovery_session: (parameters.purpose == SearchPurpose::Discovery).then(|| {
+                self.apparent_caller
+                    .expect("checked")
+                    .native_id()
+                    .to_owned()
+            }),
             continuation,
         };
         let mut page = self
@@ -201,7 +225,7 @@ impl SessionSearchService<'_> {
             class: GraphNodeKind::Session,
             local_id: reference.local_id.clone(),
         };
-        let excluded = self.excluded()?;
+        let excluded = self.excluded(reference.purpose)?;
         if excluded.contains(&id) {
             return Err(ApplicationError::ProtectedManagementSession);
         }
@@ -263,7 +287,7 @@ impl SessionSearchService<'_> {
             class: GraphNodeKind::Session,
             local_id: reference.local_id.clone(),
         };
-        let excluded = self.excluded()?;
+        let excluded = self.excluded(reference.purpose)?;
         if excluded.contains(&id) {
             return Err(ApplicationError::ProtectedManagementSession);
         }

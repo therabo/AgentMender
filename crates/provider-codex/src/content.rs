@@ -60,6 +60,7 @@ enum Response {
 #[derive(Serialize, Deserialize)]
 enum ContentReadError {
     Stale,
+    DiscoveryCallerUnavailable,
     Unavailable,
 }
 fn read_error_response(error: ProviderError) -> Response {
@@ -67,12 +68,18 @@ fn read_error_response(error: ProviderError) -> Response {
         ProviderError::InvalidScope(reason) if reason == "stale_search_evidence" => {
             ContentReadError::Stale
         }
+        ProviderError::InvalidScope(reason) if reason == "discovery_caller_unavailable" => {
+            ContentReadError::DiscoveryCallerUnavailable
+        }
         _ => ContentReadError::Unavailable,
     })
 }
 fn validate_worker_response(response: Response) -> Result<Response, ProviderError> {
     match response {
         Response::Error(ContentReadError::Stale) => Err(stale()),
+        Response::Error(ContentReadError::DiscoveryCallerUnavailable) => {
+            Err(discovery_caller_unavailable())
+        }
         Response::Error(ContentReadError::Unavailable) => Err(unavailable()),
         response => Ok(response),
     }
@@ -82,6 +89,17 @@ fn unavailable() -> ProviderError {
 }
 fn stale() -> ProviderError {
     ProviderError::InvalidScope("stale_search_evidence".into())
+}
+fn discovery_caller_unavailable() -> ProviderError {
+    ProviderError::InvalidScope("discovery_caller_unavailable".into())
+}
+
+fn has_one_thread(db: &Connection, id: &str) -> Result<bool, ProviderError> {
+    db.query_row("SELECT count(*) FROM threads WHERE id=?1", [id], |r| {
+        r.get::<_, i64>(0)
+    })
+    .map(|count| count == 1)
+    .map_err(|_| unavailable())
 }
 fn content_limit(code: &'static str) -> ProviderError {
     ProviderError::CapabilityUnavailable(code.into())
@@ -366,17 +384,20 @@ fn inventory(
         }
     }
     let excluded = excluded_ids(&request.excluded, root)?;
+    if p.purpose == SearchPurpose::Discovery {
+        let caller = request
+            .discovery_session
+            .as_ref()
+            .filter(|id| excluded.contains(id))
+            .ok_or_else(discovery_caller_unavailable)?;
+        if !has_one_thread(db, caller)? {
+            return Err(discovery_caller_unavailable());
+        }
+    }
     if let Some(management) = &request.management_session
         && (!metadata::uuid(management)
             || !excluded.contains(management)
-            || db
-                .query_row(
-                    "SELECT count(*) FROM threads WHERE id=?1",
-                    [management],
-                    |r| r.get::<_, i64>(0),
-                )
-                .map_err(|_| unavailable())?
-                != 1)
+            || !has_one_thread(db, management)?)
     {
         return Err(stale());
     }
@@ -1654,22 +1675,31 @@ fn context_candidate(
     excluded: &[ArtifactId],
     bootstrap: bool,
 ) -> Result<Candidate, ProviderError> {
-    if reference.purpose == SearchPurpose::Management {
-        for id in excluded_ids(excluded, root)? {
-            if db
-                .query_row("SELECT count(*) FROM threads WHERE id=?1", [id], |r| {
-                    r.get::<_, i64>(0)
-                })
-                .map_err(|_| unavailable())?
-                != 1
+    let excluded = excluded_ids(excluded, root)?;
+    if reference.purpose == SearchPurpose::Discovery {
+        let mut caller = None;
+        for id in &excluded {
+            if discovery_binding(&identity(root, id)?) == reference.binding_revision
+                && caller.replace(id).is_some()
             {
+                return Err(discovery_caller_unavailable());
+            }
+        }
+        let caller = caller.ok_or_else(discovery_caller_unavailable)?;
+        if !has_one_thread(db, caller)? {
+            return Err(discovery_caller_unavailable());
+        }
+    }
+    if reference.purpose == SearchPurpose::Management {
+        for id in &excluded {
+            if !has_one_thread(db, id)? {
                 return Err(stale());
             }
         }
     }
     if !metadata::uuid(&reference.native_session_id)
         || reference.local_id != identity(root, &reference.native_session_id)?.local_id
-        || excluded_ids(excluded, root)?.contains(&reference.native_session_id)
+        || excluded.contains(&reference.native_session_id)
         || (!bootstrap
             && (reference.source_fingerprint.is_empty()
                 || reference.source_bytes == 0
@@ -1677,15 +1707,7 @@ fn context_candidate(
     {
         return Err(unavailable());
     }
-    if db
-        .query_row(
-            "SELECT count(*) FROM threads WHERE id=?1",
-            [&reference.native_session_id],
-            |r| r.get::<_, i64>(0),
-        )
-        .map_err(|_| unavailable())?
-        != 1
-    {
+    if !has_one_thread(db, &reference.native_session_id)? {
         return Err(stale());
     }
     let path: Option<String> = db
@@ -2834,6 +2856,7 @@ mod tests {
             },
             excluded: vec![],
             management_session: None,
+            discovery_session: None,
             cached: vec![],
             continuation: Default::default(),
         }

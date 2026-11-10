@@ -264,6 +264,7 @@ impl From<ApplicationError> for CliError {
                 Self::new(ErrorCode::InvalidArguments, "stale_search_evidence")
             }
             ApplicationError::ManagementProtectionUnavailable
+            | ApplicationError::DiscoveryCallerUnavailable
             | ApplicationError::ProtectedManagementSession
             | ApplicationError::RemovalPlanChanged
             | ApplicationError::ReadOnlyRemovalUnavailable => {
@@ -782,8 +783,12 @@ fn run(args: Args) -> Result<bool, CliError> {
                     .dispatch(request, control)
             },
         );
-        agentmender_mcp_server::run_stdio_with_conversation(executor, conversation)
-            .map_err(|_| CliError::new(ErrorCode::OutputError, "MCP transport failed"))?;
+        agentmender_mcp_server::run_stdio_with_conversation(
+            executor,
+            conversation,
+            *session_search,
+        )
+        .map_err(|_| CliError::new(ErrorCode::OutputError, "MCP transport failed"))?;
         return Ok(false);
     }
     let mode = if args.fixture.is_some() {

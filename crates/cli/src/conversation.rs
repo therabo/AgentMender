@@ -45,7 +45,7 @@ pub(super) fn executor(
     }
     let config = args.clone();
     let state_root = state_root.expect("checked").to_path_buf();
-    Ok(Arc::new(move |request, control| {
+    Ok(Arc::new(move |request, control, _| {
         control.check()?;
         if matches!(&request, ConversationRequest::EvidenceSearch { parameters, .. }
             if parameters.purpose == agentmender_domain::SearchPurpose::Management)
@@ -141,7 +141,7 @@ pub(super) fn read_only_executor(
             executable: config.codex_executable.clone(),
         })
         .with_evidence_helper(helper.clone(), home.clone());
-    Ok(Arc::new(move |request, control| {
+    Ok(Arc::new(move |request, control, apparent_caller| {
         let management = super::management::read(registration.as_deref(), &instance, &root);
         let registrations: Vec<_> = config
             .protect_codex_session
@@ -170,6 +170,7 @@ pub(super) fn read_only_executor(
             provider_root: &root,
             provider: agentmender_domain::ProviderKind::Codex,
             management: management.as_ref(),
+            apparent_caller: apparent_caller.as_ref(),
             registered: &registrations,
             instance: &instance,
         };

@@ -106,6 +106,7 @@ fn missing_identity_refuses_before_any_reader_or_counts_for_every_management_que
         provider: ProviderKind::Codex,
         provider_root: Path::new("/provider"),
         management: None,
+        apparent_caller: None,
         registered: &[],
         instance: "fixture-instance",
     };
@@ -144,6 +145,7 @@ fn exact_binding_is_sent_before_provider_limits_and_faulty_adapter_cannot_leak_i
         provider: ProviderKind::Codex,
         provider_root: Path::new("/provider"),
         management: Some(&binding),
+        apparent_caller: None,
         registered: &[],
         instance: "fixture",
     };
@@ -199,6 +201,7 @@ fn query_filter_binding_changes_and_cancellation_invalidate_before_source_access
         provider: ProviderKind::Codex,
         provider_root: Path::new("/provider"),
         management: Some(&binding),
+        apparent_caller: None,
         registered: &[],
         instance: "fixture",
     };
@@ -249,6 +252,7 @@ fn protected_or_stale_context_never_reaches_reader_and_provider_boundaries_are_n
         provider: ProviderKind::Codex,
         provider_root: Path::new("/provider"),
         management: Some(&binding),
+        apparent_caller: None,
         registered: &[],
         instance: "fixture",
     };
@@ -322,6 +326,7 @@ fn two_trusted_fixture_callers_share_reader_without_identity_bleed_and_switches_
                     provider_root: Path::new("/provider"),
                     provider: ProviderKind::Codex,
                     management: Some(binding),
+                    apparent_caller: None,
                     registered: &[],
                     instance: "shared-server-fixture",
                 };
@@ -353,6 +358,7 @@ fn two_trusted_fixture_callers_share_reader_without_identity_bleed_and_switches_
         provider_root: Path::new("/provider"),
         provider: ProviderKind::Codex,
         management: Some(&first),
+        apparent_caller: None,
         registered: &[],
         instance: "shared-server-fixture",
     };

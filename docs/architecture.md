@@ -1,5 +1,14 @@
 # Architecture and capability boundaries
 
+## P0-SR4 discovery scope
+
+[ADR-0031](adr/0031-metadata-derived-caller-discovery.md) adds an apparent
+caller scope to the existing read pipeline. MCP parses request metadata,
+application composes exact exclusions, and the confined Codex worker
+validates the apparent caller row before selecting candidates. Discovery
+targets, cursors and evidence preserve read provenance. Authenticated
+management and lifecycle admission stay on their existing paths.
+
 ## P0-SR3 resident decoding
 
 [ADR-0030](adr/0030-resident-bounded-history-decoding.md) retains the same eight

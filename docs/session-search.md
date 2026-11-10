@@ -1,5 +1,37 @@
 # Intelligent session search
 
+## P0-SR4 discovery
+
+`session_discover` is the read-only entry point for ordinary searches and
+requests to find possible deletion candidates. It accepts the same search
+filters, paging and excerpt options as `session_search` without a purpose
+switch or caller argument. An empty query browses the eligible inventory.
+For example, to discover sessions under the observed MISSION1 project:
+
+```json
+{"structured":{"filter":{"op":"project","source":"observed_label","values":["MISSION1"]}}}
+```
+
+The configured Codex provider validates an exact row for the apparent
+`threadId` received in MCP metadata. If `sessionId` is present it must be
+the same canonical UUID for the supported root-thread shape. Unavailable,
+malformed, conflicting or unmapped callers return
+`discovery_caller_unavailable` and zero results. No diagnostic fallback occurs.
+The exclusion precedes inventory matching, cache evidence, scoring, counts and
+pagination. Responses report `purpose:"discovery"`,
+`management_exclusion:"metadata_derived_not_host_authenticated"` and
+`authenticated_caller_binding:false`. Candidate flags are
+`removal_eligibility:"discovery_only"` and `can_request_preview:false`.
+
+Continue through `session_discover` with the same filters and the returned
+cursor. Its signature and scope bind the process, exact provider/root, caller
+and query. For context, use `session_context` in the originating conversation
+with the returned discovery target and evidence reference. Each read checks
+the current caller mapping and exact source revision again. A different
+caller or root, a changed source, a new process, or a modified token requires
+fresh discovery. Discovery targets are distinct from lifecycle target tokens.
+See the [caller identity contract](mcp-caller-identity.md).
+
 Current implementation contract, 2026-11-10. [ADR-0027](adr/0027-intelligent-session-retrieval.md)
 extends the historical P0-S1 reader. The [implementation report](milestones/intelligent-search-implementation.md)
 separates fixtures, real reads and actual conversational acceptance. Lifecycle

@@ -1,5 +1,15 @@
 # MCP interface
 
+## P0-SR4 ordinary discovery
+
+Use `session_discover` in `--session-search` mode for ordinary browsing and
+possible deletion candidates. Its search inputs omit `purpose` and caller
+arguments. It excludes the apparent caller before reading and ranking eligible
+sessions. `session_context` accepts its caller-scoped evidence in the originating
+conversation. Missing or unresolved caller metadata returns
+`discovery_caller_unavailable`. Outputs label metadata-derived exclusion and
+carry no removal eligibility. [Search and context contract](session-search.md).
+
 ## P0-SR3 management default and resident history
 
 `session_search` now defaults to management and returns zero candidates before
@@ -33,8 +43,8 @@ Historical real conversational metadata search is accepted (37 MISSION1 records,
 Partial). Current [ADR-0027](adr/0027-intelligent-session-retrieval.md) adds structured
 queries, incremental supported content, context navigation and optional private
 FTS5 caching. [The canonical contract](session-search.md) defines actual inputs,
-formats, privacy and limits. Updated conversational use and enforceable real
-caller routing remain **OPEN**. Diagnostic inventory is not a manageable list.
+formats, privacy and limits. Live read-only discovery and independently verified
+management routing have separate acceptance criteria.
 
 Normal Codex browsing uses `agentmender --provider codex mcp --session-search`.
 No fixture, historical executable, protected caller UUID or state root is required.
@@ -42,7 +52,8 @@ The explicit mode locates the existing bundled macOS executable without PATH;
 trusted root/executable flags can override selection. See the
 [quick start](p0-c1-manual-acceptance.md) and [ADR-0024](adr/0024-adaptive-read-only-metadata.md).
 
-Its fourteen-tool catalog adds `session_context`. `session_search` preserves the
+Its fifteen-tool catalog includes `session_discover` and `session_context`.
+`session_search` preserves the
 legacy metadata request and adds structured filters, content, purpose, project,
 excerpts and continuation. Guaranteed `purpose=management` requires enforceable
 host binding, currently unavailable; file-only registration cannot admit it.

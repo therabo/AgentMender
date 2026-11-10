@@ -89,6 +89,7 @@ fn service(reader: &Reader) -> SessionSearchService<'_> {
         provider_root: Path::new("/provider"),
         provider: ProviderKind::Codex,
         management: None,
+        apparent_caller: None,
         registered: &[],
         instance: "fixture",
     }
@@ -156,6 +157,59 @@ fn context_windows_preserve_binding_exclusions_and_selector_before_access() {
         .unwrap();
     assert_eq!(result.window.messages[0].record_index, 42);
     assert_eq!(reader.calls.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn discovery_context_cannot_cross_provider_roots_or_read_the_apparent_caller() {
+    let reader = Reader::default();
+    let caller =
+        ApparentCodexCaller::from_metadata("12345678-1234-1234-1234-123456789abc", None).unwrap();
+    let original = SessionSearchService {
+        apparent_caller: Some(&caller),
+        ..service(&reader)
+    };
+    let id = caller.identity(original.provider_root);
+    let discovery = ContextReference {
+        purpose: SearchPurpose::Discovery,
+        binding_revision: discovery_binding(&id),
+        ..reference()
+    };
+    let foreign_root = SessionSearchService {
+        provider_root: Path::new("/different-root"),
+        ..original
+    };
+    let check = |service: &SessionSearchService<'_>, reference| {
+        service.context_window(
+            reference,
+            Arc::new(|_| true),
+            ContextOptions::default(),
+            QueryControl::default(),
+        )
+    };
+    assert!(matches!(
+        check(&foreign_root, discovery.clone()),
+        Err(ApplicationError::StaleSearchEvidence)
+    ));
+    let foreign_provider = SessionSearchService {
+        provider: ProviderKind::Claude,
+        ..original
+    };
+    assert!(matches!(
+        check(&foreign_provider, discovery.clone()),
+        Err(ApplicationError::DiscoveryCallerUnavailable)
+    ));
+    assert!(matches!(
+        check(
+            &original,
+            ContextReference {
+                local_id: id.local_id,
+                native_session_id: caller.native_id().into(),
+                ..discovery
+            }
+        ),
+        Err(ApplicationError::ProtectedManagementSession)
+    ));
+    assert_eq!(reader.calls.load(Ordering::SeqCst), 0);
 }
 #[test]
 fn faulty_adapter_cannot_change_source_neighbors_or_exceed_context_budgets() {

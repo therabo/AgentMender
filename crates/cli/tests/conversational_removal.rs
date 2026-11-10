@@ -404,6 +404,207 @@ fn default_management_and_forged_request_metadata_fail_closed_across_connections
     assert_eq!(before, tree_bytes(&root));
 }
 
+#[test]
+fn discovery_excludes_each_apparent_caller_before_matching_and_binds_every_reference() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().canonicalize().unwrap();
+    let root = path.join("provider");
+    let files = seed(&root, &path.join("MISSION1"));
+    let db = Connection::open(root.join("state_5.sqlite")).unwrap();
+    db.execute("UPDATE threads SET archived=1 WHERE id=?1", [M])
+        .unwrap();
+    db.file_control(None::<&str>, rusqlite::FileControl::PersistWal(&mut 1))
+        .unwrap();
+    drop(db);
+    let fake = root.join("not-an-executable");
+    fs::write(&fake, b"no provider startup").unwrap();
+    let before = tree_bytes(&root);
+    let home = PathBuf::from(std::env::var_os("HOME").unwrap())
+        .canonicalize()
+        .unwrap();
+    let launch = || Client::connect(base(&root, &fake, &home).args(["mcp", "--session-search"]));
+    let mut client = launch();
+    let registry =
+        client.exchange(json!({"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}));
+    let listed = registry["result"]["tools"].as_array().unwrap();
+    let discovery = listed
+        .iter()
+        .find(|tool| tool["name"] == "session_discover")
+        .unwrap();
+    assert_eq!(discovery["annotations"]["readOnlyHint"], true);
+    assert!(
+        discovery["inputSchema"]["properties"]
+            .get("purpose")
+            .is_none()
+    );
+    let rpc = |client: &mut Client, name: &str, meta: Value, args: Value| {
+        client.exchange(json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":name,"_meta":meta,"arguments":args}}))
+    };
+    let result = |v: Value| v["result"]["structuredContent"].clone();
+    let a = json!({"threadId":M,"sessionId":M});
+    let b = json!({"threadId":T});
+    let discover = |client: &mut Client, meta: &Value, args| {
+        result(rpc(client, "session_discover", meta.clone(), args))
+    };
+    let missing = "12345678-1234-1234-1234-123456789000";
+    for meta in [
+        json!({}),
+        json!({"sessionId":M}),
+        json!({"threadId":"invalid"}),
+        json!({"threadId":missing}),
+        json!({"threadId":M,"sessionId":T}),
+        json!({"threadId":M,"sessionId":null}),
+    ] {
+        let denied = discover(&mut client, &meta, json!({}));
+        assert_eq!(denied["error"], "discovery_caller_unavailable", "{denied}");
+        assert_eq!(denied["result_count"], 0);
+        assert!(!denied.to_string().contains(M));
+    }
+    for args in [
+        json!({"caller_session_id":M}),
+        json!({"purpose":"diagnostic"}),
+    ] {
+        assert!(
+            rpc(&mut client, "session_discover", a.clone(), args)
+                .get("error")
+                .is_some()
+        );
+    }
+
+    let ranked = json!({
+        "structured":{"mode":"ranked","sort":"relevance","filter":{"op":"and","args":[
+            {"op":"provider","values":["codex"]},
+            {"op":"created","range":{"start":0,"end":2}},
+            {"op":"not","arg":{"op":"project","values":["Other"]}},
+            {"op":"or","args":[{"op":"text","value":"Cesium"},{"op":"text","value":"Earth"}]}
+        ]}}
+    });
+    let control = result(client.call(3, "session_search", ranked.clone()));
+    assert_eq!(control["sessions"][0]["native_session_id"], M, "{control}");
+    let found = discover(&mut client, &a, ranked.clone());
+    assert_eq!(found["purpose"], "discovery", "{found}");
+    assert_eq!(
+        found["management_exclusion"],
+        "metadata_derived_not_host_authenticated"
+    );
+    assert_eq!(found["authenticated_caller_binding"], false);
+    assert_eq!(found["coverage"]["eligible_observed"], 2);
+    assert_eq!(found["coverage"]["sessions_inspected"], 2);
+    assert_eq!(found["result_count"], 1);
+    assert_eq!(found["sessions"][0]["native_session_id"], T);
+    assert_eq!(
+        found["sessions"][0]["removal_eligibility"],
+        "discovery_only"
+    );
+    assert_eq!(found["sessions"][0]["can_request_preview"], false);
+    let target = found["sessions"][0]["target"].clone();
+    let evidence = found["sessions"][0]["evidence"][0]["evidence_ref"]
+        .as_str()
+        .unwrap();
+    let context = json!({"target":target,"evidence_ref":evidence,"window":{"before":1,"after":1}});
+    let read = result(rpc(
+        &mut client,
+        "session_context",
+        a.clone(),
+        context.clone(),
+    ));
+    assert_eq!(read["purpose"], "discovery", "{read}");
+    assert!(!read["messages"].as_array().unwrap().is_empty());
+    let foreign = result(rpc(
+        &mut client,
+        "session_context",
+        b.clone(),
+        context.clone(),
+    ));
+    assert_eq!(foreign["error"], "stale_cursor");
+    let mut wrong_provider = context.clone();
+    wrong_provider["target"]["provider"] = json!("claude");
+    assert!(
+        rpc(&mut client, "session_context", a.clone(), wrong_provider)
+            .get("error")
+            .is_some()
+    );
+    let mut tampered = context.clone();
+    tampered["evidence_ref"] = json!(format!("{evidence}0"));
+    assert!(
+        rpc(&mut client, "session_context", a.clone(), tampered)
+            .get("error")
+            .is_some()
+    );
+    let denied = result(client.call(5, "preview_removal", json!({"target":target})));
+    assert!(
+        denied.get("review").is_none() && denied.get("session").is_none(),
+        "{denied}"
+    );
+
+    let exact = |id| {
+        json!({"include_archived":true,"include_content":true,
+        "structured":{"filter":{"op":"native_id","values":[id]}}})
+    };
+    for (meta, id) in [(&a, M), (&b, T)] {
+        let self_hit = discover(&mut client, meta, exact(id));
+        assert_eq!(self_hit["sessions"], json!([]), "{self_hit}");
+        assert_eq!(self_hit["coverage"]["eligible_observed"], 0);
+        assert_eq!(self_hit["coverage"]["bytes_read"], 0);
+        assert!(self_hit["next_cursor"].is_null());
+    }
+    let other = discover(&mut client, &b, ranked);
+    assert_eq!(other["sessions"][0]["native_session_id"], M, "{other}");
+    let page = discover(&mut client, &a, json!({"page_size":1}));
+    assert_eq!(page["coverage"]["eligible_observed"], 2);
+    let cursor = page["next_cursor"].as_str().unwrap();
+    let continuation = json!({"page_size":1,"cursor":cursor});
+    let switched = discover(&mut client, &b, continuation.clone());
+    assert_eq!(switched["error"], "stale_cursor");
+    assert!(
+        rpc(
+            &mut client,
+            "session_search",
+            a.clone(),
+            json!({"purpose":"diagnostic","page_size":1,"cursor":cursor})
+        )
+        .get("error")
+        .is_some()
+    );
+    let next = discover(&mut client, &a, continuation.clone());
+    let ids = [page, next].map(|p| {
+        p["sessions"][0]["native_session_id"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    });
+    assert_eq!(ids, [U, T]);
+
+    let management = result(rpc(&mut client, "session_search", a.clone(), json!({})));
+    assert_eq!(management["error"], "caller_identity_required");
+    assert_eq!(management["result_count"], 0);
+    assert_eq!(before, tree_bytes(&root));
+    let (rollout, body) = &files[0];
+    fs::write(rollout, [body.as_slice(), b"\n"].concat()).unwrap();
+    let stale = result(rpc(
+        &mut client,
+        "session_context",
+        a.clone(),
+        context.clone(),
+    ));
+    assert_eq!(stale["error"], "stale_cursor", "{stale}");
+    fs::write(rollout, body).unwrap();
+    client.close();
+    let mut fresh = launch();
+    assert!(
+        rpc(&mut fresh, "session_discover", a.clone(), continuation)
+            .get("error")
+            .is_some()
+    );
+    assert!(
+        rpc(&mut fresh, "session_context", a, context)
+            .get("error")
+            .is_some()
+    );
+    fresh.close();
+    assert_eq!(before, tree_bytes(&root));
+}
+
 impl Drop for Client {
     fn drop(&mut self) {
         let _ = self.child.kill();

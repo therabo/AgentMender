@@ -240,6 +240,7 @@ pub fn build_search_index(
             },
             excluded: excluded.to_vec(),
             management_session: None,
+            discovery_session: None,
             continuation: continuation.clone(),
             cached: vec![],
         })?;

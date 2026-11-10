@@ -4,13 +4,18 @@ use agentmender_application::{
     ApplicationError, QueryControl,
     conversation::{ConversationRequest, ConversationResponse},
 };
+use agentmender_domain::{ApparentCodexCaller, ContextReference, SearchPurpose};
 use rmcp::model::{ErrorData, Tool, ToolAnnotations};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 pub type ConversationExecutor = Arc<
-    dyn Fn(ConversationRequest, QueryControl) -> Result<ConversationResponse, ApplicationError>
+    dyn Fn(
+            ConversationRequest,
+            QueryControl,
+            Option<ApparentCodexCaller>,
+        ) -> Result<ConversationResponse, ApplicationError>
         + Send
         + Sync,
 >;
@@ -302,6 +307,33 @@ enum SearchOutput {
     Evidence(EvidenceSearchView),
     Error(crate::dto::ErrorView),
 }
+#[derive(Serialize, JsonSchema)]
+#[serde(untagged)]
+enum DiscoveryOutput {
+    Evidence(Box<EvidenceSearchView>),
+    Refusal(DiscoveryRefusal),
+}
+#[derive(Serialize, JsonSchema)]
+struct DiscoveryRefusal {
+    error: DiscoveryError,
+    message: &'static str,
+    result_count: usize,
+    sessions: [SessionLabelView; 0],
+}
+#[derive(Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+enum DiscoveryError {
+    DiscoveryCallerUnavailable,
+}
+pub(super) fn discovery_caller_unavailable() -> serde_json::Value {
+    serde_json::to_value(DiscoveryOutput::Refusal(DiscoveryRefusal {
+        error: DiscoveryError::DiscoveryCallerUnavailable,
+        message: "Implicit caller exclusion could not be established for the configured Codex root.",
+        result_count: 0,
+        sessions: [],
+    }))
+    .expect("discovery refusal serializes")
+}
 pub(super) fn caller_identity_required(instance: String) -> serde_json::Value {
     let mut value = serde_json::to_value(SearchOutput::Error(crate::dto::ErrorView {
         error: crate::dto::ErrorCode::CallerIdentityRequired,
@@ -581,25 +613,105 @@ struct TransactionsView {
     transactions: Vec<RemovalStatusView>,
 }
 
-pub(super) fn tools() -> Vec<Tool> {
-    [
-        ("session_search", "Search typed Boolean/date/project/provider filters and streamed text evidence. UNKNOWN candidates are separate. Management requires verified host binding and fails closed without it; diagnostic has no caller guarantee", schema::<SearchInput>(), schema::<SearchOutput>(), true),
-        ("session_context", "Retrieve source-bound untrusted text. Optional window supports before/after, forward/backward/turn navigation and occurrences; signed references recheck identity, source freshness and exclusions", schema::<ContextInput>(), schema::<ContextOutput>(), true),
-        ("preview_removal", "Fresh removal review when admitted; read-only deployments return a compatibility assessment without a plan or execution authority", schema::<PreviewInput>(), schema::<PreviewOutput>(), true),
-        ("prepare_removal", "Persist the exact reviewed plan and recovery metadata; never grant human approval or delete", schema::<PrepareInput>(), schema::<TransactionsView>(), false),
-        ("removal_status", "Recover durable primary-removal results across client disconnect or restart; no redispatch", schema::<StatusInput>(), schema::<TransactionsView>(), true),
-        ("request_removal_execution", "Return transaction status and trusted external-terminal handoff; this deployment cannot execute via MCP", schema::<HandoffInput>(), schema::<TransactionsView>(), true),
-    ].into_iter().map(|(name, description, input, output, read)| {
-        let mut tool = Tool::new(name, description, input);
-        tool.output_schema = Some(output);
-        tool.annotations = Some(ToolAnnotations::new().read_only(read).destructive(false).idempotent(true).open_world(true));
-        tool
-    }).collect()
+pub(super) fn tools(discovery: bool) -> Vec<Tool> {
+    let mut registry = vec![
+        (
+            "session_search",
+            "Search typed Boolean/date/project/provider filters and streamed text evidence. UNKNOWN candidates are separate. Management requires verified host binding and fails closed without it; diagnostic has no caller guarantee",
+            schema::<SearchInput>(),
+            schema::<SearchOutput>(),
+            true,
+        ),
+        (
+            "session_context",
+            "Retrieve source-bound untrusted text. Optional window supports before/after, forward/backward/turn navigation and occurrences; signed references recheck identity, source freshness and exclusions",
+            schema::<ContextInput>(),
+            schema::<ContextOutput>(),
+            true,
+        ),
+        (
+            "preview_removal",
+            "Fresh removal review when admitted; read-only deployments return a compatibility assessment without a plan or execution authority",
+            schema::<PreviewInput>(),
+            schema::<PreviewOutput>(),
+            true,
+        ),
+        (
+            "prepare_removal",
+            "Persist the exact reviewed plan and recovery metadata; never grant human approval or delete",
+            schema::<PrepareInput>(),
+            schema::<TransactionsView>(),
+            false,
+        ),
+        (
+            "removal_status",
+            "Recover durable primary-removal results across client disconnect or restart; no redispatch",
+            schema::<StatusInput>(),
+            schema::<TransactionsView>(),
+            true,
+        ),
+        (
+            "request_removal_execution",
+            "Return transaction status and trusted external-terminal handoff; this deployment cannot execute via MCP",
+            schema::<HandoffInput>(),
+            schema::<TransactionsView>(),
+            true,
+        ),
+    ];
+    if discovery {
+        let mut input = schema::<SearchInput>();
+        let input_map = Arc::make_mut(&mut input);
+        input_map
+            .get_mut("properties")
+            .and_then(serde_json::Value::as_object_mut)
+            .expect("search properties")
+            .remove("purpose");
+        input_map
+            .get_mut("$defs")
+            .and_then(serde_json::Value::as_object_mut)
+            .expect("search definitions")
+            .remove("SearchPurposeInput");
+        registry.insert(0, (
+            "session_discover",
+            "Use for ordinary session search, listing, or finding possible deletion candidates. Read-only. Automatically excludes the calling Codex conversation using request metadata. No exclusion flag or caller UUID is needed. Results are discovery candidates. They carry no authenticated caller identity, removal plan or deletion authority. Keep discovery context in the originating conversation.",
+            input,
+            schema::<DiscoveryOutput>(),
+            true,
+        ));
+    }
+    registry
+        .into_iter()
+        .map(|(name, description, input, output, read)| {
+            let mut tool = Tool::new(name, description, input);
+            tool.output_schema = Some(output);
+            tool.annotations = Some(
+                ToolAnnotations::new()
+                    .read_only(read)
+                    .destructive(false)
+                    .idempotent(true)
+                    .open_world(true),
+            );
+            tool
+        })
+        .collect()
 }
 fn hex(v: &str) -> bool {
     v.len() == 64
         && v.bytes()
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+fn cursor_kind(purpose: SearchPurpose) -> &'static [u8] {
+    match purpose {
+        SearchPurpose::Discovery => b"discovery-cursor",
+        _ => b"cursor",
+    }
+}
+fn purpose_labels(purpose: SearchPurpose) -> (&'static str, &'static str) {
+    match purpose {
+        SearchPurpose::Discovery => ("discovery", "metadata_derived_not_host_authenticated"),
+        SearchPurpose::Diagnostic => ("diagnostic", "not_guaranteed_diagnostic"),
+        SearchPurpose::Management => ("management", "trusted_composition_binding"),
+    }
 }
 pub(super) fn request(
     name: &str,
@@ -607,23 +719,28 @@ pub(super) fn request(
     projector: &Projector,
 ) -> Result<ConversationRequest, ErrorData> {
     let invalid = || ErrorData::invalid_params("invalid input", None);
-    let target = |v: EntityRef| {
+    let valid_target = |v: &EntityRef| {
         if !v.valid()
             || v.provider != crate::dto::Provider::Codex
             || v.class != crate::dto::EntityClass::Session
         {
             Err(invalid())
         } else {
-            Ok(projector.selector(&v))
+            Ok(())
         }
     };
     match name {
-        "session_search" => {
+        "session_search" | "session_discover" => {
+            let discovery = name == "session_discover";
+            if discovery && args.get("purpose").is_some() {
+                return Err(invalid());
+            }
             let v: SearchInput = serde_json::from_value(args.clone()).map_err(|_| invalid())?;
             if v.query.len() > 256 || v.query.chars().any(char::is_control) {
                 return Err(invalid());
             }
-            if v.include_content
+            if discovery
+                || v.include_content
                 || matches!(v.purpose, SearchPurposeInput::Management)
                 || v.project_label.is_some()
                 || v.page_size.is_some()
@@ -636,7 +753,11 @@ pub(super) fn request(
                     include_archived: v.include_archived,
                     include_content: v.include_content,
                     project_label: v.project_label,
-                    purpose: v.purpose.into(),
+                    purpose: if discovery {
+                        SearchPurpose::Discovery
+                    } else {
+                        v.purpose.into()
+                    },
                     page_size: v.page_size.unwrap_or(20),
                     excerpts: v.excerpts,
                     structured: v
@@ -650,7 +771,11 @@ pub(super) fn request(
                 }
                 let continuation = v
                     .cursor
-                    .map(|c| projector.open_search(b"cursor", &c).ok_or_else(invalid))
+                    .map(|c| {
+                        projector
+                            .open_search(cursor_kind(parameters.purpose), &c)
+                            .ok_or_else(invalid)
+                    })
                     .transpose()?;
                 return Ok(ConversationRequest::EvidenceSearch {
                     parameters,
@@ -664,10 +789,15 @@ pub(super) fn request(
         }
         "session_context" => {
             let v: ContextInput = serde_json::from_value(args.clone()).map_err(|_| invalid())?;
-            let reference = projector
+            let reference: ContextReference = projector
                 .open_search(b"evidence", &v.evidence_ref)
                 .ok_or_else(invalid)?;
-            let target = target(v.target)?;
+            valid_target(&v.target)?;
+            let target = if reference.purpose == SearchPurpose::Discovery {
+                projector.discovery_selector(&v.target, &reference.binding_revision)
+            } else {
+                projector.selector(&v.target)
+            };
             if let Some(window) = v.window {
                 let options: agentmender_domain::ContextOptions = serde_json::to_value(window)
                     .and_then(serde_json::from_value)
@@ -685,12 +815,14 @@ pub(super) fn request(
         }
         "preview_removal" => {
             let v: PreviewInput = serde_json::from_value(args.clone()).map_err(|_| invalid())?;
+            valid_target(&v.target)?;
             Ok(ConversationRequest::Preview {
-                target: target(v.target)?,
+                target: projector.selector(&v.target),
             })
         }
         "prepare_removal" => {
             let v: PrepareInput = serde_json::from_value(args.clone()).map_err(|_| invalid())?;
+            valid_target(&v.target)?;
             if !v
                 .expected_plan_digest
                 .strip_prefix("sha256:")
@@ -699,7 +831,7 @@ pub(super) fn request(
                 return Err(invalid());
             }
             Ok(ConversationRequest::Prepare {
-                target: target(v.target)?,
+                target: projector.selector(&v.target),
                 expected_digest: v.expected_plan_digest,
             })
         }
@@ -809,7 +941,9 @@ pub(super) fn project(
     use crate::projection::ProjectionError;
     let value = match response {
         ConversationResponse::EvidenceSearch(result) => {
-            let management = result.parameters.purpose == agentmender_domain::SearchPurpose::Management;
+            let search_purpose = result.parameters.purpose;
+            let discovery = search_purpose == SearchPurpose::Discovery;
+            let (purpose, exclusion) = purpose_labels(search_purpose);
             let project_hit = |hit: agentmender_domain::SessionSearchHit, verified: bool| {
                 let content_coverage = if hit.content_complete { "complete" } else if !result.parameters.reads_content() { "not_requested" } else if hit.evidence.is_empty() { "unavailable_or_partial" } else { "partial" };
                 let evidence = hit.evidence.into_iter().map(|e| {
@@ -826,9 +960,14 @@ pub(super) fn project(
                     };
                     evidence_view(e, projector.seal_search(b"evidence", &reference))
                 }).collect();
+                let mut session = label(projector, &hit.metadata, !discovery && verified && hit.metadata.state != agentmender_domain::SessionState::Unknown, true);
+                if discovery {
+                    session.target = projector.discovery_ref(&hit.metadata.identity, &result.binding_revision);
+                    session.removal_eligibility = "discovery_only";
+                }
                 EvidenceHitView {
                     source_coverage: hit.source_coverage.map(Into::into),
-                    session: label(projector, &hit.metadata, verified && hit.metadata.state != agentmender_domain::SessionState::Unknown, true),
+                    session,
                     score: hit.score,
                     matched_terms: hit.matched_terms,
                     match_sources: hit.match_sources,
@@ -841,13 +980,13 @@ pub(super) fn project(
             let sessions: Vec<_> = result.page.sessions.into_iter().map(|hit| project_hit(hit,true)).collect();
             let unresolved_candidates: Vec<_> = result.page.unresolved.into_iter().map(|hit| project_hit(hit,false)).collect();
             let coverage = result.page.coverage;
-            serde_json::to_value(SearchOutput::Evidence(EvidenceSearchView {
+            let view = EvidenceSearchView {
                 query_interpretation: result.parameters.structured.as_ref().map(query_interpretation).transpose().map_err(|_| ProjectionError::ResponseTooLarge)?,
                 presentation_complete: result.page.next.is_none(),
                 coverage_requirement_met: result.coverage_requirement_met,
                 result_count: sessions.len(), sessions, unresolved_candidates,
-                purpose: if management { "management" } else { "diagnostic" }.into(),
-                management_exclusion: if management { "trusted_composition_binding" } else { "not_guaranteed_diagnostic" }.into(),
+                purpose: purpose.into(),
+                management_exclusion: exclusion.into(),
                 authenticated_caller_binding: false,
                 registration_instance: result.registration_instance,
                 completeness: "partial",
@@ -867,11 +1006,16 @@ pub(super) fn project(
                     fully_traversed_sessions: coverage.fully_traversed_sessions,
                     reasons: coverage.reasons,
                 },
-                next_cursor: result.page.next.map(|next| projector.seal_search(b"cursor", &next)),
-            }))
+                next_cursor: result.page.next.map(|next| projector.seal_search(cursor_kind(search_purpose), &next)),
+            };
+            if discovery {
+                serde_json::to_value(DiscoveryOutput::Evidence(Box::new(view)))
+            } else {
+                serde_json::to_value(SearchOutput::Evidence(view))
+            }
         }
         ConversationResponse::ContextWindow(result) => {
-            let management = result.reference.purpose == agentmender_domain::SearchPurpose::Management;
+            let (purpose, exclusion) = purpose_labels(result.reference.purpose);
             let suggested_window = |direction: agentmender_domain::ContextDirection| {
                 let options = agentmender_domain::ContextOptions { direction, message_offset: None, ..result.options.clone() };
                 serde_json::to_value(options).and_then(serde_json::from_value::<ContextOptionsInput>)
@@ -919,15 +1063,15 @@ pub(super) fn project(
                 next_ref: result.window.next.map(|r| projector.seal_search(b"evidence", &r)),
                 at_start: result.window.at_start, at_end: result.window.at_end,
                 partial: result.window.partial, bytes_read: result.window.bytes_read,
-                purpose: if management { "management" } else { "diagnostic" }.into(),
-                management_exclusion: if management { "trusted_composition_binding" } else { "not_guaranteed_diagnostic" },
+                purpose: purpose.into(),
+                management_exclusion: exclusion,
             }))
         }
         ConversationResponse::Context(result) => {
-            let management = result.purpose == agentmender_domain::SearchPurpose::Management;
+            let (purpose, exclusion) = purpose_labels(result.purpose);
             serde_json::to_value(ContextOutput::Message(ContextView {
-                purpose: if management { "management" } else { "diagnostic" }.into(),
-                management_exclusion: if management { "trusted_composition_binding" } else { "not_guaranteed_diagnostic" },
+                purpose: purpose.into(),
+                management_exclusion: exclusion,
                 evidence: {
                     let mut reference = result.reference;
                     reference.position = result.evidence.position.clone();

@@ -291,6 +291,7 @@ fn structured(filter: QueryExpr) -> SearchReadRequest {
         },
         excluded: vec![],
         management_session: None,
+        discovery_session: None,
         cached: vec![],
     }
 }
@@ -799,6 +800,7 @@ fn application_revalidates_combined_legacy_and_structured_unknown_partition() {
         provider_root: &f.root,
         provider: ProviderKind::Codex,
         management: None,
+        apparent_caller: None,
         registered: &[],
         instance: "fixture",
     };

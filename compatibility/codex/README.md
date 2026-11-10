@@ -1,14 +1,25 @@
 # Codex compatibility evidence
 
+## P0-SR4 read-only discovery
+
+Desktop 26.1103.60933 (build 25894) with CLI 0.167.0-alpha.3.2 loaded
+`session_discover` after an AgentMender connection restart. The live
+root-thread mapping excluded the independently identified current thread
+and preserved unrelated compressed history and context. The supported
+shape is a canonical `threadId` with an absent or equal `sessionId`, plus
+an exact row in the configured Codex root. Discordant metadata and unknown
+roots refuse. Management authentication and lifecycle admission remain separate.
+[Acceptance](../../docs/milestones/p0-sr4-implicit-caller-discovery.md).
+
 ## P0-SR3 observed read compatibility
 
 Desktop26.1103.60933/build25894 and CLI0.167.0-alpha.3.2 retain validated read-only
 metadata and plain/Zstandard legacy/paginated sources. The five67.5–148MB compressed
 sources and exact330-session cohort reach physical EOF; all logical histories stay
-Partial. No mutation profile transfers to this Desktop/CLI. Actual retained-client
-MISSION1 reads pass; updated-parent resident/default-management acceptance is OPEN
-because the connection could not be refreshed. Authenticated caller routing remains
-OPEN. [Receipt](../../docs/milestones/p0-sr3-management-and-traversal.md).
+Partial. No mutation profile transfers to this Desktop/CLI. Updated-parent
+resident traversal and default management refusal passed after the
+[SR3 live refresh](../../docs/milestones/p0-sr3-live-mcp-acceptance.md).
+Authenticated caller routing remains OPEN.
 
 ## P0-SR2 current history representation
 

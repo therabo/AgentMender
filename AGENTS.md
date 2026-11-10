@@ -1,5 +1,19 @@
 # AgentMender engineering constraints
 
+## P0-SR4 read-only caller-filtered discovery
+
+Follow [ADR-0031](docs/adr/0031-metadata-derived-caller-discovery.md).
+Use `session_discover` for ordinary conversation searches, including requests
+about possible deletion candidates. The read-only route takes an apparent
+Codex caller from RMCP request metadata and validates its canonical thread row
+in the configured root before searching. Missing, malformed, discordant or
+unmapped metadata refuses. Never accept a caller UUID in tool arguments.
+Exclude before predicates, content, ranking, counts and paging. Bind discovery
+cursors, evidence and context targets to caller scope and process. Keep
+discovery targets separate from lifecycle targets and keep context reads in
+the originating chat when handing evidence to Luna. Metadata is spoofable
+and must never create a `ManagementIdentity` or authorize an operation.
+
 ## P0-SR3 resident traversal and default management refusal
 
 Follow [ADR-0030](docs/adr/0030-resident-bounded-history-decoding.md),
@@ -13,7 +27,7 @@ replay state refuses; no identical successful continuation. EOF is not logical
 paginated completeness. Context suffixes cannot attest prefix coverage. Preserve
 exact context-locator/source revalidation when unrelated metadata changes.
 
-New MCP search defaults to management and fails before source reads without a
+`session_search` defaults to management and fails before source reads without a
 verified host route. Diagnostics require explicit purpose; never silently fall
 back. Arbitrary `_meta.threadId`, model arguments, transport IDs, process identity
 and privileged declarations cannot create caller authority. Typed shared-reader

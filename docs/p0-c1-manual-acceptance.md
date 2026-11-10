@@ -74,8 +74,12 @@ In a dedicated management conversation, ask:
 > and last activity, archive state, available parent relationship and compatibility
 > limits. Keep duplicate titles separate. Do not prepare or execute removal.
 
-Require an actual `session_search` call and grounded output. The configured server
-exposes fourteen tools; the original default launch still exposes eight.
+For this compatibility probe, require an actual `session_search` call with
+`purpose:"diagnostic"` and grounded output. Ordinary browsing now uses
+`session_discover` and yields discovery-only targets. See the
+[SR4 acceptance procedure](milestones/p0-sr4-implicit-caller-discovery.md).
+The configured read-only server exposes fifteen tools. The original default
+launch still exposes eight.
 The legacy call uses all-term title/display-name/project-basename/UUID matching.
 For incremental content use `include_content:true`, an explicit purpose and paging;
 [the search contract](session-search.md) gives full inputs/limits. Management mode
