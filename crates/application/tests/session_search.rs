@@ -46,6 +46,7 @@ impl SessionSearchReadPort for Reader {
             .unwrap()
             .clone()
             .map(|id| SessionSearchHit {
+                source_coverage: None,
                 query_observation: Default::default(),
                 content_complete: false,
                 metadata: SessionMetadata {
@@ -252,6 +253,7 @@ fn protected_or_stale_context_never_reaches_reader_and_provider_boundaries_are_n
         instance: "fixture",
     };
     let reference = ContextReference {
+        decoder_progress: None,
         position: None,
         native_session_id: "management".into(),
         local_id: binding.identity.local_id.clone(),
@@ -299,4 +301,82 @@ fn protected_or_stale_context_never_reaches_reader_and_provider_boundaries_are_n
         reader.requests.lock().unwrap().last().unwrap().excluded[0].provider,
         ProviderKind::Claude
     );
+}
+
+#[test]
+fn two_trusted_fixture_callers_share_reader_without_identity_bleed_and_switches_refuse_old_cursors()
+{
+    let reader = Reader::default();
+    let first = binding();
+    let second = ManagementIdentity {
+        identity: artifact(ProviderKind::Codex, "/provider", "codex:session:second"),
+        native_session_id: "second".into(),
+        revision: "second-connection".into(),
+    };
+    std::thread::scope(|scope| {
+        for binding in [&first, &second] {
+            let reader = &reader;
+            scope.spawn(move || {
+                let service = SessionSearchService {
+                    reader,
+                    provider_root: Path::new("/provider"),
+                    provider: ProviderKind::Codex,
+                    management: Some(binding),
+                    registered: &[],
+                    instance: "shared-server-fixture",
+                };
+                let page = service
+                    .search(
+                        parameters(SearchPurpose::Management),
+                        None,
+                        QueryControl::default(),
+                    )
+                    .unwrap();
+                assert_eq!(page.binding_revision, binding.revision);
+            });
+        }
+    });
+    let requests = reader.requests.lock().unwrap();
+    assert_eq!(requests.len(), 2);
+    for request in requests.iter() {
+        assert_eq!(request.excluded.len(), 1);
+        assert!(
+            request.excluded[0]
+                .local_id
+                .as_str()
+                .ends_with(request.management_session.as_ref().unwrap())
+        );
+    }
+    drop(requests);
+    let service = SessionSearchService {
+        reader: &reader,
+        provider_root: Path::new("/provider"),
+        provider: ProviderKind::Codex,
+        management: Some(&first),
+        registered: &[],
+        instance: "shared-server-fixture",
+    };
+    let next = service
+        .search(
+            parameters(SearchPurpose::Management),
+            None,
+            QueryControl::default(),
+        )
+        .unwrap()
+        .page
+        .next;
+    let switched = SessionSearchService {
+        management: Some(&second),
+        ..service
+    };
+    let count = reader.requests.lock().unwrap().len();
+    assert!(matches!(
+        switched.search(
+            parameters(SearchPurpose::Management),
+            next,
+            QueryControl::default()
+        ),
+        Err(ApplicationError::StaleSearchEvidence)
+    ));
+    assert_eq!(reader.requests.lock().unwrap().len(), count);
 }

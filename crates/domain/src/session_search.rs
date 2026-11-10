@@ -71,7 +71,8 @@ impl SearchParameters {
     }
 }
 
-/// Constructed from independently controlled launch registration, never MCP input.
+/// Trusted typed host-composition input, never MCP/model metadata. Production
+/// launch declarations alone cannot construct an admitted identity.
 #[derive(Debug, Clone)]
 pub struct ManagementIdentity {
     pub identity: ArtifactId,
@@ -125,6 +126,8 @@ pub struct ConversationEvidence {
 #[serde(deny_unknown_fields)]
 pub struct SessionSearchHit {
     #[serde(default)]
+    pub source_coverage: Option<crate::SourceCoverage>,
+    #[serde(default)]
     pub query_observation: crate::QueryObservation,
     #[serde(default)]
     pub content_complete: bool,
@@ -139,6 +142,8 @@ pub struct SessionSearchHit {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SearchCoverage {
+    #[serde(default)]
+    pub work: crate::ReadWork,
     pub eligible_observed: usize,
     pub sessions_inspected: usize,
     #[serde(default)]
@@ -169,6 +174,8 @@ pub struct SessionSearchPage {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ContextReference {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decoder_progress: Option<crate::DecoderProgress>,
     pub native_session_id: String,
     pub local_id: crate::EntityId,
     pub record_index: usize,

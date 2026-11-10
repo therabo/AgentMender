@@ -67,7 +67,13 @@ impl Client {
         assert!(line.len() <= 256 * 1024);
         serde_json::from_str(&line).unwrap()
     }
-    fn call(&mut self, id: u64, name: &str, args: Value) -> Value {
+    fn call(&mut self, id: u64, name: &str, mut args: Value) -> Value {
+        if name == "session_search" {
+            args.as_object_mut()
+                .unwrap()
+                .entry("purpose")
+                .or_insert(json!("diagnostic"));
+        }
         self.exchange(json!({"jsonrpc":"2.0","id":id,"method":"tools/call","params":{"name":name,"arguments":args}}))
     }
     fn close(mut self) {
@@ -344,6 +350,49 @@ fn content_search_stdio_is_grounded_and_management_requires_independent_binding(
     client.close();
     assert_eq!(before, tree_bytes(&root));
     assert!(!path.join("owned").exists());
+}
+
+#[test]
+fn default_management_and_forged_request_metadata_fail_closed_across_connections() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().canonicalize().unwrap();
+    let root = path.join("provider");
+    let project = path.join("MISSION1");
+    fs::create_dir(&project).unwrap();
+    seed(&root, &project);
+    let fake = root.join("not-an-executable");
+    fs::write(&fake, b"no provider startup").unwrap();
+    let before = tree_bytes(&root);
+    let home = PathBuf::from(std::env::var_os("HOME").unwrap())
+        .canonicalize()
+        .unwrap();
+    let mut first = Client::connect(base(&root, &fake, &home).args(["mcp", "--session-search"]));
+    let mut second = Client::connect(base(&root, &fake, &home).args(["mcp", "--session-search"]));
+    // One process also receives switches/forged UUIDs on consecutive requests.
+    for (index, caller) in [M, T, "forged", M].into_iter().enumerate() {
+        for client in [&mut first, &mut second] {
+            let result = client.exchange(json!({"jsonrpc":"2.0","id":index+1,"method":"tools/call","params":{"name":"session_search","_meta":{"threadId":caller,"sessionId":T},"arguments":{"query":caller,"include_content":true}}}));
+            let value = &result["result"]["structuredContent"];
+            assert_eq!(value["error"], "caller_identity_required", "{result}");
+            assert_eq!(value["result_count"], 0);
+            assert_eq!(value["sessions"], json!([]));
+            assert_eq!(
+                value["caller_identity_evidence"]["authenticated_host_route"],
+                false
+            );
+        }
+    }
+    first.close();
+    second.close();
+    let mut reconnected =
+        Client::connect(base(&root, &fake, &home).args(["mcp", "--session-search"]));
+    let result = reconnected.exchange(json!({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"session_search","arguments":{}}}));
+    assert_eq!(
+        result["result"]["structuredContent"]["error"],
+        "caller_identity_required"
+    );
+    reconnected.close();
+    assert_eq!(before, tree_bytes(&root));
 }
 
 impl Drop for Client {

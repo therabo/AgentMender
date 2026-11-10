@@ -89,6 +89,7 @@ pub struct CodexAdapter {
     location: ProviderLocation,
     fixture: Option<Fixture>,
     evidence_helper: Option<(PathBuf, PathBuf)>,
+    content_connection: std::sync::Mutex<Option<content::ContentConnection>>,
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -161,6 +162,7 @@ impl CodexAdapter {
             location,
             fixture: None,
             evidence_helper: None,
+            content_connection: std::sync::Mutex::new(None),
         }
     }
     /// The CLI supplies its own fixed internal capture entry point. No helper is
@@ -192,6 +194,7 @@ impl CodexAdapter {
             },
             fixture: Some(fixture),
             evidence_helper: None,
+            content_connection: std::sync::Mutex::new(None),
         })
     }
     fn provider(&self) -> Provider {

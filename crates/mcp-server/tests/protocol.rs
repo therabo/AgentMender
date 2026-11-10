@@ -383,7 +383,11 @@ async fn opt_in_conversation_registry_metadata_privacy_and_authority_rejection()
     let result = exchange(
         &mut cr,
         &mut cw,
-        call(2, "session_search", json!({"query":"MISSION1 README"})),
+        call(
+            2,
+            "session_search",
+            json!({"query":"MISSION1 README","purpose":"diagnostic"}),
+        ),
     )
     .await;
     let view = &result["result"]["structuredContent"];

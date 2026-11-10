@@ -257,6 +257,7 @@ pub fn build_search_index(
                 .and_then(|s| s.checkpoint.as_ref())
                 .and_then(|s| serde_json::from_str::<TranscriptCheckpoint>(s).ok());
             let mut reference = ContextReference {
+                decoder_progress: None,
                 native_session_id: hit.metadata.native_session_id.clone(),
                 local_id: hit.metadata.identity.local_id.clone(),
                 record_index: 1,

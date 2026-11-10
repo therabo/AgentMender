@@ -1,5 +1,8 @@
 //! Fixed bounded conversation reader. Source I/O runs only in the attested worker.
-use crate::{CodexAdapter, Guard, capture, metadata, rollout_reader::RolloutReader};
+use crate::{
+    CodexAdapter, Guard, capture, metadata,
+    rollout_reader::{self, RolloutReader},
+};
 use agentmender_domain::*;
 use agentmender_provider_api::{
     ProviderError, SessionSearchReadPort, evidence::EvidenceSandbox, filesystem, process,
@@ -101,8 +104,8 @@ fn content_failure(error: &ProviderError) -> &'static str {
             "header_identity_mismatch" => "source_identity_mismatch",
             "ambiguous_rollout_counterparts" => "source_ambiguous",
             "compressed_source_invalid" => "compressed_source_invalid",
-            "compressed_source_limit" => "compressed_source_limit",
             "compressed_work_limit" => "compressed_work_limit",
+            "compressed_continuation_expired" => "compressed_continuation_expired",
             _ => "source_unavailable",
         },
         ProviderError::InvalidScope(_) => "source_link_or_scope_refused",
@@ -112,8 +115,8 @@ fn content_failure(error: &ProviderError) -> &'static str {
 fn rollout_io(error: std::io::Error) -> ProviderError {
     match error.to_string().as_str() {
         "compressed_source_invalid" => content_limit("compressed_source_invalid"),
-        "compressed_source_limit" => content_limit("compressed_source_limit"),
         "compressed_work_limit" => content_limit("compressed_work_limit"),
+        "compressed_continuation_expired" => stale(),
         "compressed_seek_past_end" => stale(),
         _ => unavailable(),
     }
@@ -551,6 +554,7 @@ struct Transcript {
     next: Option<TranscriptCheckpoint>,
     end: TranscriptCheckpoint,
     partial: bool,
+    coverage: SourceCoverage,
 }
 #[cfg(test)]
 fn transcript(
@@ -755,16 +759,17 @@ fn stream_transcript(
     }) {
         return Err(stale());
     }
-    let mut reader = BufReader::with_capacity(
+    let mut header_reader = BufReader::with_capacity(
         8192,
         RolloutReader::new(&file, compressed, end).map_err(rollout_io)?,
     );
     let mut header_bytes = Vec::new();
-    let count = reader
+    let count = header_reader
         .by_ref()
         .take((RECORD_BYTES + 1) as u64)
         .read_until(b'\n', &mut header_bytes)
         .map_err(rollout_io)?;
+    drop(header_reader);
     *bytes_read = bytes_read.saturating_add(count);
     if count == 0 || count > RECORD_BYTES {
         return Err(content_limit("bounded_session_header_unavailable"));
@@ -793,10 +798,34 @@ fn stream_transcript(
     if offset < count as u64 {
         return Err(stale());
     }
-    reader.seek(SeekFrom::Start(offset)).map_err(rollout_io)?;
+    let key = hash(
+        &serde_json::to_vec(&(root, path, &candidate.metadata.native_session_id, &revision))
+            .map_err(|_| unavailable())?,
+    );
+    let mut reader = BufReader::with_capacity(
+        8192,
+        RolloutReader::resident(
+            &file,
+            compressed,
+            key,
+            end,
+            checkpoint.and_then(|p| p.decoder_progress.as_ref()),
+        )
+        .map_err(rollout_io)?,
+    );
+    let mut replay_pending = false;
+    if let Err(error) = reader.seek(SeekFrom::Start(offset)) {
+        if rollout_reader::pending(&error) {
+            replay_pending = true;
+        } else {
+            return Err(rollout_io(error));
+        }
+    }
     let mut index = checkpoint.map_or(1, |c| c.record_index);
     let mut partial = checkpoint.is_some_and(|c| c.partial) || format == PAGINATED_INLINE_FORMAT;
     let mut suppressed = 0;
+    let mut skipped_records = checkpoint.map_or(0, |c| c.skipped_records);
+    let mut unsupported_records = checkpoint.map_or(0, |c| c.unsupported_records);
     let mut messages = vec![];
     let mut recognized = false;
     let mut captured_bytes = 0usize;
@@ -804,7 +833,9 @@ fn stream_transcript(
     let starting_bytes = *bytes_read;
     let limit = available.saturating_sub(starting_bytes.saturating_sub(work_start));
     let mut reached_eof = false;
-    while (compressed || offset < before.len()) && bytes_read.saturating_sub(starting_bytes) < limit
+    while !replay_pending
+        && (compressed || offset < before.len())
+        && bytes_read.saturating_sub(starting_bytes) < limit
     {
         if Instant::now() >= end || captured_bytes >= output_bytes {
             break;
@@ -812,11 +843,18 @@ fn stream_transcript(
         let remaining = limit.saturating_sub(bytes_read.saturating_sub(starting_bytes));
         // A bounded per-record buffer, even for malformed multi-gigabyte lines.
         let mut line = Vec::new();
-        let read = reader
+        let read_result = reader
             .by_ref()
             .take(remaining.min(STREAM_RECORD_BYTES + 1) as u64)
-            .read_until(b'\n', &mut line)
-            .map_err(rollout_io)?;
+            .read_until(b'\n', &mut line);
+        let read = match read_result {
+            Ok(read) => read,
+            Err(error) if rollout_reader::pending(&error) => {
+                replay_pending = true;
+                break;
+            }
+            Err(error) => return Err(rollout_io(error)),
+        };
         if read == 0 {
             reached_eof = true;
             break;
@@ -831,6 +869,9 @@ fn stream_transcript(
                 break;
             }
             partial = true;
+            if !skipping {
+                skipped_records += 1;
+            }
             skipping = true;
             offset += read as u64;
             continue;
@@ -838,8 +879,12 @@ fn stream_transcript(
         let current_offset = offset;
         offset += read as u64;
         index += 1;
+        rollout_reader::record_inspected();
         if skipping || line.len() > STREAM_RECORD_BYTES {
             partial = true;
+            if !skipping {
+                skipped_records += 1;
+            }
             skipping = false;
             continue;
         }
@@ -847,10 +892,18 @@ fn stream_transcript(
         if line.iter().all(u8::is_ascii_whitespace) {
             continue;
         }
+        let mut record_unsupported = false;
+        let mut mark_unsupported = || {
+            partial = true;
+            if !record_unsupported {
+                unsupported_records += 1;
+                record_unsupported = true;
+            }
+        };
         let record: serde_json::Value = match serde_json::from_slice(&line) {
             Ok(v) => v,
             Err(_) => {
-                partial = true;
+                mark_unsupported();
                 continue;
             }
         };
@@ -875,7 +928,7 @@ fn stream_transcript(
                                 | "web_search_call"
                         )
                     ) {
-                        partial = true;
+                        mark_unsupported();
                     }
                     continue;
                 }
@@ -884,7 +937,7 @@ fn stream_transcript(
                     Some("assistant") => ("assistant_message", "output_text"),
                     Some("system" | "developer") => continue,
                     _ => {
-                        partial = true;
+                        mark_unsupported();
                         continue;
                     }
                 };
@@ -906,24 +959,24 @@ fn stream_transcript(
                         .filter(|v| !v.is_null())
                         .is_some_and(|v| v != "final_answer" && v != "commentary")
                 {
-                    partial = true;
+                    mark_unsupported();
                     continue;
                 }
                 let Some(content) = payload.get("content").and_then(|v| v.as_array()) else {
-                    partial = true;
+                    mark_unsupported();
                     continue;
                 };
                 let mut text = String::new();
                 for part in content {
                     if part.get("type").and_then(|v| v.as_str()) != Some(part_type) {
-                        partial = true;
+                        mark_unsupported();
                         continue;
                     }
                     if let Some(value) = part.get("text").and_then(|v| v.as_str()) {
                         text.push_str(value);
                         text.push(' ');
                     } else {
-                        partial = true;
+                        mark_unsupported();
                     }
                 }
                 text.pop();
@@ -949,7 +1002,7 @@ fn stream_transcript(
                 if payload.get("thread_id").and_then(|v| v.as_str())
                     != Some(&candidate.metadata.native_session_id)
                 {
-                    partial = true;
+                    mark_unsupported();
                     continue;
                 }
                 let item = &payload["item"];
@@ -1010,17 +1063,28 @@ fn stream_transcript(
                             | "patch_apply_end"
                     )
                 ) {
-                    partial = true;
+                    mark_unsupported();
                 }
             }
-            _ => partial = true,
+            _ => {
+                mark_unsupported();
+            }
         }
     }
-    if compressed && !reached_eof {
+    if compressed && !reached_eof && !replay_pending {
         // EOF verifies frame termination and any advertised checksum; corruption cannot turn
         // a valid prefix into complete negative evidence.
-        reached_eof = reader.fill_buf().map_err(rollout_io)?.is_empty();
+        match reader.fill_buf() {
+            Ok(bytes) => reached_eof = bytes.is_empty(),
+            Err(error) if rollout_reader::pending(&error) => replay_pending = true,
+            Err(error) => return Err(rollout_io(error)),
+        }
     }
+    let decoder_progress = if replay_pending {
+        reader.get_ref().progress()
+    } else {
+        None
+    };
     drop(reader);
     if stamp(&before) != stamp(&file.metadata().map_err(|_| unavailable())?)
         || stamp(&before)
@@ -1035,6 +1099,9 @@ fn stream_transcript(
     }
     partial |= suppressed > 0;
     let progress = TranscriptCheckpoint {
+        skipped_records,
+        unsupported_records,
+        decoder_progress,
         native_session_id: candidate.metadata.native_session_id.clone(),
         source_fingerprint: revision.clone(),
         byte_offset: offset,
@@ -1050,6 +1117,13 @@ fn stream_transcript(
         offset < before.len()
     })
     .then(|| progress.clone());
+    if let (Some(prior), Some(next)) = (checkpoint, &next)
+        && prior.byte_offset == next.byte_offset
+        && prior.record_index == next.record_index
+        && prior.decoder_progress == next.decoder_progress
+    {
+        return Err(content_limit("transcript_no_progress"));
+    }
     let status = if next.is_some() {
         "scanning"
     } else if partial || suppressed > 0 {
@@ -1060,6 +1134,15 @@ fn stream_transcript(
         "supported"
     };
     Ok(Transcript {
+        coverage: SourceCoverage {
+            decoded_bytes: offset,
+            physical_eof: next.is_none(),
+            logical_complete: status == "supported",
+            skipped_records,
+            unsupported_records,
+            suppressed_records: suppressed + checkpoint.map_or(0, |c| c.suppressed_records),
+            external_history_unaccounted: format == PAGINATED_INLINE_FORMAT,
+        },
         messages,
         fingerprint: revision,
         status,
@@ -1102,6 +1185,7 @@ fn search(
     request: &SearchReadRequest,
     end: Instant,
 ) -> Result<SessionSearchPage, ProviderError> {
+    rollout_reader::work_reset();
     if request.cached.len() > 10 {
         return Err(unavailable());
     }
@@ -1245,6 +1329,7 @@ fn search(
                             }
                         }
                         let hit = SessionSearchHit {
+                            source_coverage: None,
                             metadata: candidate.metadata.clone(),
                             score: base_score.saturating_add(cached.score),
                             matched_terms,
@@ -1281,6 +1366,7 @@ fn search(
         }
         let mut status = "not_requested";
         let mut content_complete = false;
+        let mut source_coverage = None;
         if request.parameters.include_content
             || request
                 .parameters
@@ -1291,6 +1377,7 @@ fn search(
             let limit = SESSION_SLICE_BYTES.min(SEARCH_BYTES.saturating_sub(coverage.bytes_read));
             match transcript_stream(candidate, root, limit, &mut coverage.bytes_read, end, prior) {
                 Ok(observation) => {
+                    source_coverage = Some(observation.coverage.clone());
                     status = observation.status;
                     coverage.suppressed_records += observation.suppressed;
                     content_complete = status == "supported";
@@ -1459,6 +1546,7 @@ fn search(
         }
         if truth != Truth::False {
             let hit = SessionSearchHit {
+                source_coverage,
                 metadata: candidate.metadata.clone(),
                 score,
                 matched_terms,
@@ -1625,11 +1713,14 @@ fn context_candidate(
 }
 fn checkpoint_at(reference: &ContextReference, position: &MessagePosition) -> TranscriptCheckpoint {
     TranscriptCheckpoint {
+        decoder_progress: reference.decoder_progress.clone(),
         native_session_id: reference.native_session_id.clone(),
         source_fingerprint: reference.source_fingerprint.clone(),
         byte_offset: position.byte_offset,
         record_index: position.ordinal.saturating_sub(1),
         chunk_offset: position.chunk_offset,
+        // A message reference attests its position, not coverage of the prefix.
+        partial: true,
         ..Default::default()
     }
 }
@@ -1659,6 +1750,7 @@ fn message_reference(
     evidence: &ConversationEvidence,
 ) -> ContextReference {
     let mut result = reference.clone();
+    result.decoder_progress = None;
     result.record_index = evidence.record_index;
     result.position = evidence.position.clone();
     result.source_fingerprint = evidence.source_fingerprint.clone();
@@ -1718,6 +1810,7 @@ fn transcript_page(
     excluded: &[ArtifactId],
     end: Instant,
 ) -> Result<TranscriptPage, ProviderError> {
+    rollout_reader::work_reset();
     let candidate = context_candidate(db, root, reference, excluded, true)?;
     let seed = checkpoint.cloned().or_else(|| {
         reference
@@ -1762,7 +1855,7 @@ fn transcript_page(
                 byte_offset: message.position.byte_offset,
                 record_index: message.index - 1,
                 partial: observation.partial || seed.as_ref().is_some_and(|s| s.partial),
-                ..Default::default()
+                ..observation.end.clone()
             });
             break;
         }
@@ -1781,13 +1874,15 @@ fn transcript_page(
                 record_index: message.index - 1,
                 chunk_offset: consumed,
                 partial: observation.partial || seed.as_ref().is_some_and(|s| s.partial),
-                ..Default::default()
+                ..observation.end.clone()
             });
             break;
         }
     }
     let complete = next.is_none() && observation.status == "supported";
     Ok(TranscriptPage {
+        work: rollout_reader::work(),
+        physical_eof: next.is_none(),
         end: next.clone().unwrap_or(observation.end),
         messages,
         next,
@@ -1804,6 +1899,7 @@ fn context_window(
     excluded: &[ArtifactId],
     end: Instant,
 ) -> Result<ContextWindow, ProviderError> {
+    rollout_reader::work_reset();
     if !options.valid() {
         return Err(unavailable());
     }
@@ -1812,23 +1908,78 @@ fn context_window(
         .position
         .as_ref()
         .map(|p| checkpoint_at(reference, p));
+    if matches!(options.direction, ContextDirection::Start) {
+        seed = None;
+    }
     let needs_before = matches!(
         options.direction,
         ContextDirection::Backward | ContextDirection::Turn
-    ) || options.before > 0;
+    ) || (matches!(options.direction, ContextDirection::Around)
+        && options.before > 0);
     let mut backward_clipped = false;
     if needs_before {
         if let Some(position) = &reference.position {
             let (file, path) = open_transcript(&candidate, root)?;
-            let mut file =
-                RolloutReader::new(&file, compressed_path(&path), end).map_err(rollout_io)?;
+            let before_meta = file.metadata().map_err(|_| unavailable())?;
+            let revision = hash(stamp(&before_meta).as_bytes());
+            if revision != reference.source_fingerprint
+                || before_meta.len() != reference.source_bytes as u64
+            {
+                return Err(stale());
+            }
+            let key = hash(
+                &serde_json::to_vec(&(
+                    root,
+                    &path,
+                    &candidate.metadata.native_session_id,
+                    &revision,
+                ))
+                .map_err(|_| unavailable())?,
+            );
+            let mut probe = RolloutReader::resident(
+                &file,
+                compressed_path(&path),
+                key,
+                end,
+                reference.decoder_progress.as_ref(),
+            )
+            .map_err(rollout_io)?;
             let length = position.byte_offset.min(STREAM_RECORD_BYTES as u64);
             let start = position.byte_offset - length;
-            file.seek(SeekFrom::Start(start)).map_err(rollout_io)?;
+            if let Err(error) = probe.seek(SeekFrom::Start(start)) {
+                if rollout_reader::pending(&error) {
+                    if stamp(&before_meta) != stamp(&file.metadata().map_err(|_| unavailable())?)
+                        || stamp(&before_meta)
+                            != stamp(
+                                &open_transcript(&candidate, root)?
+                                    .0
+                                    .metadata()
+                                    .map_err(|_| unavailable())?,
+                            )
+                    {
+                        return Err(stale());
+                    }
+                    return Ok(replay_window(reference, probe.progress()));
+                }
+                return Err(rollout_io(error));
+            }
             let mut before = Vec::new();
-            file.take(length)
+            probe
+                .by_ref()
+                .take(length)
                 .read_to_end(&mut before)
                 .map_err(rollout_io)?;
+            if stamp(&before_meta) != stamp(&file.metadata().map_err(|_| unavailable())?)
+                || stamp(&before_meta)
+                    != stamp(
+                        &open_transcript(&candidate, root)?
+                            .0
+                            .metadata()
+                            .map_err(|_| unavailable())?,
+                    )
+            {
+                return Err(stale());
+            }
             let clip = if start == 0 {
                 0
             } else {
@@ -1847,6 +1998,7 @@ fn context_window(
                     source_fingerprint: reference.source_fingerprint.clone(),
                     byte_offset: offset,
                     record_index: position.ordinal.saturating_sub(lines + 1),
+                    partial: true,
                     ..Default::default()
                 });
             }
@@ -1856,24 +2008,46 @@ fn context_window(
         }
     }
     let mut bytes_read = 0;
-    let observation = transcript_stream(
+    let observation = transcript_stream_limited(
         &candidate,
         root,
         SEARCH_BYTES,
         &mut bytes_read,
         end,
         seed.as_ref(),
+        match options.direction {
+            ContextDirection::Start => options.max_bytes,
+            // Re-reading the anchor must not consume the following-message
+            // budget or add an empty hop after each completed message.
+            ContextDirection::Forward => options.max_bytes.saturating_add(
+                reference
+                    .position
+                    .as_ref()
+                    .map_or(STREAM_RECORD_BYTES, |p| {
+                        (p.byte_length as usize).min(STREAM_RECORD_BYTES)
+                    }),
+            ),
+            _ => usize::MAX,
+        },
     )?;
     if observation.fingerprint != reference.source_fingerprint
         || observation.bytes != reference.source_bytes
     {
         return Err(stale());
     }
+    if let Some(progress) = observation
+        .next
+        .as_ref()
+        .and_then(|p| p.decoder_progress.clone())
+    {
+        return Ok(replay_window(reference, Some(progress)));
+    }
     let anchor = observation
         .messages
         .iter()
         .position(|m| m.index == reference.record_index);
     let mut selected: Vec<&Message> = match options.direction {
+        ContextDirection::Start => observation.messages.iter().collect(),
         ContextDirection::Occurrences => {
             let terms: Vec<_> = options
                 .query
@@ -1965,7 +2139,8 @@ fn context_window(
     let at_start = !backward_clipped
         && seed.is_none()
         && (first.is_some_and(|i| observation.messages.first().is_some_and(|m| m.index == i))
-            || (messages.is_empty() && anchor == Some(0)));
+            || (messages.is_empty()
+                && (anchor == Some(0) || matches!(options.direction, ContextDirection::Backward))));
 
     let at_end = observation.next.is_none()
         && message_continuation.is_none()
@@ -1975,11 +2150,36 @@ fn context_window(
                     options.direction,
                     ContextDirection::Forward | ContextDirection::Occurrences
                 )));
-    let previous = if at_start {
+    let mut previous = if at_start {
         None
     } else {
         messages.first().map(|m| message_reference(reference, m))
     };
+    // An interval containing only tool/hidden records is still traversable.
+    // Return an authenticated earlier boundary rather than trapping backward
+    // navigation inside a fixed message window.
+    if previous.is_none()
+        && !at_start
+        && matches!(options.direction, ContextDirection::Backward)
+        && let Some(seed) = &seed
+    {
+        if reference
+            .position
+            .as_ref()
+            .is_none_or(|p| seed.byte_offset >= p.byte_offset)
+        {
+            return Err(content_limit("backward_record_limit"));
+        }
+        let mut earlier = reference.clone();
+        earlier.decoder_progress = None;
+        earlier.record_index = seed.record_index + 1;
+        earlier.position = Some(MessagePosition {
+            byte_offset: seed.byte_offset,
+            ordinal: seed.record_index + 1,
+            ..Default::default()
+        });
+        previous = Some(earlier);
+    }
     let mut next = message_continuation.or_else(|| {
         if at_end {
             None
@@ -2006,9 +2206,12 @@ fn context_window(
             ..Default::default()
         });
         r.record_index = progress.record_index;
+        r.decoder_progress = progress.decoder_progress.clone();
         next = Some(r);
     }
     Ok(ContextWindow {
+        source_coverage: observation.coverage,
+        work: rollout_reader::work(),
         messages,
         previous,
         next,
@@ -2017,6 +2220,21 @@ fn context_window(
         partial: observation.partial || observation.next.is_some() || backward_clipped,
         bytes_read,
     })
+}
+fn replay_window(reference: &ContextReference, progress: Option<DecoderProgress>) -> ContextWindow {
+    let mut next = reference.clone();
+    next.decoder_progress = progress;
+    ContextWindow {
+        source_coverage: Default::default(),
+        work: rollout_reader::work(),
+        messages: vec![],
+        previous: None,
+        next: Some(next),
+        at_start: false,
+        at_end: false,
+        partial: true,
+        bytes_read: 0,
+    }
 }
 fn context(
     db: &Connection,
@@ -2088,120 +2306,360 @@ fn revalidate_search_snapshot(
     Ok(())
 }
 
+fn context_request(operation: &Operation) -> Option<(&ContextReference, &[ArtifactId], bool)> {
+    match operation {
+        Operation::Context {
+            reference,
+            excluded,
+        }
+        | Operation::Window {
+            reference,
+            excluded,
+            ..
+        } => Some((reference, excluded, false)),
+        Operation::Transcript {
+            reference,
+            excluded,
+            ..
+        } => Some((reference, excluded, true)),
+        Operation::Search(_) => None,
+    }
+}
+fn revalidate_context_snapshot(
+    db: &Connection,
+    root: &Path,
+    operation: &Operation,
+    locator: &Option<PathBuf>,
+    response: &Response,
+) -> Result<(), ProviderError> {
+    let (reference, excluded, bootstrap) = context_request(operation).ok_or_else(stale)?;
+    let candidate = context_candidate(db, root, reference, excluded, bootstrap)?;
+    if &candidate.path != locator {
+        return Err(stale());
+    }
+    let revision = match response {
+        Response::Context(e) => &e.source_fingerprint,
+        Response::Window(_) => &reference.source_fingerprint,
+        Response::Transcript(p) => &p.source_revision,
+        _ => return Err(stale()),
+    };
+    let (file, _) = open_transcript(&candidate, root)?;
+    if hash(stamp(&file.metadata().map_err(|_| unavailable())?).as_bytes()) != *revision {
+        return Err(stale());
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn capture_request(request: &Request) -> Result<Response, ProviderError> {
+    let end = Instant::now() + Duration::from_secs(8);
+    rollout_reader::work_reset();
+    let before = capture::fingerprints(&request.source_root)?;
+    let source = Connection::open_with_flags(
+        request.source_root.join("state_5.sqlite"),
+        OpenFlags::SQLITE_OPEN_READ_ONLY
+            | OpenFlags::SQLITE_OPEN_NO_MUTEX
+            | OpenFlags::SQLITE_OPEN_NOFOLLOW,
+    )
+    .map_err(|_| unavailable())?;
+    capture::configure(&source)?;
+    source
+        .execute_batch("PRAGMA query_only=ON")
+        .map_err(|_| unavailable())?;
+    let mut memory = Connection::open_in_memory().map_err(|_| unavailable())?;
+    capture::configure(&memory)?;
+    capture::bounded_backup(
+        &source,
+        &mut memory,
+        end.min(Instant::now() + Duration::from_secs(3)),
+    )?;
+    drop(source);
+    let result = (|| -> Result<Response, ProviderError> {
+        let result = match request.operation {
+            Operation::Search(ref query) => {
+                Response::Search(search(&memory, &request.source_root, query, end)?)
+            }
+            Operation::Window {
+                ref reference,
+                ref options,
+                ref excluded,
+            } => Response::Window(context_window(
+                &memory,
+                &request.source_root,
+                reference,
+                options,
+                excluded,
+                end,
+            )?),
+            Operation::Transcript {
+                ref reference,
+                ref checkpoint,
+                ref excluded,
+            } => Response::Transcript(transcript_page(
+                &memory,
+                &request.source_root,
+                reference,
+                checkpoint.as_ref(),
+                excluded,
+                end,
+            )?),
+            Operation::Context {
+                ref reference,
+                ref excluded,
+            } => Response::Context(context(
+                &memory,
+                &request.source_root,
+                reference,
+                excluded,
+                end,
+            )?),
+        };
+        // The staged bounded output owns its data; release the first backup
+        // before any fresh backup so their page caches do not accumulate.
+        let context_locator = context_request(&request.operation)
+            .map(|(r, excluded, bootstrap)| {
+                context_candidate(&memory, &request.source_root, r, excluded, bootstrap)
+                    .map(|c| c.path)
+            })
+            .transpose()?;
+        drop(memory);
+        let after = capture::fingerprints(&request.source_root)?;
+        if capture::fingerprints_changed(&before, &after) {
+            if capture::same_primary_identity(&before, &after) {
+                let fresh = read_snapshot(&request.source_root, end)?;
+                match (&request.operation, &result) {
+                    (Operation::Search(query), Response::Search(page)) => {
+                        revalidate_search_snapshot(&fresh, &request.source_root, query, page, end)?
+                    }
+                    _ => revalidate_context_snapshot(
+                        &fresh,
+                        &request.source_root,
+                        &request.operation,
+                        &context_locator.ok_or_else(stale)?,
+                        &result,
+                    )?,
+                }
+                if !capture::same_primary_identity(
+                    &after,
+                    &capture::fingerprints(&request.source_root)?,
+                ) {
+                    return Err(stale());
+                }
+            } else {
+                return Err(stale());
+            }
+        }
+        Ok(result)
+    })()
+    .unwrap_or_else(read_error_response);
+
+    match result {
+        Response::Search(mut page) => {
+            page.coverage.work = rollout_reader::work();
+            Ok(Response::Search(page))
+        }
+        Response::Window(mut window) => {
+            window.work = rollout_reader::work();
+            Ok(Response::Window(window))
+        }
+        Response::Transcript(mut page) => {
+            page.work = rollout_reader::work();
+            Ok(Response::Transcript(page))
+        }
+        other => Ok(other),
+    }
+}
+
+/// Fixed framed protocol. No work occurs while waiting for the next request.
+fn wire_response(response: &Response, legacy: bool) -> Result<Vec<u8>, ProviderError> {
+    if !legacy {
+        return serde_json::to_vec(response).map_err(|_| unavailable());
+    }
+    // A retained pre-SR3 parent uses EOF framing and strict old DTOs. Preserve
+    // its proven small-source reads, but never discard a required replay token.
+    let replay_required = match response {
+        Response::Search(p) => p
+            .next
+            .as_ref()
+            .and_then(|p| p.stream.as_ref())
+            .is_some_and(|p| p.decoder_progress.is_some()),
+        Response::Window(w) => w
+            .next
+            .as_ref()
+            .is_some_and(|r| r.decoder_progress.is_some()),
+        Response::Transcript(p) => p
+            .next
+            .as_ref()
+            .is_some_and(|p| p.decoder_progress.is_some()),
+        _ => false,
+    };
+    let mut value = serde_json::to_value(if replay_required {
+        &Response::Error(ContentReadError::Unavailable)
+    } else {
+        response
+    })
+    .map_err(|_| unavailable())?;
+    fn strip(value: &mut serde_json::Value) {
+        match value {
+            serde_json::Value::Object(object) => {
+                for field in [
+                    "work",
+                    "source_coverage",
+                    "physical_eof",
+                    "decoder_progress",
+                    "skipped_records",
+                    "unsupported_records",
+                ] {
+                    object.remove(field);
+                }
+                for child in object.values_mut() {
+                    strip(child);
+                }
+            }
+            serde_json::Value::Array(items) => {
+                for child in items {
+                    strip(child);
+                }
+            }
+            _ => {}
+        }
+    }
+    strip(&mut value);
+    serde_json::to_vec(&value).map_err(|_| unavailable())
+}
+
 pub fn run_content_capture_worker() -> Result<(), ProviderError> {
     #[cfg(target_os = "macos")]
     {
-        let end = Instant::now() + Duration::from_secs(8);
-        let mut bytes = vec![];
-        std::io::stdin()
-            .take(64 * 1024 + 1)
-            .read_to_end(&mut bytes)
-            .map_err(|_| unavailable())?;
-        if bytes.len() > 64 * 1024 {
-            return Err(unavailable());
-        }
-        let request: Request = serde_json::from_slice(&bytes).map_err(|_| unavailable())?;
-        capture::validate_worker_paths(
-            &request.source_root,
-            &request.mirror_root,
-            &request.probe_path,
-        )?;
-        let before = capture::fingerprints(&request.source_root)?;
-        let source = Connection::open_with_flags(
-            request.source_root.join("state_5.sqlite"),
-            OpenFlags::SQLITE_OPEN_READ_ONLY
-                | OpenFlags::SQLITE_OPEN_NO_MUTEX
-                | OpenFlags::SQLITE_OPEN_NOFOLLOW,
-        )
-        .map_err(|_| unavailable())?;
-        capture::configure(&source)?;
-        source
-            .execute_batch("PRAGMA query_only=ON")
-            .map_err(|_| unavailable())?;
-        let mut memory = Connection::open_in_memory().map_err(|_| unavailable())?;
-        capture::configure(&memory)?;
-        capture::bounded_backup(
-            &source,
-            &mut memory,
-            end.min(Instant::now() + Duration::from_secs(3)),
-        )?;
-        drop(source);
-        let result = (|| -> Result<Response, ProviderError> {
-            let result = match request.operation {
-                Operation::Search(ref query) => {
-                    Response::Search(search(&memory, &request.source_root, query, end)?)
-                }
-                Operation::Window {
-                    ref reference,
-                    ref options,
-                    ref excluded,
-                } => Response::Window(context_window(
-                    &memory,
-                    &request.source_root,
-                    reference,
-                    options,
-                    excluded,
-                    end,
-                )?),
-                Operation::Transcript {
-                    ref reference,
-                    ref checkpoint,
-                    ref excluded,
-                } => Response::Transcript(transcript_page(
-                    &memory,
-                    &request.source_root,
-                    reference,
-                    checkpoint.as_ref(),
-                    excluded,
-                    end,
-                )?),
-                Operation::Context {
-                    ref reference,
-                    ref excluded,
-                } => Response::Context(context(
-                    &memory,
-                    &request.source_root,
-                    reference,
-                    excluded,
-                    end,
-                )?),
-            };
-            // The staged bounded output owns its data; release the first backup
-            // before any fresh backup so their page caches do not accumulate.
-            drop(memory);
-            let after = capture::fingerprints(&request.source_root)?;
-            if capture::fingerprints_changed(&before, &after) {
-                if let (Operation::Search(query), Response::Search(page)) =
-                    (&request.operation, &result)
-                    && capture::same_primary_identity(&before, &after)
-                {
-                    let fresh = read_snapshot(&request.source_root, end)?;
-                    revalidate_search_snapshot(&fresh, &request.source_root, query, page, end)?;
-                    if !capture::same_primary_identity(
-                        &after,
-                        &capture::fingerprints(&request.source_root)?,
-                    ) {
-                        return Err(stale());
-                    }
-                } else {
-                    return Err(stale());
-                }
+        let mut input = std::io::stdin().lock();
+        let mut output = std::io::stdout().lock();
+        let mut paths = None;
+        loop {
+            let mut bytes = vec![];
+            let count = input
+                .by_ref()
+                .take(64 * 1024 + 1)
+                .read_until(b'\n', &mut bytes)
+                .map_err(|_| unavailable())?;
+            if count == 0 {
+                return Ok(());
             }
-            Ok(result)
-        })()
-        .unwrap_or_else(read_error_response);
-        let encoded = serde_json::to_vec(&result).map_err(|_| unavailable())?;
-        if encoded.len() > MAX_OUTPUT {
-            return Err(unavailable());
+            if bytes.len() > 64 * 1024 {
+                return Err(unavailable());
+            }
+            let legacy = bytes.last() != Some(&b'\n');
+            let request: Request = serde_json::from_slice(&bytes).map_err(|_| unavailable())?;
+            capture::validate_worker_paths(
+                &request.source_root,
+                &request.mirror_root,
+                &request.probe_path,
+            )?;
+            let current = (
+                request.source_root.clone(),
+                request.mirror_root.clone(),
+                request.probe_path.clone(),
+            );
+            if paths.as_ref().is_some_and(|expected| expected != &current) {
+                return Err(unavailable());
+            }
+            paths = Some(current);
+            let result = capture_request(&request).unwrap_or_else(read_error_response);
+            let encoded = wire_response(&result, legacy)?;
+            if encoded.len() > MAX_OUTPUT {
+                return Err(unavailable());
+            }
+            output
+                .write_all(&encoded)
+                .and_then(|_| output.write_all(b"\n"))
+                .and_then(|_| output.flush())
+                .map_err(|_| unavailable())?;
         }
-        std::io::stdout()
-            .write_all(&encoded)
-            .map_err(|_| unavailable())?;
-        Ok(())
     }
     #[cfg(not(target_os = "macos"))]
     {
         Err(unavailable())
+    }
+}
+
+pub(super) struct ContentConnection {
+    child: Guard,
+    sandbox: EvidenceSandbox,
+    input: std::sync::mpsc::SyncSender<Vec<u8>>,
+    output: std::sync::mpsc::Receiver<std::io::Result<Vec<u8>>>,
+}
+impl ContentConnection {
+    fn start(adapter: &CodexAdapter) -> Result<Self, ProviderError> {
+        let (helper, home) = adapter.evidence_helper.as_ref().ok_or_else(unavailable)?;
+        let sandbox = EvidenceSandbox::new(&adapter.location.state_root, home)?;
+        let mut child = Guard(process::spawn_codex_content_capture(helper, &sandbox)?);
+        let mut input = child.0.stdin.take().ok_or_else(unavailable)?;
+        let mut output = BufReader::new(child.0.stdout.take().ok_or_else(unavailable)?);
+        let (sender, requests) = std::sync::mpsc::sync_channel::<Vec<u8>>(1);
+        let (responses, receiver) = std::sync::mpsc::sync_channel(1);
+        std::thread::spawn(move || {
+            while let Ok(bytes) = requests.recv() {
+                let mut response = vec![];
+                let result = input
+                    .write_all(&bytes)
+                    .and_then(|_| input.flush())
+                    .and_then(|_| {
+                        output
+                            .by_ref()
+                            .take((MAX_OUTPUT + 1) as u64)
+                            .read_until(b'\n', &mut response)
+                    })
+                    .and_then(|count| {
+                        if count == 0
+                            || response.len() > MAX_OUTPUT
+                            || response.last() != Some(&b'\n')
+                        {
+                            Err(std::io::Error::other("content frame refused"))
+                        } else {
+                            Ok(response)
+                        }
+                    });
+                let failed = result.is_err();
+                if responses.send(result).is_err() || failed {
+                    break;
+                }
+            }
+        });
+        Ok(Self {
+            child,
+            sandbox,
+            input: sender,
+            output: receiver,
+        })
+    }
+    fn call(&mut self, operation: Operation) -> Result<Response, ProviderError> {
+        self.sandbox.validate()?;
+        if self
+            .child
+            .0
+            .try_wait()
+            .map_err(|_| unavailable())?
+            .is_some()
+        {
+            return Err(unavailable());
+        }
+        let request = Request {
+            source_root: self.sandbox.source_root().into(),
+            mirror_root: self.sandbox.path().into(),
+            probe_path: self.sandbox.probe_path().into(),
+            operation,
+        };
+        let mut bytes = serde_json::to_vec(&request).map_err(|_| unavailable())?;
+        bytes.push(b'\n');
+        if bytes.len() > 64 * 1024 {
+            return Err(unavailable());
+        }
+        self.input.try_send(bytes).map_err(|_| unavailable())?;
+        let bytes = self
+            .output
+            .recv_timeout(Duration::from_secs(12))
+            .map_err(|_| unavailable())?
+            .map_err(|_| unavailable())?;
+        serde_json::from_slice(&bytes).map_err(|_| unavailable())
     }
 }
 impl CodexAdapter {
@@ -2210,54 +2668,19 @@ impl CodexAdapter {
             return Err(unavailable());
         }
         agentmender_provider_api::validate_location(&self.location)?;
-        let (helper, home) = self.evidence_helper.as_ref().ok_or_else(unavailable)?;
-        let sandbox = EvidenceSandbox::new(&self.location.state_root, home)?;
-        let request = Request {
-            source_root: sandbox.source_root().into(),
-            mirror_root: sandbox.path().into(),
-            probe_path: sandbox.probe_path().into(),
-            operation,
-        };
-        let mut child = Guard(process::spawn_codex_content_capture(helper, &sandbox)?);
-        let mut input = child.0.stdin.take().ok_or_else(unavailable)?;
-        let mut output = child.0.stdout.take().ok_or_else(unavailable)?;
-        let bytes = serde_json::to_vec(&request).map_err(|_| unavailable())?;
-        if bytes.len() > 64 * 1024 {
-            return Err(unavailable());
+        let mut slot = self.content_connection.lock().map_err(|_| unavailable())?;
+        if slot.is_none() {
+            *slot = Some(ContentConnection::start(self)?);
         }
-        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
-        std::thread::spawn(move || {
-            let mut response = vec![];
-            let result = input
-                .write_all(&bytes)
-                .and_then(|_| {
-                    drop(input);
-                    output
-                        .by_ref()
-                        .take((MAX_OUTPUT + 1) as u64)
-                        .read_to_end(&mut response)
-                })
-                .map(|_| response);
-            let _ = sender.send(result);
-        });
-        let bytes = receiver
-            .recv_timeout(Duration::from_secs(12))
-            .map_err(|_| unavailable())?
-            .map_err(|_| unavailable())?;
-        if bytes.len() > MAX_OUTPUT {
-            return Err(unavailable());
+        let result = slot.as_mut().expect("started").call(operation);
+        // Never retry a failed operation. Terminate only our isolated reader.
+        if result.is_err() {
+            *slot = None;
         }
-        let end = Instant::now() + Duration::from_secs(1);
-        loop {
-            match child.0.try_wait() {
-                Ok(Some(s)) if s.success() => break,
-                Ok(None) if Instant::now() < end => std::thread::sleep(Duration::from_millis(5)),
-                _ => return Err(unavailable()),
-            }
-        }
-        validate_worker_response(serde_json::from_slice(&bytes).map_err(|_| unavailable())?)
+        validate_worker_response(result?)
     }
 }
+
 impl SessionSearchReadPort for CodexAdapter {
     fn transcript_page(
         &self,
@@ -2455,6 +2878,391 @@ mod tests {
         encoder.finish().unwrap();
         fs::remove_file(path).unwrap();
         compressed
+    }
+
+    #[test]
+    fn forward_suggestions_ignore_inherited_before_and_never_move_behind_anchor() {
+        let root = tempfile::tempdir().unwrap();
+        let db = db();
+        seed(
+            &db,
+            root.path(),
+            1,
+            "neutral",
+            &[
+                message("user", "earlier"),
+                message("assistant", &"anchor ".repeat(100)),
+                message("user", "following"),
+            ],
+        );
+        let page = search(&db, root.path(), &request("anchor"), until()).unwrap();
+        let reference = evidence_reference(1, &page.sessions[0].evidence[0]);
+        let window = context_window(
+            &db,
+            root.path(),
+            &reference,
+            &ContextOptions {
+                direction: ContextDirection::Forward,
+                before: 5,
+                after: 2,
+                max_bytes: 180,
+                ..Default::default()
+            },
+            &[],
+            until(),
+        )
+        .unwrap();
+        assert_eq!(window.messages.len(), 1);
+        assert_eq!(window.messages[0].excerpt.as_deref(), Some("following"));
+        assert!(window.at_end);
+    }
+
+    #[test]
+    fn unsupported_parts_count_once_per_record_and_suffix_eof_is_not_prefix_coverage() {
+        let root = tempfile::tempdir().unwrap();
+        let db = db();
+        seed(
+            &db,
+            root.path(),
+            1,
+            "neutral",
+            &[
+                json!({"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"unknown"},{"type":"another_unknown"}]}}),
+                message("assistant", "needle"),
+            ],
+        );
+        let page = search(&db, root.path(), &request("needle"), until()).unwrap();
+        let hit = &page.sessions[0];
+        let coverage = hit.source_coverage.as_ref().unwrap();
+        assert_eq!(coverage.unsupported_records, 1);
+        assert!(coverage.physical_eof);
+        assert!(!coverage.logical_complete);
+        let reference = evidence_reference(1, &hit.evidence[0]);
+        let window = context_window(
+            &db,
+            root.path(),
+            &reference,
+            &ContextOptions::default(),
+            &[],
+            until(),
+        )
+        .unwrap();
+        assert!(window.source_coverage.physical_eof);
+        assert!(!window.source_coverage.logical_complete);
+    }
+
+    #[test]
+    fn context_freshness_ignores_unrelated_metadata_but_refuses_locator_and_source_changes() {
+        let root = tempfile::tempdir().unwrap();
+        let db = db();
+        let path = seed(
+            &db,
+            root.path(),
+            1,
+            "target",
+            &[message("user", "verified context")],
+        );
+        seed(
+            &db,
+            root.path(),
+            2,
+            "other",
+            &[message("user", "unrelated")],
+        );
+        let evidence = search(&db, root.path(), &request("verified"), until())
+            .unwrap()
+            .sessions[0]
+            .evidence[0]
+            .clone();
+        let reference = evidence_reference(1, &evidence);
+        let operation = Operation::Context {
+            reference,
+            excluded: vec![],
+        };
+        let response = Response::Context(evidence);
+        db.execute(
+            "UPDATE threads SET title='unrelated change',updated_at=4 WHERE id=?1",
+            [id(2)],
+        )
+        .unwrap();
+        revalidate_context_snapshot(&db, root.path(), &operation, &Some(path.clone()), &response)
+            .unwrap();
+        db.execute(
+            "UPDATE threads SET rollout_path='/different' WHERE id=?1",
+            [id(1)],
+        )
+        .unwrap();
+        assert!(
+            revalidate_context_snapshot(
+                &db,
+                root.path(),
+                &operation,
+                &Some(path.clone()),
+                &response
+            )
+            .is_err()
+        );
+        db.execute(
+            "UPDATE threads SET rollout_path=?1 WHERE id=?2",
+            params![path.to_str().unwrap(), id(1)],
+        )
+        .unwrap();
+        fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap()
+            .write_all(b"\n")
+            .unwrap();
+        assert!(
+            revalidate_context_snapshot(&db, root.path(), &operation, &Some(path), &response)
+                .is_err()
+        );
+    }
+    #[test]
+    fn retained_parent_wire_preserves_small_reads_and_refuses_required_resident_state() {
+        let response = Response::Window(ContextWindow {
+            source_coverage: Default::default(),
+            work: Default::default(),
+            messages: vec![],
+            previous: None,
+            next: None,
+            at_start: true,
+            at_end: true,
+            partial: true,
+            bytes_read: 0,
+        });
+        let old: serde_json::Value =
+            serde_json::from_slice(&wire_response(&response, true).unwrap()).unwrap();
+        assert!(old["Window"].get("work").is_none());
+        assert!(old["Window"].get("source_coverage").is_none());
+        let decoded: Response =
+            serde_json::from_slice(&wire_response(&response, false).unwrap()).unwrap();
+        assert!(matches!(decoded, Response::Window(_)));
+        let mut reference = evidence_reference(
+            1,
+            &ConversationEvidence {
+                source: "user_message".into(),
+                record_index: 2,
+                position: None,
+                excerpt: None,
+                truncated: false,
+                source_fingerprint: "revision".into(),
+                source_bytes: 20,
+                format: FORMAT.into(),
+            },
+        );
+        reference.decoder_progress = Some(DecoderProgress {
+            decoded: 10,
+            compressed: 8,
+        });
+        let Response::Window(mut window) = response else {
+            unreachable!()
+        };
+        window.next = Some(reference);
+        let old: Response =
+            serde_json::from_slice(&wire_response(&Response::Window(window), true).unwrap())
+                .unwrap();
+        assert!(matches!(
+            old,
+            Response::Error(ContentReadError::Unavailable)
+        ));
+    }
+
+    #[test]
+    fn oversized_single_frame_traverses_all_records_and_navigates_from_start() {
+        let root = tempfile::tempdir().unwrap();
+        let db = db();
+        let path = seed(
+            &db,
+            root.path(),
+            1,
+            "large",
+            &[message("user", "first traversal marker")],
+        );
+        let compressed = other_representation(&path);
+        let mut encoder =
+            zstd::stream::write::Encoder::new(fs::File::create(&compressed).unwrap(), 1).unwrap();
+        encoder.window_log(20).unwrap();
+        encoder.include_checksum(true).unwrap();
+        encoder.write_all(&fs::read(&path).unwrap()).unwrap();
+        let mut random = 0x12345678u32;
+        let mut noise = vec![0u8; 256 * 1024];
+        // 144 MiB of valid tool records, with bounded individual allocations.
+        for section in 0..3 {
+            for _ in 0..192 {
+                for byte in &mut noise {
+                    random ^= random << 13;
+                    random ^= random >> 17;
+                    random ^= random << 5;
+                    *byte = b'0' + (random % 74) as u8;
+                    if matches!(*byte, b'"' | b'\\') {
+                        *byte = b'x';
+                    }
+                }
+                encoder.write_all(b"{\"type\":\"response_item\",\"payload\":{\"type\":\"function_call_output\",\"output\":\"").unwrap();
+                encoder.write_all(&noise).unwrap();
+                encoder.write_all(b"\"}}\n").unwrap();
+            }
+            writeln!(
+                encoder,
+                "{}",
+                message("assistant", &format!("section {section} traversal marker"))
+            )
+            .unwrap();
+        }
+        encoder.finish().unwrap();
+        fs::remove_file(&path).unwrap();
+        assert!(fs::metadata(&compressed).unwrap().len() > 64 * 1024 * 1024);
+        let reference = ContextReference {
+            decoder_progress: None,
+            native_session_id: id(1),
+            local_id: identity(root.path(), &id(1)).unwrap().local_id,
+            record_index: 0,
+            position: None,
+            source_fingerprint: String::new(),
+            source_bytes: 0,
+            purpose: SearchPurpose::Diagnostic,
+            binding_revision: "diagnostic_no_caller_guarantee".into(),
+        };
+        let mut checkpoint = None;
+        let mut ordinals = BTreeSet::new();
+        let mut texts = vec![];
+        let mut evidence = None;
+        for _ in 0..40 {
+            let page = transcript_page(
+                &db,
+                root.path(),
+                &reference,
+                checkpoint.as_ref(),
+                &[],
+                until(),
+            )
+            .unwrap();
+            for m in &page.messages {
+                assert!(ordinals.insert(m.evidence.record_index));
+                texts.push(m.text.clone());
+                evidence = Some(m.evidence.clone());
+            }
+            if page.next.is_none() {
+                assert!(page.physical_eof);
+                assert!(page.complete);
+                break;
+            }
+            let next = page.next.unwrap();
+            assert!(
+                checkpoint
+                    .as_ref()
+                    .is_none_or(|p: &TranscriptCheckpoint| next.byte_offset > p.byte_offset)
+            );
+            checkpoint = Some(next);
+        }
+        assert_eq!(
+            texts,
+            [
+                "first traversal marker",
+                "section 0 traversal marker",
+                "section 1 traversal marker",
+                "section 2 traversal marker"
+            ]
+        );
+        let anchor = evidence_reference(1, &evidence.unwrap());
+        let start = context_window(
+            &db,
+            root.path(),
+            &anchor,
+            &ContextOptions {
+                direction: ContextDirection::Start,
+                max_messages: 1,
+                ..Default::default()
+            },
+            &[],
+            until(),
+        )
+        .unwrap();
+        assert!(start.at_start);
+        assert_eq!(
+            start.messages[0].excerpt.as_deref(),
+            Some("first traversal marker")
+        );
+        let mut forward = start.next.clone();
+        let mut delivered = vec![start.messages[0].record_index];
+        for _ in 0..40 {
+            let r = forward.take().unwrap();
+            let window = context_window(
+                &db,
+                root.path(),
+                &r,
+                &ContextOptions {
+                    direction: ContextDirection::Forward,
+                    ..Default::default()
+                },
+                &[],
+                until(),
+            )
+            .unwrap();
+            delivered.extend(window.messages.iter().map(|m| m.record_index));
+            if window.at_end {
+                break;
+            }
+            forward = window.next;
+        }
+        assert_eq!(delivered, ordinals.iter().copied().collect::<Vec<_>>());
+        let mut backward = anchor.clone();
+        let mut delivered = vec![anchor.record_index];
+        for _ in 0..80 {
+            let window = context_window(
+                &db,
+                root.path(),
+                &backward,
+                &ContextOptions {
+                    direction: ContextDirection::Backward,
+                    max_messages: 1,
+                    ..Default::default()
+                },
+                &[],
+                until(),
+            )
+            .unwrap();
+            delivered.extend(window.messages.iter().map(|m| m.record_index));
+            if window.at_start {
+                break;
+            }
+            backward = window
+                .previous
+                .or(window.next)
+                .expect("backward progress or replay");
+        }
+        let expected = ordinals.iter().rev().copied().collect::<Vec<_>>();
+        assert_eq!(delivered, expected);
+        // A far verified reference can replay in bounded calls after eviction.
+        crate::rollout_reader::clear_resident_for_test();
+        let mut retrieved = false;
+        let mut reference = anchor;
+        let mut seen = BTreeSet::new();
+        for _ in 0..4 {
+            let window = context_window(
+                &db,
+                root.path(),
+                &reference,
+                &ContextOptions::default(),
+                &[],
+                until(),
+            )
+            .unwrap();
+            if !window.messages.is_empty() {
+                assert_eq!(
+                    window.messages[0].excerpt.as_deref(),
+                    Some("section 2 traversal marker")
+                );
+                retrieved = true;
+                break;
+            }
+            let next = window.next.unwrap();
+            assert!(seen.insert(serde_json::to_string(&next).unwrap()));
+            reference = next;
+        }
+        assert!(!seen.is_empty());
+        assert!(retrieved);
     }
 
     #[test]
@@ -2733,6 +3541,7 @@ mod tests {
         );
         let evidence = &page.sessions[0].evidence[0];
         let reference = ContextReference {
+            decoder_progress: None,
             native_session_id: id(1),
             local_id: identity(root.path(), &id(1)).unwrap().local_id,
             record_index: evidence.record_index,
@@ -2814,6 +3623,7 @@ mod tests {
                 .any(|v| v.contains("no_history_hydration"))
         );
         let reference = ContextReference {
+            decoder_progress: None,
             native_session_id: id(1),
             local_id: identity(root.path(), &id(1)).unwrap().local_id,
             record_index: evidence.record_index,
@@ -3106,6 +3916,7 @@ mod tests {
     }
     fn evidence_reference(n: u32, evidence: &ConversationEvidence) -> ContextReference {
         ContextReference {
+            decoder_progress: None,
             native_session_id: id(n),
             local_id: EntityId::new(format!("codex:session:{}", id(n))).unwrap(),
             record_index: evidence.record_index,
@@ -3391,6 +4202,7 @@ mod tests {
         writeln!(f, "{{\"type\":\"future_record\"}}").unwrap();
         drop(f);
         let reference = ContextReference {
+            decoder_progress: None,
             native_session_id: id(1),
             local_id: identity(root.path(), &id(1)).unwrap().local_id,
             record_index: 0,

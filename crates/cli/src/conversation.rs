@@ -135,14 +135,13 @@ pub(super) fn read_only_executor(
             )
         })?;
     let instance: String = nonce.iter().map(|b| format!("{b:02x}")).collect();
-    Ok(Arc::new(move |request, control| {
-        let adapter = agentmender_provider_codex::CodexAdapter::new(
-            agentmender_provider_api::ProviderLocation {
-                state_root: root.clone(),
-                executable: config.codex_executable.clone(),
-            },
-        )
+    let adapter =
+        agentmender_provider_codex::CodexAdapter::new(agentmender_provider_api::ProviderLocation {
+            state_root: root.clone(),
+            executable: config.codex_executable.clone(),
+        })
         .with_evidence_helper(helper.clone(), home.clone());
+    Ok(Arc::new(move |request, control| {
         let management = super::management::read(registration.as_deref(), &instance, &root);
         let registrations: Vec<_> = config
             .protect_codex_session

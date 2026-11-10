@@ -21,6 +21,7 @@ impl SessionSearchReadPort for Reader {
 }
 fn hit() -> SessionSearchHit {
     SessionSearchHit {
+        source_coverage: None,
         metadata: SessionMetadata {
             identity: ArtifactId {
                 provider: ProviderKind::Codex,

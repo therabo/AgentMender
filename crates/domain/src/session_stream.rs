@@ -2,6 +2,36 @@
 use crate::{ContextReference, ConversationEvidence};
 use serde::{Deserialize, Serialize};
 
+/// Transient decoder progress, sealed inside references. Not a source position
+/// chosen by a model and not a portable decoder snapshot.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DecoderProgress {
+    pub decoded: u64,
+    pub compressed: u64,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReadWork {
+    pub compressed_bytes: u64,
+    pub decoded_bytes: u64,
+    pub replay_bytes: u64,
+    pub records_inspected: u64,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SourceCoverage {
+    pub decoded_bytes: u64,
+    pub physical_eof: bool,
+    pub logical_complete: bool,
+    pub skipped_records: usize,
+    pub unsupported_records: usize,
+    pub suppressed_records: usize,
+    pub external_history_unaccounted: bool,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MessagePosition {
@@ -18,6 +48,12 @@ pub struct MessagePosition {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TranscriptCheckpoint {
+    #[serde(default)]
+    pub skipped_records: usize,
+    #[serde(default)]
+    pub unsupported_records: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decoder_progress: Option<DecoderProgress>,
     pub native_session_id: String,
     pub source_fingerprint: String,
     pub byte_offset: u64,
@@ -42,6 +78,7 @@ pub struct TranscriptCheckpoint {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ContextDirection {
+    Start,
     #[default]
     Around,
     Forward,
@@ -105,6 +142,10 @@ impl ContextOptions {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ContextWindow {
+    #[serde(default)]
+    pub source_coverage: SourceCoverage,
+    #[serde(default)]
+    pub work: ReadWork,
     pub messages: Vec<ConversationEvidence>,
     pub previous: Option<ContextReference>,
     pub next: Option<ContextReference>,
@@ -123,6 +164,11 @@ pub struct TranscriptMessage {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TranscriptPage {
+    #[serde(default)]
+    pub work: ReadWork,
+    /// Physical EOF alone does not establish logical-session completeness.
+    #[serde(default)]
+    pub physical_eof: bool,
     pub end: TranscriptCheckpoint,
     pub messages: Vec<TranscriptMessage>,
     pub next: Option<TranscriptCheckpoint>,

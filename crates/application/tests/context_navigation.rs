@@ -47,6 +47,7 @@ fn identity() -> ArtifactId {
 }
 fn reference() -> ContextReference {
     ContextReference {
+        decoder_progress: None,
         native_session_id: "candidate".into(),
         local_id: identity().local_id,
         record_index: 42,
@@ -62,6 +63,8 @@ fn reference() -> ContextReference {
 }
 fn window() -> ContextWindow {
     ContextWindow {
+        source_coverage: Default::default(),
+        work: Default::default(),
         messages: vec![ConversationEvidence {
             source: "assistant_message".into(),
             record_index: 42,

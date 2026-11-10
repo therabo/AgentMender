@@ -89,14 +89,14 @@ def main():
         receipt['updated_schema_observed'] = 'structured' in search['inputSchema'].get('properties', {}) and 'window' in context['inputSchema'].get('properties', {})
         value, elapsed = call('session_search', {'purpose': 'management', 'include_content': True})
         receipt['missing_binding'] = {'error': value.get('error'), 'result_count': value.get('result_count'), 'latency_ms': elapsed}
-        temporal, elapsed = call('session_search', {'structured': {'filter': {'op': 'created', 'range': {
+        temporal, elapsed = call('session_search', {'purpose': 'diagnostic', 'structured': {'filter': {'op': 'created', 'range': {
             'start_date': '2026-10-10', 'end_date': '2026-10-20', 'timezone': 'Europe/Rome'}}, 'mode': 'exhaustive', 'sort': 'created'}, 'page_size': 5})
         receipt['calendar_filter'] = {'results': len(temporal.get('sessions', [])), 'unresolved': len(temporal.get('unresolved_candidates', [])),
                                       'query_interpretation_observed': temporal.get('query_interpretation') is not None, 'latency_ms': elapsed, 'error': temporal.get('error')}
-        negative, elapsed = call('session_search', {'structured': {'filter': {'op': 'not', 'arg': {
+        negative, elapsed = call('session_search', {'purpose': 'diagnostic', 'structured': {'filter': {'op': 'not', 'arg': {
             'op': 'project', 'values': ['MISSION1'], 'source': 'observed_label'}}, 'mode': 'exhaustive'}, 'page_size': 5})
         receipt['negative_project'] = {'results': len(negative.get('sessions', [])), 'unresolved': len(negative.get('unresolved_candidates', [])), 'latency_ms': elapsed, 'error': negative.get('error')}
-        query = {'query': '', 'include_content': True, 'page_size': 20,
+        query = {'purpose': 'diagnostic', 'query': '', 'include_content': True, 'page_size': 20,
                  'structured': {'filter': {'op': 'text', 'value': 'AgentMender', 'alternatives': ['the', 'and', 'che', 'Cesium', 'session']}, 'mode': 'ranked', 'sort': 'relevance'}}
         latencies, reasons = [], set()
         totals = {'pages': 0, 'verified_results': 0, 'unresolved_candidates': 0, 'bytes_read': 0, 'fully_traversed': 0}

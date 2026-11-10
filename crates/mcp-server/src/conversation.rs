@@ -34,7 +34,7 @@ struct SearchInput {
     #[schemars(range(min = 1, max = 20))]
     page_size: Option<usize>,
     #[serde(default)]
-    #[schemars(length(max = 4096))]
+    #[schemars(length(max = 32768))]
     cursor: Option<String>,
     #[serde(default = "include_archived")]
     excerpts: bool,
@@ -173,8 +173,8 @@ enum QueryExprInput {
 #[derive(Clone, Copy, Default, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 enum SearchPurposeInput {
-    #[default]
     Diagnostic,
+    #[default]
     Management,
 }
 impl From<SearchPurposeInput> for agentmender_domain::SearchPurpose {
@@ -222,6 +222,7 @@ struct ContextOptionsInput {
 #[derive(Clone, Copy, Default, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 enum ContextDirectionInput {
+    Start,
     #[default]
     Around,
     Forward,
@@ -332,6 +333,7 @@ struct MessagePositionView {
 }
 #[derive(Serialize, JsonSchema)]
 struct EvidenceHitView {
+    source_coverage: Option<SourceCoverageView>,
     #[serde(flatten)]
     session: SessionLabelView,
     score: u32,
@@ -343,7 +345,48 @@ struct EvidenceHitView {
     evidence: Vec<EvidenceView>,
 }
 #[derive(Serialize, JsonSchema)]
+struct ReadWorkView {
+    compressed_bytes: u64,
+    decoded_bytes: u64,
+    replay_bytes: u64,
+    records_inspected: u64,
+}
+#[derive(Serialize, JsonSchema)]
+struct SourceCoverageView {
+    decoded_bytes: u64,
+    physical_eof: bool,
+    logical_complete: bool,
+    skipped_records: usize,
+    unsupported_records: usize,
+    suppressed_records: usize,
+    external_history_unaccounted: bool,
+}
+impl From<agentmender_domain::SourceCoverage> for SourceCoverageView {
+    fn from(c: agentmender_domain::SourceCoverage) -> Self {
+        Self {
+            decoded_bytes: c.decoded_bytes,
+            physical_eof: c.physical_eof,
+            logical_complete: c.logical_complete,
+            skipped_records: c.skipped_records,
+            unsupported_records: c.unsupported_records,
+            suppressed_records: c.suppressed_records,
+            external_history_unaccounted: c.external_history_unaccounted,
+        }
+    }
+}
+impl From<agentmender_domain::ReadWork> for ReadWorkView {
+    fn from(work: agentmender_domain::ReadWork) -> Self {
+        Self {
+            compressed_bytes: work.compressed_bytes,
+            decoded_bytes: work.decoded_bytes,
+            replay_bytes: work.replay_bytes,
+            records_inspected: work.records_inspected,
+        }
+    }
+}
+#[derive(Serialize, JsonSchema)]
 struct SearchCoverageView {
+    work: ReadWorkView,
     eligible_observed: usize,
     sessions_inspected: usize,
     bytes_read: usize,
@@ -409,6 +452,8 @@ enum ContextOutput {
 }
 #[derive(Serialize, JsonSchema)]
 struct ContextWindowView {
+    source_coverage: SourceCoverageView,
+    work: ReadWorkView,
     messages: Vec<EvidenceView>,
     previous_ref: Option<String>,
     next_ref: Option<String>,
@@ -769,6 +814,7 @@ pub(super) fn project(
                 let content_coverage = if hit.content_complete { "complete" } else if !result.parameters.reads_content() { "not_requested" } else if hit.evidence.is_empty() { "unavailable_or_partial" } else { "partial" };
                 let evidence = hit.evidence.into_iter().map(|e| {
                     let reference = agentmender_domain::ContextReference {
+                        decoder_progress: None,
                         native_session_id: hit.metadata.native_session_id.clone(),
                         local_id: hit.metadata.identity.local_id.clone(),
                         record_index: e.record_index,
@@ -781,6 +827,7 @@ pub(super) fn project(
                     evidence_view(e, projector.seal_search(b"evidence", &reference))
                 }).collect();
                 EvidenceHitView {
+                    source_coverage: hit.source_coverage.map(Into::into),
                     session: label(projector, &hit.metadata, verified && hit.metadata.state != agentmender_domain::SessionState::Unknown, true),
                     score: hit.score,
                     matched_terms: hit.matched_terms,
@@ -807,6 +854,7 @@ pub(super) fn project(
                 search_basis: if result.parameters.reads_content() { "streamed_supported_user_assistant_content" } else { "structured_or_legacy_metadata" },
                 ranking: "deterministic structured order or bounded lexical candidate ranking; not global semantic ranking; see coverage",
                 coverage: SearchCoverageView {
+                    work: coverage.work.into(),
                     eligible_observed: coverage.eligible_observed,
                     sessions_inspected: coverage.sessions_inspected,
                     bytes_read: coverage.bytes_read,
@@ -830,7 +878,9 @@ pub(super) fn project(
                     .map_err(|_| ProjectionError::ResponseTooLarge)
             };
             let next_window = result.window.next.as_ref().map(|next| {
-                let direction = if next.position.as_ref().is_some_and(|p| p.chunk_offset > 0 && p.chunk_offset < p.chunk_total) {
+                let direction = if next.decoder_progress.is_some() {
+                    result.options.direction
+                } else if next.position.as_ref().is_some_and(|p| p.chunk_offset > 0 && p.chunk_offset < p.chunk_total) {
                     agentmender_domain::ContextDirection::Around
                 } else if matches!(result.options.direction, agentmender_domain::ContextDirection::Occurrences) {
                     agentmender_domain::ContextDirection::Occurrences
@@ -857,9 +907,12 @@ pub(super) fn project(
                 reference.source_fingerprint = e.source_fingerprint.clone();
                 reference.source_bytes = e.source_bytes;
                 reference.position = e.position.clone();
+                reference.decoder_progress = None;
                 evidence_view(e, projector.seal_search(b"evidence", &reference))
             }).collect();
             serde_json::to_value(ContextOutput::Window(ContextWindowView {
+                source_coverage: result.window.source_coverage.into(),
+                work: result.window.work.into(),
                 messages,
                 previous_window, next_window,
                 previous_ref: result.window.previous.map(|r| projector.seal_search(b"evidence", &r)),
@@ -1021,6 +1074,7 @@ mod search_tests {
 
     fn reference() -> agentmender_domain::ContextReference {
         agentmender_domain::ContextReference {
+            decoder_progress: None,
             native_session_id: "candidate".into(),
             local_id: agentmender_domain::EntityId::new("codex:session:candidate").unwrap(),
             record_index: 42,
@@ -1078,6 +1132,8 @@ mod search_tests {
                 reference: reference(),
                 options: agentmender_domain::ContextOptions::default(),
                 window: agentmender_domain::ContextWindow {
+                    source_coverage: Default::default(),
+                    work: Default::default(),
                     messages: vec![agentmender_domain::ConversationEvidence {
                         source: "assistant_message".into(),
                         record_index: 42,
@@ -1128,6 +1184,8 @@ mod search_tests {
                     ..Default::default()
                 },
                 window: agentmender_domain::ContextWindow {
+                    source_coverage: Default::default(),
+                    work: Default::default(),
                     messages: vec![],
                     previous: None,
                     next: Some(next),
@@ -1153,6 +1211,8 @@ mod search_tests {
                 ..Default::default()
             },
             window: agentmender_domain::ContextWindow {
+                source_coverage: Default::default(),
+                work: Default::default(),
                 messages: vec![],
                 previous: None,
                 next: Some(reference()),

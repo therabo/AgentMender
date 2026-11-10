@@ -92,6 +92,7 @@ impl SessionSearchReadPort for Reader {
             .map(|id| self.metadata(id))
             .filter(|m| !request.excluded.contains(&m.identity))
             .map(|metadata| SessionSearchHit {
+                source_coverage: None,
                 metadata,
                 score: 0,
                 matched_terms: vec![],
@@ -212,6 +213,8 @@ impl SessionSearchReadPort for Reader {
             ..Default::default()
         };
         Ok(TranscriptPage {
+            work: Default::default(),
+            physical_eof: exhausted,
             end: end.clone(),
             messages,
             next: (!exhausted).then_some(end),
@@ -766,6 +769,7 @@ impl SessionSearchReadPort for UnresolvedReader {
 fn application_revalidates_combined_legacy_and_structured_unknown_partition() {
     let f = Fixture::new();
     let hit = SessionSearchHit {
+        source_coverage: None,
         metadata: f.reader.metadata("a"),
         score: 0,
         matched_terms: vec![],
