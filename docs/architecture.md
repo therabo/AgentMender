@@ -55,8 +55,9 @@ bounded Codex worker. Current [ADR-0027](adr/0027-intelligent-session-retrieval.
 extends these same components as described below. Launch-protected identities
 are excluded before retrieval/counts/projection. Production guaranteed mode
 refuses before provider access until enforceable host binding exists; a privileged
-registration assertion cannot prove routing. Actual updated conversational client
-and real management binding remain open. No new destructive authority is added.
+registration assertion cannot prove routing. The
+[live MCP acceptance](milestones/p0-sr3-live-mcp-acceptance.md) verifies updated
+conversational retrieval. Real management binding remains open.
 
 [ADR-0024](adr/0024-adaptive-read-only-metadata.md) separates useful metadata from
 mutation contracts. Explicit `--session-search` uses a fixed-column protected

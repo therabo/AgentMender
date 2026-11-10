@@ -377,6 +377,11 @@ fn default_management_and_forged_request_metadata_fail_closed_across_connections
             assert_eq!(value["result_count"], 0);
             assert_eq!(value["sessions"], json!([]));
             assert_eq!(
+                value["caller_identity_evidence"]["thread_id_metadata_present"], true,
+                "{result}"
+            );
+            assert!(!serde_json::to_string(value).unwrap().contains(caller));
+            assert_eq!(
                 value["caller_identity_evidence"]["authenticated_host_route"],
                 false
             );
@@ -390,6 +395,10 @@ fn default_management_and_forged_request_metadata_fail_closed_across_connections
     assert_eq!(
         result["result"]["structuredContent"]["error"],
         "caller_identity_required"
+    );
+    assert_eq!(
+        result["result"]["structuredContent"]["caller_identity_evidence"]["thread_id_metadata_present"],
+        false
     );
     reconnected.close();
     assert_eq!(before, tree_bytes(&root));

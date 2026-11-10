@@ -368,8 +368,9 @@ impl ServerHandler for Server {
     ) -> Result<CallToolResponse, ErrorData> {
         // Presence is diagnostic only. Client-supplied _meta has no authenticated
         // host/provider-root routing contract and must never create authority.
-        let caller_meta = serde_json::to_value(&call.meta).unwrap_or_default();
-        let thread_metadata_present = caller_meta.get("threadId").is_some();
+        // RMCP extracts wire _meta into RequestContext during deserialization;
+        // call.meta no longer contains those fields at this boundary.
+        let thread_metadata_present = context.meta.contains_key("threadId");
         let args = serde_json::Value::Object(call.arguments.unwrap_or_default());
         if matches!(
             call.name.as_ref(),

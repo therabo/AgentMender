@@ -55,3 +55,7 @@ to complete actual invocation, management binding and independent human executio
 Current read-only work: [P0-S1 content search implementation, OPEN acceptance](p0-s1-content-search.md).
 
 [P0-SR3 management identity and complete history traversal](p0-sr3-management-and-traversal.md): bounded size-independent physical traversal implemented; authenticated host identity and full milestone acceptance OPEN.
+
+[P0-SR3 live MCP acceptance](p0-sr3-live-mcp-acceptance.md): restarted Desktop
+connection and bounded real retrieval verified. Authenticated caller identity
+and automatic self-exclusion remain OPEN.

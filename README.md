@@ -8,7 +8,7 @@ five known oversized histories and the same 330 identities reach physical EOF;
 all 330 remain logically Partial. Start/forward/backward/occurrence navigation,
 verified jumps and explicit replay continuations use the existing tools.
 See [traversal and operational limits](docs/progressive-history.md) and
-[acceptance](docs/milestones/p0-sr3-management-and-traversal.md).
+[live Desktop MCP acceptance](docs/milestones/p0-sr3-live-mcp-acceptance.md).
 
 New MCP parents default search to management and refuse with zero candidates
 until an authenticated host route exists. Diagnostics require explicit

@@ -87,15 +87,13 @@ request frame. HMAC kind/process binding is unchanged. This corrects a real emit
 cursor exceeding the old4KiB input limit. Parent changes require a fresh MCP parent. SR3 preserves compatible small-source
 reads for retained EOF-framed parents but refuses required resident replay.
 
-The observed chat still reports the earlier registration instance after a
-user-reported connection refresh. The new worker is proven through actual chat
-tools; the new parent projection/token handling is separately tested with fresh
-direct stdio and fixtures. Do not claim its exact parent build from the executable
-currently on disk. Refresh **only AgentMender** through Settings → MCP servers →
-AgentMender → Restart, then verify a different registration plus `content_coverage`.
-If the chat retains the old parent, leave that acceptance OPEN; never restart
-Codex or borrow its transport to obtain a passing label. Guaranteed management
-continues to refuse with zero candidates before provider access.
+The [live acceptance follow-up](milestones/p0-sr3-live-mcp-acceptance.md) verified
+the restarted AgentMender connection in the same chat. It observed a changed
+registration, fresh source-bound references, a large signed cursor round trip,
+and physical EOF on both oversized test sources. Refresh only AgentMender when
+the client offers a connection restart, then verify the registration and live
+responses. A binary on disk or a standalone catalog cannot establish a chat's
+connection state. Management continues to refuse before provider access.
 
 References: [App Server](https://learn.chatgpt.com/docs/app-server),
 [official compression source](https://github.com/openai/codex/blob/6ff1e1ca3b30fc8b914720681fcf5fe62e95f856/codex-rs/rollout/src/compression.rs),

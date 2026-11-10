@@ -18,9 +18,11 @@ Codex thread nor the root session tree identity in `thread.sessionId`.
 
 The installed binary's generated schema, obtained under network/source-write
 and auth/config read denial, confirms thread-targeted MCP calls with an optional
-JSON `meta` object. This proves an interface exists, not an authenticated inbound
-claim to an arbitrary local MCP server. Upstream source is corroborating evidence,
-not proof that every installed routing path has the same implementation.
+JSON `_meta` object. The installed Desktop direct-call wrapper also sets
+`threadId` and `thread_id` from its routed request. Its dynamic tool callbacks
+carry `threadId`, `turnId` and `callId` to the App Server client. The inspected
+Desktop dispatch provides no third-party adapter to attest those claims to
+AgentMender. Upstream source corroborates the routing and connection sharing.
 
 MCP authorization does not specify a provider-thread attestation for local STDIO.
 The observed `_meta` values can be forged by another client running AgentMender;
@@ -30,6 +32,10 @@ provider root. Merely finding a UUID in request metadata therefore cannot create
 `ManagementIdentity`. No self-issued token or privileged assertion file is admitted.
 A diagnostic in the new refusal reports only presence of thread metadata, never
 its content or an authentication claim.
+RMCP moves wire `_meta` to `RequestContext.meta`. The earlier diagnostic read
+the emptied parameters field, so its false value cannot establish wire absence.
+The corrected diagnostic reports true through the restarted real Desktop
+connection, while `authenticated_host_route` remains false.
 
 ## Missing enforceable contract
 
@@ -67,10 +73,11 @@ fixtures, not real management self-exclusion acceptance. Launch-protected
 identities remain excluded in diagnostics and preview/preparation. No lifecycle
 admission, approval authority or destructive operation was added.
 
-Actual conversational MCP management refusal passes. Real authenticated caller
-identification/self-exclusion and simultaneous actual-host routing acceptance
-remain OPEN. The user could not refresh this chat's retained MCP parent; its old
-default must not be described as the new default. Explicit management still refuses.
+Actual conversational MCP management refusal passes on the restarted connection
+for default search and an exact target. A cursor and an evidence reference from
+the earlier instance were refused after reconnect. Real authenticated caller
+identification, automatic self-exclusion and two-chat routing acceptance remain
+OPEN. See the [live acceptance receipt](milestones/p0-sr3-live-mcp-acceptance.md).
 
 Sources: [Codex MCP configuration](https://learn.chatgpt.com/docs/extend/mcp),
 [App Server and dynamic tools](https://learn.chatgpt.com/docs/app-server),

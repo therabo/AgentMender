@@ -208,9 +208,9 @@ verified management binding and independent human deletion remain acceptance gat
 Current **P0-S1: bounded content evidence with verified management exclusion**
 implements the bounded reader, grounded results and independent-registration
 refusal in [ADR-0026](adr/0026-bounded-conversation-reader-and-independent-registration.md).
-The next work is actual updated conversational use and independently verified real
-host binding/exclusivity. No indexing service, deletion authority, Claude mutation,
-deep-cleanup family or bulk operation is included.
+The [live MCP acceptance](milestones/p0-sr3-live-mcp-acceptance.md) verifies the
+updated content tools. The remaining work is independently verified real host
+binding.
 
 
 Audit baseline readiness: **READY WITH CONSTRAINTS**. Review the
@@ -245,8 +245,7 @@ protected-match, privacy, source isolation and 5,000-session pagination have fix
 coverage. See [the current search contract](session-search.md) and
 [ADR-0026](adr/0026-bounded-conversation-reader-and-independent-registration.md).
 
-P0-S1 remains **OPEN** until a genuine Codex conversation uses the updated content
-tool and its real management identity/connection exclusivity are independently
-verified. Close those gates before new deletion functionality; then P0-C2 adds the
-evidenced Claude read adapter and the same acceptance, without inferring mutation
-authority from read support. Historical P0-C1 deletion remains OPEN.
+P0-S1 remains **OPEN** on verified caller binding and automatic self-exclusion.
+Real updated content invocation passed in the live MCP acceptance. Close the
+caller gate before new deletion functionality. Historical P0-C1 deletion
+remains OPEN.

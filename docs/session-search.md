@@ -278,5 +278,7 @@ locator is exported. Only fixed active/archive counterparts of an absent locator
 are tried. Ambiguity, links, shared/nonregular sources and foreign headers refuse.
 There is no recursive discovery, root widening or credential/transport impersonation.
 The additive content_coverage is complete, partial, not_requested or
-unavailable_or_partial. Empty excerpts cannot prove absence; physical EOF of inline
-paginated history remains Partial. Missing real MISSION1 sources remain OPEN.
+unavailable_or_partial. Empty excerpts cannot prove absence. Physical EOF of inline
+paginated history remains Partial. The [live MCP acceptance](milestones/p0-sr3-live-mcp-acceptance.md)
+recovered the four nominated MISSION1 sources and verified their context through
+the restarted Desktop connection.
