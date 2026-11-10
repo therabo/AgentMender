@@ -54,3 +54,6 @@ registered filtering fixed, content/binding implementation deferred).
 - [ADR-0027: Structured queries and incremental conversation retrieval](0027-intelligent-session-retrieval.md) — Accepted; extends search without lifecycle authority.
 
 - [ADR-0028: Search reliability and query-scoped freshness](0028-search-reliability-and-scoped-freshness.md) — Accepted; P0-SR1 source diagnostics, scoped revalidation, context progress and incomplete-evidence acceptance.
+
+- [ADR-0029: Compressed native rollouts](0029-compressed-rollout-history.md) — Accepted SR2 representation; resource strategy extended by ADR-0030.
+- [ADR-0030: Bounded resident history decoding](0030-resident-bounded-history-decoding.md) — Accepted SR3 worker reuse, replay, physical/logical coverage; host admission remains closed.

@@ -1,6 +1,6 @@
 # Intelligent session search
 
-Current implementation contract, 2026-11-09. [ADR-0027](adr/0027-intelligent-session-retrieval.md)
+Current implementation contract, 2026-11-10. [ADR-0027](adr/0027-intelligent-session-retrieval.md)
 extends the historical P0-S1 reader. The [implementation report](milestones/intelligent-search-implementation.md)
 separates fixtures, real reads and actual conversational acceptance. Lifecycle
 admission, approval and transaction semantics are unchanged.
@@ -16,13 +16,13 @@ ingestion is added. Existing selected representations take precedence; histories
 are never merged. Evidence format ends in `message-zstd-v1` for compressed legacy
 or paginated display text. Paginated EOF still remains Partial.
 
-Compressed positions/checkpoints use decoded JSONL offsets; source length and
-revision bind the physical file. Seek/backward navigation replays bounded decoding.
-Limits are 64 MiB compressed file, 8 MiB decoder window and 128 MiB decoded work
-per reader, including replay, under the same deadline. Parser slice/aggregate
-bounds remain 12/32 MiB. `bytes_read` counts parsed decoded JSONL, excluding
-decoder read-ahead/replay and physical compressed I/O. Exceeding decoding bounds
-or detecting corruption is unavailable/UNKNOWN, never negative evidence.
+P0-SR3 removes total compressed-file size admission. Decoded positions and physical
+source revision remain separate. A bounded resident decoder/recent-byte working
+set replaces per-page replay from zero; cold jumps yield verified replay progress.
+Window, record, per-request work/input and deadlines remain enforced. Full details,
+including transient-state expiration, counters and operational limits, are in
+[progressive traversal](progressive-history.md). `bytes_read` still counts parsed
+JSONL; `coverage.work`/context `work` separately report decoder and replay work.
 Signed search tokens accept at most32KiB; HMAC, kind/process binding and64KiB
 request/80KiB projection limits remain. Large evidence-bearing cursors round-trip.
 
@@ -178,7 +178,7 @@ path identity are rechecked around source reads. Append, replacement or changed
 metadata invalidates old references rather than resolving them against new text.
 
 Default `session_context` preserves the prior bounded message operation. Optional
-`window` supports `around`, `forward`, `backward`, `turn`, and `occurrences` with
+`window` supports `start`, `around`, `forward`, `backward`, `turn`, and `occurrences` with
 an explicit query. It returns at most twenty messages/16 KiB per request; before
 and after are at most100. Long messages use UTF-8-safe subchunks retaining their
 parent ordinal and offsets. Set `window.message_offset:0` to retrieve a matched parent message from its
@@ -203,10 +203,13 @@ boundary. Custom-agent instructions do not sandbox inherited tools.
 The installed MCP interface does not independently attest a conversation UUID or
 exclusive per-chat connection. Titles, cwd, newest activity, model UUIDs,
 clientInfo and root-owned assertions do not prove routing. Production file-only
-binding admission is disabled. `purpose:"management"` therefore returns
+binding admission is disabled. Search defaults to management; `purpose:"management"` therefore returns
 `caller_identity_required` and **zero manageable candidates before provider access**.
 This mandatory acceptance condition remains OPEN until an enforceable host transport
 exists. Typed fixture identities test exclusion but do not admit the real client.
+
+Developer diagnostics require explicit `purpose:"diagnostic"`; no automatic fallback
+is permitted. See [the host investigation and missing contract](mcp-caller-identity.md).
 
 Explicit launch-protected identities are still excluded from diagnostic retrieval
 before counts, ranking, paging and context. Diagnostic results have no automatic
@@ -223,30 +226,30 @@ Persistent indexing requires explicit configuration; see [index storage and
 maintenance](full-text-index.md). Without it, FTS runs in memory over bounded
 source slices and AgentMender persists no extracted conversation text.
 
-## Practical calls
+## Practical calls (explicit developer diagnostics)
 
 Dates, including both October10 and20 in Rome:
 
 ```json
-{"query":"","structured":{"filter":{"op":"created","range":{"start_date":"2026-10-10","end_date":"2026-10-20","timezone":"Europe/Rome"}},"mode":"exhaustive","sort":"created"}}
+{"purpose":"diagnostic","query":"","structured":{"filter":{"op":"created","range":{"start_date":"2026-10-10","end_date":"2026-10-20","timezone":"Europe/Rome"}},"mode":"exhaustive","sort":"created"}}
 ```
 
 Before October15: use `end_date:"2026-10-14"`. Known non-MISSION1:
 
 ```json
-{"query":"","structured":{"filter":{"op":"not","arg":{"op":"project","values":["MISSION1"],"source":"observed_label"}},"mode":"exhaustive"}}
+{"purpose":"diagnostic","query":"","structured":{"filter":{"op":"not","arg":{"op":"project","values":["MISSION1"],"source":"observed_label"}},"mode":"exhaustive"}}
 ```
 
 Semantic candidate expansion (then Luna, retaining original hard conditions):
 
 ```json
-{"include_content":true,"structured":{"filter":{"op":"text","value":"slow orbital visualization","alternatives":["frame drops","Cesium camera","rendering bottlenecks"]},"mode":"ranked","sort":"relevance"}}
+{"purpose":"diagnostic","include_content":true,"structured":{"filter":{"op":"text","value":"slow orbital visualization","alternatives":["frame drops","Cesium camera","rendering bottlenecks"]},"mode":"ranked","sort":"relevance"}}
 ```
 
 Negative text requires full supported coverage:
 
 ```json
-{"include_content":true,"structured":{"filter":{"op":"not","arg":{"op":"text","value":"Cesium"}},"coverage":"complete"}}
+{"purpose":"diagnostic","include_content":true,"structured":{"filter":{"op":"not","arg":{"op":"text","value":"Cesium"}},"coverage":"complete"}}
 ```
 
 Context and another occurrence:

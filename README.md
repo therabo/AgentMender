@@ -1,15 +1,20 @@
 # AgentMender
 
-## P0-SR2 native history recovery
+## P0-SR3 progressive history
 
-Codex can compress rollouts while metadata still names the missing plain file.
-AgentMender now reads exact `.jsonl.zst` counterparts inside its existing isolated
-worker. All four nominated MISSION1 histories are searchable with neighboring
-context; coverage remains Partial. P0-SR1 pagination, privacy and incomplete-evidence
-safeguards are retained. Authenticated caller routing and full production acceptance
-remain OPEN. See [native history and limits](docs/native-history.md),
-[acceptance](docs/milestones/p0-sr2-native-history.md) and
-[ADR-0029](docs/adr/0029-compressed-rollout-history.md).
+Compressed sources are no longer refused because their total size exceeds 64 MiB.
+The existing isolated worker retains bounded decoder state across requests. All
+five known oversized histories and the same 330 identities reach physical EOF;
+all 330 remain logically Partial. Start/forward/backward/occurrence navigation,
+verified jumps and explicit replay continuations use the existing tools.
+See [traversal and operational limits](docs/progressive-history.md) and
+[acceptance](docs/milestones/p0-sr3-management-and-traversal.md).
+
+New MCP parents default search to management and refuse with zero candidates
+until an authenticated host route exists. Diagnostics require explicit
+`purpose:"diagnostic"`; they are not manageable-session lists. Real caller
+identification remains **OPEN**; [the missing host contract](docs/mcp-caller-identity.md)
+is explicit. No new deletion capability is introduced.
 
 AgentMender is an **MCP-native session lifecycle manager for AI coding agents**.
 Its initial target providers are **OpenAI Codex and Anthropic Claude Code**.
@@ -114,11 +119,12 @@ Search examples and semantics are in [session search](docs/session-search.md);
 text/terms, while [Luna Medium](docs/luna-session-relevance.md) analyzes bounded evidence.
 
 This mode uses the selected/default Codex home and locates the existing macOS
-bundled executable even without `codex` in PATH. No historical binary, synthetic
-provider root, approval store or caller UUID is needed to browse. Use explicit
+bundled executable even without `codex` in PATH. Explicit developer diagnostics need no historical binary, synthetic
+provider root, approval store or caller UUID; specify `purpose:"diagnostic"`. Use explicit
 root/executable paths when configuring a particular installation. Refresh only
 that MCP connection in the actual Codex client, then ask it to call
-`session_search` for your project. A registration in another application's web
+`session_search` with explicit `purpose:"diagnostic"` for a developer read test.
+An ordinary management request cannot fall back to diagnostics. A registration in another application's web
 Plugins screen is not proof that this chat has the tool.
 
 [Setup, current limits and human acceptance](docs/p0-c1-manual-acceptance.md).

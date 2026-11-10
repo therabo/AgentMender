@@ -53,3 +53,5 @@ to complete actual invocation, management binding and independent human executio
 [Real-world Codex compatibility and integration](p0-c1-real-world-integration.md): OPEN. Real protected metadata reads, installed-interface inspection, exact fixture cleanup and read-only client registration; actual model and independent human deletion gates remain open.
 
 Current read-only work: [P0-S1 content search implementation, OPEN acceptance](p0-s1-content-search.md).
+
+[P0-SR3 management identity and complete history traversal](p0-sr3-management-and-traversal.md): bounded size-independent physical traversal implemented; authenticated host identity and full milestone acceptance OPEN.

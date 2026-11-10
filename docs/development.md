@@ -1,5 +1,23 @@
 # Development and verification
 
+## P0-SR3 verification
+
+Run the full locked gates and semantic validator, plus reader, large single-frame,
+shared-caller and context tests. The ordinary disposable suite generates a valid
+144MiB decoded source whose compressed size exceeds64MiB, checks every visible
+record to EOF, start/forward/backward navigation and cold replay. It never writes
+real provider state. `rollout_reader` tests cover decoded-work exhaustion/resume,
+capacity bounds, corruption/truncation/windows and expired state.
+
+Benchmark the compiled test binary separately from compilation (for example
+`/usr/bin/time -l target/debug/deps/agentmender_provider_codex-<hash> --exact
+rollout_reader::tests::resident_stream_crosses_old_total_limit_without_replay_and_with_bounded_memory`).
+Real acceptance requires explicit diagnostic purpose, exact fixed UUID cohorts,
+new private receipt directories, source revision checks, all continuation pages,
+physical/logical coverage and separately labeled actual-client evidence. Sample
+reader/tree RSS independently of parsed-byte and decoded replay counters. Preserve
+failed attempts; never rerun a driver writing an older milestone's fixed directory.
+
 ## P0-SR2 verification
 
 Compressed fixtures cover decoding, decoded-offset continuation, context/chunks,

@@ -1,5 +1,17 @@
 # Luna session relevance
 
+## P0-SR3 navigation and authority
+
+Luna may use `start`, repeated forward/backward windows, occurrences, turns and
+source-bound long-distance jumps through the existing context tool. Empty replay
+windows are progress when their signed decoder frontier advances. Physical EOF
+and complete logical evidence are separate; Partial/unknown external history
+cannot establish session-wide absence. [Traversal](progressive-history.md).
+Management is now the default; unavailable binding must stop the manageable-list
+workflow. Explicit developer diagnostics must retain that purpose and label and
+must never be substituted silently. No deletion authority or additional model
+run/custom-agent routing acceptance is claimed.
+
 P0-SR2 compressed-source recovery supplies the same bounded evidence contract,
 with explicit Zstandard format provenance. It does not upgrade Partial evidence
 to complete, authenticate host/model-supplied transcripts, change Luna routing or

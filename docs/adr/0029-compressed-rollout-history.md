@@ -3,6 +3,8 @@
 ## Status
 
 Accepted, 2026-11-09, P0-SR2. Extends the existing provider-owned read path.
+P0-SR3 [ADR-0030](0030-resident-bounded-history-decoding.md) supersedes only the
+total compressed-size/cumulative replay strategy; the original receipt follows.
 
 ## Evidence and decision
 

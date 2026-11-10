@@ -1,5 +1,14 @@
 # Local full-text index
 
+## P0-SR3 traversal compatibility
+
+Resident decoding uses the existing source/index ports and source-bound positions;
+no index schema, private-retention default or provider authority is added. Physical
+EOF, logical completeness and detailed coverage remain distinct. Cached query
+facts do not manufacture a physical coverage certificate. A persisted checkpoint
+is a logical source position; transient decoder replay state can expire on worker
+restart, requiring a source replay/rebuild. See [traversal](progressive-history.md).
+
 ## P0-SR2 source representation
 
 The same read port supplies bounded decoded `.jsonl.zst` messages and explicit

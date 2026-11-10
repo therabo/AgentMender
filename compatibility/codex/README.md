@@ -1,5 +1,15 @@
 # Codex compatibility evidence
 
+## P0-SR3 observed read compatibility
+
+Desktop26.1103.60933/build25894 and CLI0.167.0-alpha.3.2 retain validated read-only
+metadata and plain/Zstandard legacy/paginated sources. The five67.5–148MB compressed
+sources and exact330-session cohort reach physical EOF; all logical histories stay
+Partial. No mutation profile transfers to this Desktop/CLI. Actual retained-client
+MISSION1 reads pass; updated-parent resident/default-management acceptance is OPEN
+because the connection could not be refreshed. Authenticated caller routing remains
+OPEN. [Receipt](../../docs/milestones/p0-sr3-management-and-traversal.md).
+
 ## P0-SR2 current history representation
 
 Desktop26.1103.41825/build25679, CLI0.167.0-alpha.3.2: all four nominated missing

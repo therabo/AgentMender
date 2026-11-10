@@ -1,5 +1,26 @@
 # AgentMender engineering constraints
 
+## P0-SR3 resident traversal and default management refusal
+
+Follow [ADR-0030](docs/adr/0030-resident-bounded-history-decoding.md),
+[progressive traversal](docs/progressive-history.md) and
+[host identity](docs/mcp-caller-identity.md). Total compressed file length is not an
+admission limit. Keep bounded per-operation decoding/input, window, record, output,
+recent-buffer capacity, resident-reader count and deadlines. Reuse only exact
+root/path/UUID/revision state inside the existing confined worker; no transcript
+spool, portable decoder snapshot, source writer or new database. Lost required
+replay state refuses; no identical successful continuation. EOF is not logical
+paginated completeness. Context suffixes cannot attest prefix coverage. Preserve
+exact context-locator/source revalidation when unrelated metadata changes.
+
+New MCP search defaults to management and fails before source reads without a
+verified host route. Diagnostics require explicit purpose; never silently fall
+back. Arbitrary `_meta.threadId`, model arguments, transport IDs, process identity
+and privileged declarations cannot create caller authority. Typed shared-reader
+fixtures are not actual-host exclusion acceptance. Retained EOF-framed parents
+receive compatible small-source output; required resident replay refuses until
+only that MCP connection is refreshed. Never restart Codex automatically.
+
 ## P0-SR2 compressed history
 
 Follow [ADR-0029](docs/adr/0029-compressed-rollout-history.md). Missing plain
@@ -7,7 +28,7 @@ locators may use their exact `.jsonl.zst` counterpart before fixed relocation.
 Decode only in the existing attested worker; never materialize into provider
 state or start App Server for content. Decoded offsets differ from physical
 source size/revision. Preserve explicit compressed evidence formats, decoder
-window/file/replay/deadline bounds, header UUID, NOFOLLOW/unshared identity and
+window/per-operation work/deadline bounds, header UUID, NOFOLLOW/unshared identity and
 source revalidation. Corruption/work limits cannot prove absence. History SQL,
 host/model transcript ingestion and imports are not admitted. Signed search
 tokens admit at most 32 KiB; retain HMAC kind/process binding and frame limits.

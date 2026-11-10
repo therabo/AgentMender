@@ -1,5 +1,19 @@
 # MCP interface
 
+## P0-SR3 management default and resident history
+
+`session_search` now defaults to management and returns zero candidates before
+source reads without an authenticated host route. Developer diagnostics require
+explicit `purpose:"diagnostic"`; there is no fallback. `_meta.threadId` is not
+admitted caller authority. [Identity contract](mcp-caller-identity.md).
+
+`session_context.window.direction:"start"` begins at the first available supported
+message. Signed replay/forward/backward continuations traverse bounded source
+operations; `work` and `source_coverage` separate resource work, physical EOF and
+logical completeness. [Traversal contract](progressive-history.md). Refresh only
+AgentMender to load the new parent. The retained parent can read compatible small
+sources but cannot attest SR3 resident traversal/defaults. No Codex restart.
+
 ## P0-SR2 history reads
 
 The same search/context tools now consume bounded compressed rollouts through

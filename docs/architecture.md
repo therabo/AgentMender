@@ -1,5 +1,14 @@
 # Architecture and capability boundaries
 
+## P0-SR3 resident decoding
+
+[ADR-0030](adr/0030-resident-bounded-history-decoding.md) retains the same eight
+crates and read ports. Provider-codex owns bounded raw Zstandard state and framed
+worker reuse; CLI retains the adapter; domain owns replay/coverage values; MCP
+seals/projections remain inbound only. No new storage or mutation authority.
+[Traversal](progressive-history.md) describes limits, source freshness and privacy;
+[caller identity](mcp-caller-identity.md) explains why management stays closed.
+
 ## P0-SR2 native history representation
 
 [ADR-0029](adr/0029-compressed-rollout-history.md) adds bounded Zstandard rollout

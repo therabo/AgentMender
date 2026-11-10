@@ -1,6 +1,6 @@
 # Codex native history sources and read boundary
 
-P0-SR2 investigation, 2026-11-09–10. Installed desktop26.1103.41825/build25679,
+P0-SR2 source investigation, updated by P0-SR3 on 2026-11-10. Installed desktop26.1103.41825/build25679,
 CLI0.167.0-alpha.3.2. [ADR-0029](adr/0029-compressed-rollout-history.md) records the
 decision; [acceptance](milestones/p0-sr2-native-history.md) separates its proof levels.
 
@@ -68,17 +68,14 @@ unknown shapes cannot prove absence. Luna's incomplete-evidence guard is unchang
 
 ## Bounds, privacy and client state
 
-Compressed file size is capped at64MiB, decoder window at8MiB, and decoded work
-including replay at128MiB per reader. Decoding streams without whole-file memory
-allocation or provider materialization. Existing8-second worker deadline,
-12MiB/session slice,32MiB parsed-byte aggregate,8MiB record and output bounds stay.
-Context may open one backward probe plus one stream, each bounded under the same
-deadline. Replaying prefixes costs work; this is not constant-time random access.
-
-`bytes_read` measures parsed decoded JSONL, excluding decoder read-ahead/replay,
-physical compressed reads and metadata backup. It is not total disk I/O. Closed
-errors distinguish compressed corruption, physical size and decoded work limits.
-They preserve UNKNOWN. Five real cohort files exceed64MiB and remain unavailable.
+P0-SR3 supersedes the total64MiB file bound and cumulative replay ceiling. Total
+physical compressed length is no longer a rejection criterion. The existing
+confined worker retains bounded decoder state and a recent-byte working set;
+per-request decoding/input, window, parser, output and deadlines remain enforced.
+[Progressive traversal](progressive-history.md) defines exact budgets, replay,
+backwards/start navigation, coverage and counters. All five former size refusals
+reach physical EOF. All330 remain logically Partial; external paginated history
+and unsupported records are not silently hydrated or counted as complete.
 
 No decoded file/index is persisted by default. Pattern suppression and inert
 evidence treatment precede scoring/projection. Historical tools/reasoning/system
@@ -87,7 +84,8 @@ and client/model processing keep their existing separate privacy choices.
 
 Evidence-bearing signed cursors now accept up to32KiB, within the existing64KiB
 request frame. HMAC kind/process binding is unchanged. This corrects a real emitted
-cursor exceeding the old4KiB input limit. Parent changes require a fresh MCP parent.
+cursor exceeding the old4KiB input limit. Parent changes require a fresh MCP parent. SR3 preserves compatible small-source
+reads for retained EOF-framed parents but refuses required resident replay.
 
 The observed chat still reports the earlier registration instance after a
 user-reported connection refresh. The new worker is proven through actual chat
