@@ -85,6 +85,12 @@ No local LLM or new natural-language interpretation service is required.
 
 ## Intelligent retrieval delivery — current checkpoint
 
+P0-SR5.1 adds [SearchIntent v1](intent-aware-resolution.md) for ordinary
+requests and preserves the advanced Boolean contract. Project mentions are
+topical hints until the request explicitly limits membership. Real-client
+acceptance and host routing are tracked in the
+[SR5.1 report](milestones/p0-sr5-1-search-intent-acceptance.md).
+
 P0-SR5 implements caller-scoped intent and outcome resolution through the
 existing Codex host and FTS5-backed read service. The implementation
 supports single, multiple, ambiguous and incomplete results. Promotion

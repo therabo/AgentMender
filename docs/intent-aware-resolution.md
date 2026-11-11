@@ -87,7 +87,8 @@ route. Both routes use the same evaluator and three-valued logic.
    available evidence cannot justify a conclusion.
 4. Submit `assess` with each presented identity, disposition, citable handles,
    observed outcomes and a short explanation. A v1 positive assessment for a
-   specific activity needs evidence of that activity. Implementation,
+   specific activity needs evidence in the candidate itself. Treat a lookup
+   that points to work in another conversation as related. Implementation,
    investigation, testing and validation use the corresponding observed
    outcome. Discussion, decision and troubleshooting include `activity`.
    An insufficient judgment can describe the gap in its explanation or use
