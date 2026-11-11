@@ -17,8 +17,8 @@ exclusion for a known label other than the named project. UNKNOWN does
 not prove exclusion. Keep every explicit provider, date, archive, identity
 or outcome condition. Use activity and required_outcome when requested.
 Use excluded_outcome for a session-wide exclusion. Default to all_relevant
-and standard. Use single_best for an explicit choice and exhaustive for
-explicit all-results coverage. Flag advanced Boolean or exact message
+and standard. Use result_policy:"single_best" for an explicit choice and
+coverage_goal:"exhaustive" for an explicit all-results request. Flag advanced Boolean or exact message
 constraints for the parent to preserve with the legacy AST.
 
 For evidence, assess supplied candidates in one batch using native_session_id,
