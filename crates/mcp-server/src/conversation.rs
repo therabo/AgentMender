@@ -1049,7 +1049,7 @@ fn resolution_request(args: &serde_json::Value) -> Result<ResolutionAction, Erro
         // argument content in its unknown-field, variant and type diagnostics.
         let message = error.to_string();
         if message.starts_with("unknown field") {
-            resolution_invalid("unknown_field", "Remove unknown fields. SearchIntent v1 requires schema_version, subject and hints.terms.")
+            resolution_invalid("unknown_field", r#"Remove unknown fields. Minimal start: {"action":"start","search_intent":{"schema_version":"1","subject":"topic","hints":{"terms":["term"]}}}."#)
         } else if message.starts_with("unknown variant") {
             resolution_invalid("invalid_enum", "Use an enum value from the advertised schema.")
         } else if args.get("action").and_then(serde_json::Value::as_str) == Some("expand") {
@@ -1385,7 +1385,7 @@ pub(super) fn tools(discovery: bool) -> Vec<Tool> {
         ));
         registry.insert(0, (
             "session_resolve",
-            "Find and verify past Codex conversations for an ordinary natural-language request. Start with search_intent v1 and a few distinctive terms. Project mentions are topical hints unless the user explicitly restricts stored membership. All supported matches are the default. Use Luna Medium for interpretation and evidence assessment. The originating chat calls start, context, assess, next and finish. For a finished scan with insufficient recall, expand once with new terms under the frozen constraints. Publish fresh finish evidence, and report coverage gaps. The legacy intent argument supports exact Boolean constraints. Read-only with implicit caller exclusion.",
+            r#"Find and verify past Codex conversations. Ordinary start example: {"action":"start","search_intent":{"schema_version":"1","subject":"Cesium rendering performance","hints":{"terms":["Cesium"]}}}. Project mentions are topical hints unless the user explicitly restricts stored membership. All supported matches are the default. Use Luna Medium for interpretation and assessment. The originating chat executes one MCP call at a time, keeps the run, and publishes fresh finish evidence with coverage gaps. Use context, assess and next. For insufficient recall after a finished scan, expand once with new terms on the same run. The legacy intent argument supports exact Boolean constraints. Read-only with implicit caller exclusion."#,
             resolution_schema(),
             schema::<ResolutionView>(),
             true,
