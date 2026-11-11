@@ -945,8 +945,8 @@ impl ResolutionInput {
                 expansion: None,
             } => {
                 let terms: Vec<String> = terms.into_iter().map(|term| term.0).collect();
-                let expansion = search_intent::compile_expansion(&terms).map_err(intent_error)?;
-                Action::ExpandTerms { run, expansion }
+                search_intent::compile_expansion(&terms).map_err(intent_error)?;
+                Action::ExpandTerms { run, terms }
             }
             Self::Expand {
                 run,
@@ -1044,24 +1044,15 @@ fn resolution_request(args: &serde_json::Value) -> Result<ResolutionAction, Erro
     {
         return Err(intent_error(SearchIntentError::UnsupportedSchemaVersion));
     }
-    let action = args.get("action").and_then(serde_json::Value::as_str);
     let input: ResolutionInput = serde_json::from_value(args.clone()).map_err(|error| {
         // Only return sanitized categories. Serde's error can include private
         // argument content in its unknown-field, variant and type diagnostics.
         let message = error.to_string();
-        if message.starts_with("unknown field") && action == Some("assess") {
-            resolution_invalid("unknown_field",
-                "Use native_session_id, disposition, evidence (integer handles), outcomes and explanation for each assessment.")
-        } else if message.starts_with("unknown field") {
+        if message.starts_with("unknown field") {
             resolution_invalid("unknown_field", r#"Remove unknown fields. Minimal start: {"action":"start","search_intent":{"schema_version":"1","subject":"topic","hints":{"terms":["term"]}}}."#)
         } else if message.starts_with("unknown variant") {
-            let correction = if action == Some("assess") {
-                "Check the outcome enums and disposition: verified_relevant, related, contradiction or insufficient."
-            } else {
-                "Use an enum value from the advertised schema."
-            };
-            resolution_invalid("invalid_enum", correction)
-        } else if action == Some("expand") {
+            resolution_invalid("invalid_enum", "Use an enum value from the advertised schema.")
+        } else if args.get("action").and_then(serde_json::Value::as_str) == Some("expand") {
             intent_error(SearchIntentError::InvalidQueryExpansion)
         } else {
             resolution_invalid("invalid_resolution_request",
@@ -1394,7 +1385,7 @@ pub(super) fn tools(discovery: bool) -> Vec<Tool> {
         ));
         registry.insert(0, (
             "session_resolve",
-            r#"Find verified past conversations. Start once with {"action":"start","search_intent":{"schema_version":"1","subject":"Cesium performance","hints":{"terms":["Cesium"]}}}. Keep explicit constraints separate from topical hints. Assess the first useful batch. For work performed elsewhere, classify a later lookup as related. Request context only for a specific gap. Finish a supported standard answer on the same run. If no match is supported and more_candidates is true, use next. For an explicit all-results request set coverage_goal:"exhaustive" and continue within the budget. Use one vocabulary expansion only after the initial scan ends. Execute calls sequentially. Only finish.matches with evidence refs are verified. The legacy intent supports exact Boolean constraints."#,
+            r#"Find and verify past Codex conversations. Ordinary start example: {"action":"start","search_intent":{"schema_version":"1","subject":"Cesium rendering performance","hints":{"terms":["Cesium"]}}}. Project mentions are topical hints unless the user explicitly restricts stored membership. All supported matches are the default. Use Luna Medium for interpretation and assessment. The originating chat executes one MCP call at a time, keeps the run, and publishes fresh finish evidence with coverage gaps. Use context, assess and next. For insufficient recall after a finished scan, expand once with new terms on the same run. The legacy intent argument supports exact Boolean constraints. Read-only with implicit caller exclusion."#,
             resolution_schema(),
             schema::<ResolutionView>(),
             true,

@@ -128,7 +128,7 @@ pub enum TextMatch {
     Exact,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 pub enum QueryExpr {
     And {
@@ -231,7 +231,7 @@ impl TimeRange {
 #[error("invalid date, timezone, ambiguous boundary or empty/reversed interval")]
 pub struct QueryTimeError;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CalendarRange {
     #[serde(default)]
@@ -240,7 +240,7 @@ pub struct CalendarRange {
     pub end_date: Option<String>,
     pub timezone: String,
 }
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum QueryRange {
     Utc(TimeRange),

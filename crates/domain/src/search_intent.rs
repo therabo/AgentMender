@@ -141,8 +141,16 @@ pub struct ValidatedSearchIntent {
 }
 
 impl ValidatedSearchIntent {
-    pub fn into_parts(self) -> (SearchIntent, Option<QueryExpr>, QueryExpr) {
-        (self.intent, self.hard_filter, self.lexical)
+    pub fn intent(&self) -> &SearchIntent {
+        &self.intent
+    }
+
+    pub fn hard_filter(&self) -> Option<&QueryExpr> {
+        self.hard_filter.as_ref()
+    }
+
+    pub fn lexical(&self) -> &QueryExpr {
+        &self.lexical
     }
 }
 
@@ -274,19 +282,11 @@ impl SearchConstraints {
     }
 }
 
-pub struct LexicalExpansion(QueryExpr);
-
-impl LexicalExpansion {
-    pub fn into_query(self) -> QueryExpr {
-        self.0
-    }
-}
-
-pub fn compile_expansion(terms: &[String]) -> Result<LexicalExpansion, SearchIntentError> {
+pub fn compile_expansion(terms: &[String]) -> Result<QueryExpr, SearchIntentError> {
     if terms.is_empty() || !bounded_list(terms, EXPANSION_LIMIT, TERM_LIMIT) {
         return Err(SearchIntentError::InvalidQueryExpansion);
     }
-    Ok(LexicalExpansion(lexical_query(terms)))
+    Ok(lexical_query(terms))
 }
 
 fn lexical_query(terms: &[String]) -> QueryExpr {

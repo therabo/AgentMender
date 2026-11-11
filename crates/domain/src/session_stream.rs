@@ -45,7 +45,7 @@ pub struct MessagePosition {
     pub chunk_total: usize,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TranscriptCheckpoint {
     #[serde(default)]
@@ -194,7 +194,7 @@ pub struct CachedSessionSearch {
 }
 
 /// Keyset boundary between bounded metadata windows; time values are UTC seconds.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct InventoryBoundary {
     pub native_session_id: String,

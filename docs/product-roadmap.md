@@ -85,11 +85,6 @@ No local LLM or new natural-language interpretation service is required.
 
 ## Intelligent retrieval delivery — current checkpoint
 
-P0-SR5.2 simplifies the ordinary search workflow and removes repeated work
-in the existing resolver and provider. See the
-[SR5.2 acceptance report](milestones/p0-sr5-2-single-search-acceptance.md)
-for controlled acquisition and live orchestration results.
-
 P0-SR5.1 adds [SearchIntent v1](intent-aware-resolution.md) for ordinary
 requests and preserves the advanced Boolean contract. Project mentions are
 topical hints until the request explicitly limits membership. Real-client

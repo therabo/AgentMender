@@ -296,24 +296,29 @@ fn query_metadata_facts(query: &QueryExpr, metadata: &SessionMetadata) -> serde_
     }
 }
 fn metadata_fingerprint(
-    candidate: &Candidate,
+    metadata: &SessionMetadata,
+    path: &Option<PathBuf>,
     p: &SearchParameters,
     root: &Path,
-    ranking: bool,
     source_revision: bool,
 ) -> Result<Vec<u8>, ProviderError> {
-    let metadata = &candidate.metadata;
     let sort = p.structured.as_ref().map(|q| q.sort);
     let facts = p
         .structured
         .as_ref()
         .map(|q| query_metadata_facts(&q.filter, metadata));
-    let reads_content = p.reads_content();
-    let revision = if source_revision && reads_content {
-        open_transcript(candidate, root)
-            .ok()
-            .and_then(|(f, _)| f.metadata().ok())
-            .map(|m| stamp(&m))
+    let ranking = !p.ranking_terms().is_empty();
+    let revision = if source_revision && p.reads_content() {
+        open_transcript(
+            &Candidate {
+                metadata: metadata.clone(),
+                path: path.clone(),
+            },
+            root,
+        )
+        .ok()
+        .and_then(|(f, _)| f.metadata().ok())
+        .map(|m| stamp(&m))
     } else {
         None
     };
@@ -323,7 +328,7 @@ fn metadata_fingerprint(
         (sort == Some(SearchSort::Created)).then_some(metadata.created_at),
         (sort == Some(SearchSort::LastActive)).then_some(metadata.last_active_at),
         ranking.then_some((&metadata.title, &metadata.project_label)),
-        reads_content.then_some(&candidate.path),
+        p.reads_content().then_some(path),
         revision,
     ))
     .map_err(|_| unavailable())
@@ -414,8 +419,6 @@ fn inventory(
         _ => None,
     };
     let excluded = serde_json::to_string(&excluded).map_err(|_| unavailable())?;
-    let ranking_terms = p.ranking_terms();
-    let ranking = !ranking_terms.is_empty();
     // Hash the fixed metadata inventory with constant auxiliary memory. This is
     // independent of the current 10,000-row window and rejects insertions or
     // reorderings anywhere in the corpus before reusing a keyset boundary.
@@ -438,7 +441,13 @@ fn inventory(
         previous_id = Some(id);
         let candidate = candidate_row(row, root)?;
         if candidate_eligible(&candidate, p) {
-            corpus.update(metadata_fingerprint(&candidate, p, root, ranking, false)?);
+            corpus.update(metadata_fingerprint(
+                &candidate.metadata,
+                &candidate.path,
+                p,
+                root,
+                false,
+            )?);
         }
     }
     let corpus_fingerprint = hash(&corpus.finalize());
@@ -483,6 +492,7 @@ fn inventory(
         .structured
         .as_ref()
         .is_some_and(|q| q.sort == SearchSort::DiscoveryPriority);
+    let priority_terms = if priority { p.ranking_terms() } else { vec![] };
     let mut prioritized = vec![];
     let stop = request
         .continuation
@@ -513,34 +523,36 @@ fn inventory(
                 _ => None,
             },
         });
-        let candidate = candidate_row(row, root)?;
-        if !candidate_eligible(&candidate, p) {
+        let Candidate { metadata, path } = candidate_row(row, root)?;
+        if p.project_label
+            .as_ref()
+            .is_some_and(|label| metadata.project_label.as_ref() != Some(label))
+        {
+            continue;
+        }
+        if p.structured
+            .as_ref()
+            .is_some_and(|q| q.filter.metadata_truth(&metadata) == Truth::False)
+        {
             continue;
         }
         // Resolution observes each source independently. A live unrelated
         // source may grow without invalidating the scan order. The in-flight
         // source checkpoint and all citations still require exact revisions.
-        digest.update(metadata_fingerprint(
-            &candidate, p, root, ranking, !priority,
-        )?);
+        digest.update(metadata_fingerprint(&metadata, &path, p, root, !priority)?);
         if priority {
-            let title = candidate
-                .metadata
-                .title
-                .as_deref()
-                .unwrap_or_default()
-                .to_lowercase();
-            let weight: usize = ranking_terms
+            let title = metadata.title.as_deref().unwrap_or_default().to_lowercase();
+            let weight: usize = priority_terms
                 .iter()
                 .filter(|term| title.contains(term.as_str()))
                 .map(|term| term.len().min(32))
                 .sum();
             prioritized.push((
                 std::cmp::Reverse(weight),
-                candidate.metadata.native_session_id,
+                metadata.native_session_id.clone(),
             ));
         } else if eligible >= request.continuation.start && eligible < stop {
-            batch.push(candidate);
+            batch.push(Candidate { metadata, path });
         }
         eligible += 1;
     }
@@ -1249,18 +1261,12 @@ fn search(
     let mut batch_digest = Sha256::new();
     let mut inspected = 0;
     let mut pending = None;
-    let required_terms = request.parameters.terms();
-    let terms = request.parameters.ranking_terms();
-    let mut ranking_query = String::new();
-    for term in terms.iter().take(64) {
-        if ranking_query.len() + term.len() + 1 > 4096 {
-            break;
-        }
-        if !ranking_query.is_empty() {
-            ranking_query.push(' ');
-        }
-        ranking_query.push_str(term);
+    let mut terms = request.parameters.terms();
+    if let Some(q) = &request.parameters.structured {
+        terms.extend(q.filter.text_terms());
     }
+    terms.sort();
+    terms.dedup();
     for candidate in &inventory.batch {
         if Instant::now() >= end
             || coverage.bytes_read >= SEARCH_BYTES
@@ -1356,7 +1362,11 @@ fn search(
                                 cached.content_complete,
                             )
                         });
-                    let legacy_match = required_terms.iter().all(|t| matched_terms.contains(t));
+                    let legacy_match = request
+                        .parameters
+                        .terms()
+                        .iter()
+                        .all(|t| matched_terms.contains(t));
                     let truth = truth.and(legacy_truth(
                         &request.parameters,
                         legacy_match,
@@ -1416,7 +1426,13 @@ fn search(
         let mut status = "not_requested";
         let mut content_complete = false;
         let mut source_coverage = None;
-        if request.parameters.reads_content() {
+        if request.parameters.include_content
+            || request
+                .parameters
+                .structured
+                .as_ref()
+                .is_some_and(|q| q.filter.needs_content())
+        {
             let limit = SESSION_SLICE_BYTES.min(SEARCH_BYTES.saturating_sub(coverage.bytes_read));
             match transcript_stream(candidate, root, limit, &mut coverage.bytes_read, end, prior) {
                 Ok(observation) => {
@@ -1425,7 +1441,34 @@ fn search(
                     coverage.suppressed_records += observation.suppressed;
                     content_complete = status == "supported";
                     batch_digest.update(observation.fingerprint.as_bytes());
+                    let mut fts = agentmender_persistence::SearchTextIndex::memory()
+                        .map_err(|_| unavailable())?;
                     for message in &observation.messages {
+                        let mut chunk_start = 0;
+                        let mut chunk = 0;
+                        while chunk_start < message.text.len() {
+                            if Instant::now() >= end {
+                                break;
+                            }
+                            let mut chunk_end = (chunk_start + 64 * 1024).min(message.text.len());
+                            while !message.text.is_char_boundary(chunk_end) {
+                                chunk_end -= 1;
+                            }
+                            fts.add_chunk(
+                                message.index as u64,
+                                chunk,
+                                &message.text[chunk_start..chunk_end],
+                            )
+                            .map_err(|_| unavailable())?;
+                            if chunk_end == message.text.len() {
+                                break;
+                            }
+                            chunk_start = chunk_end.saturating_sub(128);
+                            while !message.text.is_char_boundary(chunk_start) {
+                                chunk_start += 1;
+                            }
+                            chunk += 1;
+                        }
                         let count = rank.observe(message.source, &message.text);
                         if let Some(q) = &request.parameters.structured {
                             q.filter.observe(
@@ -1440,7 +1483,10 @@ fn search(
                                 },
                             );
                         }
-                        if count > 0 {
+                        let structured_match = terms
+                            .iter()
+                            .any(|term| message.text.to_lowercase().contains(term));
+                        if count > 0 || structured_match {
                             let (excerpt, truncated) = bounded_excerpt(&message.text, &terms, 320);
                             evidence.push(ConversationEvidence {
                                 source: message.source.into(),
@@ -1454,6 +1500,21 @@ fn search(
                             });
                         }
                     }
+                    let mut ranking_query = String::new();
+                    for term in terms.iter().take(64) {
+                        if ranking_query.len() + term.len() + 1 > 4096 {
+                            break;
+                        }
+                        if !ranking_query.is_empty() {
+                            ranking_query.push(' ');
+                        }
+                        ranking_query.push_str(term);
+                    }
+                    let ranked = if ranking_query.is_empty() {
+                        vec![]
+                    } else {
+                        fts.rank(&ranking_query, 100).unwrap_or_default()
+                    };
                     let earlier = if request
                         .parameters
                         .structured
@@ -1466,51 +1527,16 @@ fn search(
                     } else {
                         vec![]
                     };
-                    // BM25 uses all messages in a slice when there is
-                    // evidence to rank. Empty evidence needs no index.
-                    let ranked = if evidence.is_empty() || ranking_query.is_empty() {
-                        vec![]
-                    } else {
-                        let mut fts = agentmender_persistence::SearchTextIndex::memory()
-                            .map_err(|_| unavailable())?;
-                        for message in &observation.messages {
-                            let mut chunk_start = 0;
-                            let mut chunk = 0;
-                            while chunk_start < message.text.len() {
-                                if Instant::now() >= end {
-                                    break;
-                                }
-                                let mut chunk_end =
-                                    (chunk_start + 64 * 1024).min(message.text.len());
-                                while !message.text.is_char_boundary(chunk_end) {
-                                    chunk_end -= 1;
-                                }
-                                fts.add_chunk(
-                                    message.index as u64,
-                                    chunk,
-                                    &message.text[chunk_start..chunk_end],
-                                )
-                                .map_err(|_| unavailable())?;
-                                if chunk_end == message.text.len() {
-                                    break;
-                                }
-                                chunk_start = chunk_end.saturating_sub(128);
-                                while !message.text.is_char_boundary(chunk_start) {
-                                    chunk_start += 1;
-                                }
-                                chunk += 1;
-                            }
-                        }
-                        fts.rank(&ranking_query, 100).unwrap_or_default()
-                    };
-                    evidence.sort_by_cached_key(|e| {
-                        (
+                    evidence.sort_by(|a, b| {
+                        let order = |e: &ConversationEvidence| {
                             ranked
                                 .iter()
                                 .position(|(i, _)| *i == e.record_index as u64)
-                                .unwrap_or(usize::MAX),
-                            e.record_index,
-                        )
+                                .unwrap_or(usize::MAX)
+                        };
+                        order(a)
+                            .cmp(&order(b))
+                            .then_with(|| a.record_index.cmp(&b.record_index))
                     });
                     evidence.dedup_by_key(|e| e.record_index);
                     if !earlier.is_empty() {
@@ -1573,7 +1599,9 @@ fn search(
         matched_terms.dedup();
         match_sources.sort();
         match_sources.dedup();
-        let legacy_match = required_terms
+        let legacy_match = request
+            .parameters
+            .terms()
             .iter()
             .all(|term| matched_terms.contains(term));
         let truth = request
@@ -2409,7 +2437,25 @@ fn capture_request(request: &Request) -> Result<Response, ProviderError> {
     let end = Instant::now() + Duration::from_secs(8);
     rollout_reader::work_reset();
     let before = capture::fingerprints(&request.source_root)?;
-    let memory = read_snapshot(&request.source_root, end)?;
+    let source = Connection::open_with_flags(
+        request.source_root.join("state_5.sqlite"),
+        OpenFlags::SQLITE_OPEN_READ_ONLY
+            | OpenFlags::SQLITE_OPEN_NO_MUTEX
+            | OpenFlags::SQLITE_OPEN_NOFOLLOW,
+    )
+    .map_err(|_| unavailable())?;
+    capture::configure(&source)?;
+    source
+        .execute_batch("PRAGMA query_only=ON")
+        .map_err(|_| unavailable())?;
+    let mut memory = Connection::open_in_memory().map_err(|_| unavailable())?;
+    capture::configure(&memory)?;
+    capture::bounded_backup(
+        &source,
+        &mut memory,
+        end.min(Instant::now() + Duration::from_secs(3)),
+    )?;
+    drop(source);
     let result = (|| -> Result<Response, ProviderError> {
         let result = match request.operation {
             Operation::Search(ref query) => {

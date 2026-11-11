@@ -118,7 +118,7 @@ pub struct ManagementIdentity {
     pub revision: String,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SearchContinuation {
     pub scope: String,
@@ -148,7 +148,7 @@ pub struct SearchReadRequest {
     pub continuation: SearchContinuation,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ConversationEvidence {
     pub source: String,

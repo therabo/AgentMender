@@ -1386,28 +1386,6 @@ fn search_intent_v1_preserves_cross_project_eligibility_and_verified_cardinality
         )["error"],
         "invalid_assessment"
     );
-    let first = assessment(&initial)
-        .into_iter()
-        .find(|assessment| assessment["native_session_id"] == T)
-        .unwrap();
-    assert_eq!(
-        call(
-            &mut client,
-            json!({"action":"assess","run":run,"assessments":[first]})
-        )["stage"],
-        "assessed"
-    );
-    let early = call(&mut client, json!({"action":"finish","run":run}));
-    assert_eq!(early["outcome"], "incomplete_search");
-    assert_eq!(ids(&early, "matches"), set(&[T]));
-    assert_eq!(
-        early["matches"][0]["evidence_refs"]
-            .as_array()
-            .unwrap()
-            .len(),
-        1
-    );
-
     assert_eq!(
         call(
             &mut client,
