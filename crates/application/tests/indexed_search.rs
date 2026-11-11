@@ -364,6 +364,48 @@ fn bounded_build_resumes_chunks_and_reuses_canonical_eof_without_duplicate_docum
 }
 
 #[test]
+fn discovery_match_proposes_only_eligible_cache_sources_and_keeps_live_fallback() {
+    let f = Fixture::new();
+    f.reader
+        .put("allowed", "r1", &[&[(2, 0, "Cesium results")]], true);
+    f.reader
+        .put("protected", "r1", &[&[(2, 0, "Cesium results")]], true);
+    f.reader.put(
+        "split",
+        "r1",
+        &[&[(2, 0, "Ces")], &[(2, 3, "ium results")]],
+        true,
+    );
+    let mut index = f.index();
+    f.build(&mut index, 10);
+    let mut request = structured(text("Cesium", TextMatch::Contains));
+    request.parameters.purpose = SearchPurpose::Discovery;
+    request.parameters.structured.as_mut().unwrap().sort = SearchSort::DiscoveryPriority;
+    request
+        .excluded
+        .push(f.reader.metadata("protected").identity);
+    let page = IndexedSearchReader {
+        reader: &f.reader,
+        index: Arc::new(Mutex::new(index)),
+        root: &f.root,
+    }
+    .search_sessions(&request)
+    .unwrap();
+    assert_eq!(
+        page.sessions
+            .iter()
+            .map(|hit| hit.metadata.native_session_id.as_str())
+            .collect::<Vec<_>>(),
+        ["allowed", "split"]
+    );
+    let calls = f.reader.searches.lock().unwrap();
+    let [candidate] = calls.last().unwrap().cached.as_slice() else {
+        panic!("expected one eligible MATCH proposal")
+    };
+    assert_eq!(candidate.native_session_id, "allowed");
+}
+
+#[test]
 fn cached_exact_phrase_and_negation_reassemble_message_chunks_before_evaluation() {
     let f = Fixture::new();
     f.reader.put(

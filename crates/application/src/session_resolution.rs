@@ -1,9 +1,13 @@
 //! Read-only resolution state for one originating Codex conversation.
+mod progressive;
+pub use progressive::{Advance, AdvanceResult, ContextRequest, TerminalOutcome, WINDOW_BATCH};
+
 use crate::{ApplicationError, QueryControl, TargetSelector, session_search::SessionSearchService};
 pub use agentmender_domain::search_intent::Outcome;
 use agentmender_domain::{
     search_intent::{
-        CoverageGoal, ResultPolicy, SearchActivity, ValidatedSearchIntent, compile_expansion,
+        CoverageGoal, ResultPolicy, SearchActivity, SearchIntent, ValidatedSearchIntent,
+        compile_expansion,
     },
     *,
 };
@@ -15,16 +19,16 @@ use std::{
 };
 
 const RUN_LIMIT: usize = 4;
-const WORK_TIME: Duration = Duration::from_secs(480);
+const LEGACY_WORK_TIME: Duration = Duration::from_secs(480);
 const RUN_RETENTION: Duration = Duration::from_secs(600);
 const SCAN_TIME: Duration = Duration::from_secs(5);
 const SCAN_BATCH: usize = 12;
-const SCAN_LIMIT: usize = 256;
-const CANDIDATE_LIMIT: usize = 96;
+const LEGACY_SCAN_LIMIT: usize = 256;
+const LEGACY_CANDIDATE_LIMIT: usize = 96;
 const CANDIDATE_BATCH: usize = 5;
 const CONTEXT_LIMIT: usize = 24;
 const CONTEXT_BYTES: usize = 128 * 1024;
-const ASSESSMENT_LIMIT: usize = 48;
+const LEGACY_ASSESSMENT_LIMIT: usize = 48;
 const RESULT_BATCH: usize = 5;
 
 #[derive(Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
@@ -44,7 +48,7 @@ pub enum AnswerFocus {
     Chronology,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Intent {
     pub question: String,
@@ -79,10 +83,10 @@ impl Intent {
         if !bounded_text(&self.question, 1024)
             || self.required_outcomes.len() > 4
             || !bounded_hint(&self.literal)
-            || self.expansion.as_ref().is_some_and(|q| {
-                !bounded_hint(q)
-                    || serde_json::to_value(q).ok() == serde_json::to_value(&self.literal).ok()
-            })
+            || self
+                .expansion
+                .as_ref()
+                .is_some_and(|q| !bounded_hint(q) || q == &self.literal)
         {
             return Err(ApplicationError::InvalidSearch);
         }
@@ -154,7 +158,16 @@ pub enum Disposition {
     Insufficient,
 }
 
-#[derive(Clone, Deserialize, Serialize)]
+#[derive(Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EvidenceRelationship {
+    Direct,
+    Discussion,
+    Retrospective,
+    Contradiction,
+}
+
+#[derive(Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Assessment {
     pub native_session_id: String,
@@ -164,6 +177,8 @@ pub struct Assessment {
     pub outcomes: Vec<Outcome>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub activity: Option<SearchActivity>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub relationship: Option<EvidenceRelationship>,
     pub explanation: String,
     #[serde(default)]
     pub missing_evidence: Option<String>,
@@ -173,7 +188,14 @@ pub struct Assessment {
 
 pub enum ResolutionAction {
     Start(Box<Intent>),
-    StartV1(Box<ValidatedSearchIntent>),
+    StartV1 {
+        plan: Box<ValidatedSearchIntent>,
+        progressive: bool,
+    },
+    Advance {
+        run: String,
+        step: Box<Advance>,
+    },
     Next {
         run: String,
     },
@@ -205,7 +227,7 @@ pub enum ResolutionAction {
 
 impl ResolutionAction {
     pub fn is_start(&self) -> bool {
-        matches!(self, Self::Start(_) | Self::StartV1(_))
+        matches!(self, Self::Start(_) | Self::StartV1 { .. })
     }
 }
 
@@ -227,6 +249,14 @@ pub enum ResolutionError {
         "The run's context, assessment or duration budget is exhausted. Finish with the available evidence."
     )]
     BudgetExceeded,
+    #[error("Use advance with the current run revision and a new operation ID.")]
+    InvalidAdvance,
+    #[error("Another operation changed the run. Use its latest revision.")]
+    RevisionConflict,
+    #[error("Assess the outstanding candidate batch before requesting more candidates.")]
+    AssessmentRequired,
+    #[error("The resolver has no free run slot. Finish or cancel an existing run.")]
+    RunCapacity,
 }
 
 impl ResolutionError {
@@ -237,6 +267,10 @@ impl ResolutionError {
             Self::InvalidAssessment => "invalid_assessment",
             Self::InvalidPreference => "invalid_preference",
             Self::BudgetExceeded => "budget_exceeded",
+            Self::InvalidAdvance => "invalid_advance",
+            Self::RevisionConflict => "resolution_revision_conflict",
+            Self::AssessmentRequired => "assessment_required",
+            Self::RunCapacity => "resolution_run_capacity",
         }
     }
 }
@@ -247,12 +281,14 @@ pub struct MatchBasis {
     expansion: Option<Truth>,
 }
 
+#[derive(Clone)]
 pub struct Citation {
     pub handle: usize,
     pub reference: ContextReference,
     pub evidence: ConversationEvidence,
 }
 
+#[derive(Clone)]
 pub struct ResolutionCandidate {
     pub metadata: SessionMetadata,
     pub match_basis: MatchBasis,
@@ -260,6 +296,7 @@ pub struct ResolutionCandidate {
     pub evidence: Vec<Citation>,
 }
 
+#[derive(Clone)]
 pub struct ResolvedCandidate {
     pub metadata: SessionMetadata,
     pub assessment: Assessment,
@@ -300,29 +337,52 @@ pub struct ResolutionProgress {
     pub insufficient: usize,
     pub context_requests: usize,
     pub context_bytes: usize,
+    #[serde(skip_serializing_if = "is_zero_u64")]
+    pub context_decoded_bytes: u64,
+    #[serde(skip_serializing_if = "is_zero_u64")]
+    pub context_replay_bytes: u64,
     pub invalid_assessments: usize,
     pub freshness_failures: usize,
+    #[serde(skip_serializing_if = "is_zero")]
+    pub source_reanchors: usize,
+    #[serde(skip_serializing_if = "is_zero")]
+    pub publication_checks: usize,
+    #[serde(skip_serializing_if = "ProviderWork::is_empty")]
+    pub provider_work: ProviderWork,
     pub scan_complete: bool,
     pub more_candidates: bool,
     pub stop_reason: Option<&'static str>,
 }
 
+fn is_zero(value: &usize) -> bool {
+    *value == 0
+}
+
+fn is_zero_u64(value: &u64) -> bool {
+    *value == 0
+}
+
+#[derive(Clone)]
+pub struct ResolutionWindow {
+    pub messages: Vec<Citation>,
+    pub source_coverage: SourceCoverage,
+    pub work: ReadWork,
+    pub next: Option<usize>,
+    pub previous: Option<usize>,
+    pub partial: bool,
+    pub at_start: bool,
+    pub at_end: bool,
+}
+
+#[derive(Clone)]
 pub enum ResolutionData {
     Candidates {
         candidates: Vec<ResolutionCandidate>,
         query: Option<Box<QueryExpr>>,
     },
-    Context {
-        messages: Vec<Citation>,
-        source_coverage: SourceCoverage,
-        work: ReadWork,
-        next: Option<usize>,
-        previous: Option<usize>,
-        partial: bool,
-        at_start: bool,
-        at_end: bool,
-    },
+    Context(Box<ResolutionWindow>),
     Assessed,
+    Advanced(Box<AdvanceResult>),
     Finished {
         outcome: ResolutionOutcome,
         matches: Vec<ResolvedCandidate>,
@@ -336,6 +396,8 @@ pub struct ResolutionResponse {
     pub run: String,
     pub focus: AnswerFocus,
     pub coverage_goal: Option<CoverageGoal>,
+    pub revision: Option<usize>,
+    pub progressive_coverage: Option<progressive::Coverage>,
     pub progress: ResolutionProgress,
     pub data: ResolutionData,
 }
@@ -349,6 +411,7 @@ struct Anchor {
     citable: bool,
 }
 
+#[derive(Clone)]
 struct Candidate {
     hit: SessionSearchHit,
     basis: MatchBasis,
@@ -357,12 +420,13 @@ struct Candidate {
     scan_pass: usize,
 }
 
+#[derive(Clone)]
 struct Run {
     binding: String,
     instance: String,
     started: Instant,
     intent: Intent,
-    search_intent: Option<Box<ValidatedSearchIntent>>,
+    search_intent: Option<Arc<SearchIntent>>,
     parameters: SearchParameters,
     original_filter: Option<QueryExpr>,
     next: Option<SearchContinuation>,
@@ -373,8 +437,11 @@ struct Run {
     assessment_batches: usize,
     revision: usize,
     publication: Option<Publication>,
+    stream: Option<progressive::Stream>,
+    last_used: Instant,
 }
 
+#[derive(Clone)]
 struct Publication {
     luna_unavailable: bool,
     preferred_session_id: Option<String>,
@@ -398,7 +465,7 @@ impl ResolutionStore {
         control.check()?;
         let binding = service.binding(SearchPurpose::Discovery)?;
         self.runs
-            .retain(|_, run| run.started.elapsed() < RUN_RETENTION);
+            .retain(|_, run| run.last_used.elapsed() < RUN_RETENTION);
         let (id, action) = match action {
             ResolutionAction::Start(intent) => {
                 let parameters = intent.parameters()?;
@@ -409,8 +476,8 @@ impl ResolutionStore {
                     Run::new(binding, service.instance, *intent, parameters, None),
                 );
             }
-            ResolutionAction::StartV1(plan) => {
-                let spec = plan.intent();
+            ResolutionAction::StartV1 { plan, progressive } => {
+                let (spec, hard_filter, literal) = plan.into_parts();
                 let intent = Intent {
                     question: spec.subject.clone(),
                     cardinality: match spec.result_policy {
@@ -427,21 +494,21 @@ impl ResolutionStore {
                         .into_iter()
                         .chain(spec.activity.evidence_outcome())
                         .collect(),
-                    hard_filter: plan.hard_filter().cloned(),
-                    literal: plan.lexical().clone(),
+                    hard_filter,
+                    literal,
                     expansion: None,
                 };
                 let parameters = intent.compile_parameters()?;
-                return self.start(
-                    service,
-                    control,
-                    new_id,
-                    Run::new(binding, service.instance, intent, parameters, Some(plan)),
-                );
+                let mut run = Run::new(binding, service.instance, intent, parameters, Some(spec));
+                if progressive {
+                    run.enable_stream()?;
+                }
+                return self.start(service, control, new_id, run);
             }
             action => {
                 let id = match &action {
                     ResolutionAction::Next { run }
+                    | ResolutionAction::Advance { run, .. }
                     | ResolutionAction::Expand { run, .. }
                     | ResolutionAction::ExpandTerms { run, .. }
                     | ResolutionAction::Context { run, .. }
@@ -459,13 +526,21 @@ impl ResolutionStore {
         if run.binding != binding || run.instance != service.instance {
             return Err(run.contract_error(ResolutionError::StaleSearchRun));
         }
-        if run.started.elapsed() >= WORK_TIME && run.progress.stop_reason.is_none() {
+        if let ResolutionAction::Advance { step, .. } = action {
+            return run.advance(service, control, id, *step);
+        }
+        if run.stream.is_some() {
+            return Err(ResolutionError::InvalidAdvance.into());
+        }
+        if run.started.elapsed() >= LEGACY_WORK_TIME && run.progress.stop_reason.is_none() {
             run.progress.stop_reason = Some("resolution_duration_limit");
             run.publication = None;
             run.revision += 1;
         }
         let data = match action {
-            ResolutionAction::Start(_) | ResolutionAction::StartV1(_) => {
+            ResolutionAction::Start(_)
+            | ResolutionAction::StartV1 { .. }
+            | ResolutionAction::Advance { .. } => {
                 unreachable!("start returned")
             }
             ResolutionAction::Next { .. } => run.scan(service, control, false)?,
@@ -492,7 +567,7 @@ impl ResolutionStore {
                 run.expand(service, control, expansion)?
             }
             ResolutionAction::Context { anchor, window, .. } => {
-                run.context(service, control, anchor, window)?
+                ResolutionData::Context(Box::new(run.context(service, control, anchor, window)?))
             }
             ResolutionAction::Assess { assessments, .. } => run.assess(assessments)?,
             ResolutionAction::Finish {
@@ -523,16 +598,28 @@ impl ResolutionStore {
         if self.runs.contains_key(&id) {
             return Err(ApplicationError::InvalidSearch);
         }
-        let data = run.scan(service, control, true)?;
+        let reclaim = if self.runs.len() >= RUN_LIMIT {
+            Some(
+                self.runs
+                    .iter()
+                    .filter(|(_, run)| run.can_reclaim())
+                    .min_by_key(|(_, run)| run.last_used)
+                    .map(|(key, _)| key.clone())
+                    .ok_or(ResolutionError::RunCapacity)?,
+            )
+        } else {
+            None
+        };
+        let data = match run.scan(service, control, true) {
+            Ok(data) => data,
+            Err(
+                error @ (ApplicationError::Provider(_) | ApplicationError::StaleSearchEvidence),
+            ) if run.stream.is_some() => run.blocked(error.public_code()),
+            Err(error) => return Err(error),
+        };
         let result = run.response(id.clone(), data);
-        if self.runs.len() >= RUN_LIMIT
-            && let Some(oldest) = self
-                .runs
-                .iter()
-                .min_by_key(|(_, run)| run.started)
-                .map(|(key, _)| key.clone())
-        {
-            self.runs.remove(&oldest);
+        if let Some(reclaim) = reclaim {
+            self.runs.remove(&reclaim);
         }
         self.runs.insert(id, run);
         Ok(result)
@@ -540,19 +627,26 @@ impl ResolutionStore {
 }
 
 impl Run {
+    fn has_source_gaps(&self) -> bool {
+        self.progress.unknown != 0
+            || self.progress.partial_sources != 0
+            || self.progress.unavailable_sources != 0
+            || self.progress.suppressed_records != 0
+    }
+
     fn new(
         binding: String,
         instance: &str,
         intent: Intent,
         parameters: SearchParameters,
-        search_intent: Option<Box<ValidatedSearchIntent>>,
+        search_intent: Option<SearchIntent>,
     ) -> Self {
         Self {
             binding,
             instance: instance.to_owned(),
             started: Instant::now(),
             intent,
-            search_intent,
+            search_intent: search_intent.map(Arc::new),
             parameters,
             original_filter: None,
             next: None,
@@ -566,6 +660,8 @@ impl Run {
             assessment_batches: 0,
             revision: 0,
             publication: None,
+            stream: None,
+            last_used: Instant::now(),
         }
     }
 
@@ -581,15 +677,14 @@ impl Run {
 
     fn response(&self, run: String, data: ResolutionData) -> ResolutionResponse {
         let mut progress = self.progress.clone();
-        progress.more_candidates = progress.candidates_presented < self.candidates.len()
+        progress.more_candidates = self.presented() < self.candidates.len()
             || (!progress.scan_complete && progress.stop_reason.is_none());
         ResolutionResponse {
             run,
             focus: self.intent.focus,
-            coverage_goal: self
-                .search_intent
-                .as_ref()
-                .map(|p| p.intent().coverage_goal),
+            coverage_goal: self.search_intent.as_ref().map(|p| p.coverage_goal),
+            revision: self.stream.as_ref().map(|_| self.revision),
+            progressive_coverage: self.stream.as_ref().map(|_| self.stream_coverage()),
             progress,
             data,
         }
@@ -602,24 +697,46 @@ impl Run {
         first: bool,
     ) -> Result<ResolutionData, ApplicationError> {
         let started = Instant::now();
-        let first_index = self.progress.candidates_presented;
+        let mut reanchored = false;
+        let first_index = self.presented();
         let want = first_index + CANDIDATE_BATCH;
         for _ in 0..SCAN_BATCH {
             if self.progress.scan_complete
                 || self.progress.stop_reason.is_some()
                 || self.candidates.len() >= want
+                || (self.stream.is_some() && self.candidates.len() > first_index)
                 || started.elapsed() >= SCAN_TIME
             {
                 break;
             }
-            if self.progress.provider_pages >= SCAN_LIMIT {
+            if self.stream.is_none() && self.progress.provider_pages >= LEGACY_SCAN_LIMIT {
                 self.progress.stop_reason = Some("search_work_limit");
                 break;
             }
             let tick = Instant::now();
-            let result =
+            let mut result =
                 service.search(self.parameters.clone(), self.next.clone(), control.clone());
             self.progress.provider_pages += 1;
+            if !reanchored
+                && started.elapsed() < SCAN_TIME
+                && matches!(result, Err(ApplicationError::StaleSearchEvidence))
+                && let Some(retry) = self.reanchor_source()
+            {
+                reanchored = true;
+                // A new read of this unfinished source keeps the same
+                // eligibility and order commitments. Membership drift still
+                // refuses. Earlier candidate batches are never rescanned.
+                result = service.search(
+                    self.parameters.clone(),
+                    Some(retry.clone()),
+                    control.clone(),
+                );
+                self.progress.provider_pages += 1;
+                if result.is_ok() {
+                    self.next = Some(retry);
+                    self.progress.source_reanchors += 1;
+                }
+            }
             self.progress.retrieval_ms += tick.elapsed().as_millis() as u64;
             let result = match result {
                 Ok(result) => result,
@@ -635,13 +752,14 @@ impl Run {
             if result.binding_revision != self.binding {
                 return Err(ApplicationError::StaleSearchEvidence);
             }
-            let page = result.page;
+            let mut page = result.page;
             let coverage = page.coverage;
             self.progress.bytes_read += coverage.bytes_read;
             self.progress.records_inspected += coverage.work.records_inspected;
             self.progress.compressed_bytes += coverage.work.compressed_bytes;
             self.progress.decoded_bytes += coverage.work.decoded_bytes;
             self.progress.replay_bytes += coverage.work.replay_bytes;
+            self.progress.provider_work.add(&coverage.work.provider);
             self.progress.sources_inspected += coverage.sessions_inspected;
             self.progress.physically_traversed += coverage.fully_traversed_sessions;
             self.progress.partial_sources += coverage.truncated_sessions;
@@ -649,10 +767,16 @@ impl Run {
             self.progress.unknown += coverage.unresolved_sessions;
             self.progress.suppressed_records += coverage.suppressed_records;
 
-            if page.next.is_some()
-                && serde_json::to_vec(&page.next).ok() == serde_json::to_vec(&self.next).ok()
+            if let Some(next) = &page.next
+                && (page.next == self.next
+                    || self.stream.is_some()
+                        && !progressive::cursor_advances(self.next.as_ref(), next))
             {
                 self.progress.stop_reason = Some("no_search_progress");
+                break;
+            }
+            if self.stream.is_some() && !self.observe_batch_order(&mut page.sessions) {
+                self.progress.stop_reason = Some("unstable_candidate_order");
                 break;
             }
             self.next = page.next;
@@ -664,7 +788,16 @@ impl Run {
             self.publication = None;
         }
         let end = want.min(self.candidates.len());
-        let candidates = self.candidates[first_index..end]
+        let candidates = self.candidate_batch(first_index, end);
+        self.progress.candidates_presented += end - first_index;
+        Ok(ResolutionData::Candidates {
+            candidates,
+            query: (first && self.search_intent.is_none()).then(|| Box::new(self.filter().clone())),
+        })
+    }
+
+    fn candidate_batch(&self, start: usize, end: usize) -> Vec<ResolutionCandidate> {
+        self.candidates[start..end]
             .iter()
             .map(|candidate| ResolutionCandidate {
                 metadata: candidate.hit.metadata.clone(),
@@ -676,17 +809,16 @@ impl Run {
                     .zip(&candidate.hit.evidence)
                     .map(|(&handle, evidence)| Citation {
                         handle,
-                        reference: self.anchors[handle].reference.clone(),
+                        reference: self
+                            .anchor(handle)
+                            .expect("active anchor")
+                            .reference
+                            .clone(),
                         evidence: evidence.clone(),
                     })
                     .collect(),
             })
-            .collect();
-        self.progress.candidates_presented = end;
-        Ok(ResolutionData::Candidates {
-            candidates,
-            query: (first && self.search_intent.is_none()).then(|| Box::new(self.filter().clone())),
-        })
+            .collect()
     }
 
     fn expand(
@@ -698,7 +830,7 @@ impl Run {
         if self.intent.expansion.is_some()
             || !self.progress.scan_complete
             || self.progress.stop_reason.is_some()
-            || self.progress.provider_pages >= SCAN_LIMIT
+            || self.stream.is_none() && self.progress.provider_pages >= LEGACY_SCAN_LIMIT
         {
             return Err(self.contract_error(ResolutionError::InvalidQueryExpansion));
         }
@@ -761,7 +893,7 @@ impl Run {
         } else if basis.expansion == Some(Truth::True) {
             self.progress.expansion_only_candidates += 1;
         }
-        if self.candidates.len() >= CANDIDATE_LIMIT {
+        if self.stream.is_none() && self.candidates.len() >= LEGACY_CANDIDATE_LIMIT {
             self.progress.stop_reason = Some("candidate_limit");
             return;
         }
@@ -801,11 +933,11 @@ impl Run {
                 && a.continuation == anchor.continuation
                 && a.citable == anchor.citable
         }) {
-            return index;
+            return self.anchor_base() + index;
         }
         let index = self.anchors.len();
         self.anchors.push(anchor);
-        index
+        self.anchor_base() + index
     }
 
     fn context(
@@ -814,11 +946,10 @@ impl Run {
         control: &QueryControl,
         handle: usize,
         options: Option<ContextOptions>,
-    ) -> Result<ResolutionData, ApplicationError> {
+    ) -> Result<ResolutionWindow, ApplicationError> {
         let anchor = self
-            .anchors
-            .get(handle)
-            .filter(|a| a.candidate < self.progress.candidates_presented)
+            .anchor(handle)
+            .filter(|a| a.candidate < self.presented())
             .cloned()
             .ok_or(ApplicationError::InvalidSearch)?;
         let options = match (anchor.continuation.clone(), options) {
@@ -826,6 +957,11 @@ impl Run {
             (None, Some(options)) => options,
             (None, None) => ContextOptions {
                 max_bytes: 4096,
+                max_messages: if self.stream.is_some() {
+                    5
+                } else {
+                    ContextOptions::default().max_messages
+                },
                 ..Default::default()
             },
             (Some(_), Some(_)) => return Err(ApplicationError::InvalidSearch),
@@ -833,9 +969,14 @@ impl Run {
         if !options.valid() || self.requested_windows.contains(&(handle, options.clone())) {
             return Err(ApplicationError::InvalidSearch);
         }
-        if self.started.elapsed() >= WORK_TIME
-            || self.progress.context_requests >= CONTEXT_LIMIT
-            || self.progress.context_bytes + options.max_bytes > CONTEXT_BYTES
+        let context_requests = if self.stream.is_some() {
+            self.requested_windows.len()
+        } else {
+            self.progress.context_requests
+        };
+        if (self.stream.is_none() && self.started.elapsed() >= LEGACY_WORK_TIME)
+            || context_requests >= CONTEXT_LIMIT
+            || self.active_context_bytes() + options.max_bytes > CONTEXT_BYTES
         {
             return Err(self.contract_error(ResolutionError::BudgetExceeded));
         }
@@ -852,6 +993,9 @@ impl Run {
         let result = result?;
         let next_options = result.next_options();
         let window = result.window;
+        self.progress.provider_work.add(&window.work.provider);
+        self.progress.context_decoded_bytes += window.work.decoded_bytes;
+        self.progress.context_replay_bytes += window.work.replay_bytes;
         if window.next.as_ref() == Some(&anchor.reference)
             && next_options.as_ref() == Some(&options)
         {
@@ -906,7 +1050,7 @@ impl Run {
                 citable: false,
             })
         });
-        Ok(ResolutionData::Context {
+        Ok(ResolutionWindow {
             messages,
             next,
             previous,
@@ -919,7 +1063,10 @@ impl Run {
     }
 
     fn assess(&mut self, assessments: Vec<Assessment>) -> Result<ResolutionData, ApplicationError> {
-        if self.started.elapsed() >= WORK_TIME || self.assessment_batches >= ASSESSMENT_LIMIT {
+        if self.stream.is_none()
+            && (self.started.elapsed() >= LEGACY_WORK_TIME
+                || self.assessment_batches >= LEGACY_ASSESSMENT_LIMIT)
+        {
             return Err(self.contract_error(ResolutionError::BudgetExceeded));
         }
         self.assessment_batches += 1;
@@ -934,11 +1081,9 @@ impl Run {
                 {
                     assessment.missing_evidence = Some(assessment.explanation.clone());
                 }
-                let candidate = self.candidates[..self.progress.candidates_presented]
-                    .iter()
-                    .position(|c| {
-                        c.hit.metadata.native_session_id == assessment.native_session_id
-                    })?;
+                let candidate = self.candidates[..self.presented()].iter().position(|c| {
+                    c.hit.metadata.native_session_id == assessment.native_session_id
+                })?;
                 let refs: BTreeSet<_> = assessment.evidence.iter().copied().collect();
                 let insufficient = assessment.disposition == Disposition::Insufficient;
                 let valid = seen.insert(candidate)
@@ -954,12 +1099,11 @@ impl Run {
                     && refs.len() <= 4
                     && (insufficient || !refs.is_empty())
                     && refs.iter().all(|&i| {
-                        self.anchors
-                            .get(i)
+                        self.anchor(i)
                             .is_some_and(|a| a.candidate == candidate && a.citable)
                     })
                     && (assessment.disposition != Disposition::VerifiedRelevant
-                        || self.supports_intent(&assessment, &self.candidates[candidate]));
+                        || self.supports_intent(&assessment));
                 valid.then_some((candidate, assessment))
             })
             .collect();
@@ -967,42 +1111,60 @@ impl Run {
             self.progress.invalid_assessments += 1;
             return Err(self.contract_error(ResolutionError::InvalidAssessment));
         };
+        if self.stream.is_some()
+            && updates
+                .iter()
+                .all(|(i, assessment)| self.candidates[*i].assessment.as_ref() == Some(assessment))
+        {
+            return Err(ResolutionError::InvalidAdvance.into());
+        }
         for (i, assessment) in updates {
             self.candidates[i].assessment = Some(assessment);
         }
-        self.progress.assessments = self
-            .candidates
-            .iter()
-            .filter(|c| c.assessment.is_some())
-            .count();
-        self.progress.insufficient = self
-            .candidates
-            .iter()
-            .filter(|c| {
-                c.assessment
-                    .as_ref()
-                    .is_some_and(|a| a.disposition == Disposition::Insufficient)
-            })
-            .count();
+        self.refresh_assessment_counts();
         self.revision += 1;
         self.publication = None;
         Ok(ResolutionData::Assessed)
     }
 
-    fn supports_intent(&self, assessment: &Assessment, candidate: &Candidate) -> bool {
-        self.intent
-            .required_outcomes
-            .iter()
-            .all(|o| assessment.outcomes.contains(o))
-            && self.search_intent.as_ref().is_none_or(|plan| {
-                let intent = plan.intent();
+    fn refresh_assessment_counts(&mut self) {
+        self.progress.assessments = self.stream.as_ref().map_or(0, |s| s.assessed)
+            + self
+                .candidates
+                .iter()
+                .filter(|c| c.assessment.is_some())
+                .count();
+        self.progress.insufficient = self.stream.as_ref().map_or(0, |s| s.insufficient)
+            + self
+                .candidates
+                .iter()
+                .filter(|c| {
+                    c.assessment
+                        .as_ref()
+                        .is_some_and(|a| a.disposition == Disposition::Insufficient)
+                })
+                .count();
+    }
+
+    fn supports_intent(&self, assessment: &Assessment) -> bool {
+        assessment
+            .relationship
+            .is_none_or(|relationship| relationship == EvidenceRelationship::Direct)
+            && (self.stream.is_none()
+                || assessment.relationship == Some(EvidenceRelationship::Direct))
+            && self
+                .intent
+                .required_outcomes
+                .iter()
+                .all(|o| assessment.outcomes.contains(o))
+            && self.search_intent.as_ref().is_none_or(|intent| {
                 (intent.activity == SearchActivity::Any
                     || assessment.activity == Some(intent.activity)
                     || (intent.activity.evidence_outcome().is_some()
                         && assessment.activity.is_none()))
-                    && intent.excluded_outcome.is_none_or(|excluded| {
-                        candidate.hit.content_complete && !assessment.outcomes.contains(&excluded)
-                    })
+                    // A complete source scan certifies lexical observations.
+                    // The resolver has no complete semantic-review receipt.
+                    && intent.excluded_outcome.is_none()
             })
     }
 
@@ -1018,7 +1180,7 @@ impl Run {
         if (offset > 0 || revision.is_some()) && revision != Some(self.revision) {
             return Err(ApplicationError::StaleSearchEvidence);
         }
-        let v1 = self.search_intent.as_ref().map(|plan| plan.intent());
+        let v1 = self.search_intent.as_deref();
         if let Some(preferred) = &preferred_session_id
             && (!v1.is_some_and(|spec| spec.result_policy == ResultPolicy::SingleBest)
                 || !self.candidates.iter().any(|candidate| {
@@ -1066,7 +1228,8 @@ impl Run {
             let ambiguous = self.intent.cardinality == AnswerCardinality::Single
                 && preferred_session_id.is_none()
                 && positives + plausible > 1;
-            let outcome = if !complete && (v1.is_some() || !ambiguous) {
+            let unresolved_absence = v1.is_some() && positives == 0 && self.has_source_gaps();
+            let outcome = if unresolved_absence || !complete && (v1.is_some() || !ambiguous) {
                 ResolutionOutcome::IncompleteSearch
             } else if ambiguous {
                 ResolutionOutcome::Ambiguous
@@ -1104,7 +1267,12 @@ impl Run {
                         citations: assessment
                             .evidence
                             .iter()
-                            .map(|&i| self.anchors[i].reference.clone())
+                            .map(|&i| {
+                                self.anchor(i)
+                                    .expect("active assessed anchor")
+                                    .reference
+                                    .clone()
+                            })
                             .collect(),
                     })
                 })
@@ -1390,7 +1558,10 @@ mod tests {
         let start = store
             .execute(
                 &service,
-                ResolutionAction::StartV1(Box::new(spec.validate().unwrap())),
+                ResolutionAction::StartV1 {
+                    plan: Box::new(spec.validate().unwrap()),
+                    progressive: false,
+                },
                 Some("run".into()),
                 &control,
             )

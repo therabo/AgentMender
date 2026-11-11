@@ -5,7 +5,7 @@ use std::{
     collections::VecDeque,
     fs::File,
     io::{self, Read, Seek, SeekFrom},
-    time::Instant,
+    time::{Duration, Instant},
 };
 use zstd::stream::raw::{DParameter, Decoder, Operation};
 
@@ -32,6 +32,36 @@ pub(super) fn work() -> ReadWork {
 }
 pub(super) fn record_inspected() {
     WORK.with(|w| w.borrow_mut().records_inspected += 1);
+}
+pub(super) fn record_fts(build: Duration, query: Duration) {
+    WORK.with(|work| {
+        let mut work = work.borrow_mut();
+        work.provider.fts_builds += 1;
+        work.provider.fts_build_us += build.as_micros() as u64;
+        work.provider.fts_query_us += query.as_micros() as u64;
+    });
+}
+
+pub(super) fn record_metadata_row() {
+    WORK.with(|w| w.borrow_mut().provider.metadata_rows += 1);
+}
+
+#[cfg(target_os = "macos")]
+pub(super) fn record_hash_bytes(bytes: u64) {
+    WORK.with(|w| w.borrow_mut().provider.metadata_hash_bytes += bytes);
+}
+
+#[cfg(target_os = "macos")]
+pub(super) fn record_snapshot(elapsed: Option<Duration>) {
+    WORK.with(|w| {
+        let mut work = w.borrow_mut();
+        if let Some(elapsed) = elapsed {
+            work.provider.sqlite_snapshots += 1;
+            work.provider.sqlite_backup_us += elapsed.as_micros() as u64;
+        } else {
+            work.provider.sqlite_snapshot_reuses += 1;
+        }
+    });
 }
 fn failure(code: &'static str) -> io::Error {
     io::Error::other(code)

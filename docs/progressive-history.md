@@ -15,8 +15,9 @@ inside the existing kernel-confined content worker. It handles concatenated fram
 and validates their termination; corrupt/truncated frames cannot certify EOF.
 
 The CLI retains one read adapter for its MCP connection. A serialized, bounded
-JSONL exchange reuses its isolated worker. Each operation takes a fresh metadata
-snapshot, deadline and source validation. EOF on the input closes the worker;
+JSONL exchange reuses its isolated worker. Each operation takes a deadline and source validation. A worker can reuse
+the prior bounded metadata snapshot only at an unchanged root and exact
+DB/WAL/SHM fingerprints. It verifies the files again after the operation. EOF on the input closes the worker;
 parent drop terminates only its own reader. A failed transport operation is not
 retried. No live Codex App Server, external database or provider writer is started.
 

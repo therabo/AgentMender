@@ -141,6 +141,10 @@ pub struct ValidatedSearchIntent {
 }
 
 impl ValidatedSearchIntent {
+    pub fn into_parts(self) -> (SearchIntent, Option<QueryExpr>, QueryExpr) {
+        (self.intent, self.hard_filter, self.lexical)
+    }
+
     pub fn intent(&self) -> &SearchIntent {
         &self.intent
     }

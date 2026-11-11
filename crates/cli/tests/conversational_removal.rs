@@ -1246,7 +1246,13 @@ fn search_intent_v1_preserves_cross_project_eligibility_and_verified_cardinality
         .unwrap();
     let input = &resolver["inputSchema"];
     assert_eq!(input["type"], "object");
-    assert_eq!(input["oneOf"].as_array().unwrap().len(), 8);
+    assert!(
+        input["oneOf"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|branch| { branch["properties"]["action"]["const"] == "advance" })
+    );
     assert_eq!(
         input["$defs"]["SearchIntentInput"]["required"],
         json!(["schema_version", "subject", "hints"])
@@ -1509,4 +1515,181 @@ fn search_intent_v1_preserves_cross_project_eligibility_and_verified_cardinality
     );
     client.close();
     assert_eq!(tree_bytes(&root), before);
+}
+
+#[test]
+fn resolution_cannot_infer_absence_from_a_missing_source() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().canonicalize().unwrap();
+    let root = path.join("provider");
+    let files = seed(&root, &path.join("MISSION1"));
+    let (source, _) = files
+        .iter()
+        .find(|(path, _)| path.to_string_lossy().contains(T))
+        .unwrap();
+    fs::remove_file(source).unwrap();
+    let fake = root.join("unused-provider");
+    let home = PathBuf::from(std::env::var_os("HOME").unwrap())
+        .canonicalize()
+        .unwrap();
+    let mut client = Client::connect(base(&root, &fake, &home).args(["mcp", "--session-search"]));
+    let mut call = |arguments| {
+        client.exchange(json!({
+            "jsonrpc":"2.0","id":1,"method":"tools/call","params":{
+                "name":"session_resolve","_meta":{"threadId":M},"arguments":arguments
+            }
+        }))["result"]["structuredContent"]
+            .clone()
+    };
+    let started = call(json!({"action":"start","search_intent":{
+        "schema_version":"1","subject":"Find a camera implementation",
+        "constraints":{"native_session_id":T},"hints":{"terms":["camera"]}
+    }}));
+    assert_eq!(started["progress"]["scan_complete"], true, "{started}");
+    assert_eq!(started["progress"]["unknown"], 1, "{started}");
+    let result = call(json!({"action":"finish","run":started["run"]}));
+    assert_eq!(result["outcome"], "incomplete_search", "{result}");
+    assert_eq!(result["matches"], json!([]));
+    for (id, expected) in [
+        (T, "partial"),
+        (
+            "00000000-0000-4000-8000-000000000001",
+            "completed_no_matches",
+        ),
+    ] {
+        let started = call(json!({"action":"start","progressive":true,"search_intent":{
+            "schema_version":"1","subject":"Find a camera implementation",
+            "constraints":{"native_session_id":id},"hints":{"terms":["camera"]}
+        }}));
+        let finished = call(json!({"action":"advance","run":started["run"],
+            "expected_revision":started["step_revision"],"operation_id":"finish"}));
+        assert_eq!(finished["outcome"], expected, "{finished}");
+        assert_eq!(finished["matches"], json!([]));
+        assert_eq!(finished["progressive_coverage"]["inventory_complete"], true);
+        assert_eq!(
+            finished["progressive_coverage"]["eligible_evaluation_complete"],
+            id != T
+        );
+    }
+    client.close();
+}
+
+#[test]
+fn progressive_resolution_drains_all_batches_and_revalidates_replayed_publication() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().canonicalize().unwrap();
+    let root = path.join("provider");
+    seed(&root, &path.join("MISSION1"));
+    let db = Connection::open(root.join("state_5.sqlite")).unwrap();
+    let mut sources = BTreeMap::new();
+    for i in 1..=105 {
+        let id = format!("00000000-0000-4000-8000-{i:012}");
+        let source = root.join("sessions").join(format!("rollout-{id}.jsonl"));
+        let header = json!({"type":"session_meta","payload":{"id":id,"cli_version":"0.166.0"}});
+        let message = json!({"type":"response_item","payload":{"type":"message","role":"assistant",
+            "content":[{"type":"output_text","text":"FleetProbe tests passed in this session."}]}});
+        fs::write(&source, format!("{header}\n{message}\n")).unwrap();
+        db.execute("INSERT INTO threads(id,rollout_path,created_at,updated_at,source,model_provider,cwd,title,sandbox_policy,approval_mode,cli_version,preview,first_user_message) VALUES (?1,?2,1,2,'cli','openai','/fixture/Fleet','Duplicate title','read-only','never','0.166.0','','')",
+            rusqlite::params![id, source.to_str().unwrap()]).unwrap();
+        sources.insert(id, source);
+    }
+    db.file_control(None::<&str>, rusqlite::FileControl::PersistWal(&mut 1))
+        .unwrap();
+    drop(db);
+    let before = tree_bytes(&root);
+    let home = PathBuf::from(std::env::var_os("HOME").unwrap())
+        .canonicalize()
+        .unwrap();
+    let mut client = Client::connect(
+        base(&root, &root.join("unused-provider"), &home).args(["mcp", "--session-search"]),
+    );
+    let call = |client: &mut Client, arguments, caller: &str| {
+        let envelope = client.exchange(
+            json!({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{
+                "name":"session_resolve","_meta":{"threadId":caller},"arguments":arguments
+            }}),
+        );
+        assert!(envelope["error"].is_null(), "{envelope}");
+        envelope["result"]["structuredContent"].clone()
+    };
+    let mut response = call(
+        &mut client,
+        json!({"action":"start","progressive":true,"search_intent":{
+            "schema_version":"1","subject":"All FleetProbe tests","activity":"testing","coverage_goal":"exhaustive",
+            "constraints":{"project_membership":{"mode":"include","basis":"observed","names":["Fleet"]}},
+            "hints":{"terms":["FleetProbe"]}
+        }}),
+        M,
+    );
+    let run = response["run"].clone();
+    let mut published = std::collections::BTreeSet::new();
+    let mut last_step = Value::Null;
+    for index in 0..21 {
+        let candidates = response["candidates"]
+            .as_array()
+            .unwrap_or_else(|| panic!("batch {index}: {response}"));
+        assert_eq!(candidates.len(), 5, "{response}");
+        let assessments: Vec<_> = candidates.iter().map(|row| json!({
+            "native_session_id":row["native_session_id"], "disposition":"verified_relevant",
+            "relationship":"direct","outcomes":["tested"],"evidence":[row["evidence"][0]["handle"]],
+            "explanation":"The fixture reports passing tests."
+        })).collect();
+        let step = json!({"action":"advance","run":run,"expected_revision":response["step_revision"],
+            "operation_id":format!("step-{index}"),"assessments":assessments});
+        last_step = step.clone();
+        if index == 0 {
+            let mut wrong = step.clone();
+            wrong["assessments"][0]["relationship"] = json!("retrospective");
+            assert_eq!(call(&mut client, wrong, M)["error"], "invalid_assessment");
+            assert_eq!(
+                call(&mut client, step.clone(), T)["error"],
+                "stale_search_run"
+            );
+        }
+        response = call(&mut client, step.clone(), M);
+        let matches = response["matches"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{response}"));
+        assert_eq!(matches.len(), 5, "{response}");
+        for row in matches {
+            assert!(published.insert(row["native_session_id"].as_str().unwrap().to_owned()));
+            assert_eq!(row["can_request_preview"], false);
+        }
+        assert_eq!(
+            response["progressive_coverage"]["released"],
+            (index + 1) * 5
+        );
+        assert_eq!(response["progress"]["publication_checks"], index + 1);
+        if index == 0 {
+            let retry = call(&mut client, step, M);
+            assert_eq!(retry["replayed"], true);
+            assert_eq!(retry["step_revision"], response["step_revision"]);
+            assert_eq!(retry["matches"], response["matches"]);
+            assert_eq!(retry["candidates"], response["candidates"]);
+        }
+        if index < 20 {
+            assert!(response["outcome"].is_null(), "{response}");
+        }
+    }
+    assert_eq!(published, sources.keys().cloned().collect());
+    assert_eq!(response["outcome"], "completed_with_matches", "{response}");
+    assert_eq!(
+        response["progressive_coverage"]["eligible_evaluation_complete"],
+        true
+    );
+    assert_eq!(tree_bytes(&root), before);
+    let changed = response["matches"][0]["native_session_id"]
+        .as_str()
+        .unwrap();
+    let source = &sources[changed];
+    let mut newer = fs::read(source).unwrap();
+    newer.extend_from_slice(b"\n");
+    fs::write(source, newer).unwrap();
+    let replay = call(&mut client, last_step, M);
+    assert_eq!(replay["replayed"], true);
+    assert_eq!(replay["outcome"], "partial");
+    assert_eq!(replay["invalidated"], json!([changed]));
+    assert_eq!(replay["matches"].as_array().unwrap().len(), 4);
+    assert_eq!(replay["progressive_coverage"]["published"], 104);
+    client.close();
 }

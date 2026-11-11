@@ -32,13 +32,17 @@ impl SessionSearchReadPort for IndexedSearchReader<'_> {
         // Cached facts never enter from a model. The provider still checks the
         // fresh inventory, exclusions, source revision and full query scope.
         request.cached.clear();
-        if request.parameters.reads_content() {
+        let prepare = |request: &mut SearchReadRequest| -> Result<(), ProviderError> {
+            if !request.parameters.reads_content() {
+                return Ok(());
+            }
             let index = self.index.lock().map_err(|_| unavailable())?;
             if !index.status().map_err(|_| unavailable())?.persistent {
-                return self.reader.search_sessions(&request);
+                return Ok(());
             }
             let cache_deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
             let mut cached_bytes = 0usize;
+            let mut eligible = Vec::new();
             for stored in index.source_states(1000).map_err(|_| unavailable())? {
                 if !stored.exhausted {
                     continue;
@@ -47,6 +51,13 @@ impl SessionSearchReadPort for IndexedSearchReader<'_> {
                     serde_json::from_str(&stored.metadata).map_err(|_| unavailable())?;
                 if metadata.identity.state_root != self.root
                     || request.excluded.contains(&metadata.identity)
+                    || !request.parameters.include_archived
+                        && metadata.state != SessionState::Active
+                    || request
+                        .parameters
+                        .project_label
+                        .as_ref()
+                        .is_some_and(|label| metadata.project_label.as_ref() != Some(label))
                     || request
                         .parameters
                         .structured
@@ -55,6 +66,30 @@ impl SessionSearchReadPort for IndexedSearchReader<'_> {
                 {
                     continue;
                 }
+                eligible.push((stored, metadata));
+            }
+            let terms = request.parameters.ranking_terms();
+            if request.parameters.purpose == SearchPurpose::Discovery
+                && request
+                    .parameters
+                    .structured
+                    .as_ref()
+                    .is_some_and(|q| q.sort == SearchSort::DiscoveryPriority)
+            {
+                let query = terms.join(" ");
+                let keys: Vec<_> = eligible
+                    .iter()
+                    .map(|(stored, _)| stored.source.as_str())
+                    .collect();
+                let proposed = index
+                    .matching_sources(&query, &keys)
+                    .map_err(|_| unavailable())?;
+                eligible.retain(|(stored, _)| proposed.contains(&stored.source));
+            }
+            for (stored, metadata) in eligible {
+                if std::time::Instant::now() >= cache_deadline {
+                    break;
+                }
                 let mut rank = SearchRelevance::new(&request.parameters);
                 let mut observation = QueryObservation::default();
                 let mut evidence = Vec::new();
@@ -62,7 +97,6 @@ impl SessionSearchReadPort for IndexedSearchReader<'_> {
                 let mut current_ordinal = None;
                 let mut text = String::new();
                 let mut first_evidence: Option<ConversationEvidence> = None;
-                let terms = request.parameters.ranking_terms();
                 let mut flush = |text: &mut String, first: &mut Option<ConversationEvidence>| {
                     if let Some(mut e) = first.take() {
                         if e.position
@@ -172,6 +206,10 @@ impl SessionSearchReadPort for IndexedSearchReader<'_> {
                     break;
                 }
             }
+            Ok(())
+        };
+        if prepare(&mut request).is_err() {
+            request.cached.clear();
         }
         self.reader.search_sessions(&request)
     }
@@ -181,6 +219,13 @@ impl SessionSearchReadPort for IndexedSearchReader<'_> {
         e: &[ArtifactId],
     ) -> Result<ConversationEvidence, ProviderError> {
         self.reader.session_context(r, e)
+    }
+    fn verify_search_evidence(
+        &self,
+        references: &[ContextReference],
+        excluded: &[ArtifactId],
+    ) -> Result<Option<EvidenceVerification>, ProviderError> {
+        self.reader.verify_search_evidence(references, excluded)
     }
     fn session_context_window(
         &self,

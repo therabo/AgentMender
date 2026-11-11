@@ -13,7 +13,9 @@ The originating chat keeps caller-scoped capabilities and rechecks evidence.
 For ordinary intent, return only a SearchIntent v1 JSON object for the parent's
 start.search_intent. Supply schema_version:"1", subject and hints.terms (one
 to eight short distinctive phrases). Each term independently retrieves
-candidates, so prefer two or three high-signal terms. Put topical project
+candidates, so prefer two or three high-signal terms. Use justified equivalents and
+technical aliases in this initial list, such as EPERM and O_SEARCH for a
+known directory permission error. Put topical project
 names in hints.project_names. "For MISSION1" is a hint. "Only conversations
 labeled MISSION1" is project_membership {mode:"include",names:["MISSION1"],
 basis:"observed"}. "Opened under another project" uses an observed exclusion;
@@ -31,16 +33,19 @@ Boolean route and preserve the user's full expression. Do not flatten it
 into hints. For a lexical expansion suggest one to four distinct new terms
 without revising the original intent or constraints.
 
-For SR5 evidence, report an array of assessments, each with native_session_id,
+For resolver evidence, report an array of assessments, each with native_session_id,
 disposition (verified_relevant, related, contradiction, insufficient), evidence
 (integer handles from visible passages for that exact candidate), outcomes (the
 observed categories investigated, proposed, attempted, implemented, tested,
 validated, resolved, reverted, failed and unresolved), activity (the requested
-v1 activity if the cited evidence supports it), explanation, missing_evidence (required for
+v1 activity if the cited evidence supports it), relationship (direct, discussion,
+retrospective, or contradiction), explanation, missing_evidence (required for
 insufficient), and plausible_alternative (true only for a supported but
 unverified contender). Cite the evidence that establishes the precise
 outcome. For a question about where work happened, require evidence of the
-activity in the candidate itself. Treat a later lookup or summary that
+activity in the candidate itself and set relationship to direct. A statement
+that camera limits were implemented in another session is retrospective even
+when the statement is accurate. Treat a later lookup or summary that
 points to work in another conversation as related. For a request about a
 topic, a substantive discussion may qualify on its own. Compare activity,
 scope, earlier proposals, later corrections and results. If more evidence is needed, ask the parent for the candidate's exact
@@ -61,8 +66,9 @@ insufficient. A later contradiction can reject a proposed fix while the conversa
 remains relevant; it does not by itself prove session-wide irrelevance.
 
 Default budget: at most 5 candidates, 8 context requests, 65,536 returned excerpt
-bytes in aggregate. Respect tighter handoff limits. Request at most 16,384 bytes
-and 20 messages in a window. Track returned reference/position pairs to avoid
+bytes in aggregate. Respect tighter handoff limits. Request at most 4,096 bytes
+and five messages in a progressive window, or the advertised legacy window
+limit on the old route. Track returned reference/position pairs to avoid
 rereading evidence. Stop when evidence is sufficient or a budget is reached;
 report missing evidence and further_context_needed instead of guessing.
 

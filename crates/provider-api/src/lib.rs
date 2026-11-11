@@ -38,6 +38,16 @@ pub trait SessionSearchReadPort {
         &self,
         request: &agentmender_domain::SearchReadRequest,
     ) -> Result<agentmender_domain::SessionSearchPage, ProviderError>;
+    /// Fresh metadata and source revision for each anchor in a bounded batch.
+    /// A missing entry denotes a stale or unreadable source. None for the
+    /// entire batch means the adapter uses the existing single-source path.
+    fn verify_search_evidence(
+        &self,
+        _references: &[agentmender_domain::ContextReference],
+        _excluded: &[agentmender_domain::ArtifactId],
+    ) -> Result<Option<agentmender_domain::EvidenceVerification>, ProviderError> {
+        Ok(None)
+    }
     fn transcript_page(
         &self,
         _reference: &agentmender_domain::ContextReference,

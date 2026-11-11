@@ -122,6 +122,15 @@ provider/format/coverage limits. Guaranteed production management requests refus
 without that host capability; a privileged registration file cannot substitute.
 No speculative embeddings or GraphRAG milestone blocks useful local retrieval.
 
+### Progressive retrieval branch
+
+The progressive `session_resolve` route uses bounded batches, incremental
+publication and typed coverage. The origin uses SearchIntent v1 and Luna for
+semantic assessment, and Rust for retrieval, source validation and progress.
+The legacy wire contract remains available. See [ADR-0034](adr/0034-progressive-resolution.md)
+and the [progressive workflow](intent-aware-resolution.md#progressive-workflow).
+Fixture and real-client acceptance remain distinct.
+
 ## P1 — Provider coverage and native lifecycle operations
 
 Expand the same workflow across selected Codex and Claude versions, session types

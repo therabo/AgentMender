@@ -1,5 +1,22 @@
 # Local full-text index
 
+## Progressive resolver
+
+The Codex worker can reuse one in-memory metadata snapshot and its current
+bounded title-prior inventory window when the root and exact DB/WAL/SHM
+fingerprints remain unchanged. It still fingerprints before and after each
+operation and revalidates on drift. The window is scoped to the query and
+caller. Transcript revisions remain separate.
+
+The opt-in SQLite cache uses `MATCH` to propose sources for observation
+reconstruction within eligible, unprotected keys. The worker validates
+their exact source revisions and Rust applies its existing query semantics.
+Unmatched, missing, corrupt or stale cache entries fall back to live
+traversal. Token match does not prove absence or substitute for substring
+and phrase predicates. Cached candidates retain the existing inventory order.
+Transient BM25 ranks the full slice when passage order can affect the
+result, with batched writes and no derived disk data.
+
 ## P0-SR5 candidate retrieval
 
 Resolution uses the same transient FTS5/BM25 passage ranking and the same

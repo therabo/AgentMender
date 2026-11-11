@@ -11,7 +11,7 @@ use rusqlite::{Connection, OpenFlags, params};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     fs,
     io::{BufRead, BufReader, Read, Seek, SeekFrom, Write},
     path::{Component, Path, PathBuf},
@@ -34,6 +34,10 @@ struct Request {
 #[derive(Serialize, Deserialize)]
 enum Operation {
     Search(SearchReadRequest),
+    Verify {
+        references: Vec<ContextReference>,
+        excluded: Vec<ArtifactId>,
+    },
     Context {
         reference: ContextReference,
         excluded: Vec<ArtifactId>,
@@ -53,6 +57,7 @@ enum Operation {
 enum Response {
     Error(ContentReadError),
     Search(SessionSearchPage),
+    Verified(EvidenceVerification),
     Context(ConversationEvidence),
     Window(ContextWindow),
     Transcript(TranscriptPage),
@@ -300,6 +305,7 @@ fn metadata_fingerprint(
     path: &Option<PathBuf>,
     p: &SearchParameters,
     root: &Path,
+    ranking: bool,
     source_revision: bool,
 ) -> Result<Vec<u8>, ProviderError> {
     let sort = p.structured.as_ref().map(|q| q.sort);
@@ -307,7 +313,6 @@ fn metadata_fingerprint(
         .structured
         .as_ref()
         .map(|q| query_metadata_facts(&q.filter, metadata));
-    let ranking = !p.ranking_terms().is_empty();
     let revision = if source_revision && p.reads_content() {
         open_transcript(
             &Candidate {
@@ -342,22 +347,7 @@ struct Inventory {
     corpus_fingerprint: String,
     next_window: Option<InventoryBoundary>,
 }
-fn inventory(
-    db: &Connection,
-    root: &Path,
-    request: &SearchReadRequest,
-    end: Instant,
-) -> Result<Inventory, ProviderError> {
-    let p = &request.parameters;
-    if !p.valid()
-        || request.continuation.start >= SEARCH_INVENTORY
-        || request.continuation.result_offset > SEARCH_BATCH
-        || request.continuation.end.is_some_and(|e| {
-            e < request.continuation.start || e > request.continuation.start + SEARCH_BATCH
-        })
-    {
-        return Err(unavailable());
-    }
+fn thread_columns(db: &Connection) -> Result<BTreeMap<String, String>, ProviderError> {
     let cols = metadata::columns(db, "threads")?;
     if db
         .query_row(
@@ -383,6 +373,106 @@ fn inventory(
             return Err(unavailable());
         }
     }
+    Ok(cols)
+}
+
+fn metadata_projection(
+    cols: &BTreeMap<String, String>,
+) -> (&'static str, &'static str, &'static str) {
+    let title = if cols.get("name").map(String::as_str) == Some("TEXT") {
+        "COALESCE(NULLIF(name,''),title)"
+    } else {
+        "title"
+    };
+    let producer = if cols.get("cli_version").map(String::as_str) == Some("TEXT") {
+        "cli_version"
+    } else {
+        "NULL"
+    };
+    let path = if cols.get("rollout_path").map(String::as_str) == Some("TEXT") {
+        "rollout_path"
+    } else {
+        "NULL"
+    };
+    (title, producer, path)
+}
+
+struct PriorityWindow {
+    scope: String,
+    after: Option<InventoryBoundary>,
+    ids: Vec<String>,
+    fingerprint: String,
+    corpus_fingerprint: String,
+    next_window: Option<InventoryBoundary>,
+}
+
+impl PriorityWindow {
+    fn page(
+        &self,
+        db: &Connection,
+        root: &Path,
+        cursor: &SearchContinuation,
+        projection: (&str, &str, &str),
+        end: Instant,
+    ) -> Result<Inventory, ProviderError> {
+        if (!cursor.inventory_fingerprint.is_empty()
+            && cursor.inventory_fingerprint != self.fingerprint)
+            || (!cursor.corpus_fingerprint.is_empty()
+                && cursor.corpus_fingerprint != self.corpus_fingerprint)
+        {
+            return Err(stale());
+        }
+        let (title, producer, path) = projection;
+        let mut selected = db.prepare(&format!(
+            "SELECT id,{title},cwd,created_at,updated_at,archived,{producer},{path} FROM threads WHERE id=?1"
+        )).map_err(|_| unavailable())?;
+        let stop = cursor.end.unwrap_or(cursor.start + SEARCH_BATCH);
+        let mut batch = Vec::new();
+        for id in self.ids.iter().take(stop).skip(cursor.start) {
+            deadline(end)?;
+            let mut rows = selected.query([id]).map_err(|_| unavailable())?;
+            let row = rows.next().map_err(|_| unavailable())?.ok_or_else(stale)?;
+            rollout_reader::record_metadata_row();
+            batch.push(candidate_row(row, root)?);
+        }
+        Ok(Inventory {
+            batch,
+            fingerprint: self.fingerprint.clone(),
+            eligible: self.ids.len(),
+            limited: self.next_window.is_some(),
+            corpus_fingerprint: self.corpus_fingerprint.clone(),
+            next_window: self.next_window.clone(),
+        })
+    }
+}
+
+fn inventory(
+    db: &Connection,
+    root: &Path,
+    request: &SearchReadRequest,
+    end: Instant,
+) -> Result<Inventory, ProviderError> {
+    inventory_cached(db, root, request, end, &mut None)
+}
+
+fn inventory_cached(
+    db: &Connection,
+    root: &Path,
+    request: &SearchReadRequest,
+    end: Instant,
+    cached: &mut Option<PriorityWindow>,
+) -> Result<Inventory, ProviderError> {
+    let p = &request.parameters;
+    if !p.valid()
+        || request.continuation.start >= SEARCH_INVENTORY
+        || request.continuation.result_offset > SEARCH_BATCH
+        || request.continuation.end.is_some_and(|e| {
+            e < request.continuation.start || e > request.continuation.start + SEARCH_BATCH
+        })
+    {
+        return Err(unavailable());
+    }
+    let cols = thread_columns(db)?;
     let excluded = excluded_ids(&request.excluded, root)?;
     if p.purpose == SearchPurpose::Discovery {
         let caller = request
@@ -401,23 +491,38 @@ fn inventory(
     {
         return Err(stale());
     }
-    let version = cols.get("cli_version").map(String::as_str) == Some("TEXT");
-    let name = cols.get("name").map(String::as_str) == Some("TEXT");
-    let rollout = cols.get("rollout_path").map(String::as_str) == Some("TEXT");
-    // The fragments are fixed identifiers selected from a validated contract.
-    // All exclusions/filters are bound values, never SQL text from a tool.
-    let title = if name {
-        "COALESCE(NULLIF(name,''),title)"
-    } else {
-        "title"
-    };
-    let producer = if version { "cli_version" } else { "NULL" };
-    let path = if rollout { "rollout_path" } else { "NULL" };
+    let (title, producer, path) = metadata_projection(&cols);
+    let priority = p
+        .structured
+        .as_ref()
+        .is_some_and(|q| q.sort == SearchSort::DiscoveryPriority);
+    let scope = priority.then(|| {
+        search_scope(
+            p,
+            root,
+            &request.excluded,
+            request.discovery_session.as_deref().unwrap_or_default(),
+        )
+    });
+    if let Some(window) = cached.as_ref()
+        && scope.as_ref() == Some(&window.scope)
+        && request.continuation.inventory_after == window.after
+    {
+        return window.page(
+            db,
+            root,
+            &request.continuation,
+            (title, producer, path),
+            end,
+        );
+    }
     let time_column = match p.structured.as_ref().map(|q| q.sort) {
         Some(SearchSort::Created) => Some("created_at"),
         Some(SearchSort::LastActive) => Some("updated_at"),
         _ => None,
     };
+    let ranking_terms = p.ranking_terms();
+    let ranking = !ranking_terms.is_empty();
     let excluded = serde_json::to_string(&excluded).map_err(|_| unavailable())?;
     // Hash the fixed metadata inventory with constant auxiliary memory. This is
     // independent of the current 10,000-row window and rejects insertions or
@@ -433,6 +538,7 @@ fn inventory(
     corpus.update(b"agentmender/search-corpus/v3\0");
     let mut previous_id = None;
     while let Some(row) = corpus_rows.next().map_err(|_| unavailable())? {
+        rollout_reader::record_metadata_row();
         deadline(end)?;
         let id: String = row.get(0).map_err(|_| unavailable())?;
         if !metadata::uuid(&id) || previous_id.as_ref() == Some(&id) {
@@ -446,6 +552,7 @@ fn inventory(
                 &candidate.path,
                 p,
                 root,
+                ranking,
                 false,
             )?);
         }
@@ -488,17 +595,13 @@ fn inventory(
     let mut observed = 0;
     let mut limited = false;
     let mut batch = vec![];
-    let priority = p
-        .structured
-        .as_ref()
-        .is_some_and(|q| q.sort == SearchSort::DiscoveryPriority);
-    let priority_terms = if priority { p.ranking_terms() } else { vec![] };
     let mut prioritized = vec![];
     let stop = request
         .continuation
         .end
         .unwrap_or(request.continuation.start + SEARCH_BATCH);
     while let Some(row) = rows.next().map_err(|_| unavailable())? {
+        rollout_reader::record_metadata_row();
         deadline(end)?;
         observed += 1;
         if observed > SEARCH_INVENTORY {
@@ -523,30 +626,19 @@ fn inventory(
                 _ => None,
             },
         });
-        let Candidate { metadata, path } = candidate_row(row, root)?;
-        if p.project_label
-            .as_ref()
-            .is_some_and(|label| metadata.project_label.as_ref() != Some(label))
-        {
+        let candidate = candidate_row(row, root)?;
+        if !candidate_eligible(&candidate, p) {
             continue;
         }
-        if p.structured
-            .as_ref()
-            .is_some_and(|q| q.filter.metadata_truth(&metadata) == Truth::False)
-        {
-            continue;
-        }
+        let Candidate { metadata, path } = candidate;
         // Resolution observes each source independently. A live unrelated
         // source may grow without invalidating the scan order. The in-flight
         // source checkpoint and all citations still require exact revisions.
-        digest.update(metadata_fingerprint(&metadata, &path, p, root, !priority)?);
+        digest.update(metadata_fingerprint(
+            &metadata, &path, p, root, ranking, !priority,
+        )?);
         if priority {
-            let title = metadata.title.as_deref().unwrap_or_default().to_lowercase();
-            let weight: usize = priority_terms
-                .iter()
-                .filter(|term| title.contains(term.as_str()))
-                .map(|term| term.len().min(32))
-                .sum();
+            let weight = discovery_title_weight(&metadata, &ranking_terms);
             prioritized.push((
                 std::cmp::Reverse(weight),
                 metadata.native_session_id.clone(),
@@ -555,24 +647,6 @@ fn inventory(
             batch.push(Candidate { metadata, path });
         }
         eligible += 1;
-    }
-    if priority {
-        // Keep only sort keys for the window. Fetch full metadata for the next
-        // bounded batch from the same snapshot, with the same eligible IDs.
-        prioritized.sort_unstable();
-        let mut selected = db.prepare(&format!(
-            "SELECT id,{title},cwd,created_at,updated_at,archived,{producer},{path} FROM threads WHERE id=?1"
-        )).map_err(|_| unavailable())?;
-        for (_, id) in prioritized
-            .into_iter()
-            .take(stop)
-            .skip(request.continuation.start)
-        {
-            deadline(end)?;
-            let mut rows = selected.query([id]).map_err(|_| unavailable())?;
-            let row = rows.next().map_err(|_| unavailable())?.ok_or_else(stale)?;
-            batch.push(candidate_row(row, root)?);
-        }
     }
     let fingerprint = format!(
         "sha256:{}",
@@ -586,6 +660,26 @@ fn inventory(
         && request.continuation.inventory_fingerprint != fingerprint
     {
         return Err(stale());
+    }
+    if let Some(scope) = scope {
+        prioritized.sort_unstable();
+        let window = PriorityWindow {
+            scope,
+            after: request.continuation.inventory_after.clone(),
+            ids: prioritized.into_iter().map(|(_, id)| id).collect(),
+            fingerprint,
+            corpus_fingerprint,
+            next_window: limited.then_some(boundary).flatten(),
+        };
+        let page = window.page(
+            db,
+            root,
+            &request.continuation,
+            (title, producer, path),
+            end,
+        )?;
+        *cached = Some(window);
+        return Ok(page);
     }
     Ok(Inventory {
         batch,
@@ -790,6 +884,51 @@ fn transcript_stream_limited(
         output_bytes,
     )
 }
+fn read_rollout_header(
+    file: &fs::File,
+    compressed: bool,
+    native_id: &str,
+    end: Instant,
+    bytes_read: &mut usize,
+) -> Result<(usize, &'static str), ProviderError> {
+    let mut header_reader = BufReader::with_capacity(
+        8192,
+        RolloutReader::new(file, compressed, end).map_err(rollout_io)?,
+    );
+    let mut header_bytes = Vec::new();
+    let count = header_reader
+        .by_ref()
+        .take((RECORD_BYTES + 1) as u64)
+        .read_until(b'\n', &mut header_bytes)
+        .map_err(rollout_io)?;
+    drop(header_reader);
+    *bytes_read = bytes_read.saturating_add(count);
+    if count == 0 || count > RECORD_BYTES {
+        return Err(content_limit("bounded_session_header_unavailable"));
+    }
+    let record: serde_json::Value = serde_json::from_slice(&header_bytes)
+        .map_err(|_| content_limit("header_not_session_meta"))?;
+    if record["type"] != "session_meta" {
+        return Err(content_limit("header_not_session_meta"));
+    }
+    let payload = &record["payload"];
+    if payload["id"].as_str() != Some(native_id) {
+        return Err(content_limit("header_identity_mismatch"));
+    }
+    if payload["cli_version"]
+        .as_str()
+        .is_none_or(|s| s.is_empty() || s.len() > 128)
+    {
+        return Err(content_limit("header_producer_missing"));
+    }
+    let format = match payload.get("history_mode").and_then(|v| v.as_str()) {
+        None | Some("legacy") => FORMAT,
+        Some("paginated") => PAGINATED_INLINE_FORMAT,
+        _ => return Err(content_limit("unknown_history_mode")),
+    };
+    Ok((count, format))
+}
+
 #[allow(clippy::too_many_arguments)]
 fn stream_transcript(
     file: fs::File,
@@ -818,41 +957,13 @@ fn stream_transcript(
     }) {
         return Err(stale());
     }
-    let mut header_reader = BufReader::with_capacity(
-        8192,
-        RolloutReader::new(&file, compressed, end).map_err(rollout_io)?,
-    );
-    let mut header_bytes = Vec::new();
-    let count = header_reader
-        .by_ref()
-        .take((RECORD_BYTES + 1) as u64)
-        .read_until(b'\n', &mut header_bytes)
-        .map_err(rollout_io)?;
-    drop(header_reader);
-    *bytes_read = bytes_read.saturating_add(count);
-    if count == 0 || count > RECORD_BYTES {
-        return Err(content_limit("bounded_session_header_unavailable"));
-    }
-    let record: serde_json::Value = serde_json::from_slice(&header_bytes)
-        .map_err(|_| content_limit("header_not_session_meta"))?;
-    if record["type"] != "session_meta" {
-        return Err(content_limit("header_not_session_meta"));
-    }
-    let payload = &record["payload"];
-    if payload["id"].as_str() != Some(&candidate.metadata.native_session_id) {
-        return Err(content_limit("header_identity_mismatch"));
-    }
-    if payload["cli_version"]
-        .as_str()
-        .is_none_or(|s| s.is_empty() || s.len() > 128)
-    {
-        return Err(content_limit("header_producer_missing"));
-    }
-    let format = match payload.get("history_mode").and_then(|v| v.as_str()) {
-        None | Some("legacy") => FORMAT,
-        Some("paginated") => PAGINATED_INLINE_FORMAT,
-        _ => return Err(content_limit("unknown_history_mode")),
-    };
+    let (count, format) = read_rollout_header(
+        &file,
+        compressed,
+        &candidate.metadata.native_session_id,
+        end,
+        bytes_read,
+    )?;
     let mut offset = checkpoint.map_or(count as u64, |c| c.byte_offset);
     if offset < count as u64 {
         return Err(stale());
@@ -1238,17 +1349,88 @@ fn legacy_truth(parameters: &SearchParameters, matched: bool, complete: bool) ->
     }
 }
 
+fn rank_passages(
+    messages: &[Message],
+    query: &str,
+    end: Instant,
+) -> Result<BTreeMap<u64, usize>, ProviderError> {
+    use agentmender_persistence::{IndexDocument, SearchTextIndex};
+    let started = Instant::now();
+    let mut index = SearchTextIndex::memory().map_err(|_| unavailable())?;
+    let mut documents = Vec::with_capacity(256);
+    let mut flush = |documents: &mut Vec<IndexDocument<'_>>| -> Result<(), ProviderError> {
+        if !documents.is_empty() {
+            index
+                .append_page("ephemeral", "ephemeral-v1", 0, 0, false, documents)
+                .map_err(|_| unavailable())?;
+            documents.clear();
+        }
+        Ok(())
+    };
+    for message in messages {
+        let mut start = 0;
+        let mut chunk = 0;
+        while start < message.text.len() && Instant::now() < end {
+            let mut stop = (start + 64 * 1024).min(message.text.len());
+            while !message.text.is_char_boundary(stop) {
+                stop -= 1;
+            }
+            documents.push(IndexDocument {
+                ordinal: message.index as u64,
+                chunk,
+                text: &message.text[start..stop],
+                reference: "",
+            });
+            if documents.len() == documents.capacity() {
+                flush(&mut documents)?;
+            }
+            if stop == message.text.len() {
+                break;
+            }
+            start = stop.saturating_sub(128);
+            while !message.text.is_char_boundary(start) {
+                start += 1;
+            }
+            chunk += 1;
+        }
+    }
+    flush(&mut documents)?;
+    let build = started.elapsed();
+    let started = Instant::now();
+    let mut ranks = BTreeMap::new();
+    for (rank, (ordinal, _)) in index
+        .rank(query, 100)
+        .unwrap_or_default()
+        .into_iter()
+        .enumerate()
+    {
+        ranks.entry(ordinal).or_insert(rank);
+    }
+    rollout_reader::record_fts(build, started.elapsed());
+    Ok(ranks)
+}
+
+#[cfg(test)]
 fn search(
     db: &Connection,
     root: &Path,
     request: &SearchReadRequest,
     end: Instant,
 ) -> Result<SessionSearchPage, ProviderError> {
-    rollout_reader::work_reset();
+    search_cached(db, root, request, end, &mut None)
+}
+
+fn search_cached(
+    db: &Connection,
+    root: &Path,
+    request: &SearchReadRequest,
+    end: Instant,
+    inventory_cache: &mut Option<PriorityWindow>,
+) -> Result<SessionSearchPage, ProviderError> {
     if request.cached.len() > 10 {
         return Err(unavailable());
     }
-    let inventory = inventory(db, root, request, end)?;
+    let inventory = inventory_cached(db, root, request, end, inventory_cache)?;
     if request.continuation.result_offset != 0 {
         return Err(stale());
     }
@@ -1261,12 +1443,18 @@ fn search(
     let mut batch_digest = Sha256::new();
     let mut inspected = 0;
     let mut pending = None;
-    let mut terms = request.parameters.terms();
-    if let Some(q) = &request.parameters.structured {
-        terms.extend(q.filter.text_terms());
+    let required_terms = request.parameters.terms();
+    let terms = request.parameters.ranking_terms();
+    let mut ranking_query = String::new();
+    for term in terms.iter().take(64) {
+        if ranking_query.len() + term.len() + 1 > 4096 {
+            break;
+        }
+        if !ranking_query.is_empty() {
+            ranking_query.push(' ');
+        }
+        ranking_query.push_str(term);
     }
-    terms.sort();
-    terms.dedup();
     for candidate in &inventory.batch {
         if Instant::now() >= end
             || coverage.bytes_read >= SEARCH_BYTES
@@ -1282,7 +1470,7 @@ fn search(
         if prior.is_some_and(|p| p.native_session_id != candidate.metadata.native_session_id) {
             return Err(stale());
         }
-        let mut rank = SearchRelevance::new(&request.parameters);
+        let mut rank = SearchRelevance::with_terms(required_terms.clone(), terms.clone());
         if prior.is_none() {
             if let Some(title) = &candidate.metadata.title {
                 rank.observe("title", title);
@@ -1362,11 +1550,9 @@ fn search(
                                 cached.content_complete,
                             )
                         });
-                    let legacy_match = request
-                        .parameters
-                        .terms()
+                    let legacy_match = required_terms
                         .iter()
-                        .all(|t| matched_terms.contains(t));
+                        .all(|term| matched_terms.contains(term));
                     let truth = truth.and(legacy_truth(
                         &request.parameters,
                         legacy_match,
@@ -1441,52 +1627,21 @@ fn search(
                     coverage.suppressed_records += observation.suppressed;
                     content_complete = status == "supported";
                     batch_digest.update(observation.fingerprint.as_bytes());
-                    let mut fts = agentmender_persistence::SearchTextIndex::memory()
-                        .map_err(|_| unavailable())?;
                     for message in &observation.messages {
-                        let mut chunk_start = 0;
-                        let mut chunk = 0;
-                        while chunk_start < message.text.len() {
-                            if Instant::now() >= end {
-                                break;
-                            }
-                            let mut chunk_end = (chunk_start + 64 * 1024).min(message.text.len());
-                            while !message.text.is_char_boundary(chunk_end) {
-                                chunk_end -= 1;
-                            }
-                            fts.add_chunk(
-                                message.index as u64,
-                                chunk,
-                                &message.text[chunk_start..chunk_end],
-                            )
-                            .map_err(|_| unavailable())?;
-                            if chunk_end == message.text.len() {
-                                break;
-                            }
-                            chunk_start = chunk_end.saturating_sub(128);
-                            while !message.text.is_char_boundary(chunk_start) {
-                                chunk_start += 1;
-                            }
-                            chunk += 1;
-                        }
-                        let count = rank.observe(message.source, &message.text);
+                        let prepared = PreparedText::new(&message.text);
+                        let count = rank.observe_prepared(message.source, &prepared);
                         if let Some(q) = &request.parameters.structured {
-                            q.filter.observe(
+                            q.filter.observe_prepared(
                                 &mut query_observation,
-                                &QueryText {
-                                    text: &message.text,
-                                    timestamp: message
-                                        .position
-                                        .timestamp
-                                        .as_deref()
-                                        .and_then(parse_message_timestamp),
-                                },
+                                &prepared,
+                                message
+                                    .position
+                                    .timestamp
+                                    .as_deref()
+                                    .and_then(parse_message_timestamp),
                             );
                         }
-                        let structured_match = terms
-                            .iter()
-                            .any(|term| message.text.to_lowercase().contains(term));
-                        if count > 0 || structured_match {
+                        if count > 0 {
                             let (excerpt, truncated) = bounded_excerpt(&message.text, &terms, 320);
                             evidence.push(ConversationEvidence {
                                 source: message.source.into(),
@@ -1500,20 +1655,10 @@ fn search(
                             });
                         }
                     }
-                    let mut ranking_query = String::new();
-                    for term in terms.iter().take(64) {
-                        if ranking_query.len() + term.len() + 1 > 4096 {
-                            break;
-                        }
-                        if !ranking_query.is_empty() {
-                            ranking_query.push(' ');
-                        }
-                        ranking_query.push_str(term);
-                    }
-                    let ranked = if ranking_query.is_empty() {
-                        vec![]
+                    let ranked = if evidence.len() > 1 && !ranking_query.is_empty() {
+                        rank_passages(&observation.messages, &ranking_query, end)?
                     } else {
-                        fts.rank(&ranking_query, 100).unwrap_or_default()
+                        BTreeMap::new()
                     };
                     let earlier = if request
                         .parameters
@@ -1527,16 +1672,14 @@ fn search(
                     } else {
                         vec![]
                     };
-                    evidence.sort_by(|a, b| {
-                        let order = |e: &ConversationEvidence| {
+                    evidence.sort_by_key(|e| {
+                        (
                             ranked
-                                .iter()
-                                .position(|(i, _)| *i == e.record_index as u64)
-                                .unwrap_or(usize::MAX)
-                        };
-                        order(a)
-                            .cmp(&order(b))
-                            .then_with(|| a.record_index.cmp(&b.record_index))
+                                .get(&(e.record_index as u64))
+                                .copied()
+                                .unwrap_or(usize::MAX),
+                            e.record_index,
+                        )
                     });
                     evidence.dedup_by_key(|e| e.record_index);
                     if !earlier.is_empty() {
@@ -1599,9 +1742,7 @@ fn search(
         matched_terms.dedup();
         match_sources.sort();
         match_sources.dedup();
-        let legacy_match = request
-            .parameters
-            .terms()
+        let legacy_match = required_terms
             .iter()
             .all(|term| matched_terms.contains(term));
         let truth = request
@@ -1892,7 +2033,6 @@ fn transcript_page(
     excluded: &[ArtifactId],
     end: Instant,
 ) -> Result<TranscriptPage, ProviderError> {
-    rollout_reader::work_reset();
     let candidate = context_candidate(db, root, reference, excluded, true)?;
     let seed = checkpoint.cloned().or_else(|| {
         reference
@@ -1981,7 +2121,6 @@ fn context_window(
     excluded: &[ArtifactId],
     end: Instant,
 ) -> Result<ContextWindow, ProviderError> {
-    rollout_reader::work_reset();
     if !options.valid() {
         return Err(unavailable());
     }
@@ -2359,11 +2498,13 @@ fn read_snapshot(root: &Path, end: Instant) -> Result<Connection, ProviderError>
         .map_err(|_| unavailable())?;
     let mut memory = Connection::open_in_memory().map_err(|_| unavailable())?;
     capture::configure(&memory)?;
+    let started = Instant::now();
     capture::bounded_backup(
         &source,
         &mut memory,
         end.min(Instant::now() + Duration::from_secs(3)),
     )?;
+    rollout_reader::record_snapshot(Some(started.elapsed()));
     Ok(memory)
 }
 
@@ -2404,7 +2545,7 @@ fn context_request(operation: &Operation) -> Option<(&ContextReference, &[Artifa
             excluded,
             ..
         } => Some((reference, excluded, true)),
-        Operation::Search(_) => None,
+        Operation::Search(_) | Operation::Verify { .. } => None,
     }
 }
 fn revalidate_context_snapshot(
@@ -2433,34 +2574,137 @@ fn revalidate_context_snapshot(
 }
 
 #[cfg(target_os = "macos")]
-fn capture_request(request: &Request) -> Result<Response, ProviderError> {
+fn verify_evidence(
+    db: &Connection,
+    root: &Path,
+    references: &[ContextReference],
+    exclusions: &[ArtifactId],
+    end: Instant,
+) -> Result<Vec<Option<SessionMetadata>>, ProviderError> {
+    if !(1..=5).contains(&references.len()) {
+        return Err(unavailable());
+    }
+    let excluded = excluded_ids(exclusions, root)?;
+    let binding = &references[0].binding_revision;
+    let caller = excluded
+        .iter()
+        .find(|id| {
+            identity(root, id).is_ok_and(|identity| discovery_binding(&identity) == *binding)
+        })
+        .ok_or_else(discovery_caller_unavailable)?;
+    if !has_one_thread(db, caller)? {
+        return Err(discovery_caller_unavailable());
+    }
+    let (title, producer, path) = metadata_projection(&thread_columns(db)?);
+    let mut selected = db.prepare(&format!(
+        "SELECT id,{title},cwd,created_at,updated_at,archived,{producer},{path} FROM threads WHERE id=?1 LIMIT 2"
+    )).map_err(|_| unavailable())?;
+    let mut seen = BTreeSet::new();
+    let mut verified = Vec::with_capacity(references.len());
+    for reference in references {
+        deadline(end)?;
+        let id = &reference.native_session_id;
+        if reference.purpose != SearchPurpose::Discovery
+            || &reference.binding_revision != binding
+            || !metadata::uuid(id)
+            || identity(root, id)?.local_id != reference.local_id
+            || excluded.contains(id)
+            || reference.record_index == 0
+            || reference.position.is_none()
+            || reference.source_fingerprint.is_empty()
+            || !seen.insert(id)
+        {
+            return Err(stale());
+        }
+        let mut rows = selected.query([id]).map_err(|_| unavailable())?;
+        let Some(row) = rows.next().map_err(|_| unavailable())? else {
+            verified.push(None);
+            continue;
+        };
+        rollout_reader::record_metadata_row();
+        let candidate = candidate_row(row, root)?;
+        if rows.next().map_err(|_| unavailable())?.is_some() {
+            return Err(stale());
+        }
+        let current = (|| -> Result<_, ProviderError> {
+            let (file, path) = open_transcript(&candidate, root)?;
+            let before = file.metadata().map_err(|_| unavailable())?;
+            let stamp_before = stamp(&before);
+            if before.len() != reference.source_bytes as u64
+                || hash(stamp_before.as_bytes()) != reference.source_fingerprint
+            {
+                return Err(stale());
+            }
+            read_rollout_header(&file, compressed_path(&path), id, end, &mut 0)?;
+            let (reopened, selected_path) = open_transcript(&candidate, root)?;
+            if selected_path != path
+                || stamp(&file.metadata().map_err(|_| unavailable())?) != stamp_before
+                || stamp(&reopened.metadata().map_err(|_| unavailable())?) != stamp_before
+            {
+                return Err(stale());
+            }
+            Ok(candidate.metadata)
+        })();
+        verified.push(current.ok());
+    }
+    Ok(verified)
+}
+
+#[cfg(target_os = "macos")]
+struct ResidentSnapshot {
+    root: PathBuf,
+    files: Vec<capture::FileFingerprint>,
+    connection: Connection,
+    priority_window: Option<PriorityWindow>,
+}
+
+#[cfg(target_os = "macos")]
+fn fingerprint_metadata(root: &Path) -> Result<Vec<capture::FileFingerprint>, ProviderError> {
+    let files = capture::fingerprints(root)?;
+    rollout_reader::record_hash_bytes(files.iter().map(capture::FileFingerprint::bytes).sum());
+    Ok(files)
+}
+
+#[cfg(target_os = "macos")]
+fn capture_request(
+    request: &Request,
+    resident: &mut Option<ResidentSnapshot>,
+) -> Result<Response, ProviderError> {
     let end = Instant::now() + Duration::from_secs(8);
     rollout_reader::work_reset();
-    let before = capture::fingerprints(&request.source_root)?;
-    let source = Connection::open_with_flags(
-        request.source_root.join("state_5.sqlite"),
-        OpenFlags::SQLITE_OPEN_READ_ONLY
-            | OpenFlags::SQLITE_OPEN_NO_MUTEX
-            | OpenFlags::SQLITE_OPEN_NOFOLLOW,
-    )
-    .map_err(|_| unavailable())?;
-    capture::configure(&source)?;
-    source
-        .execute_batch("PRAGMA query_only=ON")
-        .map_err(|_| unavailable())?;
-    let mut memory = Connection::open_in_memory().map_err(|_| unavailable())?;
-    capture::configure(&memory)?;
-    capture::bounded_backup(
-        &source,
-        &mut memory,
-        end.min(Instant::now() + Duration::from_secs(3)),
-    )?;
-    drop(source);
+    let before = fingerprint_metadata(&request.source_root)?;
+    let (memory, mut priority_window) = match resident.take() {
+        Some(snapshot)
+            if snapshot.root == request.source_root
+                && !capture::fingerprints_changed(&snapshot.files, &before) =>
+        {
+            rollout_reader::record_snapshot(None);
+            (snapshot.connection, snapshot.priority_window)
+        }
+        _ => (read_snapshot(&request.source_root, end)?, None),
+    };
     let result = (|| -> Result<Response, ProviderError> {
-        let result = match request.operation {
-            Operation::Search(ref query) => {
-                Response::Search(search(&memory, &request.source_root, query, end)?)
-            }
+        let mut result = match request.operation {
+            Operation::Search(ref query) => Response::Search(search_cached(
+                &memory,
+                &request.source_root,
+                query,
+                end,
+                &mut priority_window,
+            )?),
+            Operation::Verify {
+                ref references,
+                ref excluded,
+            } => Response::Verified(EvidenceVerification {
+                sessions: verify_evidence(
+                    &memory,
+                    &request.source_root,
+                    references,
+                    excluded,
+                    end,
+                )?,
+                work: ProviderWork::default(),
+            }),
             Operation::Window {
                 ref reference,
                 ref options,
@@ -2504,14 +2748,38 @@ fn capture_request(request: &Request) -> Result<Response, ProviderError> {
                     .map(|c| c.path)
             })
             .transpose()?;
-        drop(memory);
-        let after = capture::fingerprints(&request.source_root)?;
+        let after = fingerprint_metadata(&request.source_root)?;
         if capture::fingerprints_changed(&before, &after) {
+            drop(memory);
             if capture::same_primary_identity(&before, &after) {
                 let fresh = read_snapshot(&request.source_root, end)?;
                 match (&request.operation, &result) {
                     (Operation::Search(query), Response::Search(page)) => {
                         revalidate_search_snapshot(&fresh, &request.source_root, query, page, end)?
+                    }
+                    (
+                        Operation::Verify {
+                            references,
+                            excluded,
+                        },
+                        Response::Verified(previous),
+                    ) => {
+                        let mut current = verify_evidence(
+                            &fresh,
+                            &request.source_root,
+                            references,
+                            excluded,
+                            end,
+                        )?;
+                        for (current, previous) in current.iter_mut().zip(&previous.sessions) {
+                            if previous.is_none() {
+                                *current = None;
+                            }
+                        }
+                        result = Response::Verified(EvidenceVerification {
+                            sessions: current,
+                            work: ProviderWork::default(),
+                        });
                     }
                     _ => revalidate_context_snapshot(
                         &fresh,
@@ -2521,21 +2789,33 @@ fn capture_request(request: &Request) -> Result<Response, ProviderError> {
                         &result,
                     )?,
                 }
-                if !capture::same_primary_identity(
-                    &after,
-                    &capture::fingerprints(&request.source_root)?,
-                ) {
+                let current_files = fingerprint_metadata(&request.source_root)?;
+                if !capture::same_primary_identity(&after, &current_files)
+                    || matches!(request.operation, Operation::Verify { .. })
+                        && capture::fingerprints_changed(&after, &current_files)
+                {
                     return Err(stale());
                 }
             } else {
                 return Err(stale());
             }
+        } else {
+            *resident = Some(ResidentSnapshot {
+                root: request.source_root.clone(),
+                files: after,
+                connection: memory,
+                priority_window,
+            });
         }
         Ok(result)
     })()
     .unwrap_or_else(read_error_response);
 
     match result {
+        Response::Verified(mut verified) => {
+            verified.work = rollout_reader::work().provider;
+            Ok(Response::Verified(verified))
+        }
         Response::Search(mut page) => {
             page.coverage.work = rollout_reader::work();
             Ok(Response::Search(page))
@@ -2616,6 +2896,7 @@ pub fn run_content_capture_worker() -> Result<(), ProviderError> {
         let mut input = std::io::stdin().lock();
         let mut output = std::io::stdout().lock();
         let mut paths = None;
+        let mut resident = None;
         loop {
             let mut bytes = vec![];
             let count = input
@@ -2645,7 +2926,8 @@ pub fn run_content_capture_worker() -> Result<(), ProviderError> {
                 return Err(unavailable());
             }
             paths = Some(current);
-            let result = capture_request(&request).unwrap_or_else(read_error_response);
+            let result =
+                capture_request(&request, &mut resident).unwrap_or_else(read_error_response);
             let encoded = wire_response(&result, legacy)?;
             if encoded.len() > MAX_OUTPUT {
                 return Err(unavailable());
@@ -2787,6 +3069,21 @@ impl SessionSearchReadPort for CodexAdapter {
         }
         Ok(page)
     }
+    fn verify_search_evidence(
+        &self,
+        references: &[ContextReference],
+        excluded: &[ArtifactId],
+    ) -> Result<Option<EvidenceVerification>, ProviderError> {
+        let Response::Verified(verified) = self.content_worker(Operation::Verify {
+            references: references.to_vec(),
+            excluded: excluded.to_vec(),
+        })?
+        else {
+            return Err(unavailable());
+        };
+        Ok(Some(verified))
+    }
+
     fn session_context_window(
         &self,
         reference: &ContextReference,

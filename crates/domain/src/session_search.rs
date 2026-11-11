@@ -109,6 +109,16 @@ impl SearchParameters {
     }
 }
 
+/// DiscoveryPriority uses this key within each native-ID inventory window.
+pub fn discovery_title_weight(metadata: &SessionMetadata, terms: &[String]) -> usize {
+    let title = metadata.title.as_deref().unwrap_or_default().to_lowercase();
+    terms
+        .iter()
+        .filter(|term| title.contains(term.as_str()))
+        .map(|term| term.len().min(32))
+        .sum()
+}
+
 /// Trusted typed host-composition input, never MCP/model metadata. Production
 /// launch declarations alone cannot construct an admitted identity.
 #[derive(Debug, Clone)]
@@ -118,7 +128,7 @@ pub struct ManagementIdentity {
     pub revision: String,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SearchContinuation {
     pub scope: String,
@@ -148,7 +158,7 @@ pub struct SearchReadRequest {
     pub continuation: SearchContinuation,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ConversationEvidence {
     pub source: String,
@@ -211,6 +221,13 @@ pub struct SessionSearchPage {
     pub next: Option<SearchContinuation>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EvidenceVerification {
+    pub sessions: Vec<Option<SessionMetadata>>,
+    pub work: crate::ProviderWork,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ContextReference {
@@ -250,7 +267,10 @@ fn search_digest(bytes: &[u8]) -> String {
 
 /// Conservative suppression; never described as perfect secret detection.
 pub fn safe_conversation_text(text: &str) -> bool {
-    let lower = text.to_lowercase();
+    safe_lowered_conversation_text(&text.to_lowercase())
+}
+
+fn safe_lowered_conversation_text(lower: &str) -> bool {
     ![
         "-----begin",
         "authorization:",
@@ -329,19 +349,27 @@ pub struct SearchRelevance {
 }
 impl SearchRelevance {
     pub fn new(parameters: &SearchParameters) -> Self {
+        Self::with_terms(parameters.terms(), parameters.ranking_terms())
+    }
+
+    pub fn with_terms(required: Vec<String>, terms: Vec<String>) -> Self {
         Self {
-            required: parameters.terms(),
-            terms: parameters.ranking_terms(),
+            required,
+            terms,
             matched: BTreeSet::new(),
             sources: BTreeSet::new(),
             score: 0,
         }
     }
     pub fn observe(&mut self, source: &str, text: &str) -> usize {
-        if !safe_conversation_text(text) {
+        self.observe_prepared(source, &crate::PreparedText::new(text))
+    }
+
+    pub fn observe_prepared(&mut self, source: &str, text: &crate::PreparedText<'_>) -> usize {
+        let lower = text.lowercase();
+        if !safe_lowered_conversation_text(lower) {
             return 0;
         }
-        let lower = text.to_lowercase();
         let weight = match source {
             "title" => 2,
             "user_message" => 4,

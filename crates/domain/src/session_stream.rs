@@ -18,6 +18,38 @@ pub struct ReadWork {
     pub decoded_bytes: u64,
     pub replay_bytes: u64,
     pub records_inspected: u64,
+    #[serde(default, skip_serializing_if = "ProviderWork::is_empty")]
+    pub provider: ProviderWork,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProviderWork {
+    pub metadata_hash_bytes: u64,
+    pub sqlite_snapshots: u64,
+    pub sqlite_snapshot_reuses: u64,
+    pub sqlite_backup_us: u64,
+    pub metadata_rows: u64,
+    pub fts_builds: u64,
+    pub fts_build_us: u64,
+    pub fts_query_us: u64,
+}
+
+impl ProviderWork {
+    pub fn is_empty(&self) -> bool {
+        self == &Self::default()
+    }
+
+    pub fn add(&mut self, work: &Self) {
+        self.metadata_hash_bytes += work.metadata_hash_bytes;
+        self.sqlite_snapshots += work.sqlite_snapshots;
+        self.sqlite_snapshot_reuses += work.sqlite_snapshot_reuses;
+        self.sqlite_backup_us += work.sqlite_backup_us;
+        self.metadata_rows += work.metadata_rows;
+        self.fts_builds += work.fts_builds;
+        self.fts_build_us += work.fts_build_us;
+        self.fts_query_us += work.fts_query_us;
+    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -45,7 +77,7 @@ pub struct MessagePosition {
     pub chunk_total: usize,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TranscriptCheckpoint {
     #[serde(default)]
@@ -194,7 +226,7 @@ pub struct CachedSessionSearch {
 }
 
 /// Keyset boundary between bounded metadata windows; time values are UTC seconds.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct InventoryBoundary {
     pub native_session_id: String,

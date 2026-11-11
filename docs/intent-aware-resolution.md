@@ -34,7 +34,9 @@ executable's `tools/list` advertises the exact [SearchIntent JSON Schema](search
   (`investigated`, `proposed`, `attempted`, `implemented`, `tested`, `validated`,
   `resolved`, `reverted`, `failed`, `unresolved`). An investigation can match
   without an implementation. A claim that an outcome never occurred requires
-  complete logical history and a grounded assessment. Paginated Codex history
+  complete logical history and an assessment of that history. The resolver
+  cannot publish a positive verification of a session-wide exclusion from
+  its current bounded assessment contract. Paginated Codex history
   remains Partial.
 - `result_policy` defaults to `all_relevant`, including singular wording.
   Use `single_best` when the user asks to choose one. `coverage_goal` defaults
@@ -67,7 +69,92 @@ literal, ...}` contract with the original AST, or `session_discover` for
 deterministic inventory. Preserve exact user restrictions when using that
 route. Both routes use the same evaluator and three-valued logic.
 
-## Originating chat workflow
+## Progressive workflow
+
+For ordinary `all_relevant` requests, add `"progressive": true` at the
+top level of the `start` request. Keep SearchIntent v1. Use the legacy route
+below for explicit `single_best` selection or advanced Boolean intent.
+
+1. The originating chat asks Luna for a SearchIntent and checks it against the
+   user's scope and expected activity. Use a short list of distinctive anchors
+   and justified aliases in the first pass. For example, “permission denied”
+   may use `EPERM` or `O_SEARCH` when the question concerns that fix.
+2. Start the run and give Luna the returned batch with quoted evidence and
+   handles. Send one `advance` with judgments when the passages suffice.
+   A positive judgment requires `relationship:"direct"`. An implementation,
+   test, or reversion belongs to the session that reports performing it.
+   A feasibility discussion, later recap, or link to work elsewhere can be
+   submitted as `related` with `discussion` or `retrospective`. If the user
+   asks where a discussion occurred, use `direct` for evidence that the
+   candidate itself contains the requested discussion.
+3. If more evidence is needed, send `context_requests` with up to two anchors
+   and windows. Specify at most 4,096 bytes and five messages per window.
+   The resolver deduplicates identical requests and can combine overlapping
+   Around windows at the same anchor within the aggregate bounds. Follow
+   returned continuation handles without overriding their window. Reassess a
+   candidate after receiving additional evidence for it.
+4. Each `advance` takes `expected_revision` from the previous response's
+   `step_revision` and a new caller-chosen `operation_id`. Collect fresh
+   `matches` from each response by exact identity and keep their evidence
+   references in the origin. The resolver releases that batch's handles
+   when it publishes and returns the next batch. Signed references remain
+   usable with the same origin, root and process while the source is fresh.
+5. Continue while `outcome` is null, including empty batches whose cursor
+   advanced. For standard requests use `finish_if_sufficient:true` after
+   evaluating the offered batch if it answers the request. For exhaustive
+   requests continue to terminal. `luna_unavailable:true` returns a partial
+   result with any already supported matches. `cancel:true` terminates a run.
+6. On a lost reply, repeat the most recent step with identical parameters
+   and operation ID. `replayed:true` acknowledges the same revision and
+   returns the batch again after revalidating its publication. Upsert by
+   identity rather than counting a retry as new results. Remove any identity
+   listed in `invalidated` from the accumulated publication. Scope or process
+   changes invalidate the run.
+
+```json
+{
+  "action": "advance",
+  "run": "<returned run>",
+  "expected_revision": 1,
+  "operation_id": "batch-1",
+  "assessments": [{
+    "native_session_id": "<candidate UUID>",
+    "disposition": "verified_relevant",
+    "relationship": "direct",
+    "evidence": [0],
+    "outcomes": ["implemented"],
+    "explanation": "The cited message reports implementing the limits in this session."
+  }],
+  "finish_if_sufficient": true
+}
+```
+
+The terminal outcomes are `completed_with_matches`, `completed_no_matches`,
+`partial`, `blocked` and `cancelled`. The accompanying
+`progressive_coverage` separates inventory completion, physical traversal,
+logical history and eligible semantic evaluation. A lexical scan can finish
+with no verified match and a partial outcome. Exhaustive semantic coverage
+requires complete supported histories and judgments for every inspected
+eligible session. The resolver does not certify session-wide semantic
+absence from lexical observations or selected excerpts.
+
+The queue holds at most five candidates. There is no cumulative candidate,
+assessment, publication or provider-page ceiling on this route. The active
+context batch has resource limits and the process retains up to four runs
+with a ten-minute idle lease. Each call retains reader and transport limits.
+An expired or restarted run returns a stale refusal. No checkpoint or
+transcript is persisted by default. If a source changes, invalid matches
+are omitted from that batch, while previously published independent results
+remain available to the originating chat. An interrupted source cursor can retry that source once with the same
+inventory commitments. Membership drift or a second source failure returns
+partial coverage. Earlier published batches remain outside the retry.
+
+`expansion_terms` offers one follow-up pass after a complete empty first
+pass. Prefer initial aliases for large scans. After identities have been
+presented, use further context on those candidates and disclose lexical
+coverage limits where applicable.
+
+## Legacy workflow
 
 1. A GPT-6 Luna Medium originating chat interprets and assesses directly.
    Other models delegate the live request to `session_relevance`. If the
@@ -130,7 +217,7 @@ matches. Standard results can report matches within the scanned candidates.
 A terminal scan observes sources at their individual revisions and does not
 certify a root-wide snapshot.
 
-The resolver retains up to four runs for ten minutes with eight minutes for
+The legacy route retains up to four runs for ten minutes with eight minutes for
 new work. Each batch visits up to twelve provider pages, subject to its
 time budget, and returns up to five candidate identities. Each run admits
 256 provider pages, 96 distinct candidates, 48 assessment submissions, 24

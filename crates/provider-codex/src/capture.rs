@@ -79,6 +79,13 @@ pub(super) struct FileFingerprint {
 }
 
 #[cfg(target_os = "macos")]
+impl FileFingerprint {
+    pub(super) fn bytes(&self) -> u64 {
+        self.record.as_ref().map_or(0, |record| record.bytes)
+    }
+}
+
+#[cfg(target_os = "macos")]
 pub(super) fn same_primary_identity(before: &[FileFingerprint], after: &[FileFingerprint]) -> bool {
     match (before.first(), after.first()) {
         (Some(a), Some(b))

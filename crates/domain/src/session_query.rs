@@ -128,7 +128,7 @@ pub enum TextMatch {
     Exact,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 pub enum QueryExpr {
     And {
@@ -231,7 +231,7 @@ impl TimeRange {
 #[error("invalid date, timezone, ambiguous boundary or empty/reversed interval")]
 pub struct QueryTimeError;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CalendarRange {
     #[serde(default)]
@@ -240,7 +240,7 @@ pub struct CalendarRange {
     pub end_date: Option<String>,
     pub timezone: String,
 }
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum QueryRange {
     Utc(TimeRange),
@@ -406,8 +406,17 @@ impl QueryExpr {
     /// Call only for supported, safe, source-validated messages. Source gaps,
     /// suppression, truncation and unread portions keep content_complete false.
     pub fn observe(&self, observation: &mut QueryObservation, message: &QueryText<'_>) {
-        observation.missing_timestamps |= message.timestamp.is_none();
         let prepared = PreparedText::new(message.text);
+        self.observe_prepared(observation, &prepared, message.timestamp);
+    }
+
+    pub fn observe_prepared(
+        &self,
+        observation: &mut QueryObservation,
+        prepared: &PreparedText<'_>,
+        timestamp: Option<i64>,
+    ) {
+        observation.missing_timestamps |= timestamp.is_none();
         self.visit_content(&mut 0, &mut |index, atom| {
             let matched = match atom {
                 Self::Text {
@@ -420,7 +429,7 @@ impl QueryExpr {
                 Self::MessageTime { range } => range
                     .bounds()
                     .ok()
-                    .zip(message.timestamp)
+                    .zip(timestamp)
                     .is_some_and(|(range, t)| range.contains(t)),
                 _ => false,
             };
@@ -581,30 +590,28 @@ fn normalized_phrase(value: &str) -> String {
         .join(" ")
         .to_lowercase()
 }
-struct PreparedText<'a> {
+pub struct PreparedText<'a> {
     original: &'a str,
     lower: OnceCell<String>,
     phrase: OnceCell<String>,
 }
 impl<'a> PreparedText<'a> {
-    fn new(original: &'a str) -> Self {
+    pub fn new(original: &'a str) -> Self {
         Self {
             original,
             lower: OnceCell::new(),
             phrase: OnceCell::new(),
         }
     }
+    pub fn lowercase(&self) -> &str {
+        self.lower.get_or_init(|| self.original.to_lowercase())
+    }
     fn matches(&self, query: &str, kind: TextMatch) -> bool {
         // A large message is folded once per observed record, not once per
         // query leaf/alternative. Both allocations are bounded by record size.
         match kind {
-            TextMatch::Contains => self
-                .lower
-                .get_or_init(|| self.original.to_lowercase())
-                .contains(&query.to_lowercase()),
-            TextMatch::Exact => {
-                *self.lower.get_or_init(|| self.original.to_lowercase()) == query.to_lowercase()
-            }
+            TextMatch::Contains => self.lowercase().contains(&query.to_lowercase()),
+            TextMatch::Exact => self.lowercase() == query.to_lowercase(),
             TextMatch::Phrase => self
                 .phrase
                 .get_or_init(|| normalized_phrase(self.original))

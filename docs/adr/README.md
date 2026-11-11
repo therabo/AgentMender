@@ -61,3 +61,4 @@ registered filtering fixed, content/binding implementation deferred).
 - [ADR-0032: Caller-scoped session resolution](0032-caller-scoped-session-resolution.md) — Host-side Luna reasoning with bounded read-only acquisition and citation validation.
 
 - [ADR-0033 — SearchIntent v1](0033-search-intent-v1.md)
+- [ADR-0034 — Progressive session resolution](0034-progressive-resolution.md)

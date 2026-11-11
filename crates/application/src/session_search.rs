@@ -233,6 +233,46 @@ impl SessionSearchService<'_> {
             coverage_requirement_met,
         })
     }
+    pub(crate) fn verify_search_evidence(
+        &self,
+        references: &[ContextReference],
+        control: &QueryControl,
+    ) -> Result<Option<EvidenceVerification>, ApplicationError> {
+        control.check()?;
+        let binding = self.binding(SearchPurpose::Discovery)?;
+        let excluded = self.excluded(SearchPurpose::Discovery)?;
+        if !(1..=5).contains(&references.len())
+            || references.iter().any(|reference| {
+                reference.binding_revision != binding
+                    || reference.purpose != SearchPurpose::Discovery
+                    || excluded.iter().any(|id| id.local_id == reference.local_id)
+            })
+        {
+            return Err(ApplicationError::StaleSearchEvidence);
+        }
+        let current = self
+            .reader
+            .verify_search_evidence(references, &excluded)
+            .map_err(reader_error)?;
+        control.check()?;
+        if current.as_ref().is_some_and(|verification| {
+            let rows = &verification.sessions;
+            rows.len() != references.len()
+                || rows.iter().zip(references).any(|(row, r)| {
+                    row.as_ref().is_some_and(|m| {
+                        m.identity.provider != self.provider
+                            || m.identity.state_root != self.provider_root
+                            || m.identity.class != GraphNodeKind::Session
+                            || m.identity.local_id != r.local_id
+                            || m.native_session_id != r.native_session_id
+                    })
+                })
+        }) {
+            return Err(ApplicationError::InvalidSearch);
+        }
+        Ok(current)
+    }
+
     pub fn context_window(
         &self,
         reference: ContextReference,

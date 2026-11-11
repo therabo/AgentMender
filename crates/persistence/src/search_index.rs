@@ -2,7 +2,7 @@
 //! Contentless FTS retains sensitive terms; callers must opt in to disk storage.
 use crate::OwnedStateRoot;
 use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
-use std::{io, path::Path};
+use std::{collections::BTreeSet, io, path::Path};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -302,17 +302,11 @@ impl SearchTextIndex {
         if query.len() > 4096 || limit == 0 || limit > 1000 {
             return Err(SearchIndexError::Invalid);
         }
-        let terms: Vec<_> = query
-            .split_whitespace()
-            .take(64)
-            .filter(|s| s.chars().any(char::is_alphanumeric))
-            .map(|s| format!("\"{}\"", s.replace('"', "\"\"")))
-            .collect();
-        if terms.is_empty() {
+        let Some(expression) = literal_match(query) else {
             return Ok(Vec::new());
-        }
+        };
         let mut statement=self.db.prepare("SELECT d.source,s.revision,d.ordinal,d.chunk,d.reference,bm25(search_terms) FROM search_terms JOIN search_documents d ON d.id=search_terms.rowid JOIN search_sources s ON s.source=d.source WHERE search_terms MATCH ?1 ORDER BY bm25(search_terms),d.source,d.ordinal,d.chunk LIMIT ?2")?;
-        let rows = statement.query_map(params![terms.join(" OR "), limit as i64], |r| {
+        let rows = statement.query_map(params![expression, limit as i64], |r| {
             Ok(IndexMatch {
                 source: r.get(0)?,
                 revision: r.get(1)?,
@@ -322,6 +316,36 @@ impl SearchTextIndex {
                 bm25: r.get(5)?,
             })
         })?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// Propose cache sources among the caller's eligible keys. Global BM25
+    /// statistics from protected or ineligible sources do not affect the order.
+    pub fn matching_sources(
+        &self,
+        query: &str,
+        eligible: &[&str],
+    ) -> Result<BTreeSet<String>, SearchIndexError> {
+        self.check()?;
+        if eligible.is_empty() {
+            return Ok(BTreeSet::new());
+        }
+        if query.len() > 4096
+            || eligible.len() > 1000
+            || eligible.iter().any(|key| key.len() > 4096)
+        {
+            return Err(SearchIndexError::Invalid);
+        }
+        let Some(expression) = literal_match(query) else {
+            return Ok(BTreeSet::new());
+        };
+        let keys = serde_json::to_string(eligible).map_err(|_| SearchIndexError::Invalid)?;
+        let mut statement = self.db.prepare(
+            "SELECT DISTINCT d.source FROM search_terms
+             JOIN search_documents d ON d.id=search_terms.rowid
+             WHERE search_terms MATCH ?1 AND d.source IN (SELECT value FROM json_each(?2))",
+        )?;
+        let rows = statement.query_map(params![expression, keys], |row| row.get(0))?;
         Ok(rows.collect::<Result<_, _>>()?)
     }
     pub fn rank(&self, query: &str, limit: usize) -> Result<Vec<(u64, f64)>, SearchIndexError> {
@@ -393,6 +417,16 @@ impl SearchTextIndex {
         )?;
         Ok(())
     }
+}
+
+fn literal_match(query: &str) -> Option<String> {
+    let terms: Vec<_> = query
+        .split_whitespace()
+        .take(64)
+        .filter(|term| term.chars().any(char::is_alphanumeric))
+        .map(|term| format!("\"{}\"", term.replace('"', "\"\"")))
+        .collect();
+    (!terms.is_empty()).then(|| terms.join(" OR "))
 }
 #[derive(Debug, Clone)]
 pub struct StoredSearchSource {

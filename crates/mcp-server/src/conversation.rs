@@ -630,6 +630,29 @@ enum ResolutionInput {
     Start {
         search_intent: Option<Box<SearchIntentInput>>,
         intent: Option<Box<IntentInput>>,
+        #[serde(default)]
+        progressive: bool,
+    },
+    Advance {
+        run: String,
+        expected_revision: usize,
+        #[schemars(length(min = 1, max = 64))]
+        operation_id: String,
+        #[serde(default)]
+        #[schemars(length(max = 5))]
+        assessments: Vec<AssessmentInput>,
+        #[serde(default)]
+        #[schemars(length(max = session_resolution::WINDOW_BATCH))]
+        context_requests: Vec<ResolutionWindowInput>,
+        #[serde(default)]
+        #[schemars(length(max = EXPANSION_LIMIT))]
+        expansion_terms: Vec<LexicalTerm>,
+        #[serde(default)]
+        finish_if_sufficient: bool,
+        #[serde(default)]
+        cancel: bool,
+        #[serde(default)]
+        luna_unavailable: bool,
     },
     Next {
         run: String,
@@ -659,6 +682,13 @@ enum ResolutionInput {
         luna_unavailable: bool,
         preferred_session_id: Option<String>,
     },
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct ResolutionWindowInput {
+    anchor: usize,
+    window: Option<ContextOptionsInput>,
 }
 
 #[derive(Deserialize, Serialize, JsonSchema)]
@@ -841,6 +871,15 @@ enum DispositionInput {
 }
 
 #[derive(Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+enum EvidenceRelationshipInput {
+    Direct,
+    Discussion,
+    Retrospective,
+    Contradiction,
+}
+
+#[derive(Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct AssessmentInput {
     native_session_id: String,
@@ -853,6 +892,9 @@ struct AssessmentInput {
     outcomes: Vec<OutcomeInput>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     activity: Option<ActivityInput>,
+    /// Progressive verified_relevant judgments require direct evidence of work in this session.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    relationship: Option<EvidenceRelationshipInput>,
     #[schemars(length(min = 1, max = 1024))]
     explanation: String,
     /// For insufficient judgments, describe the gap in explanation or supply a short text or list here.
@@ -924,13 +966,18 @@ impl ResolutionInput {
             Self::Start {
                 search_intent: Some(intent),
                 intent: None,
+                progressive,
             } => {
                 let intent: SearchIntent = decode(intent)?;
-                Action::StartV1(Box::new(intent.validate().map_err(intent_error)?))
+                Action::StartV1 {
+                    plan: Box::new(intent.validate().map_err(intent_error)?),
+                    progressive,
+                }
             }
             Self::Start {
                 search_intent: None,
                 intent: Some(intent),
+                progressive: false,
             } => Action::Start(decode(intent)?),
             Self::Start { .. } => {
                 return Err(resolution_invalid(
@@ -939,6 +986,37 @@ impl ResolutionInput {
                 ));
             }
             Self::Next { run } => Action::Next { run },
+            Self::Advance {
+                run,
+                expected_revision,
+                operation_id,
+                assessments,
+                context_requests,
+                expansion_terms,
+                finish_if_sufficient,
+                cancel,
+                luna_unavailable,
+            } => Action::Advance {
+                run,
+                step: Box::new(session_resolution::Advance {
+                    expected_revision,
+                    operation_id,
+                    assessments: decode(normalize_assessments(assessments)?)?,
+                    context_requests: context_requests
+                        .into_iter()
+                        .map(|request| {
+                            Ok(session_resolution::ContextRequest {
+                                anchor: request.anchor,
+                                window: request.window.map(decode).transpose()?,
+                            })
+                        })
+                        .collect::<Result<_, ErrorData>>()?,
+                    expansion: expansion_terms.into_iter().map(|term| term.0).collect(),
+                    finish_if_sufficient,
+                    cancel,
+                    luna_unavailable,
+                }),
+            },
             Self::Expand {
                 run,
                 terms: Some(terms),
@@ -968,24 +1046,16 @@ impl ResolutionInput {
                 anchor,
                 window: window.map(decode).transpose()?,
             },
-            Self::Assess {
-                run,
-                mut assessments,
-            } => {
+            Self::Assess { run, assessments } => {
                 if !(1..=5).contains(&assessments.len()) {
                     return Err(resolution_invalid(
                         "invalid_assessment",
                         "Submit one to five assessments for presented candidates.",
                     ));
                 }
-                for assessment in &mut assessments {
-                    if let Some(gap) = assessment.missing_evidence.take() {
-                        assessment.missing_evidence = gap.normalize()?;
-                    }
-                }
                 Action::Assess {
                     run,
-                    assessments: decode(assessments)?,
+                    assessments: decode(normalize_assessments(assessments)?)?,
                 }
             }
             Self::Finish {
@@ -1003,6 +1073,17 @@ impl ResolutionInput {
             },
         })
     }
+}
+
+fn normalize_assessments(
+    mut assessments: Vec<AssessmentInput>,
+) -> Result<Vec<AssessmentInput>, ErrorData> {
+    for assessment in &mut assessments {
+        if let Some(gap) = assessment.missing_evidence.take() {
+            assessment.missing_evidence = gap.normalize()?;
+        }
+    }
+    Ok(assessments)
 }
 
 fn intent_error(error: SearchIntentError) -> ErrorData {
@@ -1100,8 +1181,24 @@ struct ResolutionView {
     #[serde(skip_serializing_if = "Option::is_none")]
     coverage: Option<SemanticCoverageView>,
     progress: serde_json::Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    step_revision: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    progressive_coverage: Option<serde_json::Value>,
     #[serde(flatten)]
     data: ResolutionDataView,
+}
+
+#[derive(Serialize, JsonSchema)]
+struct ResolutionWindowView {
+    messages: Vec<ResolutionCitationView>,
+    next: Option<usize>,
+    previous: Option<usize>,
+    source_coverage: SourceCoverageView,
+    work: ReadWorkView,
+    partial: bool,
+    at_start: bool,
+    at_end: bool,
 }
 
 #[derive(Serialize, JsonSchema)]
@@ -1130,6 +1227,16 @@ enum ResolutionDataView {
         at_end: bool,
     },
     Assessed,
+    Advanced {
+        matches: Vec<ResolutionMatchView>,
+        alternatives: Vec<ResolutionMatchView>,
+        windows: Vec<ResolutionWindowView>,
+        candidates: Vec<ResolutionCandidateView>,
+        outcome: Option<&'static str>,
+        replayed: bool,
+        #[serde(skip_serializing_if = "Vec::is_empty")]
+        invalidated: Vec<String>,
+    },
     Finished {
         outcome: &'static str,
         matches: Vec<ResolutionMatchView>,
@@ -1215,6 +1322,18 @@ fn resolution_view(
     projector: &Projector,
 ) -> ResolutionView {
     use session_resolution::{ResolutionData, ResolutionOutcome};
+    let progressive = result.revision.is_some();
+    let display = |value: &str| {
+        let mut text = safe(value);
+        if progressive && text.len() > 256 {
+            let mut end = 256;
+            while !text.is_char_boundary(end) {
+                end -= 1;
+            }
+            text.truncate(end);
+        }
+        text
+    };
     let cite = |citation: session_resolution::Citation| ResolutionCitationView {
         handle: citation.handle,
         evidence: evidence_view(
@@ -1222,7 +1341,11 @@ fn resolution_view(
             projector.seal_search(b"evidence", &citation.reference),
         ),
     };
-    let resolved = |r: session_resolution::ResolvedCandidate| {
+    let resolved = |mut r: session_resolution::ResolvedCandidate| {
+        if progressive {
+            r.metadata.title = r.metadata.title.as_deref().map(display);
+            r.metadata.project_label = r.metadata.project_label.as_deref().map(display);
+        }
         let mut session = label(projector, &r.metadata, false, true);
         let first = r
             .citations
@@ -1240,44 +1363,72 @@ fn resolution_view(
                 .collect(),
         }
     };
+    let candidate = |c: session_resolution::ResolutionCandidate| ResolutionCandidateView {
+        native_session_id: c.metadata.native_session_id,
+        title: c.metadata.title.as_deref().map(display),
+        observed_project: c.metadata.project_label.as_deref().map(display),
+        provider: "codex",
+        match_basis: serde_json::to_value(c.match_basis).expect("typed match basis"),
+        source_coverage: c.source_coverage.map(Into::into),
+        evidence: c.evidence.into_iter().map(cite).collect(),
+        untrusted_data: true,
+    };
+    let window = |w: session_resolution::ResolutionWindow| ResolutionWindowView {
+        messages: w.messages.into_iter().map(cite).collect(),
+        next: w.next,
+        previous: w.previous,
+        source_coverage: w.source_coverage.into(),
+        work: w.work.into(),
+        partial: w.partial,
+        at_start: w.at_start,
+        at_end: w.at_end,
+    };
     let data = match result.data {
         ResolutionData::Candidates { candidates, query } => ResolutionDataView::Candidates {
             ranking: "provisional title-prior scan order within inventory windows; FTS5/BM25 passage selection within source slices",
             query: query.map(|q| serde_json::to_value(q).expect("typed query")),
-            candidates: candidates
-                .into_iter()
-                .map(|c| ResolutionCandidateView {
-                    native_session_id: c.metadata.native_session_id,
-                    title: c.metadata.title.as_deref().map(safe),
-                    observed_project: c.metadata.project_label.as_deref().map(safe),
-                    provider: "codex",
-                    match_basis: serde_json::to_value(c.match_basis).expect("typed match basis"),
-                    source_coverage: c.source_coverage.map(Into::into),
-                    evidence: c.evidence.into_iter().map(cite).collect(),
-                    untrusted_data: true,
-                })
-                .collect(),
+            candidates: candidates.into_iter().map(candidate).collect(),
         },
-        ResolutionData::Context {
-            messages,
-            next,
-            previous,
-            source_coverage,
-            work,
-            partial,
-            at_start,
-            at_end,
-        } => ResolutionDataView::Context {
-            messages: messages.into_iter().map(cite).collect(),
-            next,
-            previous,
-            source_coverage: source_coverage.into(),
-            work: work.into(),
-            partial,
-            at_start,
-            at_end,
-        },
+        ResolutionData::Context(w) => {
+            let ResolutionWindowView {
+                messages,
+                next,
+                previous,
+                source_coverage,
+                work,
+                partial,
+                at_start,
+                at_end,
+            } = window(*w);
+            ResolutionDataView::Context {
+                messages,
+                next,
+                previous,
+                source_coverage,
+                work,
+                partial,
+                at_start,
+                at_end,
+            }
+        }
         ResolutionData::Assessed => ResolutionDataView::Assessed,
+        ResolutionData::Advanced(reply) => ResolutionDataView::Advanced {
+            matches: reply.matches.into_iter().map(resolved).collect(),
+            alternatives: reply.alternatives.into_iter().map(resolved).collect(),
+            windows: reply.windows.into_iter().map(window).collect(),
+            candidates: reply.candidates.into_iter().map(candidate).collect(),
+            outcome: reply.outcome.map(|outcome| match outcome {
+                session_resolution::TerminalOutcome::CompletedWithMatches => {
+                    "completed_with_matches"
+                }
+                session_resolution::TerminalOutcome::CompletedNoMatches => "completed_no_matches",
+                session_resolution::TerminalOutcome::Partial => "partial",
+                session_resolution::TerminalOutcome::Blocked => "blocked",
+                session_resolution::TerminalOutcome::Cancelled => "cancelled",
+            }),
+            replayed: reply.replayed,
+            invalidated: reply.invalidated,
+        },
         ResolutionData::Finished {
             outcome,
             matches,
@@ -1314,6 +1465,10 @@ fn resolution_view(
             limitation: "lexical_candidates_only",
         }),
         progress: serde_json::to_value(result.progress).expect("typed progress"),
+        step_revision: result.revision,
+        progressive_coverage: result
+            .progressive_coverage
+            .map(|coverage| serde_json::to_value(coverage).expect("typed progressive coverage")),
         data,
     }
 }
@@ -1385,7 +1540,7 @@ pub(super) fn tools(discovery: bool) -> Vec<Tool> {
         ));
         registry.insert(0, (
             "session_resolve",
-            r#"Find and verify past Codex conversations. Ordinary start example: {"action":"start","search_intent":{"schema_version":"1","subject":"Cesium rendering performance","hints":{"terms":["Cesium"]}}}. Project mentions are topical hints unless the user explicitly restricts stored membership. All supported matches are the default. Use Luna Medium for interpretation and assessment. The originating chat executes one MCP call at a time, keeps the run, and publishes fresh finish evidence with coverage gaps. Use context, assess and next. For insufficient recall after a finished scan, expand once with new terms on the same run. The legacy intent argument supports exact Boolean constraints. Read-only with implicit caller exclusion."#,
+            r#"Find and verify past Codex conversations. Ordinary start: {"action":"start","progressive":true,"search_intent":{"schema_version":"1","subject":"Cesium rendering performance","hints":{"terms":["Cesium"]}}}. The originating chat keeps the run and calls advance with expected_revision from step_revision and a new operation_id. Assess up to five candidates with Luna Medium, require relationship:direct for verified_relevant, and collect fresh matches from every step. Request context through up to two bounded windows. Continue exhaustive work until an outcome is returned. Project hints do not constrain membership. Explicit single_best and the legacy Boolean intent use the original finish workflow. Read-only with implicit caller exclusion."#,
             resolution_schema(),
             schema::<ResolutionView>(),
             true,

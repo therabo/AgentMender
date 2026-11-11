@@ -1,25 +1,24 @@
 # AgentMender engineering constraints
 
-## P0-SR5.1 past-conversation resolution
+## Past-conversation resolution
 
-For a normal request to find the conversation(s) that investigated, decided,
-implemented or verified something, follow the [Luna workflow](docs/intent-aware-resolution.md)
-and use `session_resolve` from the originating chat. A chat already running
-GPT-6 Luna Medium can own the workflow directly. For other parent models,
-delegate intent and semantic assessment to the named `session_relevance` agent. If the host does
-not discover that role, explicitly spawn `gpt-6-luna` at medium effort with fresh
-context and the same workflow. This instruction authorizes that delegation for
-past-conversation search. The parent owns the MCP calls. Compare Luna's plan to
-the live user request before calling `start` with `search_intent`. Project
-mentions belong in `hints.project_names` unless the user explicitly restricts
-membership. Use the default `all_relevant` even for singular wording. Use
-`exhaustive` coverage for explicit all-results requests. For exact Boolean
-restrictions use the existing advanced route. Give Luna evidence handles and
-short quoted passages. Keep callable references and the run ID in the parent. For an
-all request, continue acquisition and assessment through the available scan.
-Use the fresh finish result as the only source of selected identities and cite
-its evidence. Distinguish a direct supported match from global uniqueness.
-Disclose unresolved evidence, incomplete work and Partial history as applicable.
+Use the [Luna workflow](docs/intent-aware-resolution.md) in the originating
+chat. A GPT-6 Luna Medium chat can interpret and assess directly. Other hosts
+use the named `session_relevance` role, with explicit GPT-6 Luna Medium fallback
+when the role is unavailable. This instruction authorizes that delegation for
+past-conversation search. The parent owns the MCP calls and checks Luna's plan
+against the live user request.
+
+Use `start` with SearchIntent v1 and top-level `progressive:true` for ordinary
+`all_relevant` requests. Explicit `single_best` selection and advanced Boolean
+intent use the documented legacy workflow. Project names are topical hints
+unless the user asks for a membership restriction. Use `exhaustive` for
+explicit all-results requests. Give Luna quoted passages and evidence handles.
+Use `advance` for judgments, bounded context, continuation and publication.
+Retain the returned matches and signed evidence in the origin as each batch
+is released. Require direct evidence of work in the candidate for a positive
+activity judgment. Treat recaps as leads. Keep the limits of logical history,
+semantic assessment, and source freshness visible in the answer.
 
 ## P0-SR4 read-only caller-filtered discovery
 
