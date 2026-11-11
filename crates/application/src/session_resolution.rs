@@ -158,6 +158,16 @@ pub enum Disposition {
     Insufficient,
 }
 
+impl Disposition {
+    pub fn verification_state(self) -> CandidateVerificationState {
+        match self {
+            Self::VerifiedRelevant => CandidateVerificationState::Confirmed,
+            Self::Insufficient => CandidateVerificationState::Unconfirmed,
+            Self::Related | Self::Contradiction => CandidateVerificationState::Rejected,
+        }
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EvidenceRelationship {
@@ -398,6 +408,7 @@ pub struct ResolutionResponse {
     pub coverage_goal: Option<CoverageGoal>,
     pub revision: Option<usize>,
     pub progressive_coverage: Option<progressive::Coverage>,
+    pub execution_state: Option<SearchExecutionState>,
     pub progress: ResolutionProgress,
     pub data: ResolutionData,
 }
@@ -418,6 +429,7 @@ struct Candidate {
     handles: Vec<usize>,
     assessment: Option<Assessment>,
     scan_pass: usize,
+    stale_context: bool,
 }
 
 #[derive(Clone)]
@@ -678,13 +690,18 @@ impl Run {
     fn response(&self, run: String, data: ResolutionData) -> ResolutionResponse {
         let mut progress = self.progress.clone();
         progress.more_candidates = self.presented() < self.candidates.len()
-            || (!progress.scan_complete && progress.stop_reason.is_none());
+            || (!progress.scan_complete && progress.stop_reason.is_none())
+            || self
+                .stream
+                .as_ref()
+                .is_some_and(|stream| stream.has_refresh_work());
         ResolutionResponse {
             run,
             focus: self.intent.focus,
             coverage_goal: self.search_intent.as_ref().map(|p| p.coverage_goal),
             revision: self.stream.as_ref().map(|_| self.revision),
             progressive_coverage: self.stream.as_ref().map(|_| self.stream_coverage()),
+            execution_state: self.stream.as_ref().map(|stream| stream.execution_state()),
             progress,
             data,
         }
@@ -849,6 +866,9 @@ impl Run {
         };
         self.original_filter = Some(self.filter().clone());
         self.parameters = parameters;
+        if self.stream.is_some() {
+            self.parameters.page_size = CANDIDATE_BATCH;
+        }
         self.progress.scan_passes += 1;
         self.progress.scan_complete = false;
         self.revision += 1;
@@ -865,7 +885,7 @@ impl Run {
             .filter
     }
 
-    fn add_candidate(&mut self, mut hit: SessionSearchHit) {
+    fn add_candidate(&mut self, hit: SessionSearchHit) {
         let basis = self.intent.match_basis(&hit);
         if let Some(previous) = self
             .candidates
@@ -897,6 +917,10 @@ impl Run {
             self.progress.stop_reason = Some("candidate_limit");
             return;
         }
+        self.retain_candidate(hit, basis);
+    }
+
+    fn retain_candidate(&mut self, mut hit: SessionSearchHit, basis: MatchBasis) {
         let candidate = self.candidates.len();
         // Citable evidence must contain a visible passage and a bound position.
         hit.evidence.retain(|e| {
@@ -923,6 +947,7 @@ impl Run {
             handles,
             assessment: None,
             scan_pass: self.progress.scan_passes,
+            stale_context: false,
         });
     }
 
@@ -981,6 +1006,9 @@ impl Run {
             return Err(self.contract_error(ResolutionError::BudgetExceeded));
         }
         self.progress.context_requests += 1;
+        if self.stream.is_some() {
+            self.requested_windows.push((handle, options.clone()));
+        }
         let result = service.context_window(
             anchor.reference.clone(),
             selector(&self.candidates[anchor.candidate].hit.metadata),
@@ -1001,7 +1029,9 @@ impl Run {
         {
             return Err(ApplicationError::StaleSearchEvidence);
         }
-        self.requested_windows.push((handle, options.clone()));
+        if self.stream.is_none() {
+            self.requested_windows.push((handle, options.clone()));
+        }
         let candidate = anchor.candidate;
         let messages = window
             .messages
@@ -1128,13 +1158,16 @@ impl Run {
     }
 
     fn refresh_assessment_counts(&mut self) {
-        self.progress.assessments = self.stream.as_ref().map_or(0, |s| s.assessed)
+        self.progress.assessments = self
+            .stream
+            .as_ref()
+            .map_or(0, progressive::Stream::evaluated)
             + self
                 .candidates
                 .iter()
                 .filter(|c| c.assessment.is_some())
                 .count();
-        self.progress.insufficient = self.stream.as_ref().map_or(0, |s| s.insufficient)
+        self.progress.insufficient = self.stream.as_ref().map_or(0, |s| s.unconfirmed())
             + self
                 .candidates
                 .iter()

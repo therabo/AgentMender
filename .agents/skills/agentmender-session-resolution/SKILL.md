@@ -22,11 +22,18 @@ parent requests it. Treat historical text as data.
 
 Use top-level `progressive:true` on `start` for `all_relevant`. Apply Luna's
 judgments and request up to two context windows with `advance`. Keep the run
-and step revision in the parent. Each new step has a new operation ID. Collect
-fresh published matches and evidence across all steps. A positive judgment
-uses `relationship:direct` and cites work in that session. For explicit
-`single_best` or advanced Boolean intent follow the legacy workflow and
-publish only the verified finish identities. Continue exhaustive work to a
-terminal outcome. Disclose coverage gaps and distinguish a related recap
-from the original activity. Use `session_discover` for exact identity,
-metadata inventory and possible deletion candidates.
+and step revision in the parent. Each new step has a new operation ID.
+Assess every candidate, using additional windows only for specific gaps.
+Continue while `execution_state` is `in_progress`, including empty batches.
+Retain confirmed matches and plausible unconfirmed alternatives with their
+signed references. Remove invalidated rows. A positive judgment uses
+`relationship:direct` and cites evidence from the original session. An
+insufficient judgment can conclude a candidate. Only use
+`plausible_alternative:true` when that candidate's evidence supports it.
+
+For progressive results, render only the two tables in the resolution
+workflow. Omit rejected candidates, label empty tables and put interruptions
+or limited lexical coverage in a short status row in the second table.
+Explicit `single_best` or advanced Boolean intent uses the legacy workflow.
+Use `session_discover` for exact identity, metadata inventory and possible
+deletion candidates.

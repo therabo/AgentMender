@@ -1,6 +1,8 @@
 # AgentMender — Progressive retrieval implementation and acceptance
 
 Baseline `8c63ef6ff7af9edf3e5e32d7ba7f801b31b919a2`. Implementation `c862382` and `df9f842` on `feature/progressive-retrieval`. The comparison uses generated Codex histories and a disposable STDIO client.
+For the current completion and verification contract, see
+[Per-session evidence verification](per-session-evidence-verification.md).
 
 ## Architecture
 

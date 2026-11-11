@@ -1,4 +1,5 @@
 use super::*;
+use std::collections::VecDeque;
 
 pub const WINDOW_BATCH: usize = 2;
 
@@ -30,15 +31,34 @@ pub enum TerminalOutcome {
     Cancelled,
 }
 
+impl TerminalOutcome {
+    fn execution_state(self) -> SearchExecutionState {
+        match self {
+            Self::CompletedWithMatches | Self::CompletedNoMatches => {
+                SearchExecutionState::Completed
+            }
+            Self::Partial | Self::Blocked | Self::Cancelled => SearchExecutionState::Interrupted,
+        }
+    }
+}
+
 #[derive(Clone, Default)]
 pub struct AdvanceResult {
     pub matches: Vec<ResolvedCandidate>,
     pub alternatives: Vec<ResolvedCandidate>,
     pub windows: Vec<ResolutionWindow>,
+    pub context_failures: Vec<ContextFailure>,
     pub candidates: Vec<ResolutionCandidate>,
     pub outcome: Option<TerminalOutcome>,
     pub replayed: bool,
     pub invalidated: Vec<String>,
+    replay_observations: BTreeMap<String, (QueryObservation, bool)>,
+}
+
+#[derive(Clone)]
+pub struct ContextFailure {
+    pub anchor: usize,
+    pub reason: &'static str,
 }
 
 #[derive(Serialize)]
@@ -47,6 +67,11 @@ pub struct Coverage {
     physical_history_complete: bool,
     logical_history_complete: bool,
     eligible_evaluation_complete: bool,
+    candidate_evaluation_complete: bool,
+    lexical_coverage_limited: bool,
+    confirmed: usize,
+    unconfirmed: usize,
+    rejected: usize,
     published: usize,
     released: usize,
     inventory_window_offset: usize,
@@ -56,16 +81,60 @@ pub struct Coverage {
 #[derive(Clone, Default)]
 pub(super) struct Stream {
     released: usize,
-    pub(super) assessed: usize,
-    pub(super) insufficient: usize,
+    refresh: VecDeque<CandidateRefresh>,
+    refreshing_batch: bool,
+    refresh_coverage_limited: bool,
+    verification_gap: Option<&'static str>,
     anchor_base: usize,
     prior_context_bytes: usize,
-    published: usize,
+    confirmed: usize,
+    unconfirmed: usize,
+    rejected: usize,
     terminal: Option<TerminalOutcome>,
     previous: Option<(Advance, AdvanceResult)>,
     last_candidate: Option<(std::cmp::Reverse<usize>, String)>,
     inventory_boundary: Option<String>,
     reanchored: Option<(Option<InventoryBoundary>, usize)>,
+}
+
+#[derive(Clone)]
+struct CandidateRefresh {
+    id: String,
+    identity: ArtifactId,
+    next: Option<SearchContinuation>,
+}
+
+impl Stream {
+    pub(super) fn execution_state(&self) -> SearchExecutionState {
+        self.terminal.map_or(
+            SearchExecutionState::InProgress,
+            TerminalOutcome::execution_state,
+        )
+    }
+
+    pub(super) fn has_refresh_work(&self) -> bool {
+        !self.refresh.is_empty()
+    }
+
+    pub(super) fn unconfirmed(&self) -> usize {
+        self.unconfirmed
+    }
+
+    fn queue_refresh(&mut self, candidate: &Candidate) {
+        if self.refreshing_batch {
+            self.verification_gap = Some("candidate_evidence_stale");
+        } else {
+            self.refresh.push_back(CandidateRefresh {
+                id: candidate.hit.metadata.native_session_id.clone(),
+                identity: candidate.hit.metadata.identity.clone(),
+                next: None,
+            });
+        }
+    }
+
+    pub(super) fn evaluated(&self) -> usize {
+        self.confirmed + self.unconfirmed + self.rejected
+    }
 }
 
 impl Run {
@@ -96,7 +165,11 @@ impl Run {
     }
 
     pub(super) fn presented(&self) -> usize {
-        self.progress.candidates_presented - self.stream.as_ref().map_or(0, |s| s.released)
+        self.stream
+            .as_ref()
+            .map_or(self.progress.candidates_presented, |_| {
+                self.candidates.len()
+            })
     }
 
     pub(super) fn anchor_base(&self) -> usize {
@@ -155,18 +228,27 @@ impl Run {
         let stream = self.stream.as_ref().expect("progressive run");
         let p = &self.progress;
         let single_pass = p.scan_passes == 1;
-        let physical =
-            p.scan_complete && single_pass && p.physically_traversed == p.sources_inspected;
-        let logical = physical && !self.has_source_gaps();
+        let physical = p.scan_complete && p.physically_traversed == p.sources_inspected;
+        let lexical_coverage_limited = self.has_source_gaps() || stream.refresh_coverage_limited;
+        let logical = physical && !lexical_coverage_limited;
         Coverage {
             inventory_complete: p.scan_complete,
             physical_history_complete: physical,
             logical_history_complete: logical,
             eligible_evaluation_complete: logical
+                && single_pass
                 && p.assessments == p.sources_inspected
                 && p.insufficient == 0
                 && p.freshness_failures == 0,
-            published: stream.published,
+            candidate_evaluation_complete: p.scan_complete
+                && p.unavailable_sources == 0
+                && p.stop_reason.is_none()
+                && stream.evaluated() == p.lexical_candidates,
+            lexical_coverage_limited,
+            confirmed: stream.confirmed,
+            unconfirmed: stream.unconfirmed,
+            rejected: stream.rejected,
+            published: stream.confirmed,
             released: stream.released,
             inventory_window_offset: self.next.as_ref().map_or(0, |cursor| cursor.start),
             current_source_decoded_offset: self
@@ -194,15 +276,13 @@ impl Run {
 
     fn release_batch(&mut self) {
         let stream = self.stream.as_mut().expect("progressive run");
-        stream.released = self.progress.candidates_presented;
-        stream.assessed = self.progress.assessments;
-        stream.insufficient = self.progress.insufficient;
         stream.anchor_base += self.anchors.len();
         stream.prior_context_bytes = self.progress.context_bytes;
         self.candidates.clear();
         self.anchors.clear();
         self.requested_windows.clear();
         self.publication = None;
+        self.refresh_assessment_counts();
     }
 
     pub(super) fn advance(
@@ -277,6 +357,11 @@ impl Run {
         let mut reply = AdvanceResult::default();
         if step.cancel {
             self.progress.stop_reason = Some("cancelled_by_caller");
+            self.stream
+                .as_mut()
+                .expect("progressive run")
+                .refresh
+                .clear();
             self.release_batch();
             reply.outcome = Some(TerminalOutcome::Cancelled);
             return Ok(reply);
@@ -285,30 +370,7 @@ impl Run {
             self.assess(step.assessments.clone())?;
         }
         if !step.context_requests.is_empty() {
-            let mut requests: Vec<&ContextRequest> = Vec::new();
-            for request in &step.context_requests {
-                if !requests.contains(&request) {
-                    requests.push(request);
-                }
-            }
-            let merged = match requests.as_slice() {
-                [first, second] => merge_windows(first, second),
-                _ => None,
-            };
-            for request in merged.as_ref().map_or(requests, |merged| vec![merged]) {
-                let candidate = self
-                    .anchor(request.anchor)
-                    .ok_or(ApplicationError::InvalidSearch)?
-                    .candidate;
-                reply.windows.push(self.context(
-                    service,
-                    control,
-                    request.anchor,
-                    request.window.clone(),
-                )?);
-                self.candidates[candidate].assessment = None;
-            }
-            self.refresh_assessment_counts();
+            self.context_step(service, control, &step.context_requests, &mut reply)?;
             return Ok(reply);
         }
         if !step.expansion.is_empty() {
@@ -336,12 +398,7 @@ impl Run {
         let needs_assessment = self
             .candidates
             .iter()
-            .any(|candidate| candidate.assessment.is_none());
-        let early_finish = step.finish_if_sufficient
-            && self
-                .search_intent
-                .as_ref()
-                .is_some_and(|plan| plan.coverage_goal == CoverageGoal::Standard);
+            .any(|candidate| candidate.assessment.is_none() && !candidate.stale_context);
         if needs_assessment && !step.luna_unavailable {
             if step.assessments.is_empty() {
                 return Err(ResolutionError::AssessmentRequired.into());
@@ -350,38 +407,61 @@ impl Run {
                 .candidate_batch(0, self.presented())
                 .into_iter()
                 .zip(&self.candidates)
-                .filter_map(|(view, candidate)| candidate.assessment.is_none().then_some(view))
+                .filter_map(|(view, candidate)| {
+                    (candidate.assessment.is_none() && !candidate.stale_context).then_some(view)
+                })
                 .collect();
             return Ok(reply);
         }
         if !self.candidates.is_empty() {
             self.publish_batch(service, control, &mut reply)?;
-            let stream = self.stream.as_mut().expect("progressive run");
-            stream.published += reply.matches.len();
             self.release_batch();
         }
-        let published = self.stream.as_ref().expect("progressive run").published;
         if step.luna_unavailable {
             self.progress.stop_reason = Some("luna_unavailable");
+            self.stream
+                .as_mut()
+                .expect("progressive run")
+                .refresh
+                .clear();
         }
-        if early_finish && published > 0 && !self.progress.scan_complete {
-            self.progress.stop_reason = Some("sufficient_evidence");
+        if self
+            .stream
+            .as_ref()
+            .expect("progressive run")
+            .has_refresh_work()
+            && !step.luna_unavailable
+        {
+            reply.candidates = self.refresh_candidates(service, control)?;
+            if !reply.candidates.is_empty()
+                || self
+                    .stream
+                    .as_ref()
+                    .expect("progressive run")
+                    .has_refresh_work()
+            {
+                return Ok(reply);
+            }
         }
-        if self.progress.scan_complete || self.progress.stop_reason.is_some() {
-            reply.outcome = Some(self.terminal_outcome(published));
-            return Ok(reply);
-        }
-        match self.scan(service, control, false) {
-            Ok(ResolutionData::Candidates { candidates, .. }) => reply.candidates = candidates,
-            Ok(_) => unreachable!(),
-            Err(ApplicationError::Cancelled) => return Err(ApplicationError::Cancelled),
-            Err(error) => {
-                self.progress.stop_reason = Some(error.public_code());
-                reply.outcome = Some(if published > 0 {
-                    TerminalOutcome::Partial
-                } else {
-                    TerminalOutcome::Blocked
-                });
+        let published = self.stream.as_ref().expect("progressive run").confirmed;
+        if !self.progress.scan_complete && self.progress.stop_reason.is_none() {
+            match self.scan(service, control, false) {
+                Ok(ResolutionData::Candidates { candidates, .. }) => reply.candidates = candidates,
+                Ok(_) => unreachable!(),
+                Err(
+                    error @ (ApplicationError::Cancelled
+                    | ApplicationError::DiscoveryCallerUnavailable),
+                ) => {
+                    return Err(error);
+                }
+                Err(error) => {
+                    self.progress.stop_reason = Some(error.public_code());
+                    reply.outcome = Some(if published > 0 {
+                        TerminalOutcome::Partial
+                    } else {
+                        TerminalOutcome::Blocked
+                    });
+                }
             }
         }
         if (self.progress.stop_reason.is_some() || self.progress.scan_complete)
@@ -393,84 +473,334 @@ impl Run {
         Ok(reply)
     }
 
+    fn context_step(
+        &mut self,
+        service: &SessionSearchService<'_>,
+        control: &QueryControl,
+        requests: &[ContextRequest],
+        reply: &mut AdvanceResult,
+    ) -> Result<(), ApplicationError> {
+        let merged = match requests {
+            [first, second] => merge_windows(first, second),
+            _ => None,
+        };
+        let requests = match requests {
+            [first, second] if first == second => &requests[..1],
+            _ => merged.as_ref().map_or(requests, std::slice::from_ref),
+        };
+        for request in requests {
+            let candidate = self
+                .anchor(request.anchor)
+                .ok_or(ApplicationError::InvalidSearch)?
+                .candidate;
+            let result = if self.candidates[candidate].stale_context {
+                Err(ApplicationError::StaleSearchEvidence)
+            } else {
+                self.context(service, control, request.anchor, request.window.clone())
+            };
+            match result {
+                Ok(window) => {
+                    reply.windows.push(window);
+                    self.candidates[candidate].assessment = None;
+                }
+                Err(
+                    error @ (ApplicationError::StaleSearchEvidence
+                    | ApplicationError::Provider(_)
+                    | ApplicationError::Resolution(ResolutionError::BudgetExceeded)),
+                ) => {
+                    if matches!(error, ApplicationError::StaleSearchEvidence) {
+                        self.candidates[candidate].stale_context = true;
+                        self.candidates[candidate].assessment = None;
+                    }
+                    reply.context_failures.push(ContextFailure {
+                        anchor: request.anchor,
+                        reason: error.public_code(),
+                    });
+                }
+                Err(error) => return Err(error),
+            }
+        }
+        self.refresh_assessment_counts();
+        Ok(())
+    }
+
+    fn refresh_candidates(
+        &mut self,
+        service: &SessionSearchService<'_>,
+        control: &QueryControl,
+    ) -> Result<Vec<ResolutionCandidate>, ApplicationError> {
+        self.stream
+            .as_mut()
+            .expect("progressive run")
+            .refreshing_batch = true;
+        let started = Instant::now();
+        for _ in 0..CANDIDATE_BATCH {
+            if started.elapsed() >= SCAN_TIME {
+                break;
+            }
+            let stream = self.stream.as_mut().expect("progressive run");
+            let Some(mut refresh) = stream.refresh.pop_front() else {
+                break;
+            };
+            let mut parameters = self.parameters.clone();
+            let QueryExpr::And { args } = &mut parameters
+                .structured
+                .as_mut()
+                .expect("resolution query")
+                .filter
+            else {
+                unreachable!("compiled resolution conjunction")
+            };
+            args.push(QueryExpr::NativeId {
+                values: vec![refresh.id.clone()],
+            });
+            let result = service.search(parameters, refresh.next.clone(), control.clone());
+            let page = match result {
+                Ok(result) if result.binding_revision == self.binding => result.page,
+                Err(
+                    error @ (ApplicationError::Cancelled
+                    | ApplicationError::DiscoveryCallerUnavailable),
+                ) => {
+                    return Err(error);
+                }
+                _ => {
+                    stream.verification_gap = Some("candidate_evidence_stale");
+                    continue;
+                }
+            };
+            self.progress
+                .provider_work
+                .add(&page.coverage.work.provider);
+            stream.refresh_coverage_limited |= page.coverage.truncated_sessions != 0
+                || page.coverage.unreadable_sessions != 0
+                || page.coverage.unresolved_sessions != 0
+                || page.coverage.suppressed_records != 0;
+            if let Some(hit) = page
+                .sessions
+                .into_iter()
+                .find(|hit| hit.metadata.identity == refresh.identity)
+            {
+                let basis = self.intent.match_basis(&hit);
+                self.retain_candidate(hit, basis);
+            } else if let Some(next) = page.next
+                && cursor_advances(refresh.next.as_ref(), &next)
+            {
+                refresh.next = Some(next);
+                stream.refresh.push_back(refresh);
+            } else {
+                stream.verification_gap = Some("candidate_evidence_stale");
+            }
+        }
+        let candidates = self.candidate_batch(0, self.presented());
+        if candidates.is_empty()
+            && !self
+                .stream
+                .as_ref()
+                .expect("progressive run")
+                .has_refresh_work()
+        {
+            self.stream
+                .as_mut()
+                .expect("progressive run")
+                .refreshing_batch = false;
+        }
+        Ok(candidates)
+    }
+
     fn publish_batch(
         &mut self,
         service: &SessionSearchService<'_>,
         control: &QueryControl,
         reply: &mut AdvanceResult,
     ) -> Result<(), ApplicationError> {
-        let choices: Vec<_> = self
-            .candidates
-            .iter()
-            .filter_map(|candidate| {
-                let assessment = candidate.assessment.as_ref()?;
-                let citations: Vec<_> = assessment
-                    .evidence
-                    .iter()
-                    .map(|&handle| {
-                        self.anchor(handle)
-                            .expect("validated assessment anchor")
+        let mut checks = Vec::new();
+        let mut choices = Vec::new();
+        for candidate in &self.candidates {
+            let Some(assessment) = candidate
+                .assessment
+                .as_ref()
+                .filter(|_| !candidate.stale_context)
+            else {
+                continue;
+            };
+            let citations: Vec<_> = assessment
+                .evidence
+                .iter()
+                .map(|&handle| {
+                    self.anchor(handle)
+                        .expect("validated assessment anchor")
+                        .reference
+                        .clone()
+                })
+                .collect();
+            let check = citations
+                .first()
+                .or_else(|| {
+                    candidate.handles.first().map(|&handle| {
+                        &self
+                            .anchor(handle)
+                            .expect("active candidate anchor")
                             .reference
-                            .clone()
                     })
-                    .collect();
-                let first = citations.first()?;
-                citations
-                    .iter()
-                    .all(|r| {
+                })
+                .filter(|first| {
+                    citations.iter().all(|r| {
                         r.source_bytes == first.source_bytes
                             && r.source_fingerprint == first.source_fingerprint
                     })
-                    .then_some((candidate, assessment, citations))
-            })
-            .collect();
-        if choices.is_empty() {
-            return Ok(());
+                })
+                .map(|first| {
+                    let index = checks.len();
+                    checks.push(first.clone());
+                    index
+                });
+            choices.push((candidate, assessment, citations, check));
         }
-        let anchors: Vec<_> = choices.iter().map(|(_, _, refs)| refs[0].clone()).collect();
-        self.progress.publication_checks += 1;
-        let Some(verified) = service.verify_search_evidence(&anchors, control)? else {
-            // Ports without a batch verifier retain the original guarded route.
-            let ResolutionData::Finished {
-                matches,
-                alternatives,
-                ..
-            } = self.finish(service, control, 0, None, false, None)?
-            else {
-                unreachable!()
-            };
-            reply.matches = matches;
-            reply.alternatives = alternatives;
-            return Ok(());
+        let fresh = match self.verify_publication(service, control, &checks) {
+            Ok(verified) => {
+                self.progress.provider_work.add(&verified.work);
+                verified.sessions
+            }
+            Err(
+                error
+                @ (ApplicationError::Cancelled | ApplicationError::DiscoveryCallerUnavailable),
+            ) => {
+                return Err(error);
+            }
+            Err(_) => vec![None; checks.len()],
         };
-        self.progress.provider_work.add(&verified.work);
-        for ((candidate, assessment, citations), metadata) in
-            choices.into_iter().zip(verified.sessions)
+        self.progress.publication_checks += usize::from(!checks.is_empty());
+        let filter = self
+            .parameters
+            .structured
+            .as_ref()
+            .expect("resolution query")
+            .filter
+            .clone();
+        let stream = self.stream.as_mut().expect("progressive run");
+        for candidate in self
+            .candidates
+            .iter()
+            .filter(|candidate| candidate.stale_context)
         {
-            let current = metadata.filter(|m| {
+            stream.queue_refresh(candidate);
+        }
+        for (candidate, assessment, citations, check) in choices {
+            let current = check.and_then(|index| fresh[index].as_ref()).filter(|m| {
                 m.identity == candidate.hit.metadata.identity
-                    && self.filter().evaluate_observed(
+                    && filter.evaluate_observed(
                         m,
                         &candidate.hit.query_observation,
                         candidate.hit.content_complete,
                     ) == Truth::True
             });
-            let Some(metadata) = current else {
+            if current.is_none() && (check.is_some() || !citations.is_empty()) {
                 self.progress.freshness_failures += 1;
+                stream.queue_refresh(candidate);
                 continue;
+            }
+            stream.released += 1;
+            let state = assessment.disposition.verification_state();
+            match state {
+                CandidateVerificationState::Confirmed => stream.confirmed += 1,
+                CandidateVerificationState::Unconfirmed => stream.unconfirmed += 1,
+                CandidateVerificationState::Rejected => stream.rejected += 1,
+            }
+            let rows = match state {
+                CandidateVerificationState::Confirmed => &mut reply.matches,
+                CandidateVerificationState::Unconfirmed if assessment.plausible_alternative => {
+                    &mut reply.alternatives
+                }
+                _ => continue,
             };
-            let row = ResolvedCandidate {
-                metadata,
+            let metadata = current.expect("a published judgment requires current source evidence");
+            reply.replay_observations.insert(
+                metadata.native_session_id.clone(),
+                (
+                    candidate.hit.query_observation.clone(),
+                    candidate.hit.content_complete,
+                ),
+            );
+            rows.push(ResolvedCandidate {
+                metadata: metadata.clone(),
                 assessment: assessment.clone(),
                 citations,
-            };
-            match assessment.disposition {
-                Disposition::VerifiedRelevant => reply.matches.push(row),
-                Disposition::Related | Disposition::Contradiction => reply.alternatives.push(row),
-                Disposition::Insufficient => {}
-            }
+            });
         }
+        stream.refreshing_batch = false;
         Ok(())
+    }
+
+    fn verify_publication(
+        &self,
+        service: &SessionSearchService<'_>,
+        control: &QueryControl,
+        references: &[ContextReference],
+    ) -> Result<EvidenceVerification, ApplicationError> {
+        if references.is_empty() {
+            return Ok(EvidenceVerification {
+                sessions: Vec::new(),
+                work: ProviderWork::default(),
+            });
+        }
+        if let Some(verified) = service.verify_search_evidence(references, control)? {
+            return Ok(verified);
+        }
+        // A read port without batch verification can still verify one reference
+        // against an exact metadata observation and a bound source probe.
+        let result = service.search(
+            SearchParameters {
+                structured: Some(StructuredQuery {
+                    filter: QueryExpr::NativeId {
+                        values: references
+                            .iter()
+                            .map(|r| r.native_session_id.clone())
+                            .collect(),
+                    },
+                    mode: SearchMode::Exhaustive,
+                    sort: SearchSort::Identity,
+                    coverage: CoverageRequirement::BestEffort,
+                }),
+                include_content: false,
+                excerpts: false,
+                ..self.parameters.clone()
+            },
+            None,
+            control.clone(),
+        )?;
+        let sessions = references
+            .iter()
+            .map(|reference| {
+                let Some(hit) = result.page.sessions.iter().find(|hit| {
+                    hit.metadata.native_session_id == reference.native_session_id
+                        && hit.metadata.identity.local_id == reference.local_id
+                }) else {
+                    return Ok(None);
+                };
+                match service.context_window(
+                    reference.clone(),
+                    selector(&hit.metadata),
+                    ContextOptions {
+                        direction: ContextDirection::Start,
+                        max_bytes: 64,
+                        max_messages: 1,
+                        ..Default::default()
+                    },
+                    control.clone(),
+                ) {
+                    Ok(_) => Ok(Some(hit.metadata.clone())),
+                    Err(
+                        error @ (ApplicationError::DiscoveryCallerUnavailable
+                        | ApplicationError::Cancelled),
+                    ) => Err(error),
+                    Err(_) => Ok(None),
+                }
+            })
+            .collect::<Result<_, _>>()?;
+        Ok(EvidenceVerification {
+            sessions,
+            work: result.page.coverage.work.provider,
+        })
     }
 
     fn verify_replayed_results(
@@ -488,52 +818,55 @@ impl Run {
         if anchors.is_empty() {
             return Ok(());
         }
-        let Some(fresh) = service.verify_search_evidence(&anchors, control)? else {
-            return Err(ApplicationError::StaleSearchEvidence);
-        };
+        let fresh = self.verify_publication(service, control, &anchors)?;
         let original_matches = reply.matches.len();
+        let original_alternatives = reply.alternatives.len();
         let mut fresh = fresh.sessions.into_iter();
-        let mut retain = |row: &ResolvedCandidate| {
-            let valid = fresh.next().flatten().as_ref() == Some(&row.metadata);
-            if !valid {
-                reply
-                    .invalidated
-                    .push(row.metadata.native_session_id.clone());
+        let filter = self.filter();
+        let mut retain = |row: &mut ResolvedCandidate| {
+            let id = &row.metadata.native_session_id;
+            let (observation, content_complete) = &reply.replay_observations[id];
+            let current = fresh.next().flatten().filter(|metadata| {
+                metadata.identity == row.metadata.identity
+                    && filter.evaluate_observed(metadata, observation, *content_complete)
+                        == Truth::True
+            });
+            if let Some(metadata) = current {
+                row.metadata = metadata;
+                true
+            } else {
+                reply.invalidated.push(id.clone());
+                false
             }
-            valid
         };
-        reply.matches.retain(&mut retain);
-        reply.alternatives.retain(retain);
+        reply.matches.retain_mut(&mut retain);
+        reply.alternatives.retain_mut(retain);
         let lost = anchors.len() - reply.matches.len() - reply.alternatives.len();
         if lost > 0 {
             self.progress.freshness_failures += lost;
             let stream = self.stream.as_mut().expect("progressive run");
-            stream.published -= original_matches - reply.matches.len();
+            stream.confirmed -= original_matches - reply.matches.len();
+            stream.unconfirmed -= original_alternatives - reply.alternatives.len();
+            stream.verification_gap = Some("candidate_evidence_stale");
             if reply.outcome.is_some() {
                 reply.outcome = Some(TerminalOutcome::Partial);
                 stream.terminal = reply.outcome;
+                self.progress.stop_reason = stream.verification_gap;
             }
             stream.previous.as_mut().expect("replayed operation").1 = reply.clone();
+            self.refresh_assessment_counts();
         }
         Ok(())
     }
 
-    fn terminal_outcome(&self, published: usize) -> TerminalOutcome {
-        let p = &self.progress;
-        let assessed_inventory = self.stream_coverage().eligible_evaluation_complete;
-        let exhaustive = self
-            .search_intent
-            .as_ref()
-            .is_some_and(|p| p.coverage_goal == CoverageGoal::Exhaustive);
-        if self.has_source_gaps()
-            || p.freshness_failures > 0
-            || p.insufficient > 0
-            || p.assessments < p.lexical_candidates
-            || p.stop_reason
-                .is_some_and(|reason| reason != "sufficient_evidence")
-            || exhaustive && !assessed_inventory
-            || published == 0 && !assessed_inventory
-        {
+    fn terminal_outcome(&mut self, published: usize) -> TerminalOutcome {
+        let stream = self.stream.as_ref().expect("progressive run");
+        self.progress.stop_reason = self
+            .progress
+            .stop_reason
+            .or(stream.verification_gap)
+            .or((self.progress.unavailable_sources > 0).then_some("source_unavailable"));
+        if !self.stream_coverage().candidate_evaluation_complete {
             TerminalOutcome::Partial
         } else if published > 0 {
             TerminalOutcome::CompletedWithMatches

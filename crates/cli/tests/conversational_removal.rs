@@ -1564,6 +1564,17 @@ fn resolution_cannot_infer_absence_from_a_missing_source() {
         let finished = call(json!({"action":"advance","run":started["run"],
             "expected_revision":started["step_revision"],"operation_id":"finish"}));
         assert_eq!(finished["outcome"], expected, "{finished}");
+        assert_eq!(
+            finished["execution_state"],
+            if id == T { "interrupted" } else { "completed" }
+        );
+        assert_eq!(
+            finished["progressive_coverage"]["candidate_evaluation_complete"],
+            id != T
+        );
+        if id == T {
+            assert_eq!(finished["progress"]["stop_reason"], "source_unavailable");
+        }
         assert_eq!(finished["matches"], json!([]));
         assert_eq!(finished["progressive_coverage"]["inventory_complete"], true);
         assert_eq!(
@@ -1615,7 +1626,7 @@ fn progressive_resolution_drains_all_batches_and_revalidates_replayed_publicatio
     let mut response = call(
         &mut client,
         json!({"action":"start","progressive":true,"search_intent":{
-            "schema_version":"1","subject":"All FleetProbe tests","activity":"testing","coverage_goal":"exhaustive",
+            "schema_version":"1","subject":"All FleetProbe tests","activity":"testing",
             "constraints":{"project_membership":{"mode":"include","basis":"observed","names":["Fleet"]}},
             "hints":{"terms":["FleetProbe"]}
         }}),
@@ -1635,7 +1646,7 @@ fn progressive_resolution_drains_all_batches_and_revalidates_replayed_publicatio
             "explanation":"The fixture reports passing tests."
         })).collect();
         let step = json!({"action":"advance","run":run,"expected_revision":response["step_revision"],
-            "operation_id":format!("step-{index}"),"assessments":assessments});
+            "operation_id":format!("step-{index}"),"assessments":assessments,"finish_if_sufficient":true});
         last_step = step.clone();
         if index == 0 {
             let mut wrong = step.clone();
@@ -1673,6 +1684,8 @@ fn progressive_resolution_drains_all_batches_and_revalidates_replayed_publicatio
     }
     assert_eq!(published, sources.keys().cloned().collect());
     assert_eq!(response["outcome"], "completed_with_matches", "{response}");
+    assert_eq!(response["execution_state"], "completed");
+    assert_eq!(response["progressive_coverage"]["confirmed"], 105);
     assert_eq!(
         response["progressive_coverage"]["eligible_evaluation_complete"],
         true
@@ -1681,6 +1694,18 @@ fn progressive_resolution_drains_all_batches_and_revalidates_replayed_publicatio
     let changed = response["matches"][0]["native_session_id"]
         .as_str()
         .unwrap();
+    let db = Connection::open(root.join("state_5.sqlite")).unwrap();
+    db.execute(
+        "UPDATE threads SET title=?1 WHERE id=?2",
+        ("Updated display title", changed),
+    )
+    .unwrap();
+    db.file_control(None::<&str>, rusqlite::FileControl::PersistWal(&mut 1))
+        .unwrap();
+    drop(db);
+    let relabeled = call(&mut client, last_step.clone(), M);
+    assert_eq!(relabeled["execution_state"], "completed", "{relabeled}");
+    assert_eq!(relabeled["matches"][0]["title"], "Updated display title");
     let source = &sources[changed];
     let mut newer = fs::read(source).unwrap();
     newer.extend_from_slice(b"\n");
@@ -1688,6 +1713,11 @@ fn progressive_resolution_drains_all_batches_and_revalidates_replayed_publicatio
     let replay = call(&mut client, last_step, M);
     assert_eq!(replay["replayed"], true);
     assert_eq!(replay["outcome"], "partial");
+    assert_eq!(replay["execution_state"], "interrupted");
+    assert_eq!(
+        replay["progressive_coverage"]["candidate_evaluation_complete"],
+        false
+    );
     assert_eq!(replay["invalidated"], json!([changed]));
     assert_eq!(replay["matches"].as_array().unwrap().len(), 4);
     assert_eq!(replay["progressive_coverage"]["published"], 104);
@@ -1725,6 +1755,313 @@ fn progressive_resolution_drains_all_batches_and_revalidates_replayed_publicatio
         "{published}"
     );
     assert_eq!(published["progress"]["freshness_failures"], 1);
-    assert_eq!(published["outcome"], "partial");
+    assert_eq!(published["execution_state"], "in_progress");
+    assert_eq!(published["candidates"].as_array().unwrap().len(), 1);
+    let refreshed = &published["candidates"][0];
+    assert_eq!(refreshed["native_session_id"], replaced);
+    assert_ne!(
+        refreshed["evidence"][0]["handle"],
+        candidates[0]["evidence"][0]["handle"]
+    );
+    let restored = call(
+        &mut client,
+        json!({"action":"advance","run":batch["run"],
+        "expected_revision":published["step_revision"],"operation_id":"assess-new-revision",
+        "assessments":[{"native_session_id":replaced,"disposition":"verified_relevant",
+            "relationship":"direct","outcomes":["tested"],"evidence":[refreshed["evidence"][0]["handle"]],
+            "explanation":"The fresh revision contains the original test result."}]}),
+        M,
+    );
+    assert_eq!(
+        restored["matches"].as_array().unwrap().len(),
+        1,
+        "{restored}"
+    );
+    assert_eq!(restored["matches"][0]["native_session_id"], replaced);
+    assert_eq!(restored["candidates"].as_array().unwrap().len(), 5);
+    assert_eq!(restored["progressive_coverage"]["confirmed"], 5);
+    assert_eq!(restored["progress"]["lexical_candidates"], 10);
+    let exact = call(
+        &mut client,
+        json!({"action":"start","progressive":true,"search_intent":{
+            "schema_version":"1","subject":"Find FleetProbe tests","activity":"testing",
+            "constraints":{"native_session_id":replaced},"hints":{"terms":["FleetProbe"]}
+        }}),
+        M,
+    );
+    let change_source = || {
+        let mut file = fs::OpenOptions::new().append(true).open(path).unwrap();
+        writeln!(file).unwrap();
+    };
+    change_source();
+    let context = call(
+        &mut client,
+        json!({"action":"advance","run":exact["run"],"expected_revision":exact["step_revision"],
+            "operation_id":"stale-context","context_requests":[{"anchor":exact["candidates"][0]["evidence"][0]["handle"]}]}),
+        M,
+    );
+    assert_eq!(
+        context["context_failures"][0]["reason"], "stale_search_evidence",
+        "{context}"
+    );
+    let retry = call(
+        &mut client,
+        json!({"action":"advance","run":exact["run"],"expected_revision":context["step_revision"],
+            "operation_id":"refresh-exact"}),
+        M,
+    );
+    assert_eq!(
+        retry["candidates"][0]["native_session_id"], replaced,
+        "{retry}"
+    );
+    change_source();
+    let interrupted = call(
+        &mut client,
+        json!({"action":"advance","run":exact["run"],"expected_revision":retry["step_revision"],
+            "operation_id":"stale-again","assessments":[{"native_session_id":replaced,
+                "disposition":"verified_relevant","relationship":"direct","outcomes":["tested"],
+                "evidence":[retry["candidates"][0]["evidence"][0]["handle"]],
+                "explanation":"The excerpt reports the test result."}]}),
+        M,
+    );
+    assert_eq!(
+        interrupted["execution_state"], "interrupted",
+        "{interrupted}"
+    );
+    assert_eq!(
+        interrupted["progress"]["stop_reason"],
+        "candidate_evidence_stale"
+    );
+    assert_eq!(
+        interrupted["progressive_coverage"]["candidate_evaluation_complete"],
+        false
+    );
+    assert_eq!(interrupted["matches"], json!([]));
     client.close();
+}
+
+#[test]
+fn progressive_resolution_publishes_two_independent_result_groups() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().canonicalize().unwrap();
+    let root = path.join("provider");
+    seed(&root, &path.join("MISSION1"));
+    let db = Connection::open(root.join("state_5.sqlite")).unwrap();
+    let id = |index: usize| format!("00000000-0000-4000-8000-{index:012}");
+    let success = "Atlas scraper tests passed and I validated the output in this session.";
+    let plausible = "We should run the Atlas scraper tests to check the output.";
+    let unrelated = "We played the card game Atlas. The rules were simple.";
+    let retrospective = "The Atlas scraper was tested and validated in a different session.";
+    let distant = "I validated the output against the expected fixtures.";
+    for index in 1..=17 {
+        let session = id(index);
+        let source = root
+            .join("sessions")
+            .join(format!("rollout-{session}.jsonl"));
+        let paginated = index == 2;
+        let title = "Same title";
+        let project = if index <= 7 { "AllTests" } else { "MixedTests" };
+        let mut header =
+            json!({"type":"session_meta","payload":{"id":session,"cli_version":"0.166.0"}});
+        if paginated {
+            header["payload"]["history_mode"] = json!("paginated");
+        }
+        let message = |ordinal: usize, body: &str| {
+            if paginated {
+                json!({"type":"event_msg","payload":{"type":"item_completed","thread_id":session,"turn_id":"fixture-turn","item":{"id":format!("item-{ordinal}"),"type":"AgentMessage","content":[{"type":"Text","text":body}]}}})
+            } else {
+                json!({"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":body}]}})
+            }
+        };
+        let mut records = vec![header];
+        match index {
+            3 => {
+                records.push(message(0, "The Atlas scraper tests passed."));
+                records.extend((1..=120).map(|n| message(n, "Fixture preparation.")));
+                records.push(message(121, distant));
+            }
+            13 | 14 => records.push(message(0, plausible)),
+            15 => records.push(message(0, unrelated)),
+            16 => records.push(message(0, retrospective)),
+            17 => records.push(message(
+                0,
+                "I saved the phrase Atlas scraper in the glossary.",
+            )),
+            _ => records.push(message(0, success)),
+        }
+        let body = records
+            .into_iter()
+            .map(|r| format!("{r}\n"))
+            .collect::<String>();
+        fs::write(&source, body).unwrap();
+        db.execute("INSERT INTO threads(id,rollout_path,created_at,updated_at,source,model_provider,cwd,title,sandbox_policy,approval_mode,cli_version,preview,first_user_message) VALUES (?1,?2,1,2,'cli','openai',?3,?4,'read-only','never','0.166.0','','')",
+            rusqlite::params![session, source.to_str().unwrap(), format!("/fixture/{project}"), title]).unwrap();
+    }
+    db.file_control(None::<&str>, rusqlite::FileControl::PersistWal(&mut 1))
+        .unwrap();
+    drop(db);
+    let before = tree_bytes(&root);
+    let home = PathBuf::from(std::env::var_os("HOME").unwrap())
+        .canonicalize()
+        .unwrap();
+    let mut client = Client::connect(
+        base(&root, &root.join("unused-provider"), &home).args(["mcp", "--session-search"]),
+    );
+    let mut call = |arguments| {
+        let envelope = client.exchange(
+            json!({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{
+                "name":"session_resolve","_meta":{"threadId":M},"arguments":arguments
+            }}),
+        );
+        assert!(envelope["error"].is_null(), "{envelope}");
+        envelope["result"]["structuredContent"].clone()
+    };
+    for (project, term, confirmed, unconfirmed, rejected) in [
+        ("AllTests", "EmptyFirstPass", 7, 0, 0),
+        ("MixedTests", "Atlas", 5, 3, 2),
+    ] {
+        let mut response = call(json!({"action":"start","progressive":true,"search_intent":{
+            "schema_version":"1","subject":"Find Atlas scraper testing and validation",
+            "activity":"testing","required_outcome":"validated","coverage_goal":"exhaustive",
+            "constraints":{"project_membership":{"mode":"include","basis":"observed","names":[project]}},
+            "hints":{"terms":[term]}
+        }}));
+        let run = response["run"].clone();
+        assert_eq!(response["execution_state"], "in_progress", "{response}");
+        if project == "AllTests" {
+            assert_eq!(response["candidates"], json!([]));
+            assert_eq!(response["progress"]["scan_complete"], true);
+            response = call(
+                json!({"action":"advance","run":run,"expected_revision":response["step_revision"],
+                "operation_id":"expand","expansion_terms":["Atlas"]}),
+            );
+            assert_eq!(
+                response["candidates"].as_array().unwrap().len(),
+                5,
+                "{response}"
+            );
+            let partial = response["candidates"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|row| row["native_session_id"] == id(2))
+                .unwrap();
+            assert_eq!(partial["source_coverage"]["logical_complete"], false);
+        }
+        let mut matches = BTreeMap::new();
+        let mut alternatives = BTreeMap::new();
+        let mut requested_context = false;
+        for batch in 0..6 {
+            let candidates = response["candidates"].as_array().unwrap().clone();
+            let mut revision = response["step_revision"].clone();
+            let mut extra = None;
+            if let Some(row) = candidates
+                .iter()
+                .find(|row| row["native_session_id"] == id(3))
+            {
+                let context = call(
+                    json!({"action":"advance","run":run,"expected_revision":revision,
+                    "operation_id":"find-distant-validation","context_requests":[{
+                    "anchor":row["evidence"][0]["handle"],"window":{"direction":"occurrences","query":distant,
+                        "max_bytes":4096,"max_messages":5}}]}),
+                );
+                let evidence = &context["windows"][0]["messages"][0];
+                assert_eq!(evidence["excerpt"], distant, "{context}");
+                extra = Some(evidence["handle"].clone());
+                revision = context["step_revision"].clone();
+                requested_context = true;
+            }
+            let assessments: Vec<_> = candidates.iter().map(|row| {
+                let native_id = row["native_session_id"].as_str().unwrap();
+                let index = native_id[24..].parse::<usize>().unwrap();
+                let mut evidence = row["evidence"].as_array().unwrap().first()
+                    .map(|citation| vec![citation["handle"].clone()]).unwrap_or_default();
+                let (disposition, relationship, explanation, plausible, outcomes) = match index {
+                    13 | 14 => ("insufficient", "discussion", "Testing was planned. No result was found.", true, json!([])),
+                    15 => ("related", "discussion", "Atlas refers to a card game.", false, json!([])),
+                    16 => ("related", "retrospective", "Testing took place in another session.", false, json!([])),
+                    17 => {
+                        evidence.clear();
+                        ("insufficient", "discussion", "No passage supports testing or validation.", false, json!([]))
+                    },
+                    _ => {
+                        if index == 3 {
+                            evidence.push(extra.clone().unwrap());
+                        }
+                        ("verified_relevant", "direct", "The evidence records testing and validation in this session.", false, json!(["tested","validated"]))
+                    }
+                };
+                json!({"native_session_id":native_id,"disposition":disposition,"relationship":relationship,
+                    "evidence":evidence,"outcomes":outcomes,"explanation":explanation,
+                    "plausible_alternative":plausible})
+            }).collect();
+            response = call(
+                json!({"action":"advance","run":run,"expected_revision":revision,
+                "operation_id":format!("evaluate-{batch}"),"assessments":assessments}),
+            );
+            for (field, state, rows) in [
+                ("matches", "confirmed", &mut matches),
+                ("alternatives", "unconfirmed", &mut alternatives),
+            ] {
+                for row in response[field]
+                    .as_array()
+                    .unwrap_or_else(|| panic!("{response}"))
+                {
+                    assert_eq!(row["verification_state"], state);
+                    assert!(!row["evidence_refs"].as_array().unwrap().is_empty());
+                    assert!(
+                        rows.insert(
+                            row["native_session_id"].as_str().unwrap().to_owned(),
+                            row.clone()
+                        )
+                        .is_none()
+                    );
+                }
+            }
+            if response["execution_state"] == "completed" {
+                break;
+            }
+            assert_eq!(response["execution_state"], "in_progress", "{response}");
+        }
+        assert_eq!(response["execution_state"], "completed", "{response}");
+        assert_eq!(response["outcome"], "completed_with_matches");
+        let coverage = &response["progressive_coverage"];
+        assert_eq!(coverage["candidate_evaluation_complete"], true);
+        assert_eq!(coverage["eligible_evaluation_complete"], false);
+        assert_eq!(coverage["confirmed"], confirmed);
+        assert_eq!(coverage["unconfirmed"], unconfirmed);
+        assert_eq!(coverage["rejected"], rejected);
+        assert_eq!(coverage["released"], confirmed + unconfirmed + rejected);
+        assert_eq!(
+            response["progress"]["assessments"],
+            confirmed + unconfirmed + rejected
+        );
+        assert_eq!(response["candidates"], json!([]));
+        assert_eq!(response["progress"]["stop_reason"], Value::Null);
+        if project == "AllTests" {
+            assert_eq!(
+                matches.keys().cloned().collect::<Vec<_>>(),
+                (1..=7).map(id).collect::<Vec<_>>()
+            );
+            assert!(alternatives.is_empty());
+            assert!(requested_context);
+            assert_eq!(
+                matches[&id(3)]["evidence_refs"].as_array().unwrap().len(),
+                2
+            );
+            assert_eq!(coverage["lexical_coverage_limited"], true);
+            assert_eq!(response["progress"]["expansion_only_candidates"], 7);
+        } else {
+            assert_eq!(
+                matches.keys().cloned().collect::<Vec<_>>(),
+                (8..=12).map(id).collect::<Vec<_>>()
+            );
+            assert_eq!(
+                alternatives.keys().cloned().collect::<Vec<_>>(),
+                vec![id(13), id(14)]
+            );
+        }
+    }
+    client.close();
+    assert_eq!(tree_bytes(&root), before);
 }

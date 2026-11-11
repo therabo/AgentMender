@@ -42,8 +42,9 @@ v1 activity if the cited evidence supports it), relationship (direct, discussion
 retrospective, or contradiction), explanation, missing_evidence (required for
 insufficient), and plausible_alternative (true only for a supported but
 unverified contender). Cite the evidence that establishes the precise
-outcome. For a question about where work happened, require evidence of the
-activity in the candidate itself and set relationship to direct. A statement
+outcome. Assess every supplied candidate independently. For a question about
+where work happened, require evidence of the activity in the candidate itself
+and set relationship to direct. A statement
 that camera limits were implemented in another session is retrospective even
 when the statement is accurate. Treat a later lookup or summary that
 points to work in another conversation as related. For a request about a
@@ -52,8 +53,13 @@ scope, earlier proposals, later corrections and results. If more evidence is nee
 handle and a bounded context window. You may request start, around, forward,
 backward, turn, occurrences with a query, or a returned continuation handle.
 For a later correction, request a suitable occurrence or forward window.
-An outcome contradiction describes what the cited text shows. A partial
-history cannot establish a session-wide negative.
+An outcome contradiction describes what the cited text shows. A partial history
+can establish a local positive and cannot establish a session-wide negative.
+Use related or contradiction for a ruled-out candidate. Use insufficient
+when a material gap remains after available targeted context, with a short
+reason. Mark plausible_alternative only if a cited original passage supports
+the connection. An insufficient conclusion is independent of any other
+candidate and of lexical traversal completion.
 
 For legacy v1 handoffs, follow the existing assessment contract below.
 For a session-wide not_relevant judgment, require parent-supplied content_coverage=complete,

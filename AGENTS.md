@@ -15,10 +15,11 @@ intent use the documented legacy workflow. Project names are topical hints
 unless the user asks for a membership restriction. Use `exhaustive` for
 explicit all-results requests. Give Luna quoted passages and evidence handles.
 Use `advance` for judgments, bounded context, continuation and publication.
-Retain the returned matches and signed evidence in the origin as each batch
-is released. Require direct evidence of work in the candidate for a positive
-activity judgment. Treat recaps as leads. Keep the limits of logical history,
-semantic assessment, and source freshness visible in the answer.
+Assess every candidate and continue while `execution_state` is `in_progress`.
+Retain confirmed matches, plausible unconfirmed alternatives and signed
+evidence in the origin. A positive activity judgment requires direct evidence
+in that candidate. Use the two result tables in the Luna workflow. Put an
+explicit interruption or lexical coverage limit in a table status row.
 
 ## P0-SR4 read-only caller-filtered discovery
 

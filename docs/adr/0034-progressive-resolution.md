@@ -35,3 +35,27 @@ Exercise stable large corpora, partial and missing histories, source changes,
 replayed requests, and caller isolation in disposable tests. Compare call
 counts and evidence at equivalent work. Keep lifecycle and provider write
 denial checks in the release gates.
+
+## Per-session verification and lexical completion
+
+Each Luna judgment applies to one candidate. A direct judgment with fresh
+source-bound evidence is confirmed. A judgment with insufficient evidence is
+unconfirmed, and only a plausible contender with fresh supporting passages is
+published as an alternative. Related or contradictory evidence can reject a
+candidate for the requested activity. Rust validates evidence identity and
+revision before publishing a row. Logical history coverage is required for
+session-wide absence claims. A local positive can stand on partial history.
+
+The run tracks execution independently. Ordinary completion requires a
+finished lexical traversal and a conclusive assessment for every retrieved
+candidate, including any admitted expansion. An unconfirmed judgment can
+conclude a candidate. Unavailable sources, stale evidence that cannot be
+revalidated, cancellation and unavailable Luna have explicit interruption
+semantics. Keep scope and coverage facts separate from the two result lists.
+A lexical pass cannot certify semantic recall.
+
+The progressive MCP contract carries these states alongside the existing wire
+fields. The originating chat assembles the two result tables from streamed
+confirmed and plausible unconfirmed rows. The resolver keeps only the active
+batch, the continuation and one replayable reply. The legacy selector and
+Boolean workflow retain their existing actions and limits.

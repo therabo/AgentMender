@@ -10,6 +10,24 @@ pub const TRANSCRIPT_BYTES: usize = 1024 * 1024;
 pub const RECORD_BYTES: usize = 256 * 1024;
 pub const SEARCH_BYTES: usize = 32 * 1024 * 1024;
 
+/// The conclusion for one retrieved candidate, independent of search execution.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CandidateVerificationState {
+    Confirmed,
+    Unconfirmed,
+    Rejected,
+}
+
+/// The execution state of the lexical search and candidate evaluation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SearchExecutionState {
+    InProgress,
+    Completed,
+    Interrupted,
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SearchPurpose {

@@ -647,6 +647,7 @@ enum ResolutionInput {
         #[serde(default)]
         #[schemars(length(max = EXPANSION_LIMIT))]
         expansion_terms: Vec<LexicalTerm>,
+        /// Accepted for compatibility. Progressive searches drain all retrieved candidates.
         #[serde(default)]
         finish_if_sufficient: bool,
         #[serde(default)]
@@ -1163,10 +1164,28 @@ struct ResolutionCandidateView {
 }
 
 #[derive(Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+enum VerificationStateView {
+    Confirmed,
+    Unconfirmed,
+    Rejected,
+}
+
+#[derive(Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+enum SearchExecutionStateView {
+    InProgress,
+    Completed,
+    Interrupted,
+}
+
+#[derive(Serialize, JsonSchema)]
 struct ResolutionMatchView {
     #[serde(flatten)]
     session: SessionLabelView,
     assessment: serde_json::Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    verification_state: Option<VerificationStateView>,
     evidence_refs: Vec<String>,
 }
 
@@ -1185,6 +1204,8 @@ struct ResolutionView {
     step_revision: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     progressive_coverage: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    execution_state: Option<SearchExecutionStateView>,
     #[serde(flatten)]
     data: ResolutionDataView,
 }
@@ -1199,6 +1220,12 @@ struct ResolutionWindowView {
     partial: bool,
     at_start: bool,
     at_end: bool,
+}
+
+#[derive(Serialize, JsonSchema)]
+struct ResolutionContextFailureView {
+    anchor: usize,
+    reason: &'static str,
 }
 
 #[derive(Serialize, JsonSchema)]
@@ -1231,6 +1258,8 @@ enum ResolutionDataView {
         matches: Vec<ResolutionMatchView>,
         alternatives: Vec<ResolutionMatchView>,
         windows: Vec<ResolutionWindowView>,
+        #[serde(skip_serializing_if = "Vec::is_empty")]
+        context_failures: Vec<ResolutionContextFailureView>,
         candidates: Vec<ResolutionCandidateView>,
         outcome: Option<&'static str>,
         replayed: bool,
@@ -1355,6 +1384,19 @@ fn resolution_view(
         session.removal_eligibility = "discovery_only";
         ResolutionMatchView {
             session,
+            verification_state: progressive.then(|| {
+                match r.assessment.disposition.verification_state() {
+                    agentmender_domain::CandidateVerificationState::Confirmed => {
+                        VerificationStateView::Confirmed
+                    }
+                    agentmender_domain::CandidateVerificationState::Unconfirmed => {
+                        VerificationStateView::Unconfirmed
+                    }
+                    agentmender_domain::CandidateVerificationState::Rejected => {
+                        VerificationStateView::Rejected
+                    }
+                }
+            }),
             assessment: serde_json::to_value(r.assessment).expect("typed assessment"),
             evidence_refs: r
                 .citations
@@ -1416,6 +1458,14 @@ fn resolution_view(
             matches: reply.matches.into_iter().map(resolved).collect(),
             alternatives: reply.alternatives.into_iter().map(resolved).collect(),
             windows: reply.windows.into_iter().map(window).collect(),
+            context_failures: reply
+                .context_failures
+                .into_iter()
+                .map(|failure| ResolutionContextFailureView {
+                    anchor: failure.anchor,
+                    reason: failure.reason,
+                })
+                .collect(),
             candidates: reply.candidates.into_iter().map(candidate).collect(),
             outcome: reply.outcome.map(|outcome| match outcome {
                 session_resolution::TerminalOutcome::CompletedWithMatches => {
@@ -1466,6 +1516,17 @@ fn resolution_view(
         }),
         progress: serde_json::to_value(result.progress).expect("typed progress"),
         step_revision: result.revision,
+        execution_state: result.execution_state.map(|state| match state {
+            agentmender_domain::SearchExecutionState::InProgress => {
+                SearchExecutionStateView::InProgress
+            }
+            agentmender_domain::SearchExecutionState::Completed => {
+                SearchExecutionStateView::Completed
+            }
+            agentmender_domain::SearchExecutionState::Interrupted => {
+                SearchExecutionStateView::Interrupted
+            }
+        }),
         progressive_coverage: result
             .progressive_coverage
             .map(|coverage| serde_json::to_value(coverage).expect("typed progressive coverage")),
@@ -1540,7 +1601,7 @@ pub(super) fn tools(discovery: bool) -> Vec<Tool> {
         ));
         registry.insert(0, (
             "session_resolve",
-            r#"Find and verify past Codex conversations. Ordinary start: {"action":"start","progressive":true,"search_intent":{"schema_version":"1","subject":"Cesium rendering performance","hints":{"terms":["Cesium"]}}}. The originating chat keeps the run and calls advance with expected_revision from step_revision and a new operation_id. Assess up to five candidates with Luna Medium, require relationship:direct for verified_relevant, and collect fresh matches from every step. Request context through up to two bounded windows. Continue exhaustive work until an outcome is returned. Project hints do not constrain membership. Explicit single_best and the legacy Boolean intent use the original finish workflow. Read-only with implicit caller exclusion."#,
+            r#"Find and verify past Codex conversations. Ordinary start: {"action":"start","progressive":true,"search_intent":{"schema_version":"1","subject":"Cesium rendering performance","hints":{"terms":["Cesium"]}}}. The originating chat keeps the run and calls advance with expected_revision from step_revision and a new operation_id. Assess every candidate with Luna Medium, require relationship:direct for verified_relevant, and collect fresh matches and plausible alternatives from every step. Request context through up to two bounded windows only when needed. Continue while execution_state is in_progress. Render confirmed and unconfirmed rows in two tables and disclose interruptions or lexical coverage limits in a table. Project hints do not constrain membership. Explicit single_best and the legacy Boolean intent use the original finish workflow. Read-only with implicit caller exclusion."#,
             resolution_schema(),
             schema::<ResolutionView>(),
             true,

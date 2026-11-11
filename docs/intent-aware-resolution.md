@@ -81,35 +81,40 @@ below for explicit `single_best` selection or advanced Boolean intent.
    may use `EPERM` or `O_SEARCH` when the question concerns that fix.
 2. Start the run and give Luna the returned batch with quoted evidence and
    handles. Send one `advance` with judgments when the passages suffice.
-   A positive judgment requires `relationship:"direct"`. An implementation,
-   test, or reversion belongs to the session that reports performing it.
-   A feasibility discussion, later recap, or link to work elsewhere can be
-   submitted as `related` with `discussion` or `retrospective`. If the user
-   asks where a discussion occurred, use `direct` for evidence that the
-   candidate itself contains the requested discussion.
-3. If more evidence is needed, send `context_requests` with up to two anchors
-   and windows. Specify at most 4,096 bytes and five messages per window.
-   The resolver deduplicates identical requests and can combine overlapping
-   Around windows at the same anchor within the aggregate bounds. Follow
-   returned continuation handles without overriding their window. Reassess a
-   candidate after receiving additional evidence for it.
-4. Each `advance` takes `expected_revision` from the previous response's
-   `step_revision` and a new caller-chosen `operation_id`. Collect fresh
-   `matches` from each response by exact identity and keep their evidence
-   references in the origin. The resolver releases that batch's handles
-   when it publishes and returns the next batch. Signed references remain
-   usable with the same origin, root and process while the source is fresh.
-5. Continue while `outcome` is null, including empty batches whose cursor
-   advanced. For standard requests use `finish_if_sufficient:true` after
-   evaluating the offered batch if it answers the request. For exhaustive
-   requests continue to terminal. `luna_unavailable:true` returns a partial
-   result with any already supported matches. `cancel:true` terminates a run.
+   A positive judgment requires `relationship:"direct"` and original
+   evidence in that candidate. A substantive discussion can satisfy a
+   discussion request. Implementation, testing and validation need passages
+   that establish those activities in that session. Judge an unrelated
+   lexical hit or a recap of work elsewhere as `related`, or use
+   `contradiction` when cited evidence rules out the requested outcome.
+3. When decisive context is missing, send `context_requests` with up to two
+   anchors and at most 4,096 bytes and five messages per window. Follow
+   continuation handles without overriding their window. Reassess only the
+   candidate whose context was extended. Use `insufficient` with a concrete
+   missing-evidence reason once available context is exhausted. Set
+   `plausible_alternative:true` only when cited passages support a plausible
+   connection to the original request. `context_failures` identifies any
+   unavailable window by anchor and gives a sanitized reason.
+4. Use the previous response's `step_revision` as `expected_revision` and
+   give each new operation an ID. Retain every confirmed `matches` row and
+   plausible unconfirmed `alternatives` row by exact identity, with their
+   signed evidence references. Released handles are replaced by those
+   references. A stale candidate in the active batch can return with fresh
+   handles for a new assessment. The original corpus cursor and independent
+   rows are preserved.
+5. Continue while `execution_state` is `in_progress`, including empty
+   batches. A full scan with no candidates allows an optional expansion
+   before the empty final advance. The compatibility field
+   `finish_if_sufficient` is accepted without requesting early completion.
+   `luna_unavailable:true` interrupts after publishing submitted valid
+   judgments. `cancel:true` interrupts without further reads.
 6. On a lost reply, repeat the most recent step with identical parameters
-   and operation ID. `replayed:true` acknowledges the same revision and
-   returns the batch again after revalidating its publication. Upsert by
-   identity rather than counting a retry as new results. Remove any identity
-   listed in `invalidated` from the accumulated publication. Scope or process
-   changes invalidate the run.
+   and operation ID. The server sets `replayed:true` and revalidates the
+   publication. Upsert by exact identity and remove every `invalidated` row
+   from the accumulated output. The resolver has one replayable reply, and
+   stale evidence in a released reply is withdrawn. Scope or process changes
+   invalidate the run. If an MCP failure leaves no usable continuation, report
+   an interruption with the valid rows already collected.
 
 ```json
 {
@@ -124,35 +129,65 @@ below for explicit `single_best` selection or advanced Boolean intent.
     "evidence": [0],
     "outcomes": ["implemented"],
     "explanation": "The cited message reports implementing the limits in this session."
-  }],
-  "finish_if_sufficient": true
+  }]
 }
 ```
 
-The terminal outcomes are `completed_with_matches`, `completed_no_matches`,
-`partial`, `blocked` and `cancelled`. The accompanying
-`progressive_coverage` separates inventory completion, physical traversal,
-logical history and eligible semantic evaluation. A lexical scan can finish
-with no verified match and a partial outcome. Exhaustive semantic coverage
-requires complete supported histories and judgments for every inspected
-eligible session. The resolver does not certify session-wide semantic
-absence from lexical observations or selected excerpts.
+The per-row `verification_state` is `confirmed` for `matches` and
+`unconfirmed` for `alternatives`. Rejected candidates contribute to the
+coverage counters. An unconfirmed judgment without a plausible connection
+also contributes to coverage without generating a row.
+
+`execution_state` is `completed` when the lexical traversal finishes and
+every retrieved candidate has a conclusive judgment, including unconfirmed
+judgments. `progressive_coverage.candidate_evaluation_complete` records this
+criterion. Missing sources or unresolved technical failures yield
+`interrupted` with a `progress.stop_reason`. The previous `outcome` field
+remains available. It uses `completed_no_matches` when there are zero
+confirmed rows. It uses `partial`, `blocked` or `cancelled` on interruption.
+
+`progressive_coverage` reports inventory, physical and logical coverage, and
+the conservative eligible semantic assessment flag. These are independent of
+the two result groups. A partial original history can establish a local
+positive. Report `lexical_coverage_limited` when unsupported or omitted
+history limits the searchable material. The resolver does not certify
+session-wide absence from lexical observations or selected excerpts.
 
 The queue holds at most five candidates. There is no cumulative candidate,
-assessment, publication or provider-page ceiling on this route. The active
-context batch has resource limits and the process retains up to four runs
-with a ten-minute idle lease. Each call retains reader and transport limits.
-An expired or restarted run returns a stale refusal. No checkpoint or
-transcript is persisted by default. If a source changes, invalid matches
-are omitted from that batch, while previously published independent results
-remain available to the originating chat. An interrupted source cursor can retry that source once with the same
-inventory commitments. Membership drift or a second source failure returns
-partial coverage. Earlier published batches remain outside the retry.
+assessment, publication or provider-page ceiling. Context and refresh work
+remain bounded per active batch. The process retains up to four runs with a
+ten-minute idle lease. A new process or an expired lease requires a new run.
+An interrupted in-flight cursor can retry its current source once with the
+same inventory commitments. At publication, the resolver reacquires only
+stale candidate identities and asks Luna to assess their new excerpts once.
+Repeated change or an unavailable replacement yields an explicit
+interruption. A replay can withdraw stale rows from the most recent reply.
+Earlier signed references remain subject to their normal source checks.
 
 `expansion_terms` offers one follow-up pass after a complete empty first
-pass. Prefer initial aliases for large scans. After identities have been
-presented, use further context on those candidates and disclose lexical
-coverage limits where applicable.
+pass. The resolver drains the expanded scan with the same queue bounds.
+Include known justified aliases in the initial plan.
+
+### Conversational answer
+
+Render exactly these two tables, localized to the user. Use the title as the
+session label, the grounded explanation for a confirmed row, and the concrete
+gap for a plausible unconfirmed row. Keep signed references in the origin.
+Use a clearly labeled empty row if a table contains no results. If the run was
+interrupted or lexical coverage is limited, put one short status row in the
+second table with a blank session ID.
+
+**Sessioni confermate**
+
+| Sessione | Evidenza / motivazione | ID sessione |
+| --- | --- | --- |
+| Nessuna sessione confermata | | |
+
+**Possibili candidate non confermate**
+
+| Sessione | Motivo della mancata conferma | ID sessione |
+| --- | --- | --- |
+| Nessuna candidata plausibile | | |
 
 ## Legacy workflow
 
@@ -211,9 +246,9 @@ refuses when caller scope cannot be established. See the
 
 The resolver reports scan completion, work, unassessed candidates and source
 coverage. Physical EOF and assessed lexical candidates do not establish
-complete eligible semantic coverage. For v1, `coverage.eligible_evaluation_complete`
-is false and exhaustive requests return `incomplete_search` with the supported
-matches. Standard results can report matches within the scanned candidates.
+complete eligible semantic coverage. On the legacy v1 route,
+`coverage.eligible_evaluation_complete` is false and exhaustive requests
+return `incomplete_search` with the supported matches.
 A terminal scan observes sources at their individual revisions and does not
 certify a root-wide snapshot.
 
