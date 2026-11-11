@@ -1,6 +1,7 @@
 # Milestone history and current product sequencing
 
-- [P0-SR5 intent-aware session resolution](p0-sr5-intent-aware-session-resolution.md) records the current implementation and acceptance limits.
+- [Progressive session resolution](progressive-session-resolution.md) records the feature branch implementation, scale tests and acceptance limits.
+- [P0-SR5 intent-aware session resolution](p0-sr5-intent-aware-session-resolution.md) records the original resolver acceptance.
 
 The [canonical product roadmap](../product-roadmap.md) and
 [ADR-0022](../adr/0022-product-first-session-lifecycle.md) govern current work.
