@@ -1691,5 +1691,40 @@ fn progressive_resolution_drains_all_batches_and_revalidates_replayed_publicatio
     assert_eq!(replay["invalidated"], json!([changed]));
     assert_eq!(replay["matches"].as_array().unwrap().len(), 4);
     assert_eq!(replay["progressive_coverage"]["published"], 104);
+
+    let batch = call(
+        &mut client,
+        json!({"action":"start","progressive":true,"search_intent":{
+            "schema_version":"1","subject":"Find FleetProbe tests","activity":"testing",
+            "hints":{"terms":["FleetProbe"]}
+        }}),
+        M,
+    );
+    let candidates = batch["candidates"].as_array().unwrap();
+    assert_eq!(candidates.len(), 5);
+    let replaced = candidates[0]["native_session_id"].as_str().unwrap();
+    let path = &sources[replaced];
+    let moved = path.with_extension("previous");
+    fs::rename(path, &moved).unwrap();
+    fs::write(path, fs::read(&moved).unwrap()).unwrap();
+    let assessments: Vec<_> = candidates.iter().map(|row| json!({
+        "native_session_id":row["native_session_id"], "disposition":"verified_relevant",
+        "relationship":"direct","outcomes":["tested"],"evidence":[row["evidence"][0]["handle"]],
+        "explanation":"The fixture reports passing tests."
+    })).collect();
+    let published = call(
+        &mut client,
+        json!({"action":"advance","run":batch["run"],
+        "expected_revision":batch["step_revision"],"operation_id":"verify-replacement",
+        "assessments":assessments,"finish_if_sufficient":true}),
+        M,
+    );
+    assert_eq!(
+        published["matches"].as_array().unwrap().len(),
+        4,
+        "{published}"
+    );
+    assert_eq!(published["progress"]["freshness_failures"], 1);
+    assert_eq!(published["outcome"], "partial");
     client.close();
 }

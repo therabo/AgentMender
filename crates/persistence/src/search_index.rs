@@ -52,6 +52,10 @@ pub struct SearchTextIndex {
     lock: Option<std::fs::File>,
 }
 impl SearchTextIndex {
+    pub fn stores_text(&self) -> bool {
+        self.root.is_some()
+    }
+
     pub fn memory() -> Result<Self, SearchIndexError> {
         Self::initialize(Connection::open_in_memory()?, None)
     }

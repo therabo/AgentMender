@@ -37,7 +37,7 @@ impl SessionSearchReadPort for IndexedSearchReader<'_> {
                 return Ok(());
             }
             let index = self.index.lock().map_err(|_| unavailable())?;
-            if !index.status().map_err(|_| unavailable())?.persistent {
+            if !index.stores_text() {
                 return Ok(());
             }
             let cache_deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
@@ -76,6 +76,27 @@ impl SessionSearchReadPort for IndexedSearchReader<'_> {
                     .as_ref()
                     .is_some_and(|q| q.sort == SearchSort::DiscoveryPriority)
             {
+                // The worker cannot use an index observation to replace an
+                // unfinished source read. For a new source, approximate the
+                // worker's active inventory window with the indexed metadata.
+                // Any incomplete or stale approximation only affects reuse.
+                if request.continuation.stream.is_some() {
+                    return Ok(());
+                }
+                if let Some(boundary) = &request.continuation.inventory_after {
+                    eligible.retain(|(_, m)| m.native_session_id > boundary.native_session_id);
+                }
+                eligible.sort_by_cached_key(|(_, m)| {
+                    (
+                        std::cmp::Reverse(discovery_title_weight(m, &terms)),
+                        m.native_session_id.clone(),
+                    )
+                });
+                eligible = eligible
+                    .into_iter()
+                    .skip(request.continuation.start)
+                    .take(SEARCH_BATCH)
+                    .collect();
                 let query = terms.join(" ");
                 let keys: Vec<_> = eligible
                     .iter()
