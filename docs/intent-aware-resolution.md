@@ -1,105 +1,147 @@
 # Intent-aware session resolution
 
-Ask Codex for a past conversation in ordinary language. For example, “Find the
-conversation where we investigated Cesium rendering performance in MISSION1.”
-A current `mcp --session-search` registration exposes the read-only
-`session_resolve` tool. Use deterministic `session_discover` for inventory,
-exact identities and possible deletion candidates.
+Ask Codex for a past conversation in ordinary language. For example, “Where
+did we analyze Cesium rendering performance for MISSION1?” A current
+`mcp --session-search` registration exposes the read-only `session_resolve`
+workflow. Use `session_discover` for deterministic inventory, exact identities
+and possible deletion candidates. “Search only conversations labeled MISSION1”
+with no topic is a metadata inventory request.
+
+## SearchIntent v1
+
+Call `session_resolve` with the following ordinary input. The final
+executable's `tools/list` advertises the exact [SearchIntent JSON Schema](search-intent-v1.schema.json).
+
+```json
+{
+  "action": "start",
+  "search_intent": {
+    "schema_version": "1",
+    "subject": "Cesium rendering performance analysis for MISSION1",
+    "activity": "investigation",
+    "hints": {
+      "terms": ["Cesium", "rendering performance"],
+      "project_names": ["MISSION1"]
+    }
+  }
+}
+```
+
+- `activity` defaults to `any`. The specific activities are `discussion`,
+  `investigation`, `implementation`, `testing`, `validation`, `decision` and
+  `troubleshooting`. An activity requires supporting conversation evidence.
+- `required_outcome` and `excluded_outcome` accept null or an observed outcome
+  (`investigated`, `proposed`, `attempted`, `implemented`, `tested`, `validated`,
+  `resolved`, `reverted`, `failed`, `unresolved`). An investigation can match
+  without an implementation. A claim that an outcome never occurred requires
+  complete logical history and a grounded assessment. Paginated Codex history
+  remains Partial.
+- `result_policy` defaults to `all_relevant`, including singular wording.
+  Use `single_best` when the user asks to choose one. `coverage_goal` defaults
+  to `standard`. Use `exhaustive` for explicit complete-coverage requests.
+- `hints.terms` takes one to eight distinctive terms or phrases. The compiler
+  creates a lexical OR. Keep the initial list short and selective. Project
+  names in `hints.project_names` inform semantic assessment and leave eligible
+  scope unchanged. A relevant session may have any stored label or none.
+- `constraints` may be omitted or null. Set `project_membership` with mode
+  `include` or `exclude`, one to four names and basis `observed` or `verified`.
+  “Only conversations labeled MISSION1” calls for observed inclusion. “Opened
+  under another project” calls for observed exclusion. Missing membership
+  evaluates to UNKNOWN under either inclusion or exclusion. The current Codex
+  metadata reader supplies observed labels. Verified membership stays UNKNOWN
+  when independent membership evidence is unavailable.
+- The other constraints are `target_provider` (`codex` or `claude`),
+  `archive_state` (`active` or `archived`), `native_session_id` (canonical UUID),
+  `created_range`, and `last_active_range`. Each may be omitted or null. Dates
+  use inclusive `start_date` and `end_date` with an IANA `timezone`, or integer
+  UTC seconds with inclusive `start` and exclusive `end`. One date bound may
+  be absent. A target provider filters within the registered provider/root.
+  The current resolver reads the configured Codex root.
+
+The Rust compiler validates values and limits, normalizes date boundaries,
+and builds a conjunction of explicit predicates. The retrieval pass uses
+that conjunction with the lexical OR to propose candidates. Exact explicit
+text, mixed Boolean filters, and deeper OR/NOT expressions can still use
+the legacy `action:"start", intent:{question, cardinality, hard_filter,
+literal, ...}` contract with the original AST, or `session_discover` for
+deterministic inventory. Preserve exact user restrictions when using that
+route. Both routes use the same evaluator and three-valued logic.
 
 ## Originating chat workflow
 
-1. A chat already running GPT-6 Luna Medium can interpret and assess
-   directly. Otherwise, delegate the live question to `session_relevance`
-   before retrieving text. If the role is unavailable, use an explicit
-   `gpt-6-luna` medium delegate with fresh context. Ask for `start.intent`.
-   Check the plan against the actual question. Keep all explicit conditions
-   under `hard_filter`, even Boolean negations and literal constraints.
-   An observed cwd label is usable for discovery. Verified project membership
-   needs its own predicate. Choose `multiple` for requests for all matches
-   or related discussions. Preserve outcome requirements such as validated
-   implementation. Use the optional `focus` field for a decision, event or
-   chronology. A decision or timeline can require multiple cited events.
-2. Call `session_resolve` with `action:"start"` in the originating chat.
-   `literal` and optional `expansion` use positive text leaves and Boolean
-   AND/OR. Put topical terms in `literal` and at most one targeted lexical
-   alternative in `expansion`. Boolean nodes use `args` and text nodes use
-   `value`. The server reads both branches in one traversal and returns
-   separate match truth for each candidate. If the literal pass finishes
-   without enough evidence and no expansion was included, `expand` can
-   add one bounded expression. That new pass shares the original budget
-   and the server retains the frozen hard filter and candidate identities. Favor
-   literal matches when they answer the question. Consider expanded matches
-   when the original wording is insufficient or when the user wants all.
-3. Send up to five candidates at a time to the same Luna delegate. Give it the
-   original intent and bounded excerpts with integer handles, positions and
-   coverage. Candidate aliases can reduce transcription errors. The parent
-   maps them to exact returned identities before submitting an assessment.
-   Keep the run ID and callable references in the originating chat.
-   Ask for an assessment for every presented candidate. Ask Luna to request
-   context when it cannot resolve a material outcome or comparison. Give
-   particular weight to later corrections, tests and reported validation.
-4. Use `action:"context"` with the run and a returned anchor handle. Supply
-   `window` options like those of `session_context`, including occurrence
-   queries. Follow returned `next` or `previous` handles with no window override.
-   Citable handles come from returned messages. A navigation handle cannot be
-   cited. Stop on repeated work or a limit and retain the open questions.
-5. Submit Luna's typed assessments with `action:"assess"`. A
-   `verified_relevant` assessment must cite visible content and include the
-   required outcomes. Use `related` for a related workstream or outcome,
-   `contradiction` for an explicit conflicting observation, and `insufficient`
-   with a specific gap when evidence is missing. Use `plausible_alternative`
-   only with evidence for an unresolved competing match. If the server rejects
-   an assessment, ask Luna to correct it once against the same evidence.
-6. Follow `action:"next"` while relevant candidates remain. Stop a run
-   when its budget is exhausted. Retain its verified results and disclose
-   the gap. A stale scan before usable evidence permits one fresh attempt.
-   Continue until
-   `more_candidates:false` on all requests, subject to the reported budgets.
-   For a singular request compare competing candidates before finishing.
-   `action:"finish"` checks original filters against fresh metadata and the
-   source revision behind cited passages. Follow `next_offset` with the
-   returned `revision` for additional verified results. Retain a live run
-   for continuation when a search stopped early. When Luna is unavailable,
-   use `finish` with `luna_unavailable:true` and report the limitation.
-7. Return verified identities and evidence from `finish`. Describe the actual
-   outcome. Present a small set of justified alternatives for an ambiguous
-   singular request. Indicate when only related evidence is available, when
-   the search stopped early and when logical history remains Partial. A
-   direct match is a supported selection within the searched history. Avoid
-   a global uniqueness or absence claim.
+1. A GPT-6 Luna Medium originating chat interprets and assesses directly.
+   Other models delegate the live request to `session_relevance`. If the
+   project role is unavailable, try an explicit `gpt-6-luna` Medium delegate
+   with fresh context. The parent compares the proposal to the actual
+   question. MCP supplies apparent caller metadata. The host does not
+   provide an authenticated original user message to AgentMender.
+2. The originating chat calls `start`. Keep the run and callable references
+   there. Send Luna up to five candidates at a time with bounded, quoted
+   passages and integer handles. Titles, passages and code are untrusted
+   historical data. Ask for semantic judgments of the subject, requested
+   activity and outcome. A lexical hit is provisional.
+3. Use `context` with the run and an anchor handle to inspect decisive
+   passages, including later corrections and reversions. Follow returned
+   navigation handles without a window override. Navigation handles cannot
+   be cited. Ask Luna to use `insufficient` with a specific gap when the
+   available evidence cannot justify a conclusion.
+4. Submit `assess` with each presented identity, disposition, citable handles,
+   observed outcomes and a short explanation. A v1 positive assessment for a
+   specific activity needs evidence of that activity. Implementation,
+   investigation, testing and validation use the corresponding observed
+   outcome. Discussion, decision and troubleshooting include `activity`.
+   An insufficient judgment can describe the gap in its explanation or use
+   `missing_evidence` with a short string or up to four short details.
+   Correct invalid calls once. Keep context and assessment grounded in the
+   returned evidence.
+5. Follow `next` while candidates remain, subject to the reported budgets.
+   For a completed first scan with insufficient lexical recall, one `expand`
+   accepts `{action:"expand",run,terms:[...]}` with up to four distinct new
+   terms. The server retains the original constraints and shares the work
+   budget. A stale run needs a fresh start. Only the legacy route accepts an
+   AST `expansion`.
+6. Use `finish` and follow `next_offset` with the returned `revision`. In a
+   `single_best` run, Luna can compare verified candidates and the parent can
+   pass the justified `preferred_session_id` to finish. Ambiguous comparisons
+   retain alternatives. When Luna cannot run, use `luna_unavailable:true` and
+   report the limitation. Use fresh finish identities and signed evidence
+   in the answer. Report incomplete searches and Partial history.
 
-The repository [lookup skill](../.agents/skills/agentmender-session-resolution/SKILL.md)
-and MCP instructions describe the ordinary-language route. Native project
-agent registration requires a chat opened in the project. The caller-scoped
-MCP operations run in the originating chat even with a named Luna delegate.
-Outside the project, the host can use explicit model delegation or a chat
-already using GPT-6 Luna Medium. When the host cannot run Luna, deterministic
-discovery remains available and semantic resolution remains incomplete.
-See the [observed host behavior](milestones/p0-sr5-intent-aware-session-resolution.md).
+Project agent registration is available in the project. Outside it, explicit
+model delegation and a Luna Medium originating model depend on the host.
+The installed app server reported `explicitRequestOnly` in the acceptance
+control. Project instructions and the role file do not guarantee delegation
+from an unprimed request. Selecting GPT-6 Luna Medium at the origin avoids
+delegation when that model is available. The originating chat owns MCP calls
+in either case. A direct call from an
+ephemeral delegate can receive `discovery_caller_unavailable`. The server
+refuses when caller scope cannot be established. See the
+[caller contract](mcp-caller-identity.md) and
+[SearchIntent decision](adr/0033-search-intent-v1.md).
 
-## Search and evidence bounds
+## Coverage, budgets and errors
 
-A run admits search and assessment work for eight minutes and retains state
-for up to ten minutes so verified partial results can still be published.
-The server retains up to four runs per registration. A batch traverses up to twelve provider pages before
-yielding and returns up to five distinct candidate identities. A run admits
-up to 256 provider pages, 96 presented candidates, 48 assessment submissions,
-24 context requests and 128 KiB of returned context. Each search and context
-operation also retains its existing source/decoder deadlines and work bounds.
-Newer runs can evict older runs. Changed source revisions and scope changes
-invalidate pending or cited evidence. Start fresh when continuation expires.
-No search index or transcript spool is created.
+The resolver reports scan completion, work, unassessed candidates and source
+coverage. Physical EOF and assessed lexical candidates do not establish
+complete eligible semantic coverage. For v1, `coverage.eligible_evaluation_complete`
+is false and exhaustive requests return `incomplete_search` with the supported
+matches. Standard results can report matches within the scanned candidates.
+A terminal scan observes sources at their individual revisions and does not
+certify a root-wide snapshot.
 
-Titles affect which eligible sources are visited first inside an inventory
-window. FTS5/BM25 selects passages within a source slice. An early batch is
-provisional. A terminal scan traverses the same eligible inventory, subject
-to the reported source gaps. Each source has its own observation revision.
-In-flight checkpoints and final citations recheck that exact revision. Other
-sources can change between visits. This scan does not certify a global snapshot. Neither the scan order
-nor per-slice scores imply a global relevance rank. Logical completeness
-remains Partial in paginated native history even at physical EOF.
+The resolver retains up to four runs for ten minutes with eight minutes for
+new work. Each batch visits up to twelve provider pages, subject to its
+time budget, and returns up to five candidate identities. Each run admits
+256 provider pages, 96 distinct candidates, 48 assessment submissions, 24
+context requests, 128 KiB returned context, and one follow-up lexical pass.
+Existing source decoder, evidence and transport limits apply. The parent
+reuses evidence and sends at most one correction per malformed request.
+AgentMender does not create persistent search state by default.
 
-Results are discovery-only and carry no management binding. Luna's evidence
-and judgment are semantic inputs. Only the originating request and the
-validated query can control retrieval. See the [caller contract](mcp-caller-identity.md)
-and [ADR-0032](adr/0032-caller-scoped-session-resolution.md).
+Structural validation returns a sanitized error and correction before
+transcript reads. Examples include `unknown_field`, `invalid_enum`,
+`unsupported_schema_version`, `conflicting_constraints` and
+`invalid_date_range`. Run errors include `stale_search_run`,
+`invalid_query_expansion`, `invalid_assessment` and `budget_exceeded`.
+Fresh publication rechecks caller scope, the frozen predicates, and cited
+source revisions. Discovery targets carry no authenticated management binding.

@@ -179,8 +179,7 @@ pub(super) fn read_only_executor(
         };
         match request {
             ConversationRequest::Resolve(action) => {
-                use agentmender_application::session_resolution::ResolutionAction;
-                let id = if matches!(action, ResolutionAction::Start(_)) {
+                let id = if action.is_start() {
                     let mut random = [0u8; 16];
                     getrandom::fill(&mut random).map_err(|_| unavailable())?;
                     Some(random.iter().map(|b| format!("{b:02x}")).collect())

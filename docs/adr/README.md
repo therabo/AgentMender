@@ -59,3 +59,5 @@ registered filtering fixed, content/binding implementation deferred).
 - [ADR-0030: Bounded resident history decoding](0030-resident-bounded-history-decoding.md) — Accepted SR3 worker reuse, replay, physical/logical coverage; host admission remains closed.
 - [ADR-0031: Separate caller-filtered discovery from management](0031-metadata-derived-caller-discovery.md) — Accepted SR4 read-only apparent-caller scope and distinct discovery tokens.
 - [ADR-0032: Caller-scoped session resolution](0032-caller-scoped-session-resolution.md) — Host-side Luna reasoning with bounded read-only acquisition and citation validation.
+
+- [ADR-0033 — SearchIntent v1](0033-search-intent-v1.md)

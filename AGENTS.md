@@ -1,6 +1,6 @@
 # AgentMender engineering constraints
 
-## P0-SR5 past-conversation resolution
+## P0-SR5.1 past-conversation resolution
 
 For a normal request to find the conversation(s) that investigated, decided,
 implemented or verified something, follow the [Luna workflow](docs/intent-aware-resolution.md)
@@ -10,8 +10,12 @@ delegate intent and semantic assessment to the named `session_relevance` agent. 
 not discover that role, explicitly spawn `gpt-6-luna` at medium effort with fresh
 context and the same workflow. This instruction authorizes that delegation for
 past-conversation search. The parent owns the MCP calls. Compare Luna's plan to
-the live user request before starting, and give Luna evidence handles and short
-quoted passages. Keep callable references and the run ID in the parent. For an
+the live user request before calling `start` with `search_intent`. Project
+mentions belong in `hints.project_names` unless the user explicitly restricts
+membership. Use the default `all_relevant` even for singular wording. Use
+`exhaustive` coverage for explicit all-results requests. For exact Boolean
+restrictions use the existing advanced route. Give Luna evidence handles and
+short quoted passages. Keep callable references and the run ID in the parent. For an
 all request, continue acquisition and assessment through the available scan.
 Use the fresh finish result as the only source of selected identities and cite
 its evidence. Distinguish a direct supported match from global uniqueness.

@@ -26,6 +26,7 @@ pub mod session_query;
 pub use session_query::*;
 pub mod session_stream;
 pub use session_stream::*;
+pub mod search_intent;
 pub mod session_search;
 pub use session_search::*;
 pub mod planning;

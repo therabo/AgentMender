@@ -1,6 +1,12 @@
 //! Read-only resolution state for one originating Codex conversation.
 use crate::{ApplicationError, QueryControl, TargetSelector, session_search::SessionSearchService};
-use agentmender_domain::*;
+pub use agentmender_domain::search_intent::Outcome;
+use agentmender_domain::{
+    search_intent::{
+        CoverageGoal, ResultPolicy, SearchActivity, ValidatedSearchIntent, compile_expansion,
+    },
+    *,
+};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -36,21 +42,6 @@ pub enum AnswerFocus {
     Decision,
     Event,
     Chronology,
-}
-
-#[derive(Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum Outcome {
-    Investigated,
-    Proposed,
-    Attempted,
-    Implemented,
-    Tested,
-    Validated,
-    Resolved,
-    Reverted,
-    Failed,
-    Unresolved,
 }
 
 #[derive(Deserialize)]
@@ -95,6 +86,10 @@ impl Intent {
         {
             return Err(ApplicationError::InvalidSearch);
         }
+        self.compile_parameters()
+    }
+
+    fn compile_parameters(&self) -> Result<SearchParameters, ApplicationError> {
         let lexical = QueryExpr::Or {
             args: std::iter::once(self.literal.clone())
                 .chain(self.expansion.clone())
@@ -167,6 +162,8 @@ pub struct Assessment {
     pub evidence: Vec<usize>,
     #[serde(default)]
     pub outcomes: Vec<Outcome>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub activity: Option<SearchActivity>,
     pub explanation: String,
     #[serde(default)]
     pub missing_evidence: Option<String>,
@@ -176,12 +173,17 @@ pub struct Assessment {
 
 pub enum ResolutionAction {
     Start(Box<Intent>),
+    StartV1(Box<ValidatedSearchIntent>),
     Next {
         run: String,
     },
     Expand {
         run: String,
         expansion: Box<QueryExpr>,
+    },
+    ExpandTerms {
+        run: String,
+        terms: Vec<String>,
     },
     Context {
         run: String,
@@ -197,7 +199,46 @@ pub enum ResolutionAction {
         offset: usize,
         revision: Option<usize>,
         luna_unavailable: bool,
+        preferred_session_id: Option<String>,
     },
+}
+
+impl ResolutionAction {
+    pub fn is_start(&self) -> bool {
+        matches!(self, Self::Start(_) | Self::StartV1(_))
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum ResolutionError {
+    #[error("The run is stale or belongs to another originating conversation. Start a fresh run.")]
+    StaleSearchRun,
+    #[error(
+        "Expansion requires a finished first scan and distinct new terms. Only one expansion is allowed."
+    )]
+    InvalidQueryExpansion,
+    #[error(
+        "Assess presented candidates with their own evidence handles and the requested activity and outcome."
+    )]
+    InvalidAssessment,
+    #[error("The preferred session must be a verified match in a single_best run.")]
+    InvalidPreference,
+    #[error(
+        "The run's context, assessment or duration budget is exhausted. Finish with the available evidence."
+    )]
+    BudgetExceeded,
+}
+
+impl ResolutionError {
+    pub fn code(self) -> &'static str {
+        match self {
+            Self::StaleSearchRun => "stale_search_run",
+            Self::InvalidQueryExpansion => "invalid_query_expansion",
+            Self::InvalidAssessment => "invalid_assessment",
+            Self::InvalidPreference => "invalid_preference",
+            Self::BudgetExceeded => "budget_exceeded",
+        }
+    }
 }
 
 #[derive(Clone, Serialize)]
@@ -294,6 +335,7 @@ pub enum ResolutionData {
 pub struct ResolutionResponse {
     pub run: String,
     pub focus: AnswerFocus,
+    pub coverage_goal: Option<CoverageGoal>,
     pub progress: ResolutionProgress,
     pub data: ResolutionData,
 }
@@ -317,8 +359,10 @@ struct Candidate {
 
 struct Run {
     binding: String,
+    instance: String,
     started: Instant,
     intent: Intent,
+    search_intent: Option<Box<ValidatedSearchIntent>>,
     parameters: SearchParameters,
     original_filter: Option<QueryExpr>,
     next: Option<SearchContinuation>,
@@ -328,7 +372,14 @@ struct Run {
     requested_windows: Vec<(usize, ContextOptions)>,
     assessment_batches: usize,
     revision: usize,
-    publication: Option<(bool, ResolutionOutcome, Vec<ResolvedCandidate>)>,
+    publication: Option<Publication>,
+}
+
+struct Publication {
+    luna_unavailable: bool,
+    preferred_session_id: Option<String>,
+    outcome: ResolutionOutcome,
+    choices: Vec<ResolvedCandidate>,
 }
 
 #[derive(Default)]
@@ -348,66 +399,97 @@ impl ResolutionStore {
         let binding = service.binding(SearchPurpose::Discovery)?;
         self.runs
             .retain(|_, run| run.started.elapsed() < RUN_RETENTION);
-        let id = match action {
+        let (id, action) = match action {
             ResolutionAction::Start(intent) => {
                 let parameters = intent.parameters()?;
-                let id = new_id.ok_or(ApplicationError::InvalidSearch)?;
-                if self.runs.contains_key(&id) {
-                    return Err(ApplicationError::InvalidSearch);
-                }
-                let mut run = Run {
-                    binding,
-                    started: Instant::now(),
-                    intent: *intent,
-                    parameters,
-                    original_filter: None,
-                    next: None,
-                    progress: ResolutionProgress {
-                        scan_passes: 1,
-                        ..Default::default()
-                    },
-                    candidates: Vec::new(),
-                    anchors: Vec::new(),
-                    requested_windows: Vec::new(),
-                    assessment_batches: 0,
-                    revision: 0,
-                    publication: None,
-                };
-                let data = run.scan(service, control, true)?;
-                let result = run.response(id.clone(), data);
-                if self.runs.len() >= RUN_LIMIT
-                    && let Some(oldest) = self
-                        .runs
-                        .iter()
-                        .min_by_key(|(_, run)| run.started)
-                        .map(|(key, _)| key.clone())
-                {
-                    self.runs.remove(&oldest);
-                }
-                self.runs.insert(id, run);
-                return Ok(result);
+                return self.start(
+                    service,
+                    control,
+                    new_id,
+                    Run::new(binding, service.instance, *intent, parameters, None),
+                );
             }
-            ResolutionAction::Next { ref run }
-            | ResolutionAction::Expand { ref run, .. }
-            | ResolutionAction::Context { ref run, .. }
-            | ResolutionAction::Assess { ref run, .. }
-            | ResolutionAction::Finish { ref run, .. } => run.clone(),
+            ResolutionAction::StartV1(plan) => {
+                let spec = plan.intent();
+                let intent = Intent {
+                    question: spec.subject.clone(),
+                    cardinality: match spec.result_policy {
+                        ResultPolicy::AllRelevant => AnswerCardinality::Multiple,
+                        ResultPolicy::SingleBest => AnswerCardinality::Single,
+                    },
+                    focus: if spec.activity == SearchActivity::Decision {
+                        AnswerFocus::Decision
+                    } else {
+                        AnswerFocus::Conversation
+                    },
+                    required_outcomes: spec
+                        .required_outcome
+                        .into_iter()
+                        .chain(spec.activity.evidence_outcome())
+                        .collect(),
+                    hard_filter: plan.hard_filter().cloned(),
+                    literal: plan.lexical().clone(),
+                    expansion: None,
+                };
+                let parameters = intent.compile_parameters()?;
+                return self.start(
+                    service,
+                    control,
+                    new_id,
+                    Run::new(binding, service.instance, intent, parameters, Some(plan)),
+                );
+            }
+            action => {
+                let id = match &action {
+                    ResolutionAction::Next { run }
+                    | ResolutionAction::Expand { run, .. }
+                    | ResolutionAction::ExpandTerms { run, .. }
+                    | ResolutionAction::Context { run, .. }
+                    | ResolutionAction::Assess { run, .. }
+                    | ResolutionAction::Finish { run, .. } => run.clone(),
+                    _ => unreachable!("start returned"),
+                };
+                (id, action)
+            }
         };
         let run = self
             .runs
             .get_mut(&id)
-            .filter(|r| r.binding == binding)
-            .ok_or(ApplicationError::StaleSearchEvidence)?;
+            .ok_or(ResolutionError::StaleSearchRun)?;
+        if run.binding != binding || run.instance != service.instance {
+            return Err(run.contract_error(ResolutionError::StaleSearchRun));
+        }
         if run.started.elapsed() >= WORK_TIME && run.progress.stop_reason.is_none() {
             run.progress.stop_reason = Some("resolution_duration_limit");
             run.publication = None;
             run.revision += 1;
         }
         let data = match action {
-            ResolutionAction::Start(_) => unreachable!("start returned"),
+            ResolutionAction::Start(_) | ResolutionAction::StartV1(_) => {
+                unreachable!("start returned")
+            }
             ResolutionAction::Next { .. } => run.scan(service, control, false)?,
             ResolutionAction::Expand { expansion, .. } => {
+                if run.search_intent.is_some() {
+                    return Err(ResolutionError::InvalidQueryExpansion.into());
+                }
                 run.expand(service, control, *expansion)?
+            }
+            ResolutionAction::ExpandTerms { terms, .. } => {
+                if run.search_intent.is_none() {
+                    return Err(ResolutionError::InvalidQueryExpansion.into());
+                }
+                let expansion = compile_expansion(&terms)
+                    .map_err(|_| ResolutionError::InvalidQueryExpansion)?;
+                let original = run.intent.literal.text_terms();
+                if expansion
+                    .text_terms()
+                    .iter()
+                    .any(|term| original.contains(term))
+                {
+                    return Err(ResolutionError::InvalidQueryExpansion.into());
+                }
+                run.expand(service, control, expansion)?
             }
             ResolutionAction::Context { anchor, window, .. } => {
                 run.context(service, control, anchor, window)?
@@ -417,14 +499,86 @@ impl ResolutionStore {
                 offset,
                 revision,
                 luna_unavailable,
+                preferred_session_id,
                 ..
-            } => run.finish(service, control, offset, revision, luna_unavailable)?,
+            } => run.finish(
+                service,
+                control,
+                offset,
+                revision,
+                luna_unavailable,
+                preferred_session_id,
+            )?,
         };
         Ok(run.response(id, data))
+    }
+    fn start(
+        &mut self,
+        service: &SessionSearchService<'_>,
+        control: &QueryControl,
+        new_id: Option<String>,
+        mut run: Run,
+    ) -> Result<ResolutionResponse, ApplicationError> {
+        let id = new_id.ok_or(ApplicationError::InvalidSearch)?;
+        if self.runs.contains_key(&id) {
+            return Err(ApplicationError::InvalidSearch);
+        }
+        let data = run.scan(service, control, true)?;
+        let result = run.response(id.clone(), data);
+        if self.runs.len() >= RUN_LIMIT
+            && let Some(oldest) = self
+                .runs
+                .iter()
+                .min_by_key(|(_, run)| run.started)
+                .map(|(key, _)| key.clone())
+        {
+            self.runs.remove(&oldest);
+        }
+        self.runs.insert(id, run);
+        Ok(result)
     }
 }
 
 impl Run {
+    fn new(
+        binding: String,
+        instance: &str,
+        intent: Intent,
+        parameters: SearchParameters,
+        search_intent: Option<Box<ValidatedSearchIntent>>,
+    ) -> Self {
+        Self {
+            binding,
+            instance: instance.to_owned(),
+            started: Instant::now(),
+            intent,
+            search_intent,
+            parameters,
+            original_filter: None,
+            next: None,
+            progress: ResolutionProgress {
+                scan_passes: 1,
+                ..Default::default()
+            },
+            candidates: Vec::new(),
+            anchors: Vec::new(),
+            requested_windows: Vec::new(),
+            assessment_batches: 0,
+            revision: 0,
+            publication: None,
+        }
+    }
+
+    fn contract_error(&self, error: ResolutionError) -> ApplicationError {
+        if self.search_intent.is_some() {
+            error.into()
+        } else if error == ResolutionError::StaleSearchRun {
+            ApplicationError::StaleSearchEvidence
+        } else {
+            ApplicationError::InvalidSearch
+        }
+    }
+
     fn response(&self, run: String, data: ResolutionData) -> ResolutionResponse {
         let mut progress = self.progress.clone();
         progress.more_candidates = progress.candidates_presented < self.candidates.len()
@@ -432,6 +586,10 @@ impl Run {
         ResolutionResponse {
             run,
             focus: self.intent.focus,
+            coverage_goal: self
+                .search_intent
+                .as_ref()
+                .map(|p| p.intent().coverage_goal),
             progress,
             data,
         }
@@ -527,7 +685,7 @@ impl Run {
         self.progress.candidates_presented = end;
         Ok(ResolutionData::Candidates {
             candidates,
-            query: first.then(|| Box::new(self.filter().clone())),
+            query: (first && self.search_intent.is_none()).then(|| Box::new(self.filter().clone())),
         })
     }
 
@@ -542,14 +700,19 @@ impl Run {
             || self.progress.stop_reason.is_some()
             || self.progress.provider_pages >= SCAN_LIMIT
         {
-            return Err(ApplicationError::InvalidSearch);
+            return Err(self.contract_error(ResolutionError::InvalidQueryExpansion));
         }
         self.intent.expansion = Some(expansion);
-        let parameters = match self.intent.parameters() {
+        let compiled = if self.search_intent.is_some() {
+            self.intent.compile_parameters()
+        } else {
+            self.intent.parameters()
+        };
+        let parameters = match compiled {
             Ok(parameters) => parameters,
-            Err(error) => {
+            Err(_) => {
                 self.intent.expansion = None;
-                return Err(error);
+                return Err(self.contract_error(ResolutionError::InvalidQueryExpansion));
             }
         };
         self.original_filter = Some(self.filter().clone());
@@ -667,13 +830,14 @@ impl Run {
             },
             (Some(_), Some(_)) => return Err(ApplicationError::InvalidSearch),
         };
-        if !options.valid()
-            || self.started.elapsed() >= WORK_TIME
+        if !options.valid() || self.requested_windows.contains(&(handle, options.clone())) {
+            return Err(ApplicationError::InvalidSearch);
+        }
+        if self.started.elapsed() >= WORK_TIME
             || self.progress.context_requests >= CONTEXT_LIMIT
             || self.progress.context_bytes + options.max_bytes > CONTEXT_BYTES
-            || self.requested_windows.contains(&(handle, options.clone()))
         {
-            return Err(ApplicationError::InvalidSearch);
+            return Err(self.contract_error(ResolutionError::BudgetExceeded));
         }
         self.progress.context_requests += 1;
         let result = service.context_window(
@@ -756,13 +920,20 @@ impl Run {
 
     fn assess(&mut self, assessments: Vec<Assessment>) -> Result<ResolutionData, ApplicationError> {
         if self.started.elapsed() >= WORK_TIME || self.assessment_batches >= ASSESSMENT_LIMIT {
-            return Err(ApplicationError::InvalidSearch);
+            return Err(self.contract_error(ResolutionError::BudgetExceeded));
         }
         self.assessment_batches += 1;
         let mut seen = BTreeSet::new();
         let updates: Option<Vec<_>> = assessments
             .into_iter()
-            .map(|assessment| {
+            .map(|mut assessment| {
+                if self.search_intent.is_some()
+                    && assessment.disposition == Disposition::Insufficient
+                    && assessment.missing_evidence.is_none()
+                    && bounded_text(&assessment.explanation, 512)
+                {
+                    assessment.missing_evidence = Some(assessment.explanation.clone());
+                }
                 let candidate = self.candidates[..self.progress.candidates_presented]
                     .iter()
                     .position(|c| {
@@ -788,17 +959,13 @@ impl Run {
                             .is_some_and(|a| a.candidate == candidate && a.citable)
                     })
                     && (assessment.disposition != Disposition::VerifiedRelevant
-                        || self
-                            .intent
-                            .required_outcomes
-                            .iter()
-                            .all(|o| assessment.outcomes.contains(o)));
+                        || self.supports_intent(&assessment, &self.candidates[candidate]));
                 valid.then_some((candidate, assessment))
             })
             .collect();
         let Some(updates) = updates.filter(|a| (1..=CANDIDATE_BATCH).contains(&a.len())) else {
             self.progress.invalid_assessments += 1;
-            return Err(ApplicationError::InvalidSearch);
+            return Err(self.contract_error(ResolutionError::InvalidAssessment));
         };
         for (i, assessment) in updates {
             self.candidates[i].assessment = Some(assessment);
@@ -822,6 +989,23 @@ impl Run {
         Ok(ResolutionData::Assessed)
     }
 
+    fn supports_intent(&self, assessment: &Assessment, candidate: &Candidate) -> bool {
+        self.intent
+            .required_outcomes
+            .iter()
+            .all(|o| assessment.outcomes.contains(o))
+            && self.search_intent.as_ref().is_none_or(|plan| {
+                let intent = plan.intent();
+                (intent.activity == SearchActivity::Any
+                    || assessment.activity == Some(intent.activity)
+                    || (intent.activity.evidence_outcome().is_some()
+                        && assessment.activity.is_none()))
+                    && intent.excluded_outcome.is_none_or(|excluded| {
+                        candidate.hit.content_complete && !assessment.outcomes.contains(&excluded)
+                    })
+            })
+    }
+
     fn finish(
         &mut self,
         service: &SessionSearchService<'_>,
@@ -829,15 +1013,27 @@ impl Run {
         offset: usize,
         revision: Option<usize>,
         luna_unavailable: bool,
+        preferred_session_id: Option<String>,
     ) -> Result<ResolutionData, ApplicationError> {
         if (offset > 0 || revision.is_some()) && revision != Some(self.revision) {
             return Err(ApplicationError::StaleSearchEvidence);
         }
-        if self
-            .publication
-            .as_ref()
-            .is_none_or(|(unavailable, _, _)| *unavailable != luna_unavailable)
+        let v1 = self.search_intent.as_ref().map(|plan| plan.intent());
+        if let Some(preferred) = &preferred_session_id
+            && (!v1.is_some_and(|spec| spec.result_policy == ResultPolicy::SingleBest)
+                || !self.candidates.iter().any(|candidate| {
+                    &candidate.hit.metadata.native_session_id == preferred
+                        && candidate.assessment.as_ref().is_some_and(|assessment| {
+                            assessment.disposition == Disposition::VerifiedRelevant
+                        })
+                }))
         {
+            return Err(ResolutionError::InvalidPreference.into());
+        }
+        if self.publication.as_ref().is_none_or(|publication| {
+            publication.luna_unavailable != luna_unavailable
+                || publication.preferred_session_id != preferred_session_id
+        }) {
             if offset != 0 {
                 return Err(ApplicationError::StaleSearchEvidence);
             }
@@ -862,16 +1058,23 @@ impl Run {
             let complete = self.progress.scan_complete
                 && self.progress.stop_reason.is_none()
                 && self.progress.assessments == self.progress.lexical_candidates
-                && !luna_unavailable;
-            let outcome = if self.intent.cardinality == AnswerCardinality::Single
-                && positives + plausible > 1
-            {
-                ResolutionOutcome::Ambiguous
-            } else if !complete {
+                && !luna_unavailable
+                && v1.is_none_or(|intent| {
+                    intent.coverage_goal == CoverageGoal::Standard
+                        && self.progress.insufficient == 0
+                });
+            let ambiguous = self.intent.cardinality == AnswerCardinality::Single
+                && preferred_session_id.is_none()
+                && positives + plausible > 1;
+            let outcome = if !complete && (v1.is_some() || !ambiguous) {
                 ResolutionOutcome::IncompleteSearch
+            } else if ambiguous {
+                ResolutionOutcome::Ambiguous
             } else if positives == 0 {
                 ResolutionOutcome::NoVerifiedMatch
-            } else if self.intent.cardinality == AnswerCardinality::Multiple {
+            } else if self.intent.cardinality == AnswerCardinality::Multiple
+                && (v1.is_none() || positives > 1)
+            {
                 ResolutionOutcome::MultipleVerified
             } else {
                 ResolutionOutcome::SingleVerified
@@ -884,6 +1087,12 @@ impl Run {
                     let relevant = assessment.disposition == Disposition::VerifiedRelevant;
                     let competing = self.intent.cardinality == AnswerCardinality::Single
                         && assessment.plausible_alternative;
+                    if preferred_session_id
+                        .as_ref()
+                        .is_some_and(|id| id != &c.hit.metadata.native_session_id)
+                    {
+                        return None;
+                    }
                     let related = positives == 0
                         && matches!(
                             assessment.disposition,
@@ -900,14 +1109,26 @@ impl Run {
                     })
                 })
                 .collect();
-            self.publication = Some((luna_unavailable, outcome, choices));
+            self.publication = Some(Publication {
+                luna_unavailable,
+                preferred_session_id,
+                outcome,
+                choices,
+            });
         }
-        let (_, outcome, choices) = self.publication.as_ref().expect("built");
+        let Publication {
+            outcome, choices, ..
+        } = self.publication.as_ref().expect("built");
         let mut outcome = *outcome;
         if offset > choices.len() {
             return Err(ApplicationError::InvalidSearch);
         }
         let end = (offset + RESULT_BATCH).min(choices.len());
+        let single_best = v1.is_some_and(|spec| spec.result_policy == ResultPolicy::SingleBest);
+        let preferred = self
+            .publication
+            .as_ref()
+            .is_some_and(|p| p.preferred_session_id.is_some());
         let selected = &choices[offset..end];
         let mut matches = vec![];
         let mut alternatives = vec![];
@@ -1001,7 +1222,9 @@ impl Run {
                     assessment: choice.assessment.clone(),
                     citations: choice.citations.clone(),
                 };
-                if choice.assessment.disposition == Disposition::VerifiedRelevant {
+                if choice.assessment.disposition == Disposition::VerifiedRelevant
+                    && (!single_best || preferred || choices.len() == 1)
+                {
                     matches.push(choice);
                 } else {
                     alternatives.push(choice);
@@ -1018,7 +1241,7 @@ impl Run {
             outcome,
             matches,
             alternatives,
-            next_offset: (end < choices.len()).then_some(end),
+            next_offset: (!single_best && end < choices.len()).then_some(end),
             revision: self.revision,
         })
     }
@@ -1144,6 +1367,63 @@ mod tests {
     }
 
     #[test]
+    fn v1_run_rejects_other_roots_and_registrations_before_reading() {
+        let caller = ApparentCodexCaller::from_metadata(CALLER, None).unwrap();
+        let reader = RepeatingReader(Cell::new(0));
+        let service = SessionSearchService {
+            reader: &reader,
+            provider_root: Path::new("/provider"),
+            provider: ProviderKind::Codex,
+            management: None,
+            apparent_caller: Some(&caller),
+            registered: &[],
+            instance: "fixture",
+        };
+        let spec: agentmender_domain::search_intent::SearchIntent =
+            serde_json::from_value(serde_json::json!({
+                "schema_version":"1", "subject":"Inspect the permission error",
+                "hints":{"terms":["EPERM"]}
+            }))
+            .unwrap();
+        let control = QueryControl::default();
+        let mut store = ResolutionStore::default();
+        let start = store
+            .execute(
+                &service,
+                ResolutionAction::StartV1(Box::new(spec.validate().unwrap())),
+                Some("run".into()),
+                &control,
+            )
+            .unwrap();
+        let count = reader.0.get();
+        for other in [
+            SessionSearchService {
+                provider_root: Path::new("/other"),
+                ..service
+            },
+            SessionSearchService {
+                instance: "new registration",
+                ..service
+            },
+        ] {
+            assert!(matches!(
+                store.execute(
+                    &other,
+                    ResolutionAction::Next {
+                        run: start.run.clone()
+                    },
+                    None,
+                    &control
+                ),
+                Err(ApplicationError::Resolution(
+                    ResolutionError::StaleSearchRun
+                ))
+            ));
+        }
+        assert_eq!(reader.0.get(), count);
+    }
+
+    #[test]
     fn repeated_continuation_stops_and_unavailable_model_preserves_incomplete_outcome() {
         let caller = ApparentCodexCaller::from_metadata(CALLER, None).unwrap();
         let reader = RepeatingReader(Cell::new(0));
@@ -1178,6 +1458,7 @@ mod tests {
                     offset: 0,
                     revision: None,
                     luna_unavailable: true,
+                    preferred_session_id: None,
                 },
                 None,
                 &control,

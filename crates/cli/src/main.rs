@@ -256,6 +256,7 @@ impl From<ApplicationError> for CliError {
             ApplicationError::CallerIdentityRequired { .. } => {
                 Self::new(ErrorCode::InvalidConfiguration, "caller_identity_required")
             }
+            ApplicationError::Resolution(e) => Self::new(ErrorCode::InvalidScope, e.to_string()),
             ApplicationError::InvalidSearch => Self::new(
                 ErrorCode::InvalidArguments,
                 "invalid bounded search request",

@@ -1177,3 +1177,336 @@ fn resolution_binds_intent_context_and_outcomes_to_fresh_discovery_evidence() {
     assert_eq!(stale["progress"]["freshness_failures"], 1);
     client.close();
 }
+
+#[test]
+fn search_intent_v1_preserves_cross_project_eligibility_and_verified_cardinality() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().canonicalize().unwrap();
+    let root = path.join("provider");
+    let mut files = seed(&root, &path.join("MISSION1"));
+    let unknown = "12345678-1234-1234-1234-123456789ab1";
+    let unknown_source = root.join(format!(
+        "sessions/rollout-2026-01-01T00-00-00-{unknown}.jsonl"
+    ));
+    let db = Connection::open(root.join("state_5.sqlite")).unwrap();
+    db.execute(
+        "UPDATE threads SET cwd = ?1 WHERE id = ?2",
+        (path.join("AgentMender").to_str().unwrap(), U),
+    )
+    .unwrap();
+    db.execute("INSERT INTO threads(id,rollout_path,created_at,updated_at,source,model_provider,cwd,title,sandbox_policy,approval_mode,cli_version) SELECT ?1,?2,1,2,'cli','openai','','Unlabeled','read-only','never','0.166.0'", (unknown, unknown_source.to_str().unwrap())).unwrap();
+    let mut persist = 1;
+    db.file_control(
+        None::<&str>,
+        rusqlite::FileControl::PersistWal(&mut persist),
+    )
+    .unwrap();
+    drop(db);
+    files.push((unknown_source, vec![]));
+    for (id, evidence) in [
+        (
+            T,
+            "We investigated MISSION1 Cesium rendering performance. The FPS measurements isolate a terrain bottleneck.",
+        ),
+        (
+            U,
+            "We analyzed MISSION1 Cesium rendering performance in this AgentMender conversation. Separately, we implemented and validated an optimization.",
+        ),
+        (
+            M,
+            "We investigated MISSION1 Cesium rendering performance in the originating chat.",
+        ),
+        (
+            unknown,
+            "Cesium rendering performance was mentioned in the agenda. We discussed lunch.",
+        ),
+    ] {
+        let (source, _) = files
+            .iter()
+            .find(|(p, _)| p.to_string_lossy().contains(id))
+            .unwrap();
+        let header = json!({"type":"session_meta","payload":{"id":id,"cli_version":"0.166.0"}});
+        let record = json!({"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":evidence}]}});
+        fs::write(source, format!("{header}\n{record}\n")).unwrap();
+    }
+    let fake = root.join("unused-provider");
+    fs::write(&fake, b"provider startup prohibited").unwrap();
+    let home = PathBuf::from(std::env::var_os("HOME").unwrap())
+        .canonicalize()
+        .unwrap();
+    let before = tree_bytes(&root);
+    let mut client = Client::connect(base(&root, &fake, &home).args(["mcp", "--session-search"]));
+    let catalog =
+        client.exchange(json!({"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}));
+    let resolver = catalog["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|tool| tool["name"] == "session_resolve")
+        .unwrap();
+    let input = &resolver["inputSchema"];
+    assert_eq!(input["type"], "object");
+    assert_eq!(input["oneOf"].as_array().unwrap().len(), 8);
+    assert_eq!(
+        input["$defs"]["SearchIntentInput"]["required"],
+        json!(["schema_version", "subject", "hints"])
+    );
+    assert_eq!(
+        input["$defs"]["SearchIntentInput"]["additionalProperties"],
+        false
+    );
+    assert!(resolver["outputSchema"].is_object());
+    let documented: Value =
+        serde_json::from_str(include_str!("../../../docs/search-intent-v1.schema.json")).unwrap();
+    let mut advertised = input["$defs"]["SearchIntentInput"].clone();
+    advertised["$schema"] = input["$schema"].clone();
+    advertised["$defs"] = Value::Object(
+        documented["$defs"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(|key| (key.clone(), input["$defs"][key].clone()))
+            .collect(),
+    );
+    assert_eq!(documented, advertised);
+
+    let rpc = |client: &mut Client, arguments, caller| {
+        client.exchange(
+            json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{
+                "name":"session_resolve","arguments":arguments,"_meta":caller
+            }}),
+        )
+    };
+    let call = |client: &mut Client, arguments| {
+        let result = rpc(client, arguments, json!({"threadId":M}));
+        assert!(result.get("error").is_none(), "{result}");
+        result["result"]["structuredContent"].clone()
+    };
+    let start = json!({"action":"start","search_intent":{
+        "schema_version":"1",
+        "subject":"Find where we analyzed Cesium performance for MISSION1.",
+        "activity":"investigation",
+        "hints":{"terms":["Cesium"],"project_names":["MISSION1"]}
+    }});
+    let ids = |value: &Value, key: &str| -> std::collections::BTreeSet<String> {
+        value[key]
+            .as_array()
+            .unwrap_or_else(|| panic!("Missing {key} in {value}"))
+            .iter()
+            .map(|row| row["native_session_id"].as_str().unwrap().to_owned())
+            .collect()
+    };
+    let set = |ids: &[&str]| ids.iter().map(|id| id.to_string()).collect();
+
+    let mut unsupported = start.clone();
+    unsupported["search_intent"]["schema_version"] = json!("2");
+    let mut unknown_field = start.clone();
+    unknown_field["search_intent"]["caller_uuid"] = json!(M);
+    let mut wrong_type = start.clone();
+    wrong_type["search_intent"]["hints"]["terms"] = json!("Cesium");
+    let mut invalid_activity = start.clone();
+    invalid_activity["search_intent"]["activity"] = json!("exploration");
+    let mut bad_basis = start.clone();
+    bad_basis["search_intent"]["constraints"] =
+        json!({"project_membership":{"mode":"include","names":["MISSION1"],"basis":"guessed"}});
+    let mut too_many = start.clone();
+    too_many["search_intent"]["hints"]["terms"] =
+        json!((0..9).map(|i| format!("term {i}")).collect::<Vec<_>>());
+    let mut too_long = start.clone();
+    too_long["search_intent"]["subject"] = json!("X".repeat(513));
+    let mut conflicting = start.clone();
+    conflicting["search_intent"]["excluded_outcome"] = json!("investigated");
+    let mut invalid_date = start.clone();
+    invalid_date["search_intent"]["constraints"] =
+        json!({"created_range":{"start_date":"2026-02-30","timezone":"Europe/Rome"}});
+    for (invalid, code) in [
+        (
+            json!({"action":"start","search_intent":{"schema_version":"1","hints":{"terms":["Cesium"]}}}),
+            "invalid_resolution_request",
+        ),
+        (unsupported, "unsupported_schema_version"),
+        (unknown_field, "unknown_field"),
+        (wrong_type, "invalid_resolution_request"),
+        (invalid_activity, "invalid_enum"),
+        (bad_basis, "invalid_enum"),
+        (too_many, "invalid_search_intent"),
+        (too_long, "invalid_search_intent"),
+        (conflicting, "conflicting_constraints"),
+        (invalid_date, "invalid_date_range"),
+        (
+            json!({"action":"expand","run":"missing","terms":[]}),
+            "invalid_query_expansion",
+        ),
+        (
+            json!({"action":"assess","run":"missing","assessments":"not JSON judgments"}),
+            "invalid_resolution_request",
+        ),
+    ] {
+        // The real MCP server rejects malformed input before it needs caller
+        // metadata or opens the source reader.
+        let result = rpc(&mut client, invalid, json!({}));
+        assert_eq!(result["error"]["data"]["error"], code, "{result}");
+    }
+    let initial = call(&mut client, start.clone());
+    assert_eq!(ids(&initial, "candidates"), set(&[T, U, unknown]));
+    assert_eq!(initial["progress"]["scan_complete"], true);
+    assert_eq!(initial["coverage"]["goal"], "standard");
+    assert_eq!(initial["coverage"]["eligible_evaluation_complete"], false);
+    let run = &initial["run"];
+    assert_eq!(
+        call(&mut client, json!({"action":"next","run":"missing"}))["error"],
+        "stale_search_run"
+    );
+    let foreign = rpc(
+        &mut client,
+        json!({"action":"next","run":run}),
+        json!({"threadId":U}),
+    );
+    assert_eq!(
+        foreign["result"]["structuredContent"]["error"],
+        "stale_search_run"
+    );
+    let assessment = |batch: &Value| -> Vec<Value> {
+        batch["candidates"].as_array().unwrap().iter().map(|candidate| {
+            let id = candidate["native_session_id"].as_str().unwrap();
+            let handle = &candidate["evidence"][0]["handle"];
+            if id == unknown {
+                json!({"native_session_id":id,"disposition":"related","evidence":[handle],"explanation":"The term appears on an agenda only.","missing_evidence":["Measurements","Investigation conclusions"]})
+            } else {
+                json!({"native_session_id":id,"disposition":"verified_relevant","evidence":[handle],"outcomes":["investigated"],"explanation":"The passage reports an investigation of MISSION1 rendering performance."})
+            }
+        }).collect()
+    };
+    let mut forged = assessment(&initial);
+    forged[0]["evidence"] = json!([9999]);
+    assert_eq!(
+        call(
+            &mut client,
+            json!({"action":"assess","run":run,"assessments":forged})
+        )["error"],
+        "invalid_assessment"
+    );
+    assert_eq!(
+        call(
+            &mut client,
+            json!({"action":"assess","run":run,"assessments":assessment(&initial)})
+        )["stage"],
+        "assessed"
+    );
+    let finished = call(&mut client, json!({"action":"finish","run":run}));
+    assert_eq!(finished["outcome"], "multiple_verified");
+    assert_eq!(ids(&finished, "matches"), set(&[T, U]));
+    assert!(finished["matches"].as_array().unwrap().iter().all(|row| {
+        row["evidence_refs"].as_array().unwrap().len() == 1 && row["can_request_preview"] == false
+    }));
+
+    let mut include = start.clone();
+    include["search_intent"]["constraints"] =
+        json!({"project_membership":{"mode":"include","names":["MISSION1"],"basis":"observed"}});
+    let result = call(&mut client, include.clone());
+    assert_eq!(ids(&result, "candidates"), set(&[T]));
+    let result = call(
+        &mut client,
+        json!({"action":"expand","run":result["run"],"terms":["lunch"]}),
+    );
+    assert_eq!(result["stage"], "candidates");
+    assert_eq!(result["progress"]["lexical_candidates"], 1);
+    assert_eq!(result["candidates"], json!([]));
+    assert_eq!(
+        call(
+            &mut client,
+            json!({"action":"expand","run":result["run"],"terms":["FPS"]})
+        )["error"],
+        "invalid_query_expansion"
+    );
+
+    let mut exclude = include;
+    exclude["search_intent"]["constraints"]["project_membership"]["mode"] = json!("exclude");
+    let result = call(&mut client, exclude);
+    assert_eq!(ids(&result, "candidates"), set(&[U]));
+    assert!(result["progress"]["unknown"].as_u64().unwrap() > 0);
+
+    let mut exhaustive = start.clone();
+    exhaustive["search_intent"]["subject"] =
+        json!("Where did we investigate rendering performance?");
+    exhaustive["search_intent"]["hints"] = json!({"terms":["rendering performance"]});
+    exhaustive["search_intent"]["coverage_goal"] = json!("exhaustive");
+    exhaustive["search_intent"]["required_outcome"] = Value::Null;
+    exhaustive["search_intent"]["constraints"] = Value::Null;
+    let batch = call(&mut client, exhaustive);
+    assert_eq!(ids(&batch, "candidates"), set(&[T, U, unknown]));
+    assert_eq!(
+        call(
+            &mut client,
+            json!({"action":"assess","run":batch["run"],"assessments":assessment(&batch)})
+        )["stage"],
+        "assessed"
+    );
+    let result = call(&mut client, json!({"action":"finish","run":batch["run"]}));
+    assert_eq!(result["outcome"], "incomplete_search");
+    assert_eq!(ids(&result, "matches"), set(&[T, U]));
+
+    let mut single = start.clone();
+    single["search_intent"]["result_policy"] = json!("single_best");
+    let batch = call(&mut client, single);
+    let run = &batch["run"];
+    assert_eq!(
+        call(
+            &mut client,
+            json!({"action":"assess","run":run,"assessments":assessment(&batch)})
+        )["stage"],
+        "assessed"
+    );
+    let alternatives = call(&mut client, json!({"action":"finish","run":run}));
+    assert_eq!(alternatives["outcome"], "ambiguous");
+    assert!(ids(&alternatives, "matches").is_empty());
+    assert_eq!(ids(&alternatives, "alternatives"), set(&[T, U]));
+    let selected = call(
+        &mut client,
+        json!({"action":"finish","run":run,"preferred_session_id":U}),
+    );
+    assert_eq!(selected["outcome"], "single_verified");
+    assert_eq!(ids(&selected, "matches"), set(&[U]));
+    let invalid = call(
+        &mut client,
+        json!({"action":"finish","run":run,"preferred_session_id":unknown}),
+    );
+    assert_eq!(invalid["error"], "invalid_preference");
+
+    let mut implementation = start;
+    implementation["search_intent"]["activity"] = json!("implementation");
+    implementation["search_intent"]["required_outcome"] = json!("validated");
+    let batch = call(&mut client, implementation);
+    let run = &batch["run"];
+    assert_eq!(
+        call(
+            &mut client,
+            json!({"action":"assess","run":run,"assessments":assessment(&batch)})
+        )["error"],
+        "invalid_assessment"
+    );
+    let mut judgments = assessment(&batch);
+    for judgment in &mut judgments {
+        match judgment["native_session_id"].as_str().unwrap() {
+            U => judgment["outcomes"] = json!(["implemented", "validated"]),
+            T => judgment["disposition"] = json!("related"),
+            _ => {}
+        }
+    }
+    assert_eq!(
+        call(
+            &mut client,
+            json!({"action":"assess","run":run,"assessments":judgments})
+        )["stage"],
+        "assessed"
+    );
+    assert_eq!(
+        ids(
+            &call(&mut client, json!({"action":"finish","run":run})),
+            "matches"
+        ),
+        set(&[U])
+    );
+    client.close();
+    assert_eq!(tree_bytes(&root), before);
+}

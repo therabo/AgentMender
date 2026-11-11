@@ -3,10 +3,11 @@
 ## Find the conversation that answers a question
 
 Ask Codex “Find the MISSION1 conversation where we implemented and validated
-the Earth View camera limits.” The read-only `session_resolve` workflow plans
-the search with GPT-6 Luna Medium, retrieves source-bound passages and checks
-the requested outcome before returning a conversation. For all-results
-requests, follow the available candidate and result continuations.
+the Earth View camera limits.” The read-only `session_resolve` workflow uses
+[SearchIntent v1](docs/intent-aware-resolution.md) and source-bound evidence.
+Luna Medium interprets the request and judges the evidence where supported.
+A topical project mention leaves cross-project discovery open. The default
+returns all supported matches found within the reported coverage.
 
 `session_discover` still handles deterministic inventory, exact identities
 and possible deletion candidates. Both discovery routes exclude the apparent

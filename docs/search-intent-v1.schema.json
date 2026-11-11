@@ -1,0 +1,342 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "activity": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ActivityInput"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Use the activity requested by the user. Omit for broad work."
+    },
+    "constraints": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/SearchConstraintsInput"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Only restrictions the user actually requested. An omitted or null field leaves scope unrestricted."
+    },
+    "coverage_goal": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CoverageGoalInput"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Use exhaustive for requests for complete coverage. The server reports coverage gaps."
+    },
+    "excluded_outcome": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/OutcomeInput"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Explicit session-wide outcome exclusion. Verification requires complete logical history."
+    },
+    "hints": {
+      "$ref": "#/$defs/SearchHintsInput"
+    },
+    "required_outcome": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/OutcomeInput"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "A requested result such as implemented, validated, resolved or failed. Omit or use null when unspecified."
+    },
+    "result_policy": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ResultPolicyInput"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Defaults to all_relevant. Use single_best only when explicitly asked to choose one."
+    },
+    "schema_version": {
+      "$ref": "#/$defs/SearchIntentVersion"
+    },
+    "subject": {
+      "description": "The information need, including material scope and qualifications.",
+      "maxLength": 512,
+      "minLength": 1,
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_version",
+    "subject",
+    "hints"
+  ],
+  "type": "object",
+  "$defs": {
+    "ActivityInput": {
+      "enum": [
+        "any",
+        "discussion",
+        "investigation",
+        "implementation",
+        "testing",
+        "validation",
+        "decision",
+        "troubleshooting"
+      ]
+    },
+    "ArchiveStateInput": {
+      "enum": [
+        "active",
+        "archived"
+      ]
+    },
+    "CalendarRangeInput": {
+      "additionalProperties": false,
+      "properties": {
+        "end_date": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "start_date": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "timezone": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "timezone"
+      ],
+      "type": "object"
+    },
+    "CoverageGoalInput": {
+      "enum": [
+        "standard",
+        "exhaustive"
+      ]
+    },
+    "LexicalTerm": {
+      "maxLength": 64,
+      "minLength": 1,
+      "type": "string"
+    },
+    "MembershipBasisInput": {
+      "enum": [
+        "observed",
+        "verified"
+      ]
+    },
+    "MembershipModeInput": {
+      "enum": [
+        "include",
+        "exclude"
+      ]
+    },
+    "OutcomeInput": {
+      "enum": [
+        "investigated",
+        "proposed",
+        "attempted",
+        "implemented",
+        "tested",
+        "validated",
+        "resolved",
+        "reverted",
+        "failed",
+        "unresolved"
+      ]
+    },
+    "ProjectMembershipInput": {
+      "additionalProperties": false,
+      "properties": {
+        "basis": {
+          "$ref": "#/$defs/MembershipBasisInput",
+          "description": "Observed means the recorded project label. Verified requires verified membership evidence."
+        },
+        "mode": {
+          "$ref": "#/$defs/MembershipModeInput"
+        },
+        "names": {
+          "items": {
+            "$ref": "#/$defs/ProjectName"
+          },
+          "maxItems": 4,
+          "minItems": 1,
+          "type": "array"
+        }
+      },
+      "required": [
+        "mode",
+        "names",
+        "basis"
+      ],
+      "type": "object"
+    },
+    "ProjectName": {
+      "maxLength": 128,
+      "minLength": 1,
+      "type": "string"
+    },
+    "Provider": {
+      "enum": [
+        "codex",
+        "claude"
+      ]
+    },
+    "QueryRangeInput": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/UtcRangeInput"
+        },
+        {
+          "$ref": "#/$defs/CalendarRangeInput"
+        }
+      ]
+    },
+    "ResultPolicyInput": {
+      "enum": [
+        "all_relevant",
+        "single_best"
+      ]
+    },
+    "SearchConstraintsInput": {
+      "additionalProperties": false,
+      "properties": {
+        "archive_state": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ArchiveStateInput"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "created_range": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/QueryRangeInput"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "UTC seconds [start,end) or inclusive calendar dates with an IANA timezone."
+        },
+        "last_active_range": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/QueryRangeInput"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "UTC seconds [start,end) or inclusive calendar dates with an IANA timezone."
+        },
+        "native_session_id": {
+          "description": "Explicit search target. The server derives the excluded caller separately.",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "project_membership": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ProjectMembershipInput"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "target_provider": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Provider"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Target provider within the registered scope."
+        }
+      },
+      "type": "object"
+    },
+    "SearchHintsInput": {
+      "additionalProperties": false,
+      "properties": {
+        "project_names": {
+          "description": "Topical project names for assessment. They do not constrain stored membership.",
+          "items": {
+            "$ref": "#/$defs/ProjectName"
+          },
+          "maxItems": 4,
+          "type": "array"
+        },
+        "terms": {
+          "description": "One or a few distinctive content terms or phrases. Each term can independently retrieve a candidate.",
+          "items": {
+            "$ref": "#/$defs/LexicalTerm"
+          },
+          "maxItems": 8,
+          "minItems": 1,
+          "type": "array"
+        }
+      },
+      "required": [
+        "terms"
+      ],
+      "type": "object"
+    },
+    "SearchIntentVersion": {
+      "enum": [
+        "1"
+      ]
+    },
+    "UtcRangeInput": {
+      "additionalProperties": false,
+      "properties": {
+        "end": {
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "start": {
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    }
+  }
+}

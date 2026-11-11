@@ -1,14 +1,13 @@
 # MCP interface
 
-## P0-SR5 session resolution
+## P0-SR5.1 session resolution
 
-The read-only `--session-search` catalog includes `session_resolve`. Actions
-`start`, `next`, `expand`, `context`, `assess` and `finish` form a bounded
-caller-scoped workflow. A run ID and integer evidence handles support the
-originating chat during model turns. The tool projects signed evidence refs
-for source-bound citations and confirms exact filters and freshness at
-`finish`. The host owns Luna invocation and the natural-language answer.
-[Workflow and budgets](intent-aware-resolution.md).
+The read-only `--session-search` catalog includes `session_resolve`.
+Ordinary `start` takes `search_intent` v1. Legacy `intent` keeps exact Boolean
+constraints available. Use `next`, `expand`, `context`, `assess` and `finish`
+with the originating run. The server publishes the action schema and
+validates it before retrieval. See the
+[SearchIntent and Luna workflow](intent-aware-resolution.md).
 
 ## P0-SR4 ordinary discovery
 

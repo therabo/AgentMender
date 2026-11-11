@@ -23,6 +23,8 @@ pub enum ApplicationError {
     DiscoveryCallerUnavailable,
     #[error("invalid bounded search request or provider response")]
     InvalidSearch,
+    #[error(transparent)]
+    Resolution(#[from] session_resolution::ResolutionError),
     #[error("search continuation or conversation evidence changed")]
     StaleSearchEvidence,
     #[error("trusted management-session registration is missing or no longer verified")]
@@ -54,6 +56,7 @@ impl ApplicationError {
             Self::CallerIdentityRequired { .. } => "caller_identity_required",
             Self::DiscoveryCallerUnavailable => "discovery_caller_unavailable",
             Self::InvalidSearch => "invalid_scope",
+            Self::Resolution(error) => error.code(),
             Self::StaleSearchEvidence => "stale_search_evidence",
             Self::ManagementProtectionUnavailable => "management_protection_required",
             Self::ProtectedManagementSession => "protected_management_session",
