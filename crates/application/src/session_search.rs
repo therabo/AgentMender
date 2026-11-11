@@ -29,6 +29,34 @@ pub struct ContextWindowResult {
     pub reference: ContextReference,
     pub options: ContextOptions,
 }
+impl ContextWindowResult {
+    pub fn next_options(&self) -> Option<ContextOptions> {
+        let next = self.window.next.as_ref()?;
+        let chunk = next
+            .position
+            .as_ref()
+            .is_some_and(|p| p.chunk_offset > 0 && p.chunk_offset < p.chunk_total);
+        let direction = if next.decoder_progress.is_some() {
+            self.options.direction
+        } else if chunk {
+            ContextDirection::Around
+        } else if self.options.direction == ContextDirection::Occurrences {
+            ContextDirection::Occurrences
+        } else {
+            ContextDirection::Forward
+        };
+        let mut options = ContextOptions {
+            direction,
+            message_offset: None,
+            ..self.options.clone()
+        };
+        if next.position.as_ref().is_some_and(|p| p.chunk_offset > 0) {
+            options.before = 0;
+            options.after = 0;
+        }
+        Some(options)
+    }
+}
 pub struct ContextResult {
     pub evidence: ConversationEvidence,
     pub purpose: SearchPurpose,
@@ -44,7 +72,7 @@ pub struct SessionSearchService<'a> {
     pub instance: &'a str,
 }
 impl SessionSearchService<'_> {
-    fn binding(&self, purpose: SearchPurpose) -> Result<String, ApplicationError> {
+    pub(crate) fn binding(&self, purpose: SearchPurpose) -> Result<String, ApplicationError> {
         match purpose {
             SearchPurpose::Diagnostic => return Ok("diagnostic_no_caller_guarantee".into()),
             SearchPurpose::Discovery => {

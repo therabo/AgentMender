@@ -1,5 +1,16 @@
 # Local full-text index
 
+## P0-SR5 candidate retrieval
+
+Resolution uses the same transient FTS5/BM25 passage ranking and the same
+explicit private-index policy. Within a metadata window, title terms prioritize
+which eligible sources are visited first. One traversal can observe the
+literal expression and a targeted expansion. Per-source-slice ranks choose
+candidate anchors, including evidence from early and later matching slices.
+Source selection and passage rank remain provisional. A terminal run
+reports traversed sources, bytes, records and gaps independently of whether
+Luna verified an outcome. [Resolution and coverage](intent-aware-resolution.md).
+
 ## P0-SR3 traversal compatibility
 
 Resident decoding uses the existing source/index ports and source-bound positions;

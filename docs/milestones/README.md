@@ -1,5 +1,7 @@
 # Milestone history and current product sequencing
 
+- [P0-SR5 intent-aware session resolution](p0-sr5-intent-aware-session-resolution.md) records the current implementation and acceptance limits.
+
 The [canonical product roadmap](../product-roadmap.md) and
 [ADR-0022](../adr/0022-product-first-session-lifecycle.md) govern current work.
 The reports in this directory are dated historical receipts. Their original

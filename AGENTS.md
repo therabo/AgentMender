@@ -1,10 +1,27 @@
 # AgentMender engineering constraints
 
+## P0-SR5 past-conversation resolution
+
+For a normal request to find the conversation(s) that investigated, decided,
+implemented or verified something, follow the [Luna workflow](docs/intent-aware-resolution.md)
+and use `session_resolve` from the originating chat. A chat already running
+GPT-6 Luna Medium can own the workflow directly. For other parent models,
+delegate intent and semantic assessment to the named `session_relevance` agent. If the host does
+not discover that role, explicitly spawn `gpt-6-luna` at medium effort with fresh
+context and the same workflow. This instruction authorizes that delegation for
+past-conversation search. The parent owns the MCP calls. Compare Luna's plan to
+the live user request before starting, and give Luna evidence handles and short
+quoted passages. Keep callable references and the run ID in the parent. For an
+all request, continue acquisition and assessment through the available scan.
+Use the fresh finish result as the only source of selected identities and cite
+its evidence. Distinguish a direct supported match from global uniqueness.
+Disclose unresolved evidence, incomplete work and Partial history as applicable.
+
 ## P0-SR4 read-only caller-filtered discovery
 
 Follow [ADR-0031](docs/adr/0031-metadata-derived-caller-discovery.md).
-Use `session_discover` for ordinary conversation searches, including requests
-about possible deletion candidates. The read-only route takes an apparent
+Use `session_discover` for deterministic inventory, exact targets and
+possible deletion candidates. Both discovery tools are read-only. The read-only route takes an apparent
 Codex caller from RMCP request metadata and validates its canonical thread row
 in the configured root before searching. Missing, malformed, discordant or
 unmapped metadata refuses. Never accept a caller UUID in tool arguments.

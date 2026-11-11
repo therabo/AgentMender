@@ -85,13 +85,21 @@ No local LLM or new natural-language interpretation service is required.
 
 ## Intelligent retrieval delivery — current checkpoint
 
+P0-SR5 implements caller-scoped intent and outcome resolution through the
+existing Codex host and FTS5-backed read service. The implementation
+supports single, multiple, ambiguous and incomplete results. Promotion
+requires actual-client behavior as well as acquisition, evidence and
+safety regressions. [SR5 acceptance status](milestones/p0-sr5-intent-aware-session-resolution.md)
+records the measured gaps. P0-SR4 made ordinary read-only discovery
+caller-filtered; authenticated management remains a separate open gate.
+
 P0-SR3 removes total compressed-size admission and retains bounded worker decoder
 state. The exact 330 identities and five oversized histories reach physical EOF;
 logical paginated coverage stays Partial. All four MISSION1 targets retain actual
 conversational retrieval. [Current evidence](milestones/p0-sr3-management-and-traversal.md)
 separates fixtures, real reads, retained-client results and blocked refreshed-parent
-acceptance. Authenticated host routing remains OPEN: ordinary searches default to
-management and fail closed; developer diagnostics require explicit purpose.
+acceptance. Authenticated host routing remains OPEN. The management route
+fails closed and developer diagnostics require explicit purpose.
 Restore remote access/CI and host admission before claiming production management.
 No semantic infrastructure, deletion or provider-startup scope is added.
 

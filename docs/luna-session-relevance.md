@@ -1,5 +1,17 @@
 # Luna session relevance
 
+## P0-SR5 semantic assessment
+
+For new lookups follow the [intent-aware workflow](intent-aware-resolution.md).
+Luna plans with a typed intent and distinguishes the requested outcome from
+the retrieval vocabulary. The originating chat supplies short excerpts
+and evidence handles and owns the read calls. SR5 assessment submissions
+are validated by the application against the originating run, exact
+candidate, visible content handles and required outcome categories.
+`finish` checks frozen query truth against current metadata and exact source
+revisions. The legacy v1 JSON schema and checker below remain readable
+for historical assessments and their original coverage rules.
+
 ## P0-SR4 discovery handoff
 
 Use `session_discover` in the originating chat for ordinary candidate

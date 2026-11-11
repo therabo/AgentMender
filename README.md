@@ -1,14 +1,19 @@
 # AgentMender
 
-## Find conversations without including this chat
+## Find the conversation that answers a question
 
-With `mcp --session-search`, ask Codex “Find my conversations about MISSION1”
-or “Find conversations about MISSION1 that I could delete.” Ordinary requests
-use `session_discover` and omit the apparent calling chat automatically.
-Discovery results are read-only. They carry metadata-derived caller exclusion
-and no removal eligibility. Guaranteed management remains a separate route
-that requires verified host identity. See the [search contract](docs/session-search.md)
-and [SR4 acceptance](docs/milestones/p0-sr4-implicit-caller-discovery.md).
+Ask Codex “Find the MISSION1 conversation where we implemented and validated
+the Earth View camera limits.” The read-only `session_resolve` workflow plans
+the search with GPT-6 Luna Medium, retrieves source-bound passages and checks
+the requested outcome before returning a conversation. For all-results
+requests, follow the available candidate and result continuations.
+
+`session_discover` still handles deterministic inventory, exact identities
+and possible deletion candidates. Both discovery routes exclude the apparent
+calling chat before retrieval. They confer no removal eligibility.
+See the [resolution workflow](docs/intent-aware-resolution.md),
+[search contract](docs/session-search.md) and
+[SR5 acceptance status](docs/milestones/p0-sr5-intent-aware-session-resolution.md).
 
 ## P0-SR3 progressive history
 
@@ -66,8 +71,8 @@ and all historical removal evidence are preserved.
 | Provider discovery, scan and inspection | Implemented with explicit partial coverage and exact compatibility limits |
 | Codex inventory | Real metadata search with validated column/value contract; historical App Server scans remain separate |
 | Claude inventory | Partial observed Desktop sidecar metadata; synthetic Code fixtures; no general live SDK inventory |
-| MCP | Eight default read-only tools; six opt-in Codex search/context/preview/preparation/status/external-handoff tools |
-| Session search | Typed Boolean/time/project queries, unknown-safe negatives, sequential full supported content, FTS5 passages, bounded continuation and source-validated cache; updated client acceptance reported separately |
+| MCP | Eight default read-only tools. Explicit `--session-search` adds caller-scoped resolution, discovery and context alongside the existing opt-in tool catalog. |
+| Session search | Typed Boolean/time/project filters, unknown-safe negatives, FTS5 passages and bounded continuation. SR5 groups evidence and validates cited outcomes through the read-only resolver. |
 | Management-session exclusion | Guaranteed real mode refuses with zero candidates until enforceable host binding exists; typed fixture exclusion precedes counts/ranking/paging/context; launch-protected diagnostic identities stay excluded |
 | Human approval and durable transactions | Implemented local terminal review, one-shot authenticated grants, journal and read-only reconciliation |
 | Codex primary cleanup | M8.2 PASS for exact 0.166.0/macOS arm64, unshared Legacy plain history and reviewed WAL schema |
@@ -132,7 +137,9 @@ This mode uses the selected/default Codex home and locates the existing macOS
 bundled executable even without `codex` in PATH. Explicit developer diagnostics need no historical binary, synthetic
 provider root, approval store or caller UUID; specify `purpose:"diagnostic"`. Use explicit
 root/executable paths when configuring a particular installation. Refresh only
-that MCP connection in Codex and verify the chat can call `session_discover`.
+that MCP connection in Codex and verify the chat can call `session_resolve`
+and `session_discover`. The repository supplies the named Luna agent and
+an implicitly discoverable [lookup skill](.agents/skills/agentmender-session-resolution/SKILL.md).
 A failed discovery or management request has no automatic diagnostic fallback.
 
 [Setup, current limits and human acceptance](docs/p0-c1-manual-acceptance.md).

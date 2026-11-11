@@ -141,6 +141,9 @@ pub(super) fn read_only_executor(
             executable: config.codex_executable.clone(),
         })
         .with_evidence_helper(helper.clone(), home.clone());
+    let resolution = std::sync::Mutex::new(
+        agentmender_application::session_resolution::ResolutionStore::default(),
+    );
     Ok(Arc::new(move |request, control, apparent_caller| {
         let management = super::management::read(registration.as_deref(), &instance, &root);
         let registrations: Vec<_> = config
@@ -175,6 +178,25 @@ pub(super) fn read_only_executor(
             instance: &instance,
         };
         match request {
+            ConversationRequest::Resolve(action) => {
+                use agentmender_application::session_resolution::ResolutionAction;
+                let id = if matches!(action, ResolutionAction::Start(_)) {
+                    let mut random = [0u8; 16];
+                    getrandom::fill(&mut random).map_err(|_| unavailable())?;
+                    Some(random.iter().map(|b| format!("{b:02x}")).collect())
+                } else {
+                    None
+                };
+                return resolution
+                    .try_lock()
+                    .map_err(|_| unavailable())?
+                    .execute(&service, action, id, &control)
+                    .map(|response| {
+                        agentmender_application::conversation::ConversationResponse::Resolution(
+                            Box::new(response),
+                        )
+                    });
+            }
             ConversationRequest::EvidenceSearch {
                 parameters,
                 continuation,

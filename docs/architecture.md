@@ -1,5 +1,16 @@
 # Architecture and capability boundaries
 
+## P0-SR5 resolution boundary
+
+[ADR-0032](adr/0032-caller-scoped-session-resolution.md) keeps Luna in the
+Codex host and the bounded read-only workflow in the existing application,
+provider and MCP layers. The application owns a small caller-scoped run
+store, AST composition, evidence handles, continuation and final
+revalidation. The existing Codex adapter and confined worker order and
+traverse eligible sources. MCP projects bounded results and sealed
+citations. Existing diagnostic, management and lifecycle contracts retain
+their authority boundaries.
+
 ## P0-SR4 discovery scope
 
 [ADR-0031](adr/0031-metadata-derived-caller-discovery.md) adds an apparent

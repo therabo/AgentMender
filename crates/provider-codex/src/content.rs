@@ -488,6 +488,12 @@ fn inventory(
     let mut observed = 0;
     let mut limited = false;
     let mut batch = vec![];
+    let priority = p
+        .structured
+        .as_ref()
+        .is_some_and(|q| q.sort == SearchSort::DiscoveryPriority);
+    let priority_terms = if priority { p.ranking_terms() } else { vec![] };
+    let mut prioritized = vec![];
     let stop = request
         .continuation
         .end
@@ -530,11 +536,43 @@ fn inventory(
         {
             continue;
         }
-        digest.update(metadata_fingerprint(&metadata, &path, p, root, true)?);
-        if eligible >= request.continuation.start && eligible < stop {
+        // Resolution observes each source independently. A live unrelated
+        // source may grow without invalidating the scan order. The in-flight
+        // source checkpoint and all citations still require exact revisions.
+        digest.update(metadata_fingerprint(&metadata, &path, p, root, !priority)?);
+        if priority {
+            let title = metadata.title.as_deref().unwrap_or_default().to_lowercase();
+            let weight: usize = priority_terms
+                .iter()
+                .filter(|term| title.contains(term.as_str()))
+                .map(|term| term.len().min(32))
+                .sum();
+            prioritized.push((
+                std::cmp::Reverse(weight),
+                metadata.native_session_id.clone(),
+            ));
+        } else if eligible >= request.continuation.start && eligible < stop {
             batch.push(Candidate { metadata, path });
         }
         eligible += 1;
+    }
+    if priority {
+        // Keep only sort keys for the window. Fetch full metadata for the next
+        // bounded batch from the same snapshot, with the same eligible IDs.
+        prioritized.sort_unstable();
+        let mut selected = db.prepare(&format!(
+            "SELECT id,{title},cwd,created_at,updated_at,archived,{producer},{path} FROM threads WHERE id=?1"
+        )).map_err(|_| unavailable())?;
+        for (_, id) in prioritized
+            .into_iter()
+            .take(stop)
+            .skip(request.continuation.start)
+        {
+            deadline(end)?;
+            let mut rows = selected.query([id]).map_err(|_| unavailable())?;
+            let row = rows.next().map_err(|_| unavailable())?.ok_or_else(stale)?;
+            batch.push(candidate_row(row, root)?);
+        }
     }
     let fingerprint = format!(
         "sha256:{}",
@@ -1477,6 +1515,18 @@ fn search(
                     } else {
                         fts.rank(&ranking_query, 100).unwrap_or_default()
                     };
+                    let earlier = if request
+                        .parameters
+                        .structured
+                        .as_ref()
+                        .is_some_and(|q| q.sort == SearchSort::DiscoveryPriority)
+                    {
+                        evidence
+                            .drain(..prior.map_or(0, |p| p.evidence.len()))
+                            .collect::<Vec<_>>()
+                    } else {
+                        vec![]
+                    };
                     evidence.sort_by(|a, b| {
                         let order = |e: &ConversationEvidence| {
                             ranked
@@ -1489,6 +1539,14 @@ fn search(
                             .then_with(|| a.record_index.cmp(&b.record_index))
                     });
                     evidence.dedup_by_key(|e| e.record_index);
+                    if !earlier.is_empty() {
+                        if evidence.is_empty() {
+                            evidence = earlier;
+                        } else {
+                            evidence
+                                .insert(0, earlier.into_iter().next().expect("earlier evidence"));
+                        }
+                    }
                     evidence.truncate(2);
                     if let Some(mut next) = observation.next {
                         let (score, matched, sources) = rank.facts();
@@ -1586,7 +1644,9 @@ fn search(
     }
     let batch_fingerprint = hash(&batch_digest.finalize());
     if let Some(q) = &request.parameters.structured {
-        hits.sort_by(|a, b| q.compare(a, b));
+        if q.sort != SearchSort::DiscoveryPriority {
+            hits.sort_by(|a, b| q.compare(a, b));
+        }
     } else {
         hits.sort_by(|a, b| {
             b.score

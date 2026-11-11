@@ -56,6 +56,8 @@ pub enum SearchSort {
     Created,
     LastActive,
     Relevance,
+    /// Internal discovery scan order. Title evidence is a visit prior only.
+    DiscoveryPriority,
 }
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -91,6 +93,7 @@ impl StructuredQuery {
                 cmp_time(a.metadata.last_active_at, b.metadata.last_active_at)
             }
             SearchSort::Relevance => b.score.cmp(&a.score),
+            SearchSort::DiscoveryPriority => Ordering::Equal,
         }
         .then_with(|| a.metadata.identity.cmp(&b.metadata.identity))
     }
@@ -437,6 +440,25 @@ impl QueryExpr {
         }
         self.evaluate_incremental(metadata, observation, content_complete, &mut 0)
     }
+    /// Evaluate a branch against atom positions in its enclosing filter.
+    /// The caller must first validate the observations against that filter.
+    pub fn evaluate_observed_branch(
+        &self,
+        metadata: &SessionMetadata,
+        observation: &QueryObservation,
+        content_complete: bool,
+        first_node: usize,
+    ) -> Truth {
+        let mut next = first_node;
+        self.evaluate_incremental(metadata, observation, content_complete, &mut next)
+    }
+
+    pub fn node_count(&self) -> usize {
+        let mut next = 0;
+        self.visit_content(&mut next, &mut |_, _| {});
+        next
+    }
+
     fn evaluate_incremental(
         &self,
         metadata: &SessionMetadata,

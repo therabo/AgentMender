@@ -1,5 +1,16 @@
 # Intelligent session search
 
+## P0-SR5 outcome-aware resolution
+
+`session_resolve` starts with a typed answer cardinality, focus, requested
+outcomes, hard filters and positive lexical expressions. The originating
+chat freezes the user constraints and interprets evidence with Luna Medium.
+The same search service binds candidate and context reads to the apparent
+caller. Candidate order is provisional. Finalization checks exact identity,
+fresh hard filters and the revision of cited content. A related passage
+or explicit contradiction may clarify an outcome without proving
+session-wide absence. See the [resolution contract](intent-aware-resolution.md).
+
 ## P0-SR4 discovery
 
 `session_discover` is the read-only entry point for ordinary searches and
