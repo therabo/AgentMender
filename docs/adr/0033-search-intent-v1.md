@@ -20,3 +20,11 @@ semantic claim requires eligible semantic coverage beyond lexical acquisition.
 The resolver exposes incomplete coverage and still publishes fresh supported
 matches. The originating chat owns all capabilities and uses Luna Medium
 for the proposed intent and evidence judgments where the host supports it.
+
+P0-SR5.2 keeps the same run and trust boundaries. The ordinary host workflow
+assesses the first useful batch and finishes once there is a supported
+standard answer. A single delegate handles interpretation and judgments
+when the origin needs one. Exact title and inventory questions use metadata.
+The worker prepares ranking terms per inventory pass and constructs transient
+FTS only for slices with evidence to rank. When ranking is needed, BM25
+still uses the full slice. See the [originating chat workflow](../intent-aware-resolution.md).

@@ -3,7 +3,8 @@ use crate::{ApplicationError, QueryControl, TargetSelector, session_search::Sess
 pub use agentmender_domain::search_intent::Outcome;
 use agentmender_domain::{
     search_intent::{
-        CoverageGoal, ResultPolicy, SearchActivity, ValidatedSearchIntent, compile_expansion,
+        CoverageGoal, LexicalExpansion, ResultPolicy, SearchActivity, SearchIntent,
+        ValidatedSearchIntent,
     },
     *,
 };
@@ -79,10 +80,10 @@ impl Intent {
         if !bounded_text(&self.question, 1024)
             || self.required_outcomes.len() > 4
             || !bounded_hint(&self.literal)
-            || self.expansion.as_ref().is_some_and(|q| {
-                !bounded_hint(q)
-                    || serde_json::to_value(q).ok() == serde_json::to_value(&self.literal).ok()
-            })
+            || self
+                .expansion
+                .as_ref()
+                .is_some_and(|q| !bounded_hint(q) || q == &self.literal)
         {
             return Err(ApplicationError::InvalidSearch);
         }
@@ -183,7 +184,7 @@ pub enum ResolutionAction {
     },
     ExpandTerms {
         run: String,
-        terms: Vec<String>,
+        expansion: LexicalExpansion,
     },
     Context {
         run: String,
@@ -362,7 +363,7 @@ struct Run {
     instance: String,
     started: Instant,
     intent: Intent,
-    search_intent: Option<Box<ValidatedSearchIntent>>,
+    search_intent: Option<Box<SearchIntent>>,
     parameters: SearchParameters,
     original_filter: Option<QueryExpr>,
     next: Option<SearchContinuation>,
@@ -379,7 +380,7 @@ struct Publication {
     luna_unavailable: bool,
     preferred_session_id: Option<String>,
     outcome: ResolutionOutcome,
-    choices: Vec<ResolvedCandidate>,
+    choices: Vec<usize>,
 }
 
 #[derive(Default)]
@@ -410,9 +411,9 @@ impl ResolutionStore {
                 );
             }
             ResolutionAction::StartV1(plan) => {
-                let spec = plan.intent();
+                let (spec, hard_filter, literal) = plan.into_parts();
                 let intent = Intent {
-                    question: spec.subject.clone(),
+                    question: String::new(),
                     cardinality: match spec.result_policy {
                         ResultPolicy::AllRelevant => AnswerCardinality::Multiple,
                         ResultPolicy::SingleBest => AnswerCardinality::Single,
@@ -427,8 +428,8 @@ impl ResolutionStore {
                         .into_iter()
                         .chain(spec.activity.evidence_outcome())
                         .collect(),
-                    hard_filter: plan.hard_filter().cloned(),
-                    literal: plan.lexical().clone(),
+                    hard_filter,
+                    literal,
                     expansion: None,
                 };
                 let parameters = intent.compile_parameters()?;
@@ -436,7 +437,13 @@ impl ResolutionStore {
                     service,
                     control,
                     new_id,
-                    Run::new(binding, service.instance, intent, parameters, Some(plan)),
+                    Run::new(
+                        binding,
+                        service.instance,
+                        intent,
+                        parameters,
+                        Some(Box::new(spec)),
+                    ),
                 );
             }
             action => {
@@ -475,12 +482,11 @@ impl ResolutionStore {
                 }
                 run.expand(service, control, *expansion)?
             }
-            ResolutionAction::ExpandTerms { terms, .. } => {
+            ResolutionAction::ExpandTerms { expansion, .. } => {
                 if run.search_intent.is_none() {
                     return Err(ResolutionError::InvalidQueryExpansion.into());
                 }
-                let expansion = compile_expansion(&terms)
-                    .map_err(|_| ResolutionError::InvalidQueryExpansion)?;
+                let expansion = expansion.into_query();
                 let original = run.intent.literal.text_terms();
                 if expansion
                     .text_terms()
@@ -545,7 +551,7 @@ impl Run {
         instance: &str,
         intent: Intent,
         parameters: SearchParameters,
-        search_intent: Option<Box<ValidatedSearchIntent>>,
+        search_intent: Option<Box<SearchIntent>>,
     ) -> Self {
         Self {
             binding,
@@ -589,7 +595,7 @@ impl Run {
             coverage_goal: self
                 .search_intent
                 .as_ref()
-                .map(|p| p.intent().coverage_goal),
+                .map(|intent| intent.coverage_goal),
             progress,
             data,
         }
@@ -649,9 +655,7 @@ impl Run {
             self.progress.unknown += coverage.unresolved_sessions;
             self.progress.suppressed_records += coverage.suppressed_records;
 
-            if page.next.is_some()
-                && serde_json::to_vec(&page.next).ok() == serde_json::to_vec(&self.next).ok()
-            {
+            if page.next.is_some() && page.next == self.next {
                 self.progress.stop_reason = Some("no_search_progress");
                 break;
             }
@@ -715,8 +719,9 @@ impl Run {
                 return Err(self.contract_error(ResolutionError::InvalidQueryExpansion));
             }
         };
-        self.original_filter = Some(self.filter().clone());
-        self.parameters = parameters;
+        self.original_filter = std::mem::replace(&mut self.parameters, parameters)
+            .structured
+            .map(|query| query.filter);
         self.progress.scan_passes += 1;
         self.progress.scan_complete = false;
         self.revision += 1;
@@ -994,8 +999,7 @@ impl Run {
             .required_outcomes
             .iter()
             .all(|o| assessment.outcomes.contains(o))
-            && self.search_intent.as_ref().is_none_or(|plan| {
-                let intent = plan.intent();
+            && self.search_intent.as_ref().is_none_or(|intent| {
                 (intent.activity == SearchActivity::Any
                     || assessment.activity == Some(intent.activity)
                     || (intent.activity.evidence_outcome().is_some()
@@ -1018,7 +1022,7 @@ impl Run {
         if (offset > 0 || revision.is_some()) && revision != Some(self.revision) {
             return Err(ApplicationError::StaleSearchEvidence);
         }
-        let v1 = self.search_intent.as_ref().map(|plan| plan.intent());
+        let v1 = self.search_intent.as_deref();
         if let Some(preferred) = &preferred_session_id
             && (!v1.is_some_and(|spec| spec.result_policy == ResultPolicy::SingleBest)
                 || !self.candidates.iter().any(|candidate| {
@@ -1037,24 +1041,17 @@ impl Run {
             if offset != 0 {
                 return Err(ApplicationError::StaleSearchEvidence);
             }
-            let positives = self
+            let (positives, plausible) = self
                 .candidates
                 .iter()
-                .filter(|c| {
-                    c.assessment
-                        .as_ref()
-                        .is_some_and(|a| a.disposition == Disposition::VerifiedRelevant)
-                })
-                .count();
-            let plausible = self
-                .candidates
-                .iter()
-                .filter(|c| {
-                    c.assessment
-                        .as_ref()
-                        .is_some_and(|a| a.plausible_alternative)
-                })
-                .count();
+                .filter_map(|candidate| candidate.assessment.as_ref())
+                .fold((0, 0), |(positives, plausible), assessment| {
+                    (
+                        positives
+                            + usize::from(assessment.disposition == Disposition::VerifiedRelevant),
+                        plausible + usize::from(assessment.plausible_alternative),
+                    )
+                });
             let complete = self.progress.scan_complete
                 && self.progress.stop_reason.is_none()
                 && self.progress.assessments == self.progress.lexical_candidates
@@ -1082,7 +1079,8 @@ impl Run {
             let choices = self
                 .candidates
                 .iter()
-                .filter_map(|c| {
+                .enumerate()
+                .filter_map(|(index, c)| {
                     let assessment = c.assessment.as_ref()?;
                     let relevant = assessment.disposition == Disposition::VerifiedRelevant;
                     let competing = self.intent.cardinality == AnswerCardinality::Single
@@ -1098,15 +1096,7 @@ impl Run {
                             assessment.disposition,
                             Disposition::Related | Disposition::Contradiction
                         );
-                    (relevant || competing || related).then(|| ResolvedCandidate {
-                        metadata: c.hit.metadata.clone(),
-                        assessment: assessment.clone(),
-                        citations: assessment
-                            .evidence
-                            .iter()
-                            .map(|&i| self.anchors[i].reference.clone())
-                            .collect(),
-                    })
+                    (relevant || competing || related).then_some(index)
                 })
                 .collect();
             self.publication = Some(Publication {
@@ -1142,7 +1132,13 @@ impl Run {
                         filter: QueryExpr::NativeId {
                             values: selected
                                 .iter()
-                                .map(|c| c.metadata.native_session_id.clone())
+                                .map(|&index| {
+                                    self.candidates[index]
+                                        .hit
+                                        .metadata
+                                        .native_session_id
+                                        .clone()
+                                })
                                 .collect(),
                         },
                         mode: SearchMode::Exhaustive,
@@ -1156,17 +1152,14 @@ impl Run {
                 None,
                 control.clone(),
             )?;
-            for choice in selected {
-                let candidate = self
-                    .candidates
-                    .iter()
-                    .find(|c| c.hit.metadata.identity == choice.metadata.identity)
-                    .expect("selected candidate");
+            for &index in selected {
+                let candidate = &self.candidates[index];
+                let assessment = candidate.assessment.as_ref().expect("selected assessment");
                 let valid = fresh
                     .page
                     .sessions
                     .iter()
-                    .find(|h| h.metadata.identity == choice.metadata.identity)
+                    .find(|h| h.metadata.identity == candidate.hit.metadata.identity)
                     .filter(|h| {
                         let filter = if candidate.scan_pass == self.progress.scan_passes {
                             self.filter()
@@ -1183,11 +1176,15 @@ impl Run {
                     failures += 1;
                     continue;
                 };
-                let Some(anchor) = choice.citations.first() else {
+                let citations = assessment
+                    .evidence
+                    .iter()
+                    .map(|&i| &self.anchors[i].reference);
+                let Some(anchor) = citations.clone().next() else {
                     failures += 1;
                     continue;
                 };
-                if choice.citations.iter().any(|r| {
+                if citations.clone().any(|r| {
                     r.source_fingerprint != anchor.source_fingerprint
                         || r.source_bytes != anchor.source_bytes
                 }) {
@@ -1219,8 +1216,8 @@ impl Run {
                 }
                 let choice = ResolvedCandidate {
                     metadata: current.metadata.clone(),
-                    assessment: choice.assessment.clone(),
-                    citations: choice.citations.clone(),
+                    assessment: assessment.clone(),
+                    citations: citations.cloned().collect(),
                 };
                 if choice.assessment.disposition == Disposition::VerifiedRelevant
                     && (!single_best || preferred || choices.len() == 1)

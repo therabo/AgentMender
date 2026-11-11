@@ -1,25 +1,17 @@
 # AgentMender engineering constraints
 
-## P0-SR5.1 past-conversation resolution
+## P0-SR5.2 past-conversation search
 
-For a normal request to find the conversation(s) that investigated, decided,
-implemented or verified something, follow the [Luna workflow](docs/intent-aware-resolution.md)
-and use `session_resolve` from the originating chat. A chat already running
-GPT-6 Luna Medium can own the workflow directly. For other parent models,
-delegate intent and semantic assessment to the named `session_relevance` agent. If the host does
-not discover that role, explicitly spawn `gpt-6-luna` at medium effort with fresh
-context and the same workflow. This instruction authorizes that delegation for
-past-conversation search. The parent owns the MCP calls. Compare Luna's plan to
-the live user request before calling `start` with `search_intent`. Project
-mentions belong in `hints.project_names` unless the user explicitly restricts
-membership. Use the default `all_relevant` even for singular wording. Use
-`exhaustive` coverage for explicit all-results requests. For exact Boolean
-restrictions use the existing advanced route. Give Luna evidence handles and
-short quoted passages. Keep callable references and the run ID in the parent. For an
-all request, continue acquisition and assessment through the available scan.
-Use the fresh finish result as the only source of selected identities and cite
-its evidence. Distinguish a direct supported match from global uniqueness.
-Disclose unresolved evidence, incomplete work and Partial history as applicable.
+Follow the [ordinary search workflow](docs/intent-aware-resolution.md#originating-chat-workflow).
+For semantic search, a GPT-6 Luna Medium originating chat can interpret and
+judge evidence directly. Other parents delegate both tasks to one
+`session_relevance` agent, or explicitly spawn GPT-6 Luna Medium if the role
+is unavailable. This instruction authorizes that delegation for past-conversation
+search. The originating chat owns the caller-bound MCP calls.
+
+Use one SearchIntent v1 run per question. Assess early and finish a standard
+search once the available evidence answers it. Publish AgentMender matches
+only from fresh `finish.matches` with evidence and coverage.
 
 ## P0-SR4 read-only caller-filtered discovery
 

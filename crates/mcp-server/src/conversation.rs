@@ -945,8 +945,8 @@ impl ResolutionInput {
                 expansion: None,
             } => {
                 let terms: Vec<String> = terms.into_iter().map(|term| term.0).collect();
-                search_intent::compile_expansion(&terms).map_err(intent_error)?;
-                Action::ExpandTerms { run, terms }
+                let expansion = search_intent::compile_expansion(&terms).map_err(intent_error)?;
+                Action::ExpandTerms { run, expansion }
             }
             Self::Expand {
                 run,
@@ -1385,7 +1385,7 @@ pub(super) fn tools(discovery: bool) -> Vec<Tool> {
         ));
         registry.insert(0, (
             "session_resolve",
-            r#"Find and verify past Codex conversations. Ordinary start example: {"action":"start","search_intent":{"schema_version":"1","subject":"Cesium rendering performance","hints":{"terms":["Cesium"]}}}. Project mentions are topical hints unless the user explicitly restricts stored membership. All supported matches are the default. Use Luna Medium for interpretation and assessment. The originating chat executes one MCP call at a time, keeps the run, and publishes fresh finish evidence with coverage gaps. Use context, assess and next. For insufficient recall after a finished scan, expand once with new terms on the same run. The legacy intent argument supports exact Boolean constraints. Read-only with implicit caller exclusion."#,
+            r#"Find verified past conversations. Start once with {"action":"start","search_intent":{"schema_version":"1","subject":"Cesium performance","hints":{"terms":["Cesium"]}}}. Keep explicit constraints separate from topical hints. Assess the first useful batch. Request context only for a specific evidence gap. Finish a sufficient standard result on the same run, including partial coverage. Continue explicit exhaustive requests within the budget. Use one vocabulary expansion only after the initial scan ends. Execute calls sequentially. Only finish.matches with evidence refs are verified. The legacy intent supports exact Boolean constraints."#,
             resolution_schema(),
             schema::<ResolutionView>(),
             true,
