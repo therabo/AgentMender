@@ -24,6 +24,7 @@ thread_local! {
 pub(super) fn clear_resident_for_test() {
     READERS.with(|r| r.borrow_mut().clear());
 }
+#[cfg(any(target_os = "macos", test))]
 pub(super) fn work_reset() {
     WORK.with(|w| *w.borrow_mut() = ReadWork::default());
 }
