@@ -317,6 +317,14 @@ for path in (ROOT / "crates").glob("*/src/**/*.rs"):
         errors.append(f"independent approval boundary violation: {path.relative_to(ROOT)}")
     owned_files = {ROOT / f"crates/persistence/src/{name}.rs" for name in ["owned", "recovery"]}
     reviewed_owned = path in owned_files
+    reviewed_cohort = path == ROOT / "crates/provider-codex/src/content/cohort.rs"
+    if reviewed_cohort:
+        for marker in ['Connection::open("")', 'PRAGMA temp_store=FILE',
+                       'open_provider_db(root)', 'scope.excluded', 'search_batch(']:
+            if marker not in source:
+                errors.append(f'UUID cohort boundary lost: {marker}')
+        if re.search(r'\b(?:fingerprint_metadata|read_snapshot|inventory_cached|bounded_backup)\s*\(', code):
+            errors.append('UUID cohort reintroduced a global snapshot dependency')
     for pattern in patterns:
         inspected = source
         if reviewed_lifecycle:
@@ -335,6 +343,11 @@ for path in (ROOT / "crates").glob("*/src/**/*.rs"):
             # derived files inside a validated OwnedStateRoot; checked below.
             for body in method_bodies(source, 'rebuild_search_index'):
                 inspected = inspected.replace(body, '')
+        if reviewed_cohort and pattern == patterns[-1]:
+            # ADR-0035 admits only the fixed writes to an anonymous worker spool.
+            for sql in ['"INSERT INTO cohort(id,metadata) VALUES (?1,?2)"',
+                        '"UPDATE cohort SET offered=1 WHERE id=?1"']:
+                inspected = inspected.replace(sql, '')
         if (re.search(pattern, inspected)
             and not (reviewed_capture and pattern in {patterns[1], patterns[2], patterns[-1]})
             and not (reviewed_owned and pattern in patterns[:3])
@@ -757,6 +770,10 @@ search_service = (ROOT / 'crates/application/src/session_search.rs').read_text(e
 search_body = list(method_bodies(search_service, 'search'))
 if len(search_body) != 1 or not (0 <= search_body[0].find('self.binding(') < search_body[0].find('.search_sessions(')):
     raise SystemExit('management binding must precede provider search access')
+resolver = (ROOT / 'crates/application/src/session_resolution.rs').read_text(encoding="utf-8")
+scan_body = list(method_bodies(resolver, 'scan'))
+if len(scan_body) != 1 or '.read_cohort(' not in scan_body[0] or '.search(' in scan_body[0]:
+    raise SystemExit('progressive resolution must only acquire pages from its UUID cohort')
 registration = (ROOT / 'crates/cli/src/management.rs').read_text(encoding="utf-8")
 for marker in ['verify_operator_descriptor', 'root_device', 'root_inode', 'server_instance', 'expires_at', 'single_conversation_operator_verified']:
     if marker not in registration:

@@ -11,6 +11,12 @@ fn reader_error(error: ProviderError) -> ApplicationError {
         ProviderError::InvalidScope(ref reason) if reason == "discovery_caller_unavailable" => {
             ApplicationError::DiscoveryCallerUnavailable
         }
+        ProviderError::InvalidScope(ref reason) if reason == "search_cohort_unavailable" => {
+            crate::session_resolution::ResolutionError::CohortUnavailable.into()
+        }
+        ProviderError::InvalidScope(ref reason) if reason == "session_source_unavailable" => {
+            ApplicationError::SessionSourceUnavailable
+        }
         _ => error.into(),
     }
 }
@@ -28,6 +34,7 @@ pub struct ContextWindowResult {
     pub window: ContextWindow,
     pub reference: ContextReference,
     pub options: ContextOptions,
+    pub opened_identity: Option<ArtifactId>,
 }
 impl ContextWindowResult {
     pub fn next_options(&self) -> Option<ContextOptions> {
@@ -154,6 +161,51 @@ impl SessionSearchService<'_> {
             .search_sessions(&request)
             .map_err(reader_error)?;
         control.check()?;
+        self.validate_search_page(
+            &parameters,
+            &excluded,
+            &page.sessions,
+            &page.unresolved,
+            &page.coverage,
+        )?;
+        let requires_complete = parameters
+            .structured
+            .as_ref()
+            .is_some_and(|q| q.coverage == CoverageRequirement::Complete);
+        let coverage_requirement_met = !requires_complete
+            || (page.next.is_none()
+                && page.coverage.sessions_inspected == page.coverage.eligible_observed
+                && page.coverage.unresolved_sessions == 0
+                && page.coverage.unsupported_sessions == 0
+                && page.coverage.unreadable_sessions == 0
+                && page.coverage.truncated_sessions == 0
+                && page.coverage.suppressed_records == 0
+                && (!parameters.reads_content()
+                    || page.coverage.fully_traversed_sessions == page.coverage.eligible_observed)
+                && !page
+                    .coverage
+                    .reasons
+                    .iter()
+                    .any(|reason| reason == "metadata_inventory_limit"));
+        if let Some(next) = page.next.as_mut() {
+            next.scope = scope;
+        }
+        Ok(SearchResult {
+            parameters,
+            page,
+            binding_revision: revision,
+            registration_instance: self.instance.into(),
+            coverage_requirement_met,
+        })
+    }
+    fn validate_search_page(
+        &self,
+        parameters: &SearchParameters,
+        excluded: &[ArtifactId],
+        sessions: &[SessionSearchHit],
+        unresolved: &[SessionSearchHit],
+        coverage: &SearchCoverage,
+    ) -> Result<(), ApplicationError> {
         // Validate deterministic conditions after retrieval/ranking. A model or
         // faulty adapter cannot reintroduce a filtered, foreign, unknown or
         // duplicate identity. Text proof comes from the trusted read adapter's
@@ -190,49 +242,64 @@ impl SessionSearchService<'_> {
                     .is_none_or(|label| h.metadata.project_label.as_ref() == Some(label))
                 && legacy_truth.and(structured_truth) == expected
         };
-        if page.sessions.len().saturating_add(page.unresolved.len()) > parameters.page_size
-            || page.sessions.iter().any(|h| !valid_hit(h, Truth::True))
-            || page
-                .unresolved
-                .iter()
-                .any(|h| !valid_hit(h, Truth::Unknown))
-            || page.coverage.sessions_inspected > page.coverage.eligible_observed
-            || page.coverage.unresolved_sessions > page.coverage.sessions_inspected
-            || page.unresolved.len() > page.coverage.unresolved_sessions
-            || page.coverage.fully_traversed_sessions > page.coverage.sessions_inspected
+        if sessions.len().saturating_add(unresolved.len()) > parameters.page_size
+            || sessions.iter().any(|h| !valid_hit(h, Truth::True))
+            || unresolved.iter().any(|h| !valid_hit(h, Truth::Unknown))
+            || coverage.sessions_inspected > coverage.eligible_observed
+            || coverage.unresolved_sessions > coverage.sessions_inspected
+            || unresolved.len() > coverage.unresolved_sessions
+            || coverage.fully_traversed_sessions > coverage.sessions_inspected
         {
             return Err(ApplicationError::InvalidSearch);
         }
-        let requires_complete = parameters
-            .structured
-            .as_ref()
-            .is_some_and(|q| q.coverage == CoverageRequirement::Complete);
-        let coverage_requirement_met = !requires_complete
-            || (page.next.is_none()
-                && page.coverage.sessions_inspected == page.coverage.eligible_observed
-                && page.coverage.unresolved_sessions == 0
-                && page.coverage.unsupported_sessions == 0
-                && page.coverage.unreadable_sessions == 0
-                && page.coverage.truncated_sessions == 0
-                && page.coverage.suppressed_records == 0
-                && (!parameters.reads_content()
-                    || page.coverage.fully_traversed_sessions == page.coverage.eligible_observed)
-                && !page
-                    .coverage
-                    .reasons
-                    .iter()
-                    .any(|reason| reason == "metadata_inventory_limit"));
-        if let Some(next) = page.next.as_mut() {
-            next.scope = scope;
-        }
-        Ok(SearchResult {
-            parameters,
-            page,
-            binding_revision: revision,
-            registration_instance: self.instance.into(),
-            coverage_requirement_met,
+        Ok(())
+    }
+
+    pub(crate) fn cohort_scope(&self, id: &str) -> Result<CohortScope, ApplicationError> {
+        Ok(CohortScope {
+            id: id.to_owned(),
+            caller: self.discovery_caller()?.native_id().to_owned(),
+            excluded: self.excluded(SearchPurpose::Discovery)?,
         })
     }
+
+    pub(crate) fn capture_cohort(
+        &self,
+        id: &str,
+        parameters: &SearchParameters,
+        control: &QueryControl,
+    ) -> Result<ProviderWork, ApplicationError> {
+        control.check()?;
+        self.reader
+            .capture_cohort(&self.cohort_scope(id)?, parameters)
+            .map_err(reader_error)
+    }
+
+    pub(crate) fn read_cohort(
+        &self,
+        read: CohortRead,
+        control: &QueryControl,
+    ) -> Result<CohortPage, ApplicationError> {
+        control.check()?;
+        if read.scope != self.cohort_scope(&read.scope.id)? {
+            return Err(ApplicationError::StaleSearchEvidence);
+        }
+        let page = self.reader.read_cohort(&read).map_err(reader_error)?;
+        control.check()?;
+        self.validate_search_page(
+            &read.parameters,
+            &read.scope.excluded,
+            &page.sessions,
+            &page.unresolved,
+            &page.coverage,
+        )?;
+        Ok(page)
+    }
+
+    pub(crate) fn release_cohort(&self, id: &str) {
+        self.reader.release_cohort(id);
+    }
+
     pub(crate) fn verify_search_evidence(
         &self,
         references: &[ContextReference],
@@ -305,6 +372,79 @@ impl SessionSearchService<'_> {
             .session_context_window(&reference, &options, &excluded)
             .map_err(reader_error)?;
         control.check()?;
+        Self::validate_window(&reference, &options, &window)?;
+        Ok(ContextWindowResult {
+            window,
+            reference,
+            options,
+            opened_identity: None,
+        })
+    }
+
+    pub fn open_session_window(
+        &self,
+        native_session_id: &str,
+        options: ContextOptions,
+        control: QueryControl,
+    ) -> Result<ContextWindowResult, ApplicationError> {
+        control.check()?;
+        let purpose = SearchPurpose::Discovery;
+        let binding = self.binding(purpose)?;
+        let excluded = self.excluded(purpose)?;
+        let identity = ApparentCodexCaller::from_metadata(native_session_id, None)
+            .ok_or(ApplicationError::InvalidSearch)?
+            .identity(self.provider_root);
+        if excluded.contains(&identity) {
+            return Err(ApplicationError::ProtectedManagementSession);
+        }
+        if !options.valid()
+            || !matches!(
+                options.direction,
+                ContextDirection::Start | ContextDirection::Occurrences
+            )
+            || options.message_offset.is_some()
+        {
+            return Err(ApplicationError::InvalidSearch);
+        }
+        let bootstrap = ContextReference {
+            decoder_progress: None,
+            native_session_id: native_session_id.into(),
+            local_id: identity.local_id.clone(),
+            record_index: 0,
+            position: None,
+            source_fingerprint: String::new(),
+            source_bytes: 0,
+            purpose,
+            binding_revision: binding,
+        };
+        let (reference, window) = self
+            .reader
+            .open_session_window(&bootstrap, &options, &excluded)
+            .map_err(reader_error)?;
+        control.check()?;
+        if reference.native_session_id != bootstrap.native_session_id
+            || reference.local_id != bootstrap.local_id
+            || reference.purpose != purpose
+            || reference.binding_revision != bootstrap.binding_revision
+            || reference.source_fingerprint.is_empty()
+            || reference.source_bytes == 0
+        {
+            return Err(ApplicationError::InvalidSearch);
+        }
+        Self::validate_window(&reference, &options, &window)?;
+        Ok(ContextWindowResult {
+            window,
+            reference,
+            options,
+            opened_identity: Some(identity),
+        })
+    }
+
+    fn validate_window(
+        reference: &ContextReference,
+        options: &ContextOptions,
+        window: &ContextWindow,
+    ) -> Result<(), ApplicationError> {
         let same_source = |r: &ContextReference| {
             r.local_id == reference.local_id
                 && r.native_session_id == reference.native_session_id
@@ -333,12 +473,9 @@ impl SessionSearchService<'_> {
         {
             return Err(ApplicationError::InvalidSearch);
         }
-        Ok(ContextWindowResult {
-            window,
-            reference,
-            options,
-        })
+        Ok(())
     }
+
     pub fn context(
         &self,
         reference: ContextReference,

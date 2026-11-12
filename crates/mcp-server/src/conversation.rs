@@ -201,12 +201,26 @@ impl From<SearchPurposeInput> for agentmender_domain::SearchPurpose {
         }
     }
 }
-#[derive(Deserialize, JsonSchema)]
+#[derive(JsonSchema)]
+#[schemars(rename = "ContextInput")]
 #[serde(deny_unknown_fields)]
-struct ContextInput {
+#[allow(dead_code)] // Legacy catalog shape. Both routes share ContextInput decoding.
+struct SignedContextInput {
     target: EntityRef,
     #[schemars(length(max = 4096))]
     evidence_ref: String,
+    window: Option<ContextOptionsInput>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct ContextInput {
+    /// Signed target for a previously returned evidence reference.
+    target: Option<EntityRef>,
+    #[schemars(length(max = 32768))]
+    evidence_ref: Option<String>,
+    /// Open a new caller-scoped view of this exact Codex UUID.
+    native_session_id: Option<String>,
     #[serde(default)]
     window: Option<ContextOptionsInput>,
 }
@@ -495,6 +509,8 @@ enum ContextOutput {
 }
 #[derive(Serialize, JsonSchema)]
 struct ContextWindowView {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    target: Option<EntityRef>,
     source_coverage: SourceCoverageView,
     work: ReadWorkView,
     messages: Vec<EvidenceView>,
@@ -1202,7 +1218,7 @@ fn resolution_view(
     };
     let data = match result.data {
         ResolutionData::Candidates(candidates) => ResolutionDataView::Candidates {
-            ranking: "provisional title-prior scan order within inventory windows; FTS5/BM25 passage selection within source slices",
+            ranking: "frozen native UUID order; FTS5/BM25 passage selection within source slices",
             candidates: candidates.into_iter().map(candidate).collect(),
         },
         ResolutionData::Advanced(reply) => ResolutionDataView::Advanced {
@@ -1269,19 +1285,38 @@ fn resolution_view(
 }
 
 pub(super) fn tools(discovery: bool) -> Vec<Tool> {
+    let mut context_output = schema::<ContextOutput>();
+    if !discovery {
+        // Only the UUID bootstrap in discovery mode issues a new signed target.
+        Arc::make_mut(&mut context_output)
+            .get_mut("$defs")
+            .and_then(|defs| defs.get_mut("ContextWindowView"))
+            .and_then(|window| window.get_mut("properties"))
+            .and_then(serde_json::Value::as_object_mut)
+            .expect("window properties")
+            .remove("target");
+    }
     let mut registry = vec![
         (
             "session_search",
-            "Search typed Boolean/date/project/provider filters and streamed text evidence. UNKNOWN candidates are separate. Management requires verified host binding and fails closed without it; diagnostic has no caller guarantee",
+            "Search typed filters and text evidence. UNKNOWN stays separate. Management requires verified caller binding.",
             schema::<SearchInput>(),
             schema::<SearchOutput>(),
             true,
         ),
         (
             "session_context",
-            "Retrieve source-bound untrusted text. Optional window supports before/after, forward/backward/turn navigation and occurrences; signed references recheck identity, source freshness and exclusions",
-            schema::<ContextInput>(),
-            schema::<ContextOutput>(),
+            if discovery {
+                "Open the current Codex source by native_session_id or navigate using signed target and evidence_ref. Read-only with caller exclusion."
+            } else {
+                "Retrieve source-bound untrusted text using a signed target and evidence reference."
+            },
+            if discovery {
+                schema::<ContextInput>()
+            } else {
+                schema::<SignedContextInput>()
+            },
+            context_output,
             true,
         ),
         (
@@ -1328,14 +1363,14 @@ pub(super) fn tools(discovery: bool) -> Vec<Tool> {
             .remove("SearchPurposeInput");
         registry.insert(0, (
             "session_discover",
-            "Use for deterministic listing, exact identity, or possible deletion candidates. For an exact observed label use project_label. Omit page_size for the default or choose 1–20. Use session_resolve for intent and outcome questions. Read-only. Automatically excludes the calling Codex conversation using request metadata. No exclusion flag or caller UUID is needed. Results are discovery candidates. They carry no authenticated caller identity, removal plan or deletion authority. Keep discovery context in the originating conversation.",
+            "Read-only inventory for deterministic listing, exact identity and potential deletion candidates. Excludes the apparent caller. Results carry no removal authority. Use session_resolve for conversational intent.",
             input,
             schema::<DiscoveryOutput>(),
             true,
         ));
         registry.insert(0, (
             "session_resolve",
-            r#"Find and verify past Codex conversations. Luna Medium must interpret the request before start and assess every candidate. Start with {"action":"start","search_intent":{"schema_version":"1","subject":"Cesium rendering performance","hints":{"terms":["Cesium"]}}}. Use search_intent.filter for explicit Boolean queries. For exact identity use constraints.native_session_id. Use advance with the latest step_revision and a new operation_id. The originating chat collects fresh matches and plausible alternatives, uses Luna to select a best result if requested, and renders two tables. If Luna becomes unavailable, advance with luna_unavailable:true and no judgments. Read-only with implicit caller exclusion."#,
+            "Search a frozen Codex UUID cohort. Luna Medium must interpret one SearchIntent and assess every candidate. Use start and advance with the latest step_revision. The origin retains signed results and renders two tables. Report Luna unavailability without submitting judgments.",
             resolution_schema(),
             schema::<ResolutionView>(),
             true,
@@ -1458,22 +1493,59 @@ pub(super) fn request(
         }
         "session_context" => {
             let v: ContextInput = serde_json::from_value(args.clone()).map_err(|_| invalid())?;
-            let reference: ContextReference = projector
-                .open_search(b"evidence", &v.evidence_ref)
-                .ok_or_else(invalid)?;
-            valid_target(&v.target)?;
-            let target = if reference.purpose == SearchPurpose::Discovery {
-                projector.discovery_selector(&v.target, &reference.binding_revision)
-            } else {
-                projector.selector(&v.target)
-            };
-            if let Some(window) = v.window {
-                let options: agentmender_domain::ContextOptions = serde_json::to_value(window)
-                    .and_then(serde_json::from_value)
-                    .map_err(|_| invalid())?;
-                if !options.valid() {
-                    return Err(invalid());
+            let options = v
+                .window
+                .map(|window| {
+                    serde_json::to_value(window)
+                        .and_then(serde_json::from_value::<agentmender_domain::ContextOptions>)
+                        .map_err(|_| invalid())
+                        .and_then(|options| options.valid().then_some(options).ok_or_else(invalid))
+                })
+                .transpose()?;
+            let (reference, target) = match (v.native_session_id, v.target, v.evidence_ref) {
+                (Some(native_session_id), None, None)
+                    if agentmender_domain::ApparentCodexCaller::from_metadata(
+                        &native_session_id,
+                        None,
+                    )
+                    .is_some() =>
+                {
+                    let mut options = options.unwrap_or_default();
+                    if args
+                        .get("window")
+                        .and_then(|window| window.get("direction"))
+                        .is_none()
+                    {
+                        options.direction = agentmender_domain::ContextDirection::Start;
+                    }
+                    if !matches!(
+                        options.direction,
+                        agentmender_domain::ContextDirection::Start
+                            | agentmender_domain::ContextDirection::Occurrences
+                    ) || options.message_offset.is_some()
+                    {
+                        return Err(invalid());
+                    }
+                    return Ok(ConversationRequest::ContextById {
+                        native_session_id,
+                        options,
+                    });
                 }
+                (None, Some(target), Some(evidence_ref)) => {
+                    valid_target(&target)?;
+                    let reference: ContextReference = projector
+                        .open_search(b"evidence", &evidence_ref)
+                        .ok_or_else(invalid)?;
+                    let selector = if reference.purpose == SearchPurpose::Discovery {
+                        projector.discovery_selector(&target, &reference.binding_revision)
+                    } else {
+                        projector.selector(&target)
+                    };
+                    (reference, selector)
+                }
+                _ => return Err(invalid()),
+            };
+            if let Some(options) = options {
                 return Ok(ConversationRequest::ContextWindow {
                     reference,
                     target,
@@ -1713,6 +1785,8 @@ pub(super) fn project(
                 evidence_view(e, projector.seal_search(b"evidence", &reference))
             }).collect();
             serde_json::to_value(ContextOutput::Window(ContextWindowView {
+                target: result.opened_identity.as_ref().map(|identity|
+                    projector.discovery_ref(identity, &result.reference.binding_revision)),
                 source_coverage: result.window.source_coverage.into(),
                 work: result.window.work.into(),
                 messages,
@@ -1931,6 +2005,7 @@ mod search_tests {
         let projector = Projector::new([9; 32]);
         let response = ConversationResponse::ContextWindow(
             agentmender_application::session_search::ContextWindowResult {
+                opened_identity: None,
                 reference: reference(),
                 options: agentmender_domain::ContextOptions::default(),
                 window: agentmender_domain::ContextWindow {
@@ -1979,6 +2054,7 @@ mod search_tests {
         next.position.as_mut().unwrap().chunk_total = 16384;
         let response = ConversationResponse::ContextWindow(
             agentmender_application::session_search::ContextWindowResult {
+                opened_identity: None,
                 reference: reference(),
                 options: agentmender_domain::ContextOptions {
                     before: 5,
@@ -2007,6 +2083,7 @@ mod search_tests {
     fn identical_forward_continuation_pair_is_refused() {
         let projector = Projector::new([9; 32]);
         let result = agentmender_application::session_search::ContextWindowResult {
+            opened_identity: None,
             reference: reference(),
             options: agentmender_domain::ContextOptions {
                 direction: agentmender_domain::ContextDirection::Forward,

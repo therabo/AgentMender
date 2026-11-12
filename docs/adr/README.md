@@ -62,3 +62,5 @@ registered filtering fixed, content/binding implementation deferred).
 
 - [ADR-0033 — SearchIntent v1](0033-search-intent-v1.md)
 - [ADR-0034 — Progressive session resolution](0034-progressive-resolution.md)
+
+- [ADR-0035 — UUID cohort for conversational retrieval](0035-uuid-search-cohort.md)

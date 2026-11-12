@@ -25,6 +25,8 @@ pub enum ApplicationError {
     InvalidSearch,
     #[error(transparent)]
     Resolution(#[from] session_resolution::ResolutionError),
+    #[error("The session's original transcript is unavailable or cannot be read safely.")]
+    SessionSourceUnavailable,
     #[error("search continuation or conversation evidence changed")]
     StaleSearchEvidence,
     #[error("trusted management-session registration is missing or no longer verified")]
@@ -58,6 +60,7 @@ impl ApplicationError {
             Self::InvalidSearch => "invalid_scope",
             Self::Resolution(error) => error.code(),
             Self::StaleSearchEvidence => "stale_search_evidence",
+            Self::SessionSourceUnavailable => "session_source_unavailable",
             Self::ManagementProtectionUnavailable => "management_protection_required",
             Self::ProtectedManagementSession => "protected_management_session",
             Self::RemovalPlanChanged => "removal_plan_changed",

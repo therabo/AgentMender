@@ -41,8 +41,9 @@ Follow [ADR-0030](docs/adr/0030-resident-bounded-history-decoding.md),
 [host identity](docs/mcp-caller-identity.md). Total compressed file length is not an
 admission limit. Keep bounded per-operation decoding/input, window, record, output,
 recent-buffer capacity, resident-reader count and deadlines. Reuse only exact
-root/path/UUID/revision state inside the existing confined worker; no transcript
-spool, portable decoder snapshot, source writer or new database. Lost required
+root/path/UUID/revision state inside the existing confined worker. The anonymous
+UUID metadata spool is limited to the worker. Keep transcripts, provider writes
+and portable decoder snapshots outside that spool. Lost required
 replay state refuses; no identical successful continuation. EOF is not logical
 paginated completeness. Context suffixes cannot attest prefix coverage. Preserve
 exact context-locator/source revalidation when unrelated metadata changes.
@@ -71,7 +72,10 @@ unchanged when its output directory is fixed to an earlier acceptance folder.
 
 ## P0-SR1 reliability constraints
 
-Follow [ADR-0028](docs/adr/0028-search-reliability-and-scoped-freshness.md). Cursor fingerprints bind eligible identities, predicate leaf truth, lexical facts and sort keys; unused display facts are read fresh. Relevant membership/order and selected source changes still refuse. Only fixed active/archive counterparts of missing locators may be tried, with exact header UUID, NOFOLLOW, single-link and revision checks. No recursive scanner or root widening. Positive next offsets mean unfinished messages; completed messages advance. Reject identical continuation pairs. Session-wide semantic negatives require trusted complete coverage, fresh source/filter validation and parent-vetted negative evidence. Keep real receipts outside Git. No management admission is added.
+The progressive resolver follows [ADR-0035](docs/adr/0035-uuid-search-cohort.md).
+Keep its immutable UUID cohort separate from live rollout revisions. Only
+independent diagnostic and management search retain the cursor contract in
+[ADR-0028](docs/adr/0028-search-reliability-and-scoped-freshness.md). Its fingerprints bind eligible identities, predicate leaf truth, lexical facts and sort keys; unused display facts are read fresh. Relevant membership/order and selected source changes still refuse. Only fixed active/archive counterparts of missing locators may be tried, with exact header UUID, NOFOLLOW, single-link and revision checks. No recursive scanner or root widening. Positive next offsets mean unfinished messages; completed messages advance. Reject identical continuation pairs. Session-wide semantic negatives require trusted complete coverage, fresh source/filter validation and parent-vetted negative evidence. Keep real receipts outside Git. No management admission is added.
 
 ## Current product direction
 

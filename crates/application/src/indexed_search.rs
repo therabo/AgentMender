@@ -24,6 +24,34 @@ fn source_key(metadata: &SessionMetadata) -> Result<String, ProviderError> {
     encode(&metadata.identity)
 }
 impl SessionSearchReadPort for IndexedSearchReader<'_> {
+    fn capture_cohort(
+        &self,
+        scope: &CohortScope,
+        parameters: &SearchParameters,
+    ) -> Result<ProviderWork, ProviderError> {
+        self.reader.capture_cohort(scope, parameters)
+    }
+
+    fn read_cohort(&self, read: &CohortRead) -> Result<CohortPage, ProviderError> {
+        // The private index is optional. Its inventory window is a live
+        // lookup and cannot be substituted for a frozen cohort.
+        self.reader.read_cohort(read)
+    }
+
+    fn release_cohort(&self, id: &str) {
+        self.reader.release_cohort(id);
+    }
+
+    fn open_session_window(
+        &self,
+        reference: &ContextReference,
+        options: &ContextOptions,
+        excluded: &[ArtifactId],
+    ) -> Result<(ContextReference, ContextWindow), ProviderError> {
+        self.reader
+            .open_session_window(reference, options, excluded)
+    }
+
     fn search_sessions(
         &self,
         request: &SearchReadRequest,

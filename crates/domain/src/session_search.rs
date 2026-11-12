@@ -176,6 +176,44 @@ pub struct SearchReadRequest {
     pub continuation: SearchContinuation,
 }
 
+/// Internal read-only scope for one captured conversational inventory.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CohortScope {
+    pub id: String,
+    pub caller: String,
+    pub excluded: Vec<ArtifactId>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CohortPosition {
+    pub index: usize,
+    pub after: Option<String>,
+    pub stream: Option<crate::TranscriptCheckpoint>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CohortRead {
+    pub scope: CohortScope,
+    pub parameters: SearchParameters,
+    pub position: CohortPosition,
+    /// Reacquire one existing identity using its frozen query metadata.
+    pub refresh: Option<String>,
+    pub expansion: bool,
+    pub remember: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CohortPage {
+    pub sessions: Vec<SessionSearchHit>,
+    pub unresolved: Vec<SessionSearchHit>,
+    pub coverage: SearchCoverage,
+    pub next: Option<CohortPosition>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ConversationEvidence {

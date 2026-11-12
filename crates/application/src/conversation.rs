@@ -15,6 +15,10 @@ pub enum ConversationRequest {
         reference: ContextReference,
         target: TargetSelector,
     },
+    ContextById {
+        native_session_id: String,
+        options: ContextOptions,
+    },
     ContextWindow {
         reference: ContextReference,
         target: TargetSelector,
@@ -218,7 +222,8 @@ impl ConversationService<'_> {
             ConversationRequest::Resolve(_)
             | ConversationRequest::EvidenceSearch { .. }
             | ConversationRequest::Context { .. }
-            | ConversationRequest::ContextWindow { .. } => Err(unavailable()),
+            | ConversationRequest::ContextWindow { .. }
+            | ConversationRequest::ContextById { .. } => Err(unavailable()),
             ConversationRequest::Search {
                 query,
                 include_archived,

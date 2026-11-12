@@ -18,6 +18,9 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[cfg(target_os = "macos")]
+mod cohort;
+
 const FORMAT: &str = "codex-rollout-response-item-message-v1";
 const PAGINATED_INLINE_FORMAT: &str = "codex-paginated-item-completed-message-v1";
 const ZSTD_FORMAT: &str = "codex-rollout-response-item-message-zstd-v1";
@@ -34,6 +37,17 @@ struct Request {
 #[derive(Serialize, Deserialize)]
 enum Operation {
     Search(SearchReadRequest),
+    CaptureCohort {
+        scope: CohortScope,
+        parameters: SearchParameters,
+    },
+    ReadCohort(CohortRead),
+    ReleaseCohort(String),
+    OpenWindow {
+        reference: ContextReference,
+        options: ContextOptions,
+        excluded: Vec<ArtifactId>,
+    },
     Verify {
         references: Vec<ContextReference>,
         excluded: Vec<ArtifactId>,
@@ -57,6 +71,10 @@ enum Operation {
 enum Response {
     Error(ContentReadError),
     Search(SessionSearchPage),
+    CapturedCohort(ProviderWork),
+    Cohort(CohortPage),
+    ReleasedCohort,
+    OpenedWindow(ContextReference, ContextWindow),
     Verified(EvidenceVerification),
     Context(ConversationEvidence),
     Window(ContextWindow),
@@ -66,6 +84,8 @@ enum Response {
 enum ContentReadError {
     Stale,
     DiscoveryCallerUnavailable,
+    CohortUnavailable,
+    SessionSourceUnavailable,
     Unavailable,
 }
 fn read_error_response(error: ProviderError) -> Response {
@@ -76,6 +96,12 @@ fn read_error_response(error: ProviderError) -> Response {
         ProviderError::InvalidScope(reason) if reason == "discovery_caller_unavailable" => {
             ContentReadError::DiscoveryCallerUnavailable
         }
+        ProviderError::InvalidScope(reason) if reason == "search_cohort_unavailable" => {
+            ContentReadError::CohortUnavailable
+        }
+        ProviderError::InvalidScope(reason) if reason == "session_source_unavailable" => {
+            ContentReadError::SessionSourceUnavailable
+        }
         _ => ContentReadError::Unavailable,
     })
 }
@@ -84,6 +110,10 @@ fn validate_worker_response(response: Response) -> Result<Response, ProviderErro
         Response::Error(ContentReadError::Stale) => Err(stale()),
         Response::Error(ContentReadError::DiscoveryCallerUnavailable) => {
             Err(discovery_caller_unavailable())
+        }
+        Response::Error(ContentReadError::CohortUnavailable) => Err(cohort_unavailable()),
+        Response::Error(ContentReadError::SessionSourceUnavailable) => {
+            Err(session_source_unavailable())
         }
         Response::Error(ContentReadError::Unavailable) => Err(unavailable()),
         response => Ok(response),
@@ -97,6 +127,14 @@ fn stale() -> ProviderError {
 }
 fn discovery_caller_unavailable() -> ProviderError {
     ProviderError::InvalidScope("discovery_caller_unavailable".into())
+}
+
+fn cohort_unavailable() -> ProviderError {
+    ProviderError::InvalidScope("search_cohort_unavailable".into())
+}
+
+fn session_source_unavailable() -> ProviderError {
+    ProviderError::InvalidScope("session_source_unavailable".into())
 }
 
 fn has_one_thread(db: &Connection, id: &str) -> Result<bool, ProviderError> {
@@ -1431,6 +1469,19 @@ fn search_cached(
         return Err(unavailable());
     }
     let inventory = inventory_cached(db, root, request, end, inventory_cache)?;
+    search_batch(root, request, end, inventory, None)
+}
+
+/// A cohort supplies its own immutable order. Diagnostic callers retain the
+/// existing inventory and response digest contracts.
+fn search_batch(
+    root: &Path,
+    request: &SearchReadRequest,
+    end: Instant,
+    inventory: Inventory,
+    cohort_skips: Option<&BTreeSet<String>>,
+) -> Result<SessionSearchPage, ProviderError> {
+    let cohort = cohort_skips.is_some();
     if request.continuation.result_offset != 0 {
         return Err(stale());
     }
@@ -1440,8 +1491,9 @@ fn search_cached(
     };
     let mut hits = Vec::new();
     let mut unresolved = Vec::new();
-    let mut batch_digest = Sha256::new();
+    let mut batch_digest = (!cohort).then(Sha256::new);
     let mut inspected = 0;
+    let mut skipped = 0;
     let mut pending = None;
     let required_terms = request.parameters.terms();
     let terms = request.parameters.ranking_terms();
@@ -1462,7 +1514,12 @@ fn search_cached(
         {
             break;
         }
-        let prior = if inspected == 0 {
+        if cohort_skips.is_some_and(|ids| ids.contains(&candidate.metadata.native_session_id)) {
+            inspected += 1;
+            skipped += 1;
+            continue;
+        }
+        let mut prior = if inspected == 0 {
             request.continuation.stream.as_ref()
         } else {
             None
@@ -1611,7 +1668,9 @@ fn search_cached(
                             .reasons
                             .push("fresh_source_validated_index_cache".into());
                     }
-                    batch_digest.update(observation.fingerprint.as_bytes());
+                    if let Some(digest) = &mut batch_digest {
+                        digest.update(observation.fingerprint.as_bytes());
+                    }
                     continue;
                 }
             }
@@ -1633,7 +1692,9 @@ fn search_cached(
                     status = observation.status;
                     coverage.suppressed_records += observation.suppressed;
                     content_complete = status == "supported";
-                    batch_digest.update(observation.fingerprint.as_bytes());
+                    if let Some(digest) = &mut batch_digest {
+                        digest.update(observation.fingerprint.as_bytes());
+                    }
                     for message in &observation.messages {
                         let prepared = PreparedText::new(&message.text);
                         let count = rank.observe_prepared(message.source, &prepared);
@@ -1738,13 +1799,24 @@ fn search_cached(
                 Err(error) => {
                     if matches!(&error, ProviderError::InvalidScope(s) if s=="stale_search_evidence")
                     {
-                        return Err(error);
+                        if !cohort {
+                            return Err(error);
+                        }
+                        coverage.reasons.push("source_revision_changed".into());
+                    }
+                    if cohort {
+                        // A failed source cannot substantiate its earlier prefix.
+                        prior = None;
+                        query_observation = QueryObservation::default();
+                        evidence.clear();
                     }
                     coverage.unsupported_sessions += 1;
                     coverage.unreadable_sessions += 1;
                     status = content_failure(&error);
                     coverage.reasons.push(status.into());
-                    batch_digest.update(status.as_bytes());
+                    if let Some(digest) = &mut batch_digest {
+                        digest.update(status.as_bytes());
+                    }
                 }
             }
         }
@@ -1800,7 +1872,7 @@ fn search_cached(
             }
         }
     }
-    let batch_fingerprint = hash(&batch_digest.finalize());
+    let batch_fingerprint = batch_digest.map_or_else(String::new, |d| hash(&d.finalize()));
     if let Some(q) = &request.parameters.structured {
         if q.sort != SearchSort::DiscoveryPriority {
             hits.sort_by(|a, b| q.compare(a, b));
@@ -1812,7 +1884,7 @@ fn search_cached(
                 .then_with(|| a.metadata.identity.cmp(&b.metadata.identity))
         });
     }
-    coverage.sessions_inspected = inspected;
+    coverage.sessions_inspected = inspected - skipped;
     coverage.matched_in_batch = hits.len();
     coverage
         .reasons
@@ -2501,7 +2573,7 @@ fn context(
 }
 
 #[cfg(target_os = "macos")]
-fn read_snapshot(root: &Path, end: Instant) -> Result<Connection, ProviderError> {
+fn open_provider_db(root: &Path) -> Result<Connection, ProviderError> {
     let source = Connection::open_with_flags(
         root.join("state_5.sqlite"),
         OpenFlags::SQLITE_OPEN_READ_ONLY
@@ -2513,6 +2585,12 @@ fn read_snapshot(root: &Path, end: Instant) -> Result<Connection, ProviderError>
     source
         .execute_batch("PRAGMA query_only=ON")
         .map_err(|_| unavailable())?;
+    Ok(source)
+}
+
+#[cfg(target_os = "macos")]
+fn read_snapshot(root: &Path, end: Instant) -> Result<Connection, ProviderError> {
+    let source = open_provider_db(root)?;
     let mut memory = Connection::open_in_memory().map_err(|_| unavailable())?;
     capture::configure(&memory)?;
     let started = Instant::now();
@@ -2562,7 +2640,7 @@ fn context_request(operation: &Operation) -> Option<(&ContextReference, &[Artifa
             excluded,
             ..
         } => Some((reference, excluded, true)),
-        Operation::Search(_) | Operation::Verify { .. } => None,
+        _ => None,
     }
 }
 fn revalidate_context_snapshot(
@@ -2652,6 +2730,15 @@ fn verify_evidence(
             {
                 return Err(stale());
             }
+            let position = reference.position.as_ref().expect("validated citation");
+            if !compressed_path(&path)
+                && position
+                    .byte_offset
+                    .checked_add(position.byte_length)
+                    .is_none_or(|end| end > before.len())
+            {
+                return Err(stale());
+            }
             read_rollout_header(&file, compressed_path(&path), id, end, &mut 0)?;
             let (reopened, selected_path) = open_transcript(&candidate, root)?;
             if selected_path != path
@@ -2701,7 +2788,7 @@ fn capture_request(
         _ => (read_snapshot(&request.source_root, end)?, None),
     };
     let result = (|| -> Result<Response, ProviderError> {
-        let mut result = match request.operation {
+        let result = match request.operation {
             Operation::Search(ref query) => Response::Search(search_cached(
                 &memory,
                 &request.source_root,
@@ -2709,19 +2796,6 @@ fn capture_request(
                 end,
                 &mut priority_window,
             )?),
-            Operation::Verify {
-                ref references,
-                ref excluded,
-            } => Response::Verified(EvidenceVerification {
-                sessions: verify_evidence(
-                    &memory,
-                    &request.source_root,
-                    references,
-                    excluded,
-                    end,
-                )?,
-                work: ProviderWork::default(),
-            }),
             Operation::Window {
                 ref reference,
                 ref options,
@@ -2756,6 +2830,7 @@ fn capture_request(
                 excluded,
                 end,
             )?),
+            _ => return Err(unavailable()),
         };
         // The staged bounded output owns its data; release the first backup
         // before any fresh backup so their page caches do not accumulate.
@@ -2774,30 +2849,6 @@ fn capture_request(
                     (Operation::Search(query), Response::Search(page)) => {
                         revalidate_search_snapshot(&fresh, &request.source_root, query, page, end)?
                     }
-                    (
-                        Operation::Verify {
-                            references,
-                            excluded,
-                        },
-                        Response::Verified(previous),
-                    ) => {
-                        let mut current = verify_evidence(
-                            &fresh,
-                            &request.source_root,
-                            references,
-                            excluded,
-                            end,
-                        )?;
-                        for (current, previous) in current.iter_mut().zip(&previous.sessions) {
-                            if previous.is_none() {
-                                *current = None;
-                            }
-                        }
-                        result = Response::Verified(EvidenceVerification {
-                            sessions: current,
-                            work: ProviderWork::default(),
-                        });
-                    }
                     _ => revalidate_context_snapshot(
                         &fresh,
                         &request.source_root,
@@ -2807,10 +2858,7 @@ fn capture_request(
                     )?,
                 }
                 let current_files = fingerprint_metadata(&request.source_root)?;
-                if !capture::same_primary_identity(&after, &current_files)
-                    || matches!(request.operation, Operation::Verify { .. })
-                        && capture::fingerprints_changed(&after, &current_files)
-                {
+                if !capture::same_primary_identity(&after, &current_files) {
                     return Err(stale());
                 }
             } else {
@@ -2829,10 +2877,6 @@ fn capture_request(
     .unwrap_or_else(read_error_response);
 
     match result {
-        Response::Verified(mut verified) => {
-            verified.work = rollout_reader::work().provider;
-            Ok(Response::Verified(verified))
-        }
         Response::Search(mut page) => {
             page.coverage.work = rollout_reader::work();
             Ok(Response::Search(page))
@@ -2914,6 +2958,7 @@ pub fn run_content_capture_worker() -> Result<(), ProviderError> {
         let mut output = std::io::stdout().lock();
         let mut paths = None;
         let mut resident = None;
+        let mut cohorts = cohort::Cohorts::default();
         loop {
             let mut bytes = vec![];
             let count = input
@@ -2943,8 +2988,10 @@ pub fn run_content_capture_worker() -> Result<(), ProviderError> {
                 return Err(unavailable());
             }
             paths = Some(current);
-            let result =
-                capture_request(&request, &mut resident).unwrap_or_else(read_error_response);
+            let result = cohorts
+                .handle(&request)
+                .unwrap_or_else(|| capture_request(&request, &mut resident))
+                .unwrap_or_else(read_error_response);
             let encoded = wire_response(&result, legacy)?;
             if encoded.len() > MAX_OUTPUT {
                 return Err(unavailable());
@@ -3062,7 +3109,87 @@ impl CodexAdapter {
     }
 }
 
+impl CodexAdapter {
+    fn validate_search_hits(
+        &self,
+        sessions: &[SessionSearchHit],
+        unresolved: &[SessionSearchHit],
+        excluded: &[ArtifactId],
+    ) -> Result<(), ProviderError> {
+        if sessions.len() + unresolved.len() > 20
+            || sessions.iter().chain(unresolved).any(|h| {
+                h.metadata.identity.state_root != self.location.state_root
+                    || h.metadata.identity.provider != ProviderKind::Codex
+                    || h.metadata.identity.class != GraphNodeKind::Session
+                    || !metadata::uuid(&h.metadata.native_session_id)
+                    || h.metadata.identity.local_id.as_str()
+                        != format!("codex:session:{}", h.metadata.native_session_id)
+                    || excluded.contains(&h.metadata.identity)
+                    || h.evidence.len() > 2
+                    || h.evidence.iter().any(|e| {
+                        e.excerpt
+                            .as_ref()
+                            .is_some_and(|v| v.chars().count() > 320 || !safe_conversation_text(v))
+                    })
+            })
+        {
+            return Err(unavailable());
+        }
+        Ok(())
+    }
+}
+
 impl SessionSearchReadPort for CodexAdapter {
+    fn capture_cohort(
+        &self,
+        scope: &CohortScope,
+        parameters: &SearchParameters,
+    ) -> Result<ProviderWork, ProviderError> {
+        match self.content_worker(Operation::CaptureCohort {
+            scope: scope.clone(),
+            parameters: parameters.clone(),
+        })? {
+            Response::CapturedCohort(work) => Ok(work),
+            _ => Err(unavailable()),
+        }
+    }
+
+    fn read_cohort(&self, read: &CohortRead) -> Result<CohortPage, ProviderError> {
+        let Response::Cohort(page) = self.content_worker(Operation::ReadCohort(read.clone()))?
+        else {
+            return Err(unavailable());
+        };
+        self.validate_search_hits(&page.sessions, &page.unresolved, &read.scope.excluded)?;
+        Ok(page)
+    }
+
+    fn release_cohort(&self, id: &str) {
+        if let Ok(mut slot) = self.content_connection.lock()
+            && let Some(connection) = slot.as_mut()
+            && connection
+                .call(Operation::ReleaseCohort(id.into()))
+                .is_err()
+        {
+            *slot = None;
+        }
+    }
+
+    fn open_session_window(
+        &self,
+        reference: &ContextReference,
+        options: &ContextOptions,
+        excluded: &[ArtifactId],
+    ) -> Result<(ContextReference, ContextWindow), ProviderError> {
+        match self.content_worker(Operation::OpenWindow {
+            reference: reference.clone(),
+            options: options.clone(),
+            excluded: excluded.to_vec(),
+        })? {
+            Response::OpenedWindow(reference, window) => Ok((reference, window)),
+            _ => Err(unavailable()),
+        }
+    }
+
     fn transcript_page(
         &self,
         reference: &ContextReference,
@@ -3141,25 +3268,7 @@ impl SessionSearchReadPort for CodexAdapter {
         else {
             return Err(unavailable());
         };
-        if page.sessions.len() + page.unresolved.len() > 20
-            || page.sessions.iter().chain(&page.unresolved).any(|h| {
-                h.metadata.identity.state_root != self.location.state_root
-                    || h.metadata.identity.provider != ProviderKind::Codex
-                    || h.metadata.identity.class != GraphNodeKind::Session
-                    || !metadata::uuid(&h.metadata.native_session_id)
-                    || h.metadata.identity.local_id.as_str()
-                        != format!("codex:session:{}", h.metadata.native_session_id)
-                    || request.excluded.contains(&h.metadata.identity)
-                    || h.evidence.len() > 2
-                    || h.evidence.iter().any(|e| {
-                        e.excerpt
-                            .as_ref()
-                            .is_some_and(|v| v.chars().count() > 320 || !safe_conversation_text(v))
-                    })
-            })
-        {
-            return Err(unavailable());
-        }
+        self.validate_search_hits(&page.sessions, &page.unresolved, &request.excluded)?;
         Ok(page)
     }
     fn session_context(
@@ -3275,6 +3384,87 @@ mod tests {
         encoder.finish().unwrap();
         fs::remove_file(path).unwrap();
         compressed
+    }
+
+    #[test]
+    fn cohort_discards_a_changed_source_prefix_and_advances_to_the_next_uuid() {
+        let root = tempfile::tempdir().unwrap();
+        let db = db();
+        let first = seed(
+            &db,
+            root.path(),
+            1,
+            "neutral",
+            &[message("user", "FlightProbe early")],
+        );
+        let mut source = fs::OpenOptions::new().append(true).open(&first).unwrap();
+        let filler = message("system", &"x".repeat(64 * 1024));
+        for _ in 0..220 {
+            writeln!(source, "{filler}").unwrap();
+        }
+        seed(
+            &db,
+            root.path(),
+            2,
+            "neutral",
+            &[message("user", "FlightProbe second source")],
+        );
+        let mut query = request("FlightProbe");
+        query.parameters.page_size = 1;
+        let batch = || {
+            let mut observed = inventory(&db, root.path(), &query, until()).unwrap();
+            observed.fingerprint.clear();
+            observed.corpus_fingerprint.clear();
+            observed
+        };
+        let mut continuation = query.clone();
+        let first_page = search_batch(
+            root.path(),
+            &query,
+            until(),
+            batch(),
+            Some(&BTreeSet::new()),
+        )
+        .unwrap();
+        assert!(first_page.sessions.is_empty());
+        continuation.continuation = first_page.next.unwrap();
+        assert!(continuation.continuation.stream.is_some());
+        writeln!(
+            source,
+            "{}",
+            message("user", "FlightProbe appended after the captured extent")
+        )
+        .unwrap();
+        let second_page = search_batch(
+            root.path(),
+            &continuation,
+            until(),
+            batch(),
+            Some(&BTreeSet::new()),
+        )
+        .unwrap();
+        assert_eq!(second_page.coverage.unreadable_sessions, 1);
+        assert!(
+            second_page
+                .coverage
+                .reasons
+                .iter()
+                .any(|r| r == "source_revision_changed")
+        );
+        assert!(second_page.sessions.is_empty());
+        assert!(second_page.unresolved[0].evidence.is_empty());
+        continuation.continuation = second_page.next.unwrap();
+        assert_eq!(continuation.continuation.start, 1);
+        let final_page = search_batch(
+            root.path(),
+            &continuation,
+            until(),
+            inventory(&db, root.path(), &continuation, until()).unwrap(),
+            Some(&BTreeSet::new()),
+        )
+        .unwrap();
+        assert_eq!(final_page.sessions[0].metadata.native_session_id, id(2));
+        assert!(final_page.next.is_none());
     }
 
     #[test]

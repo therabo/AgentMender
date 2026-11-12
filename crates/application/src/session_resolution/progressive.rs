@@ -51,8 +51,6 @@ pub struct AdvanceResult {
     pub outcome: Option<TerminalOutcome>,
     pub replayed: bool,
     pub invalidated: Vec<String>,
-    replay_filter: Option<QueryExpr>,
-    replay_observations: BTreeMap<String, (QueryObservation, bool)>,
 }
 
 #[derive(Clone)]
@@ -74,6 +72,7 @@ pub struct Coverage {
     rejected: usize,
     published: usize,
     released: usize,
+    snapshot_sessions: u64,
     inventory_window_offset: usize,
     current_source_decoded_offset: Option<u64>,
 }
@@ -92,16 +91,15 @@ pub(super) struct Stream {
     rejected: usize,
     terminal: Option<TerminalOutcome>,
     previous: Option<(Advance, AdvanceResult)>,
-    last_candidate: Option<(std::cmp::Reverse<usize>, String)>,
-    inventory_boundary: Option<String>,
-    reanchored: Option<(Option<InventoryBoundary>, usize)>,
+    last_candidate: Option<String>,
+    offered: BTreeSet<String>,
 }
 
 #[derive(Clone)]
 struct CandidateRefresh {
     id: String,
     identity: ArtifactId,
-    next: Option<SearchContinuation>,
+    next: Option<CohortPosition>,
 }
 
 impl Stream {
@@ -114,8 +112,10 @@ impl Stream {
 
     pub(super) fn reset_order(&mut self) {
         self.last_candidate = None;
-        self.inventory_boundary = None;
-        self.reanchored = None;
+    }
+
+    pub(super) fn take_offered(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.offered).into_iter().collect()
     }
 
     pub(super) fn has_refresh_work(&self) -> bool {
@@ -128,7 +128,7 @@ impl Stream {
 
     fn queue_refresh(&mut self, candidate: &Candidate) {
         if self.refreshing_batch {
-            self.verification_gap = Some("candidate_evidence_stale");
+            self.unconfirmed_stale();
         } else {
             self.refresh.push_back(CandidateRefresh {
                 id: candidate.hit.metadata.native_session_id.clone(),
@@ -136,6 +136,12 @@ impl Stream {
                 next: None,
             });
         }
+    }
+
+    fn unconfirmed_stale(&mut self) {
+        self.verification_gap = Some("candidate_evidence_stale");
+        self.unconfirmed += 1;
+        self.released += 1;
     }
 
     pub(super) fn evaluated(&self) -> usize {
@@ -174,43 +180,24 @@ impl Run {
     }
 
     pub(super) fn observe_batch_order(&mut self, hits: &mut Vec<SessionSearchHit>) -> bool {
-        let boundary = self
-            .next
-            .as_ref()
-            .and_then(|cursor| cursor.inventory_after.as_ref())
-            .map(|key| key.native_session_id.clone());
-        let stream = &mut self.stream;
-        let mut previous = if stream.inventory_boundary == boundary {
-            stream.last_candidate.clone()
-        } else {
-            None
-        };
-        let terms = self.parameters.ranking_terms();
+        let mut previous = self.stream.last_candidate.clone();
         let mut valid = true;
         hits.retain(|hit| {
             let id = &hit.metadata.native_session_id;
-            let key = (
-                std::cmp::Reverse(discovery_title_weight(&hit.metadata, &terms)),
-                id.clone(),
-            );
-            if boundary.as_ref().is_some_and(|boundary| id <= boundary)
-                || previous.as_ref().is_some_and(|prior| key < *prior)
-            {
+            if previous.as_ref().is_some_and(|prior| id < prior) {
                 valid = false;
                 return false;
             }
-            if previous.as_ref() == Some(&key) {
+            if previous.as_ref() == Some(id) {
                 return false;
             }
-            previous = Some(key);
+            previous = Some(id.clone());
             true
         });
-        if !valid {
-            return false;
+        if valid {
+            self.stream.last_candidate = previous;
         }
-        stream.inventory_boundary = boundary;
-        stream.last_candidate = previous;
-        true
+        valid
     }
 
     pub(super) fn stream_coverage(&self) -> Coverage {
@@ -239,7 +226,8 @@ impl Run {
             rejected: stream.rejected,
             published: stream.confirmed,
             released: stream.released,
-            inventory_window_offset: self.next.as_ref().map_or(0, |cursor| cursor.start),
+            snapshot_sessions: p.provider_work.cohort_rows,
+            inventory_window_offset: self.next.as_ref().map_or(0, |cursor| cursor.index),
             current_source_decoded_offset: self
                 .next
                 .as_ref()
@@ -248,23 +236,15 @@ impl Run {
         }
     }
 
-    pub(super) fn reanchor_source(&mut self) -> Option<SearchContinuation> {
-        let stream = &mut self.stream;
-        let cursor = self.next.as_ref()?;
-        cursor.stream.as_ref()?;
-        let position = (cursor.inventory_after.clone(), cursor.start);
-        if stream.reanchored.as_ref() == Some(&position) {
-            return None;
-        }
-        stream.reanchored = Some(position);
-        Some(SearchContinuation {
-            stream: None,
-            ..cursor.clone()
-        })
-    }
-
     fn release_batch(&mut self) {
         let stream = &mut self.stream;
+        if self.progress.scan_passes == 1 {
+            stream.offered.extend(
+                self.candidates
+                    .iter()
+                    .map(|candidate| candidate.hit.metadata.native_session_id.clone()),
+            );
+        }
         stream.anchor_base += self.anchors.len();
         stream.prior_context_bytes = self.progress.context_bytes;
         self.candidates.clear();
@@ -401,7 +381,7 @@ impl Run {
         }
         let published = self.stream.confirmed;
         if !self.progress.scan_complete && self.progress.stop_reason.is_none() {
-            match self.scan(service, control, false) {
+            match self.scan(service, control) {
                 Ok(candidates) => reply.candidates = candidates,
                 Err(
                     error @ (ApplicationError::Cancelled
@@ -494,21 +474,19 @@ impl Run {
             let Some(mut refresh) = stream.refresh.pop_front() else {
                 break;
             };
-            let mut parameters = self.parameters.clone();
-            let QueryExpr::And { args } = &mut parameters
-                .structured
-                .as_mut()
-                .expect("resolution query")
-                .filter
-            else {
-                unreachable!("compiled resolution conjunction")
-            };
-            args.push(QueryExpr::NativeId {
-                values: vec![refresh.id.clone()],
-            });
-            let result = service.search(parameters, refresh.next.clone(), control.clone());
+            let result = service.read_cohort(
+                CohortRead {
+                    scope: service.cohort_scope(&self.cohort_id)?,
+                    parameters: self.parameters.clone(),
+                    position: refresh.next.clone().unwrap_or_default(),
+                    refresh: Some(refresh.id.clone()),
+                    expansion: false,
+                    remember: Vec::new(),
+                },
+                control,
+            );
             let page = match result {
-                Ok(result) if result.binding_revision == self.binding => result.page,
+                Ok(page) => page,
                 Err(
                     error @ (ApplicationError::Cancelled
                     | ApplicationError::DiscoveryCallerUnavailable),
@@ -516,7 +494,7 @@ impl Run {
                     return Err(error);
                 }
                 _ => {
-                    stream.verification_gap = Some("candidate_evidence_stale");
+                    stream.unconfirmed_stale();
                     continue;
                 }
             };
@@ -540,9 +518,10 @@ impl Run {
                 refresh.next = Some(next);
                 stream.refresh.push_back(refresh);
             } else {
-                stream.verification_gap = Some("candidate_evidence_stale");
+                stream.unconfirmed_stale();
             }
         }
+        self.refresh_assessment_counts();
         let candidates = self.candidate_batch(0, self.presented());
         if candidates.is_empty() && !self.stream.has_refresh_work() {
             self.stream.refreshing_batch = false;
@@ -626,7 +605,7 @@ impl Run {
             let current = check.and_then(|index| fresh[index].as_ref()).filter(|m| {
                 m.identity == candidate.hit.metadata.identity
                     && filter.evaluate_observed(
-                        m,
+                        &candidate.hit.metadata,
                         &candidate.hit.query_observation,
                         candidate.hit.content_complete,
                     ) == Truth::True
@@ -650,22 +629,18 @@ impl Run {
                 }
                 _ => continue,
             };
-            let metadata = current.expect("a published judgment requires current source evidence");
-            reply.replay_observations.insert(
-                metadata.native_session_id.clone(),
-                (
-                    candidate.hit.query_observation.clone(),
-                    candidate.hit.content_complete,
-                ),
-            );
+            let current = current.expect("a published judgment requires current source evidence");
+            let mut metadata = candidate.hit.metadata.clone();
+            metadata.title.clone_from(&current.title);
+            metadata
+                .producer_version
+                .clone_from(&current.producer_version);
+            metadata.producer_version_matches = current.producer_version_matches;
             rows.push(ResolvedCandidate {
-                metadata: metadata.clone(),
+                metadata,
                 assessment: assessment.clone(),
                 citations,
             });
-        }
-        if !reply.replay_observations.is_empty() {
-            reply.replay_filter = Some(filter);
         }
         stream.refreshing_batch = false;
         Ok(())
@@ -683,64 +658,9 @@ impl Run {
                 work: ProviderWork::default(),
             });
         }
-        if let Some(verified) = service.verify_search_evidence(references, control)? {
-            return Ok(verified);
-        }
-        // A read port without batch verification can still verify one reference
-        // against an exact metadata observation and a bound source probe.
-        let result = service.search(
-            SearchParameters {
-                structured: Some(StructuredQuery {
-                    filter: QueryExpr::NativeId {
-                        values: references
-                            .iter()
-                            .map(|r| r.native_session_id.clone())
-                            .collect(),
-                    },
-                    mode: SearchMode::Exhaustive,
-                    sort: SearchSort::Identity,
-                    coverage: CoverageRequirement::BestEffort,
-                }),
-                include_content: false,
-                excerpts: false,
-                ..self.parameters.clone()
-            },
-            None,
-            control.clone(),
-        )?;
-        let sessions = references
-            .iter()
-            .map(|reference| {
-                let Some(hit) = result.page.sessions.iter().find(|hit| {
-                    hit.metadata.native_session_id == reference.native_session_id
-                        && hit.metadata.identity.local_id == reference.local_id
-                }) else {
-                    return Ok(None);
-                };
-                match service.context_window(
-                    reference.clone(),
-                    selector(&hit.metadata),
-                    ContextOptions {
-                        direction: ContextDirection::Start,
-                        max_bytes: 64,
-                        max_messages: 1,
-                        ..Default::default()
-                    },
-                    control.clone(),
-                ) {
-                    Ok(_) => Ok(Some(hit.metadata.clone())),
-                    Err(
-                        error @ (ApplicationError::DiscoveryCallerUnavailable
-                        | ApplicationError::Cancelled),
-                    ) => Err(error),
-                    Err(_) => Ok(None),
-                }
-            })
-            .collect::<Result<_, _>>()?;
-        Ok(EvidenceVerification {
-            sessions,
-            work: result.page.coverage.work.provider,
-        })
+        service
+            .verify_search_evidence(references, control)?
+            .ok_or(ApplicationError::StaleSearchEvidence)
     }
 
     fn verify_replayed_results(
@@ -760,19 +680,17 @@ impl Run {
         }
         let fresh = self.verify_publication(service, control, &anchors)?;
         let original_matches = reply.matches.len();
-        let original_alternatives = reply.alternatives.len();
         let mut fresh = fresh.sessions.into_iter();
-        let filter = reply.replay_filter.as_ref().expect("published query");
         let mut retain = |row: &mut ResolvedCandidate| {
             let id = &row.metadata.native_session_id;
-            let (observation, content_complete) = &reply.replay_observations[id];
-            let current = fresh.next().flatten().filter(|metadata| {
-                metadata.identity == row.metadata.identity
-                    && filter.evaluate_observed(metadata, observation, *content_complete)
-                        == Truth::True
-            });
+            let current = fresh
+                .next()
+                .flatten()
+                .filter(|metadata| metadata.identity == row.metadata.identity);
             if let Some(metadata) = current {
-                row.metadata = metadata;
+                row.metadata.title = metadata.title;
+                row.metadata.producer_version = metadata.producer_version;
+                row.metadata.producer_version_matches = metadata.producer_version_matches;
                 true
             } else {
                 reply.invalidated.push(id.clone());
@@ -786,7 +704,7 @@ impl Run {
             self.progress.freshness_failures += lost;
             let stream = &mut self.stream;
             stream.confirmed -= original_matches - reply.matches.len();
-            stream.unconfirmed -= original_alternatives - reply.alternatives.len();
+            stream.unconfirmed += original_matches - reply.matches.len();
             stream.verification_gap = Some("candidate_evidence_stale");
             if reply.outcome.is_some() {
                 reply.outcome = Some(TerminalOutcome::Partial);
@@ -843,27 +761,15 @@ fn merge_windows(first: &ContextRequest, second: &ContextRequest) -> Option<Cont
     })
 }
 
-/// DiscoveryPriority pages use native-ID keysets across inventory windows
-/// and increasing offsets within each window. The active source cursor may
-/// advance through decoder replay before the logical byte offset changes.
-pub(super) fn cursor_advances(
-    prior: Option<&SearchContinuation>,
-    next: &SearchContinuation,
-) -> bool {
-    let boundary = |cursor: &SearchContinuation| {
-        cursor
-            .inventory_after
-            .as_ref()
-            .map(|key| key.native_session_id.clone())
-    };
-    let before_boundary = prior.and_then(boundary);
-    let after_boundary = boundary(next);
-    if after_boundary != before_boundary {
-        return after_boundary > before_boundary;
+/// Cohort pages advance by immutable position or by progress in one source.
+pub(super) fn cursor_advances(prior: Option<&CohortPosition>, next: &CohortPosition) -> bool {
+    let index = prior.map_or(0, |cursor| cursor.index);
+    let after = prior.and_then(|cursor| cursor.after.as_ref());
+    if next.index != index {
+        return next.index > index && next.after.as_ref() > after;
     }
-    let start = prior.map_or(0, |cursor| cursor.start);
-    if next.start != start {
-        return next.start > start;
+    if next.after.as_ref() != after {
+        return false;
     }
     let Some(after) = next.stream.as_ref() else {
         return false;
@@ -905,60 +811,25 @@ mod tests {
 
     #[test]
     fn cursor_requires_forward_work_and_accepts_decoder_replay() {
-        let previous = SearchContinuation {
-            start: 4,
+        let previous = CohortPosition {
+            index: 4,
+            after: Some("00000000-0000-4000-8000-000000000009".into()),
             stream: Some(checkpoint(150, 50)),
-            ..Default::default()
         };
-        assert!(!cursor_advances(Some(&previous), &previous));
-        let advanced = SearchContinuation {
+        let advanced = CohortPosition {
+            index: 4,
+            after: Some("00000000-0000-4000-8000-000000000009".into()),
             stream: Some(checkpoint(150, 80)),
-            ..previous.clone()
+        };
+        let rolled = CohortPosition {
+            index: 5,
+            after: Some("00000000-0000-4000-8000-000000000010".into()),
+            stream: None,
         };
         assert!(cursor_advances(Some(&previous), &advanced));
         assert!(!cursor_advances(Some(&advanced), &previous));
-        let rolled = SearchContinuation {
-            inventory_after: Some(InventoryBoundary {
-                native_session_id: "later".into(),
-                sort_value: None,
-            }),
-            ..Default::default()
-        };
         assert!(cursor_advances(Some(&advanced), &rolled));
         assert!(!cursor_advances(Some(&rolled), &advanced));
-    }
-
-    #[test]
-    fn a_reanchor_preserves_scope_and_only_restarts_the_unfinished_source() {
-        let (intent, hard_filter, literal) = super::super::tests::example_intent().into_parts();
-        let retrieval = Retrieval {
-            hard_filter,
-            literal,
-            expansion: None,
-            exclude_literal_on_expansion: false,
-        };
-        let parameters = retrieval.compile_parameters().unwrap();
-        let mut run = Run::new("caller".into(), "instance", retrieval, parameters, intent);
-        let cursor = SearchContinuation {
-            scope: "frozen scope".into(),
-            inventory_fingerprint: "window".into(),
-            corpus_fingerprint: "cohort".into(),
-            start: 4,
-            stream: Some(checkpoint(150, 50)),
-            ..Default::default()
-        };
-        run.next = Some(cursor.clone());
-        let retry = run.reanchor_source().unwrap();
-        assert_eq!(
-            retry,
-            SearchContinuation {
-                stream: None,
-                ..cursor.clone()
-            }
-        );
-        assert!(run.reanchor_source().is_none());
-        run.next.as_mut().unwrap().start += 1;
-        assert!(run.reanchor_source().is_some());
     }
 
     #[test]

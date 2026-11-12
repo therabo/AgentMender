@@ -206,6 +206,16 @@ pub(super) fn read_only_executor(
                         agentmender_application::conversation::ConversationResponse::EvidenceSearch,
                     );
             }
+            ConversationRequest::ContextById {
+                native_session_id,
+                options,
+            } => {
+                return service
+                    .open_session_window(&native_session_id, options, control)
+                    .map(
+                        agentmender_application::conversation::ConversationResponse::ContextWindow,
+                    );
+            }
             ConversationRequest::ContextWindow {
                 reference,
                 target,

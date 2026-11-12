@@ -8,8 +8,9 @@ mod macos_sandbox;
 pub mod process;
 
 use agentmender_domain::{
-    ArtifactGraph, DiscoveryScope, DiscoverySnapshot, GraphError, IntegrityContext,
-    PlanningContext, Provider, ProviderKind, observed_path_is_absolute,
+    ArtifactGraph, CohortPage, CohortRead, CohortScope, DiscoveryScope, DiscoverySnapshot,
+    GraphError, IntegrityContext, PlanningContext, Provider, ProviderKind,
+    observed_path_is_absolute,
 };
 use std::path::PathBuf;
 use thiserror::Error;
@@ -38,6 +39,37 @@ pub trait SessionSearchReadPort {
         &self,
         request: &agentmender_domain::SearchReadRequest,
     ) -> Result<agentmender_domain::SessionSearchPage, ProviderError>;
+    fn capture_cohort(
+        &self,
+        _scope: &CohortScope,
+        _parameters: &agentmender_domain::SearchParameters,
+    ) -> Result<agentmender_domain::ProviderWork, ProviderError> {
+        Err(ProviderError::CapabilityUnavailable(
+            "conversation cohort unavailable".into(),
+        ))
+    }
+    fn read_cohort(&self, _read: &CohortRead) -> Result<CohortPage, ProviderError> {
+        Err(ProviderError::CapabilityUnavailable(
+            "conversation cohort unavailable".into(),
+        ))
+    }
+    fn release_cohort(&self, _id: &str) {}
+    fn open_session_window(
+        &self,
+        _reference: &agentmender_domain::ContextReference,
+        _options: &agentmender_domain::ContextOptions,
+        _excluded: &[agentmender_domain::ArtifactId],
+    ) -> Result<
+        (
+            agentmender_domain::ContextReference,
+            agentmender_domain::ContextWindow,
+        ),
+        ProviderError,
+    > {
+        Err(ProviderError::CapabilityUnavailable(
+            "UUID context unavailable".into(),
+        ))
+    }
     /// Fresh metadata and source revision for each anchor in a bounded batch.
     /// A missing entry denotes a stale or unreadable source. None for the
     /// entire batch means the adapter uses the existing single-source path.

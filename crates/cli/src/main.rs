@@ -261,6 +261,9 @@ impl From<ApplicationError> for CliError {
                 ErrorCode::InvalidArguments,
                 "invalid bounded search request",
             ),
+            ApplicationError::SessionSourceUnavailable => {
+                Self::new(ErrorCode::InvalidArguments, "session_source_unavailable")
+            }
             ApplicationError::StaleSearchEvidence => {
                 Self::new(ErrorCode::InvalidArguments, "stale_search_evidence")
             }

@@ -42,6 +42,15 @@ pub(super) fn record_fts(build: Duration, query: Duration) {
     });
 }
 
+#[cfg(target_os = "macos")]
+pub(super) fn record_cohort(rows: usize, elapsed: std::time::Duration) {
+    WORK.with(|work| {
+        let mut work = work.borrow_mut();
+        work.provider.cohort_rows += rows as u64;
+        work.provider.cohort_capture_us += elapsed.as_micros() as u64;
+    });
+}
+
 pub(super) fn record_metadata_row() {
     WORK.with(|w| w.borrow_mut().provider.metadata_rows += 1);
 }

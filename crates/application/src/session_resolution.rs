@@ -31,7 +31,6 @@ struct Retrieval {
     hard_filter: Option<QueryExpr>,
     literal: QueryExpr,
     expansion: Option<QueryExpr>,
-    exclude_literal_on_expansion: bool,
 }
 
 impl Retrieval {
@@ -41,14 +40,9 @@ impl Retrieval {
                 .chain(self.expansion.clone())
                 .collect(),
         };
-        let mut clauses: Vec<_> = std::iter::once(lexical)
+        let clauses: Vec<_> = std::iter::once(lexical)
             .chain(self.hard_filter.clone())
             .collect();
-        if self.exclude_literal_on_expansion {
-            clauses.push(QueryExpr::Not {
-                arg: Box::new(self.literal.clone()),
-            });
-        }
         let parameters = SearchParameters {
             structured: Some(StructuredQuery {
                 // Positions 0 and 1 are the outer AND and the lexical OR. Keep
@@ -173,6 +167,8 @@ pub enum ResolutionError {
     RevisionConflict,
     #[error("Assess the outstanding candidate batch before requesting more candidates.")]
     AssessmentRequired,
+    #[error("The captured session cohort is no longer available. Start a new run.")]
+    CohortUnavailable,
     #[error("The resolver has no free run slot. Finish or cancel an existing run.")]
     RunCapacity,
 }
@@ -188,6 +184,7 @@ impl ResolutionError {
             Self::RevisionConflict => "resolution_revision_conflict",
             Self::AssessmentRequired => "assessment_required",
             Self::RunCapacity => "resolution_run_capacity",
+            Self::CohortUnavailable => "search_cohort_unavailable",
         }
     }
 }
@@ -250,8 +247,6 @@ pub struct ResolutionProgress {
     pub context_replay_bytes: u64,
     pub invalid_assessments: usize,
     pub freshness_failures: usize,
-    #[serde(skip_serializing_if = "is_zero")]
-    pub source_reanchors: usize,
     #[serde(skip_serializing_if = "is_zero")]
     pub publication_checks: usize,
     #[serde(skip_serializing_if = "ProviderWork::is_empty")]
@@ -323,7 +318,8 @@ struct Run {
     retrieval: Retrieval,
     search_intent: SearchIntent,
     parameters: SearchParameters,
-    next: Option<SearchContinuation>,
+    next: Option<CohortPosition>,
+    cohort_id: String,
     progress: ResolutionProgress,
     candidates: Vec<Candidate>,
     anchors: Vec<Anchor>,
@@ -348,8 +344,13 @@ impl ResolutionStore {
     ) -> Result<ResolutionResponse, ApplicationError> {
         control.check()?;
         let binding = service.binding(SearchPurpose::Discovery)?;
-        self.runs
-            .retain(|_, run| run.last_used.elapsed() < RUN_RETENTION);
+        self.runs.retain(|id, run| {
+            let live = run.last_used.elapsed() < RUN_RETENTION;
+            if !live && !run.can_reclaim() {
+                service.release_cohort(id);
+            }
+            live
+        });
         match action {
             ResolutionAction::Start(plan) => {
                 let (intent, hard_filter, literal) = plan.into_parts();
@@ -357,7 +358,6 @@ impl ResolutionStore {
                     hard_filter,
                     literal,
                     expansion: None,
-                    exclude_literal_on_expansion: false,
                 };
                 let parameters = retrieval.compile_parameters()?;
                 self.start(
@@ -375,7 +375,12 @@ impl ResolutionStore {
                 if state.binding != binding || state.instance != service.instance {
                     return Err(ResolutionError::StaleSearchRun.into());
                 }
-                state.advance(service, control, run, *step)
+                let was_active = !state.can_reclaim();
+                let result = state.advance(service, control, run.clone(), *step);
+                if was_active && state.can_reclaim() {
+                    service.release_cohort(&run);
+                }
+                result
             }
         }
     }
@@ -403,12 +408,27 @@ impl ResolutionStore {
         } else {
             None
         };
-        let data = match run.scan(service, control, true) {
+        run.cohort_id.clone_from(&id);
+        let acquisition = service
+            .capture_cohort(&id, &run.parameters, control)
+            .and_then(|work| {
+                run.progress.provider_work.add(&work);
+                run.scan(service, control)
+            });
+        let data = match acquisition {
             Ok(candidates) => ResolutionData::Candidates(candidates),
             Err(
-                error @ (ApplicationError::Provider(_) | ApplicationError::StaleSearchEvidence),
-            ) => run.blocked(error.public_code()),
-            Err(error) => return Err(error),
+                error @ (ApplicationError::Provider(_)
+                | ApplicationError::StaleSearchEvidence
+                | ApplicationError::Resolution(ResolutionError::CohortUnavailable)),
+            ) => {
+                service.release_cohort(&id);
+                run.blocked(error.public_code())
+            }
+            Err(error) => {
+                service.release_cohort(&id);
+                return Err(error);
+            }
         };
         let result = run.response(id.clone(), data);
         if let Some(reclaim) = reclaim {
@@ -441,6 +461,7 @@ impl Run {
             search_intent,
             parameters,
             next: None,
+            cohort_id: String::new(),
             progress: ResolutionProgress {
                 scan_passes: 1,
                 ..Default::default()
@@ -474,10 +495,8 @@ impl Run {
         &mut self,
         service: &SessionSearchService<'_>,
         control: &QueryControl,
-        first: bool,
     ) -> Result<Vec<ResolutionCandidate>, ApplicationError> {
         let started = Instant::now();
-        let mut reanchored = false;
         for _ in 0..SCAN_BATCH {
             if self.progress.scan_complete
                 || self.progress.stop_reason.is_some()
@@ -487,45 +506,20 @@ impl Run {
                 break;
             }
             let tick = Instant::now();
-            let mut result =
-                service.search(self.parameters.clone(), self.next.clone(), control.clone());
+            let remember = self.stream.take_offered();
+            let mut page = service.read_cohort(
+                CohortRead {
+                    scope: service.cohort_scope(&self.cohort_id)?,
+                    parameters: self.parameters.clone(),
+                    position: self.next.clone().unwrap_or_default(),
+                    refresh: None,
+                    expansion: self.progress.scan_passes > 1,
+                    remember,
+                },
+                control,
+            )?;
             self.progress.provider_pages += 1;
-            if !reanchored
-                && started.elapsed() < SCAN_TIME
-                && matches!(result, Err(ApplicationError::StaleSearchEvidence))
-                && let Some(retry) = self.reanchor_source()
-            {
-                reanchored = true;
-                // A new read of this unfinished source keeps the same
-                // eligibility and order commitments. Membership drift still
-                // refuses. Earlier candidate batches are never rescanned.
-                result = service.search(
-                    self.parameters.clone(),
-                    Some(retry.clone()),
-                    control.clone(),
-                );
-                self.progress.provider_pages += 1;
-                if result.is_ok() {
-                    self.next = Some(retry);
-                    self.progress.source_reanchors += 1;
-                }
-            }
             self.progress.retrieval_ms += tick.elapsed().as_millis() as u64;
-            let result = match result {
-                Ok(result) => result,
-                Err(ApplicationError::StaleSearchEvidence)
-                    if !first || self.progress.provider_pages > 1 =>
-                {
-                    self.progress.freshness_failures += 1;
-                    self.progress.stop_reason = Some("search_revision_changed");
-                    break;
-                }
-                Err(error) => return Err(error),
-            };
-            if result.binding_revision != self.binding {
-                return Err(ApplicationError::StaleSearchEvidence);
-            }
-            let mut page = result.page;
             let coverage = page.coverage;
             self.progress.bytes_read += coverage.bytes_read;
             self.progress.records_inspected += coverage.work.records_inspected;
@@ -539,6 +533,12 @@ impl Run {
             self.progress.unavailable_sources += coverage.unreadable_sessions;
             self.progress.unknown += coverage.unresolved_sessions;
             self.progress.suppressed_records += coverage.suppressed_records;
+            self.progress.freshness_failures += usize::from(
+                coverage
+                    .reasons
+                    .iter()
+                    .any(|reason| reason == "source_revision_changed"),
+            );
 
             if let Some(next) = &page.next
                 && !progressive::cursor_advances(self.next.as_ref(), next)
@@ -596,7 +596,6 @@ impl Run {
             return Err(ResolutionError::InvalidQueryExpansion.into());
         }
         self.retrieval.expansion = Some(expansion);
-        self.retrieval.exclude_literal_on_expansion = self.progress.lexical_candidates != 0;
         self.parameters = self
             .retrieval
             .compile_parameters()
@@ -907,22 +906,32 @@ mod tests {
     impl SessionSearchReadPort for RepeatingReader {
         fn search_sessions(
             &self,
-            request: &SearchReadRequest,
+            _: &SearchReadRequest,
         ) -> Result<SessionSearchPage, ProviderError> {
+            panic!("progressive resolution never invokes live inventory")
+        }
+
+        fn capture_cohort(
+            &self,
+            _: &CohortScope,
+            _: &SearchParameters,
+        ) -> Result<ProviderWork, ProviderError> {
+            Ok(ProviderWork::default())
+        }
+
+        fn read_cohort(&self, read: &CohortRead) -> Result<CohortPage, ProviderError> {
             self.0.set(self.0.get() + 1);
-            assert_eq!(request.parameters.purpose, SearchPurpose::Discovery);
-            assert_eq!(request.discovery_session.as_deref(), Some(CALLER));
-            assert_eq!(request.excluded.len(), 1);
-            Ok(SessionSearchPage {
+            assert_eq!(read.parameters.purpose, SearchPurpose::Discovery);
+            assert_eq!(read.scope.caller, CALLER);
+            assert_eq!(read.scope.excluded.len(), 1);
+            Ok(CohortPage {
                 unresolved: vec![],
                 sessions: vec![],
                 coverage: SearchCoverage::default(),
-                inventory_fingerprint: "fixture".into(),
-                batch_fingerprint: "fixture".into(),
-                next: Some(SearchContinuation {
-                    inventory_fingerprint: "fixture".into(),
-                    start: 1,
-                    ..Default::default()
+                next: Some(CohortPosition {
+                    index: 1,
+                    after: Some("00000000-0000-4000-8000-000000000009".into()),
+                    stream: None,
                 }),
             })
         }
@@ -966,7 +975,6 @@ mod tests {
             hard_filter,
             literal,
             expansion: Some(compile_expansion(&["EPERM".into()]).unwrap()),
-            exclude_literal_on_expansion: true,
         };
         let params = retrieval.compile_parameters().unwrap();
         let metadata = SessionMetadata {

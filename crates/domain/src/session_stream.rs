@@ -30,9 +30,17 @@ pub struct ProviderWork {
     pub sqlite_snapshot_reuses: u64,
     pub sqlite_backup_us: u64,
     pub metadata_rows: u64,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub cohort_rows: u64,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub cohort_capture_us: u64,
     pub fts_builds: u64,
     pub fts_build_us: u64,
     pub fts_query_us: u64,
+}
+
+fn is_zero(value: &u64) -> bool {
+    *value == 0
 }
 
 impl ProviderWork {
@@ -46,6 +54,8 @@ impl ProviderWork {
         self.sqlite_snapshot_reuses += work.sqlite_snapshot_reuses;
         self.sqlite_backup_us += work.sqlite_backup_us;
         self.metadata_rows += work.metadata_rows;
+        self.cohort_rows += work.cohort_rows;
+        self.cohort_capture_us += work.cohort_capture_us;
         self.fts_builds += work.fts_builds;
         self.fts_build_us += work.fts_build_us;
         self.fts_query_us += work.fts_query_us;

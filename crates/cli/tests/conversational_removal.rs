@@ -1966,3 +1966,208 @@ fn progressive_resolution_publishes_two_independent_result_groups() {
     client.close();
     assert_eq!(tree_bytes(&root), before);
 }
+
+#[test]
+fn uuid_cohort_freezes_membership_and_reopens_sessions_after_completion() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().canonicalize().unwrap();
+    let root = path.join("provider");
+    seed(&root, &path.join("MISSION1"));
+    let db = Connection::open(root.join("state_5.sqlite")).unwrap();
+    db.file_control(None::<&str>, rusqlite::FileControl::PersistWal(&mut 1))
+        .unwrap();
+    let id = |n: usize| format!("00000000-0000-4000-8000-{n:012}");
+    let message = |text: &str| {
+        json!({"type":"response_item","payload":{"type":"message","role":"assistant",
+            "content":[{"type":"output_text","text":text}]}})
+    };
+    let add = |n, project| {
+        let id = id(n);
+        let source = root.join("sessions").join(format!("rollout-{id}.jsonl"));
+        let header = json!({"type":"session_meta","payload":{"id":id,"cli_version":"0.166.0"}});
+        let first = message("FleetProbe implementation was completed.");
+        let second = message("A second recorded message documents the implementation.");
+        fs::write(&source, format!("{header}\n{first}\n{second}\n")).unwrap();
+        db.execute("INSERT INTO threads(id,rollout_path,created_at,updated_at,source,model_provider,cwd,title,sandbox_policy,approval_mode,cli_version,preview,first_user_message) VALUES (?1,?2,1,2,'cli','openai',?3,'Fixture title','read-only','never','0.166.0','','')",
+            rusqlite::params![id, source.to_str().unwrap(), project]).unwrap();
+        source
+    };
+    let sources: Vec<_> = (1..=12).map(|n| add(n, "/fixture/Fleet")).collect();
+    let outside = add(13, "/fixture/Other");
+    let home = PathBuf::from(std::env::var_os("HOME").unwrap())
+        .canonicalize()
+        .unwrap();
+    let mut client =
+        Client::connect(base(&root, &root.join("unused"), &home).args(["mcp", "--session-search"]));
+    let call = |client: &mut Client, tool, caller: &str, arguments| {
+        let result = client.exchange(json!({"jsonrpc":"2.0","id":1,"method":"tools/call",
+            "params":{"name":tool,"arguments":arguments,"_meta":{"threadId":caller}}}));
+        assert!(result["error"].is_null(), "{result}");
+        result["result"]["structuredContent"].clone()
+    };
+    let start = json!({"action":"start","search_intent":{
+        "schema_version":"1","subject":"Find FleetProbe implementation","hints":{"terms":["FleetProbe"]},
+        "constraints":{"archive_state":"active","project_membership":{"mode":"include","names":["Fleet"],"basis":"observed"}}
+    }});
+    let earlier = call(&mut client, "session_resolve", M, start.clone());
+    assert_eq!(earlier["progressive_coverage"]["snapshot_sessions"], 12);
+    assert_eq!(earlier["candidates"].as_array().unwrap().len(), 5);
+
+    // Every mutation is on this disposable fixture. None can change the old cohort.
+    add(0, "/fixture/Fleet");
+    db.execute(
+        "UPDATE threads SET title='Renamed',updated_at=7 WHERE id=?1",
+        [id(7)],
+    )
+    .unwrap();
+    db.execute(
+        "UPDATE threads SET archived=1,cwd='/fixture/Other' WHERE id=?1",
+        [id(6)],
+    )
+    .unwrap();
+    db.execute_batch("CREATE TABLE unrelated(fact INTEGER); INSERT INTO unrelated VALUES (1); PRAGMA wal_checkpoint(TRUNCATE);").unwrap();
+    let append = |source: &Path, text| {
+        let mut file = fs::OpenOptions::new().append(true).open(source).unwrap();
+        writeln!(file, "{}", message(text)).unwrap();
+    };
+    append(
+        &sources[8],
+        "FleetProbe appended before this source was first read.",
+    );
+    let later = call(&mut client, "session_resolve", M, start);
+    assert_eq!(later["progressive_coverage"]["snapshot_sessions"], 12);
+    assert_eq!(later["candidates"][0]["native_session_id"], id(0));
+
+    let drain = |client: &mut Client, mut page: Value| {
+        let run = page["run"].clone();
+        let mut published = BTreeMap::new();
+        for batch in 0..10 {
+            let assessments: Vec<_> = page["candidates"].as_array().unwrap().iter().map(|candidate| {
+                json!({"native_session_id":candidate["native_session_id"],"disposition":"verified_relevant",
+                    "relationship":"direct","explanation":"Fixture implementation",
+                    "evidence":[candidate["evidence"][0]["handle"]]})
+            }).collect();
+            page = call(
+                client,
+                "session_resolve",
+                M,
+                json!({"action":"advance","run":run,
+                "expected_revision":page["step_revision"],"operation_id":format!("batch-{batch}"),"assessments":assessments}),
+            );
+            for row in page["matches"].as_array().unwrap() {
+                assert!(
+                    published
+                        .insert(
+                            row["native_session_id"].as_str().unwrap().to_owned(),
+                            row.clone()
+                        )
+                        .is_none()
+                );
+            }
+            if page["execution_state"] != "in_progress" {
+                break;
+            }
+        }
+        assert_eq!(page["execution_state"], "completed", "{page}");
+        assert_eq!(page["progress"]["sources_inspected"], 12);
+        assert_eq!(page["progress"]["freshness_failures"], 0);
+        assert_eq!(page["progress"]["provider_work"]["metadata_hash_bytes"], 0);
+        assert_eq!(page["progress"]["provider_work"]["sqlite_snapshots"], 0);
+        assert_eq!(page["progress"]["provider_work"]["cohort_rows"], 12);
+        published
+    };
+    let old_rows = drain(&mut client, earlier);
+    let new_rows = drain(&mut client, later);
+    assert_eq!(
+        old_rows.keys().cloned().collect::<Vec<_>>(),
+        (1..=12).map(id).collect::<Vec<_>>()
+    );
+    assert_eq!(
+        new_rows.keys().cloned().collect::<Vec<_>>(),
+        (0..=12).filter(|n| *n != 6).map(id).collect::<Vec<_>>()
+    );
+    assert_eq!(old_rows[&id(7)]["title"], "Renamed");
+    assert_eq!(old_rows[&id(6)]["project_label"], "Fleet");
+
+    let request = json!({"native_session_id":id(1),"window":{"max_messages":1,"max_bytes":512}});
+    let window = call(&mut client, "session_context", M, request.clone());
+    assert_eq!(window["messages"].as_array().unwrap().len(), 1, "{window}");
+    assert_eq!(window["at_start"], true);
+    assert!(window["target"]["token"].is_string());
+    let next_request = json!({"target":window["target"],"evidence_ref":window["next_ref"],
+        "window":window["next_window"]});
+    let next = call(&mut client, "session_context", M, next_request.clone());
+    assert!(
+        next["messages"][0]["excerpt"]
+            .as_str()
+            .unwrap()
+            .contains("second recorded")
+    );
+    let previous = call(
+        &mut client,
+        "session_context",
+        M,
+        json!({
+            "target":window["target"], "evidence_ref":next["previous_ref"],
+            "window":next["previous_window"]
+        }),
+    );
+    assert!(
+        previous["messages"][0]["excerpt"]
+            .as_str()
+            .unwrap()
+            .contains("implementation was completed")
+    );
+    let foreign = call(&mut client, "session_context", T, next_request.clone());
+    assert_eq!(foreign["error"], "stale_cursor");
+    append(
+        &sources[0],
+        "The distinctive refresh marker appeared in a later message.",
+    );
+    let stale = call(&mut client, "session_context", M, next_request);
+    assert_eq!(stale["error"], "stale_cursor");
+    let refreshed = call(
+        &mut client,
+        "session_context",
+        M,
+        json!({"native_session_id":id(1),
+        "window":{"direction":"occurrences","query":"refresh marker"}}),
+    );
+    assert!(
+        refreshed["messages"][0]["excerpt"]
+            .as_str()
+            .unwrap()
+            .contains("refresh marker")
+    );
+
+    let blocked = call(
+        &mut client,
+        "session_context",
+        M,
+        json!({"native_session_id":M}),
+    );
+    assert_eq!(blocked["error"], "protected_management_session");
+    fs::remove_file(&outside).unwrap();
+    let missing = call(
+        &mut client,
+        "session_context",
+        M,
+        json!({"native_session_id":id(13)}),
+    );
+    assert_eq!(missing["error"], "session_source_unavailable");
+    let external = path.join("outside.jsonl");
+    fs::write(&external, b"outside provider").unwrap();
+    db.execute(
+        "UPDATE threads SET rollout_path=?1 WHERE id=?2",
+        (external.to_str().unwrap(), id(13)),
+    )
+    .unwrap();
+    let denied = call(
+        &mut client,
+        "session_context",
+        M,
+        json!({"native_session_id":id(13)}),
+    );
+    assert_eq!(denied["error"], "session_source_unavailable");
+    client.close();
+}
