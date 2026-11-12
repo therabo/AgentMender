@@ -657,9 +657,12 @@ enum ResolutionInput {
         #[serde(default)]
         #[schemars(length(max = session_resolution::WINDOW_BATCH))]
         context_requests: Vec<ResolutionWindowInput>,
+        /// Publish the next verified result page after closing the evaluator.
         #[serde(default)]
-        #[schemars(length(max = EXPANSION_LIMIT))]
-        expansion_terms: Vec<LexicalTerm>,
+        publish: bool,
+        /// Renew an active evaluation while the evaluator is still working.
+        #[serde(default)]
+        keep_alive: bool,
         #[serde(default)]
         cancel: bool,
         #[serde(default)]
@@ -749,6 +752,10 @@ struct SearchHintsInput {
     /// One or a few distinctive content terms or phrases. Each term can independently retrieve a candidate.
     #[schemars(length(max = TERMS_LIMIT))]
     terms: Vec<LexicalTerm>,
+    /// Optional distinct alternatives planned before retrieval. Boolean filters carry their own aliases.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[schemars(length(max = EXPANSION_LIMIT))]
+    expansion_terms: Vec<LexicalTerm>,
     /// Topical project names for assessment. They do not constrain stored membership.
     #[serde(default)]
     #[schemars(length(max = PROJECT_LIMIT))]
@@ -929,7 +936,8 @@ impl ResolutionInput {
                 operation_id,
                 assessments,
                 context_requests,
-                expansion_terms,
+                publish,
+                keep_alive,
                 cancel,
                 luna_unavailable,
             } => Action::Advance {
@@ -947,7 +955,8 @@ impl ResolutionInput {
                             })
                         })
                         .collect::<Result<_, ErrorData>>()?,
-                    expansion: expansion_terms.into_iter().map(|term| term.0).collect(),
+                    publish,
+                    keep_alive,
                     cancel,
                     luna_unavailable,
                 }),
@@ -1061,8 +1070,25 @@ struct ResolutionView {
     step_revision: usize,
     progressive_coverage: serde_json::Value,
     execution_state: SearchExecutionStateView,
+    phase: ResolutionPhaseView,
     #[serde(flatten)]
     data: ResolutionDataView,
+}
+
+#[derive(Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+enum ResolutionPhaseView {
+    Retrieving,
+    Evaluating,
+    Publishing,
+    Completed,
+    Interrupted,
+}
+
+#[derive(Serialize, JsonSchema)]
+struct PreparedChoiceView {
+    native_session_id: String,
+    explanation: String,
 }
 
 #[derive(Serialize, JsonSchema)]
@@ -1108,6 +1134,8 @@ enum ResolutionDataView {
         replayed: bool,
         #[serde(skip_serializing_if = "Vec::is_empty")]
         invalidated: Vec<String>,
+        #[serde(skip_serializing_if = "Vec::is_empty")]
+        prepared_choices: Vec<PreparedChoiceView>,
     },
 }
 
@@ -1245,6 +1273,14 @@ fn resolution_view(
             }),
             replayed: reply.replayed,
             invalidated: reply.invalidated,
+            prepared_choices: reply
+                .prepared_choices
+                .into_iter()
+                .map(|choice| PreparedChoiceView {
+                    native_session_id: choice.native_session_id,
+                    explanation: safe(&choice.explanation),
+                })
+                .collect(),
         },
     };
     ResolutionView {
@@ -1267,6 +1303,13 @@ fn resolution_view(
         },
         progress: serde_json::to_value(result.progress).expect("typed progress"),
         step_revision: result.revision,
+        phase: match result.phase {
+            session_resolution::ResolutionPhase::Retrieving => ResolutionPhaseView::Retrieving,
+            session_resolution::ResolutionPhase::Evaluating => ResolutionPhaseView::Evaluating,
+            session_resolution::ResolutionPhase::Publishing => ResolutionPhaseView::Publishing,
+            session_resolution::ResolutionPhase::Completed => ResolutionPhaseView::Completed,
+            session_resolution::ResolutionPhase::Interrupted => ResolutionPhaseView::Interrupted,
+        },
         execution_state: match result.execution_state {
             agentmender_domain::SearchExecutionState::InProgress => {
                 SearchExecutionStateView::InProgress
@@ -1370,7 +1413,7 @@ pub(super) fn tools(discovery: bool) -> Vec<Tool> {
         ));
         registry.insert(0, (
             "session_resolve",
-            "Search a frozen Codex UUID cohort. Luna Medium must interpret one SearchIntent and assess every candidate. Use start and advance with the latest step_revision. The origin retains signed results and renders two tables. Report Luna unavailability without submitting judgments.",
+            "Use one Luna Medium Planner and close it before start. Advance the frozen UUID retrieval without Luna. When retrieval completes, use one distinct Luna Medium Evaluator across all candidate batches and any single_best selection. Close it before advance with publish:true. Pass the latest step_revision and collect signed rows in two tables. If the required Luna execution is unavailable, interrupt without substitute judgments.",
             resolution_schema(),
             schema::<ResolutionView>(),
             true,

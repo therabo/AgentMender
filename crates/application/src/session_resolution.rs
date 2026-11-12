@@ -1,17 +1,18 @@
 //! Read-only resolution state for one originating Codex conversation.
 mod progressive;
-pub use progressive::{Advance, AdvanceResult, ContextRequest, TerminalOutcome, WINDOW_BATCH};
+pub use progressive::{
+    Advance, AdvanceResult, ContextRequest, ResolutionPhase, TerminalOutcome, WINDOW_BATCH,
+};
 
 use crate::{ApplicationError, QueryControl, TargetSelector, session_search::SessionSearchService};
 pub use agentmender_domain::search_intent::Outcome;
 use agentmender_domain::{
     search_intent::{
         CoverageGoal, ResultPolicy, SearchActivity, SearchIntent, ValidatedSearchIntent,
-        compile_expansion,
     },
     *,
 };
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use std::sync::Arc;
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -21,8 +22,7 @@ use std::{
 const RUN_LIMIT: usize = 4;
 const RUN_RETENTION: Duration = Duration::from_secs(600);
 const SCAN_TIME: Duration = Duration::from_secs(5);
-const SCAN_BATCH: usize = 12;
-const CANDIDATE_BATCH: usize = 5;
+const CANDIDATE_BATCH: usize = COHORT_BATCH;
 const CONTEXT_LIMIT: usize = 24;
 const CONTEXT_BYTES: usize = 128 * 1024;
 
@@ -89,52 +89,7 @@ fn bounded_text(text: &str, limit: usize) -> bool {
     !text.trim().is_empty() && text.len() <= limit && !text.chars().any(char::is_control)
 }
 
-#[derive(Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum Disposition {
-    VerifiedRelevant,
-    Related,
-    Contradiction,
-    Insufficient,
-}
-
-impl Disposition {
-    pub fn verification_state(self) -> CandidateVerificationState {
-        match self {
-            Self::VerifiedRelevant => CandidateVerificationState::Confirmed,
-            Self::Insufficient => CandidateVerificationState::Unconfirmed,
-            Self::Related | Self::Contradiction => CandidateVerificationState::Rejected,
-        }
-    }
-}
-
-#[derive(Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum EvidenceRelationship {
-    Direct,
-    Discussion,
-    Retrospective,
-    Contradiction,
-}
-
-#[derive(Clone, PartialEq, Eq, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct Assessment {
-    pub native_session_id: String,
-    pub disposition: Disposition,
-    pub evidence: Vec<usize>,
-    #[serde(default)]
-    pub outcomes: Vec<Outcome>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub activity: Option<SearchActivity>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub relationship: Option<EvidenceRelationship>,
-    pub explanation: String,
-    #[serde(default)]
-    pub missing_evidence: Option<String>,
-    #[serde(default)]
-    pub plausible_alternative: bool,
-}
+pub use agentmender_domain::{Assessment, Disposition, EvidenceRelationship};
 
 pub enum ResolutionAction {
     Start(Box<ValidatedSearchIntent>),
@@ -151,10 +106,6 @@ impl ResolutionAction {
 pub enum ResolutionError {
     #[error("The run is stale or belongs to another originating conversation. Start a fresh run.")]
     StaleSearchRun,
-    #[error(
-        "Expansion requires a finished first scan and distinct new terms. Only one expansion is allowed."
-    )]
-    InvalidQueryExpansion,
     #[error(
         "Assess presented candidates with their own evidence handles and the requested activity and outcome."
     )]
@@ -177,7 +128,6 @@ impl ResolutionError {
     pub fn code(self) -> &'static str {
         match self {
             Self::StaleSearchRun => "stale_search_run",
-            Self::InvalidQueryExpansion => "invalid_query_expansion",
             Self::InvalidAssessment => "invalid_assessment",
             Self::BudgetExceeded => "budget_exceeded",
             Self::InvalidAdvance => "invalid_advance",
@@ -210,12 +160,7 @@ pub struct ResolutionCandidate {
     pub evidence: Vec<Citation>,
 }
 
-#[derive(Clone)]
-pub struct ResolvedCandidate {
-    pub metadata: SessionMetadata,
-    pub assessment: Assessment,
-    pub citations: Vec<ContextReference>,
-}
+pub type ResolvedCandidate = CohortReceipt;
 
 #[derive(Clone, Default, Serialize)]
 pub struct ResolutionProgress {
@@ -234,6 +179,16 @@ pub struct ResolutionProgress {
     pub unavailable_sources: usize,
     pub suppressed_records: usize,
     pub lexical_candidates: usize,
+    pub snapshot_sessions: u64,
+    pub candidates_staged: usize,
+    pub candidates_evaluated: usize,
+    pub remaining_candidates: usize,
+    pub confirmed: usize,
+    pub unconfirmed: usize,
+    pub rejected: usize,
+    pub retrieval_complete: bool,
+    pub evaluation_complete: bool,
+    pub publication_ready: bool,
     pub literal_candidates: usize,
     pub expansion_only_candidates: usize,
     pub candidates_presented: usize,
@@ -289,6 +244,7 @@ pub struct ResolutionResponse {
     pub revision: usize,
     pub progressive_coverage: progressive::Coverage,
     pub execution_state: SearchExecutionState,
+    pub phase: ResolutionPhase,
     pub progress: ResolutionProgress,
     pub data: ResolutionData,
 }
@@ -353,11 +309,11 @@ impl ResolutionStore {
         });
         match action {
             ResolutionAction::Start(plan) => {
-                let (intent, hard_filter, literal) = plan.into_parts();
+                let (intent, hard_filter, literal, expansion) = plan.into_parts();
                 let retrieval = Retrieval {
                     hard_filter,
                     literal,
-                    expansion: None,
+                    expansion,
                 };
                 let parameters = retrieval.compile_parameters()?;
                 self.start(
@@ -416,7 +372,13 @@ impl ResolutionStore {
                 run.scan(service, control)
             });
         let data = match acquisition {
-            Ok(candidates) => ResolutionData::Candidates(candidates),
+            Ok(()) => {
+                let reply = run.retrieval_response();
+                if run.can_reclaim() {
+                    service.release_cohort(&id);
+                }
+                reply
+            }
             Err(
                 error @ (ApplicationError::Provider(_)
                 | ApplicationError::StaleSearchEvidence
@@ -477,8 +439,7 @@ impl Run {
 
     fn response(&self, run: String, data: ResolutionData) -> ResolutionResponse {
         let mut progress = self.progress.clone();
-        progress.more_candidates = (!progress.scan_complete && progress.stop_reason.is_none())
-            || self.stream.has_refresh_work();
+        self.project_progress(&mut progress);
         ResolutionResponse {
             run,
             result_policy: self.search_intent.result_policy,
@@ -486,6 +447,7 @@ impl Run {
             revision: self.revision,
             progressive_coverage: self.stream_coverage(),
             execution_state: self.stream.execution_state(),
+            phase: self.phase(),
             progress,
             data,
         }
@@ -495,26 +457,22 @@ impl Run {
         &mut self,
         service: &SessionSearchService<'_>,
         control: &QueryControl,
-    ) -> Result<Vec<ResolutionCandidate>, ApplicationError> {
+    ) -> Result<(), ApplicationError> {
         let started = Instant::now();
-        for _ in 0..SCAN_BATCH {
+        for _ in 0..COHORT_SCAN_PAGES {
             if self.progress.scan_complete
                 || self.progress.stop_reason.is_some()
-                || !self.candidates.is_empty()
                 || started.elapsed() >= SCAN_TIME
             {
                 break;
             }
             let tick = Instant::now();
-            let remember = self.stream.take_offered();
             let mut page = service.read_cohort(
                 CohortRead {
                     scope: service.cohort_scope(&self.cohort_id)?,
                     parameters: self.parameters.clone(),
                     position: self.next.clone().unwrap_or_default(),
                     refresh: None,
-                    expansion: self.progress.scan_passes > 1,
-                    remember,
                 },
                 control,
             )?;
@@ -553,12 +511,11 @@ impl Run {
             self.next = page.next;
             self.progress.scan_complete = self.next.is_none();
             for hit in page.sessions {
-                self.add_candidate(hit);
+                self.count_candidate(&hit);
             }
             self.revision += 1;
         }
-        self.progress.candidates_presented += self.candidates.len();
-        Ok(self.candidate_batch(0, self.presented()))
+        Ok(())
     }
 
     fn candidate_batch(&self, start: usize, end: usize) -> Vec<ResolutionCandidate> {
@@ -586,26 +543,6 @@ impl Run {
             .collect()
     }
 
-    fn expand(&mut self, expansion: QueryExpr) -> Result<(), ApplicationError> {
-        if self.retrieval.expansion.is_some()
-            || self.search_intent.filter.is_some()
-            || self.search_intent.hints.terms.is_empty()
-            || !self.progress.scan_complete
-            || self.progress.stop_reason.is_some()
-        {
-            return Err(ResolutionError::InvalidQueryExpansion.into());
-        }
-        self.retrieval.expansion = Some(expansion);
-        self.parameters = self
-            .retrieval
-            .compile_parameters()
-            .map_err(|_| ResolutionError::InvalidQueryExpansion)?;
-        self.progress.scan_passes += 1;
-        self.progress.scan_complete = false;
-        self.stream.reset_order();
-        Ok(())
-    }
-
     fn filter(&self) -> &QueryExpr {
         &self
             .parameters
@@ -615,15 +552,15 @@ impl Run {
             .filter
     }
 
-    fn add_candidate(&mut self, hit: SessionSearchHit) {
-        let basis = self.retrieval.match_basis(&hit);
-        self.progress.lexical_candidates += 1;
+    fn count_candidate(&mut self, hit: &SessionSearchHit) {
+        let basis = self.retrieval.match_basis(hit);
+        self.progress.candidates_staged += 1;
+        self.progress.lexical_candidates += usize::from(!hit.matched_terms.is_empty());
         if basis.literal == Truth::True {
             self.progress.literal_candidates += 1;
         } else if basis.expansion == Some(Truth::True) {
             self.progress.expansion_only_candidates += 1;
         }
-        self.retain_candidate(hit, basis);
     }
 
     fn retain_candidate(&mut self, mut hit: SessionSearchHit, basis: MatchBasis) {
@@ -962,7 +899,8 @@ mod tests {
             operation_id: "next".into(),
             assessments: vec![],
             context_requests: vec![],
-            expansion: vec![],
+            publish: false,
+            keep_alive: false,
             cancel: false,
             luna_unavailable: false,
         })
@@ -970,11 +908,13 @@ mod tests {
 
     #[test]
     fn expansion_cannot_override_unknown_hard_membership() {
-        let (_, hard_filter, literal) = example_intent().into_parts();
+        let (_, hard_filter, literal, _) = example_intent().into_parts();
         let retrieval = Retrieval {
             hard_filter,
             literal,
-            expansion: Some(compile_expansion(&["EPERM".into()]).unwrap()),
+            expansion: Some(
+                agentmender_domain::search_intent::compile_expansion(&["EPERM".into()]).unwrap(),
+            ),
         };
         let params = retrieval.compile_parameters().unwrap();
         let metadata = SessionMetadata {
@@ -1065,7 +1005,7 @@ mod tests {
     }
 
     #[test]
-    fn repeated_continuation_stops_and_unavailable_model_preserves_incomplete_outcome() {
+    fn repeated_continuation_interrupts_before_evaluation() {
         let caller = ApparentCodexCaller::from_metadata(CALLER, None).unwrap();
         let reader = RepeatingReader(Cell::new(0));
         let service = SessionSearchService {
@@ -1091,24 +1031,11 @@ mod tests {
         assert_eq!(first.progress.stop_reason, Some("no_search_progress"));
         assert!(!first.progress.scan_complete);
         assert!(!first.progress.more_candidates);
-        let finish = store
-            .execute(
-                &service,
-                ResolutionAction::Advance {
-                    run: first.run,
-                    step: Box::new(Advance {
-                        luna_unavailable: true,
-                        ..*step(first.revision)
-                    }),
-                },
-                None,
-                &control,
-            )
-            .unwrap();
-        assert!(matches!(finish.data, ResolutionData::Advanced(reply)
+        assert!(matches!(first.data, ResolutionData::Advanced(reply)
             if reply.outcome == Some(TerminalOutcome::Blocked) && reply.matches.is_empty()));
-        assert_eq!(finish.execution_state, SearchExecutionState::Interrupted);
-        assert_eq!(finish.progress.stop_reason, Some("luna_unavailable"));
+        assert_eq!(first.execution_state, SearchExecutionState::Interrupted);
+        assert_eq!(first.phase, ResolutionPhase::Interrupted);
+        assert!(!first.progress.evaluation_complete);
         assert_eq!(reader.0.get(), 2);
     }
 }

@@ -10,8 +10,7 @@ transcript retrieval. New rows belong to a later run.
 
 A progressive cursor identifies a UUID boundary and position and, when necessary, the
 bounded checkpoint of one exact rollout revision. The worker reuses the
-existing lexical evaluator, passage ranking and source reader. An optional
-expansion uses the same cohort and an exact record of already offered UUIDs.
+existing lexical evaluator, passage ranking and source reader. Planned aliases participate in the same scan. [ADR-0036](0036-two-stage-luna-resolution.md) extends the anonymous spool to stage candidates and pending publication receipts.
 The spool stores no transcripts. Bounded pages and a limited number of live
 runs bound resident memory independently of corpus size.
 

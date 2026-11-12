@@ -8,9 +8,9 @@ mod macos_sandbox;
 pub mod process;
 
 use agentmender_domain::{
-    ArtifactGraph, CohortPage, CohortRead, CohortScope, DiscoveryScope, DiscoverySnapshot,
-    GraphError, IntegrityContext, PlanningContext, Provider, ProviderKind,
-    observed_path_is_absolute,
+    ArtifactGraph, CohortPage, CohortQueue, CohortQueuePage, CohortRead, CohortScope,
+    DiscoveryScope, DiscoverySnapshot, GraphError, IntegrityContext, PlanningContext, Provider,
+    ProviderKind, observed_path_is_absolute,
 };
 use std::path::PathBuf;
 use thiserror::Error;
@@ -49,6 +49,15 @@ pub trait SessionSearchReadPort {
         ))
     }
     fn read_cohort(&self, _read: &CohortRead) -> Result<CohortPage, ProviderError> {
+        Err(ProviderError::CapabilityUnavailable(
+            "conversation cohort unavailable".into(),
+        ))
+    }
+    fn cohort_queue(
+        &self,
+        _scope: &CohortScope,
+        _queue: CohortQueue,
+    ) -> Result<CohortQueuePage, ProviderError> {
         Err(ProviderError::CapabilityUnavailable(
             "conversation cohort unavailable".into(),
         ))

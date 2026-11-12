@@ -38,6 +38,14 @@ impl SessionSearchReadPort for IndexedSearchReader<'_> {
         self.reader.read_cohort(read)
     }
 
+    fn cohort_queue(
+        &self,
+        scope: &CohortScope,
+        queue: CohortQueue,
+    ) -> Result<CohortQueuePage, ProviderError> {
+        self.reader.cohort_queue(scope, queue)
+    }
+
     fn release_cohort(&self, id: &str) {
         self.reader.release_cohort(id);
     }

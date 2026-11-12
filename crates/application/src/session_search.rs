@@ -300,6 +300,18 @@ impl SessionSearchService<'_> {
         self.reader.release_cohort(id);
     }
 
+    pub(crate) fn cohort_queue(
+        &self,
+        id: &str,
+        queue: CohortQueue,
+        control: &QueryControl,
+    ) -> Result<CohortQueuePage, ApplicationError> {
+        control.check()?;
+        self.reader
+            .cohort_queue(&self.cohort_scope(id)?, queue)
+            .map_err(reader_error)
+    }
+
     pub(crate) fn verify_search_evidence(
         &self,
         references: &[ContextReference],

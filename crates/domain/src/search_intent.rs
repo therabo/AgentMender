@@ -113,6 +113,8 @@ pub struct SearchConstraints {
 #[serde(deny_unknown_fields)]
 pub struct SearchHints {
     pub terms: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub expansion_terms: Vec<String>,
     #[serde(default)]
     pub project_names: Vec<String>,
 }
@@ -141,11 +143,19 @@ pub struct ValidatedSearchIntent {
     intent: SearchIntent,
     hard_filter: Option<QueryExpr>,
     lexical: QueryExpr,
+    expansion: Option<QueryExpr>,
 }
 
 impl ValidatedSearchIntent {
-    pub fn into_parts(self) -> (SearchIntent, Option<QueryExpr>, QueryExpr) {
-        (self.intent, self.hard_filter, self.lexical)
+    pub fn into_parts(
+        self,
+    ) -> (
+        SearchIntent,
+        Option<QueryExpr>,
+        QueryExpr,
+        Option<QueryExpr>,
+    ) {
+        (self.intent, self.hard_filter, self.lexical, self.expansion)
     }
 
     pub fn intent(&self) -> &SearchIntent {
@@ -197,12 +207,6 @@ impl SearchIntent {
             return Err(UnsupportedSchemaVersion);
         }
         if !bounded_text(&self.subject, SUBJECT_LIMIT)
-            || (self.hints.terms.is_empty()
-                && self.filter.is_none()
-                && self
-                    .constraints
-                    .as_ref()
-                    .is_none_or(|c| c.native_session_id.is_none()))
             || self.filter.as_ref().is_some_and(|query| !query.valid())
             || !bounded_list(&self.hints.terms, TERMS_LIMIT, TERM_LIMIT)
             || !bounded_list(&self.hints.project_names, PROJECT_LIMIT, PROJECT_NAME_LIMIT)
@@ -215,7 +219,7 @@ impl SearchIntent {
         {
             return Err(ConflictingConstraints);
         }
-        let hard_filter = self
+        let mut hard_filter = self
             .constraints
             .as_ref()
             .map(SearchConstraints::compile)
@@ -224,21 +228,30 @@ impl SearchIntent {
         let lexical = if let Some(filter) = &self.filter {
             filter.clone()
         } else if self.hints.terms.is_empty() {
-            QueryExpr::NativeId {
-                values: vec![
-                    self.constraints
-                        .as_ref()
-                        .and_then(|c| c.native_session_id.clone())
-                        .expect("validated identity lookup"),
-                ],
-            }
+            hard_filter.take().ok_or(InvalidSearchIntent)?
         } else {
             lexical_query(&self.hints.terms)
+        };
+        let expansion = if self.hints.expansion_terms.is_empty() {
+            None
+        } else {
+            let expansion = compile_expansion(&self.hints.expansion_terms)?;
+            if self.filter.is_some()
+                || self.hints.terms.is_empty()
+                || expansion
+                    .text_terms()
+                    .iter()
+                    .any(|term| lexical.text_terms().contains(term))
+            {
+                return Err(InvalidQueryExpansion);
+            }
+            Some(expansion)
         };
         Ok(ValidatedSearchIntent {
             intent: self,
             hard_filter,
             lexical,
+            expansion,
         })
     }
 }

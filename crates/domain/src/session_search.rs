@@ -176,6 +176,53 @@ pub struct SearchReadRequest {
     pub continuation: SearchContinuation,
 }
 
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum Disposition {
+    VerifiedRelevant,
+    Related,
+    Contradiction,
+    Insufficient,
+}
+
+impl Disposition {
+    pub fn verification_state(self) -> crate::CandidateVerificationState {
+        match self {
+            Self::VerifiedRelevant => crate::CandidateVerificationState::Confirmed,
+            Self::Insufficient => crate::CandidateVerificationState::Unconfirmed,
+            Self::Related | Self::Contradiction => crate::CandidateVerificationState::Rejected,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EvidenceRelationship {
+    Direct,
+    Discussion,
+    Retrospective,
+    Contradiction,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Assessment {
+    pub native_session_id: String,
+    pub disposition: Disposition,
+    pub evidence: Vec<usize>,
+    #[serde(default)]
+    pub outcomes: Vec<crate::search_intent::Outcome>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub activity: Option<crate::search_intent::SearchActivity>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub relationship: Option<EvidenceRelationship>,
+    pub explanation: String,
+    #[serde(default)]
+    pub missing_evidence: Option<String>,
+    #[serde(default)]
+    pub plausible_alternative: bool,
+}
+
 /// Internal read-only scope for one captured conversational inventory.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -201,8 +248,33 @@ pub struct CohortRead {
     pub position: CohortPosition,
     /// Reacquire one existing identity using its frozen query metadata.
     pub refresh: Option<String>,
-    pub expansion: bool,
-    pub remember: Vec<String>,
+}
+
+pub const COHORT_BATCH: usize = 5;
+pub const COHORT_SCAN_PAGES: usize = 12;
+
+/// A validated judgment awaiting fresh source verification before publication.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CohortReceipt {
+    pub metadata: SessionMetadata,
+    pub assessment: Assessment,
+    pub citations: Vec<ContextReference>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum CohortQueue {
+    Candidates { after: Option<String> },
+    Record { receipts: Vec<CohortReceipt> },
+    Receipts { after: Option<String> },
+    KeepAlive,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub enum CohortQueuePage {
+    Candidates(Vec<SessionSearchHit>),
+    Receipts(Vec<CohortReceipt>),
+    Acknowledged { spool_bytes: u64 },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

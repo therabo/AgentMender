@@ -42,6 +42,10 @@ enum Operation {
         parameters: SearchParameters,
     },
     ReadCohort(CohortRead),
+    CohortQueue {
+        scope: CohortScope,
+        queue: CohortQueue,
+    },
     ReleaseCohort(String),
     OpenWindow {
         reference: ContextReference,
@@ -73,6 +77,7 @@ enum Response {
     Search(SessionSearchPage),
     CapturedCohort(ProviderWork),
     Cohort(CohortPage),
+    CohortQueue(CohortQueuePage),
     ReleasedCohort,
     OpenedWindow(ContextReference, ContextWindow),
     Verified(EvidenceVerification),
@@ -1469,7 +1474,7 @@ fn search_cached(
         return Err(unavailable());
     }
     let inventory = inventory_cached(db, root, request, end, inventory_cache)?;
-    search_batch(root, request, end, inventory, None)
+    search_batch(root, request, end, inventory, false)
 }
 
 /// A cohort supplies its own immutable order. Diagnostic callers retain the
@@ -1479,9 +1484,8 @@ fn search_batch(
     request: &SearchReadRequest,
     end: Instant,
     inventory: Inventory,
-    cohort_skips: Option<&BTreeSet<String>>,
+    cohort: bool,
 ) -> Result<SessionSearchPage, ProviderError> {
-    let cohort = cohort_skips.is_some();
     if request.continuation.result_offset != 0 {
         return Err(stale());
     }
@@ -1493,7 +1497,6 @@ fn search_batch(
     let mut unresolved = Vec::new();
     let mut batch_digest = (!cohort).then(Sha256::new);
     let mut inspected = 0;
-    let mut skipped = 0;
     let mut pending = None;
     let required_terms = request.parameters.terms();
     let terms = request.parameters.ranking_terms();
@@ -1513,11 +1516,6 @@ fn search_batch(
             || hits.len() + unresolved.len() >= request.parameters.page_size
         {
             break;
-        }
-        if cohort_skips.is_some_and(|ids| ids.contains(&candidate.metadata.native_session_id)) {
-            inspected += 1;
-            skipped += 1;
-            continue;
         }
         let mut prior = if inspected == 0 {
             request.continuation.stream.as_ref()
@@ -1884,7 +1882,7 @@ fn search_batch(
                 .then_with(|| a.metadata.identity.cmp(&b.metadata.identity))
         });
     }
-    coverage.sessions_inspected = inspected - skipped;
+    coverage.sessions_inspected = inspected;
     coverage.matched_in_batch = hits.len();
     coverage
         .reasons
@@ -2954,24 +2952,44 @@ fn wire_response(response: &Response, legacy: bool) -> Result<Vec<u8>, ProviderE
 pub fn run_content_capture_worker() -> Result<(), ProviderError> {
     #[cfg(target_os = "macos")]
     {
-        let mut input = std::io::stdin().lock();
+        use std::sync::mpsc::{RecvTimeoutError, sync_channel};
+
+        let (frames, input) = sync_channel(1);
+        std::thread::spawn(move || {
+            let mut stdin = std::io::stdin().lock();
+            loop {
+                let mut bytes = Vec::new();
+                match stdin
+                    .by_ref()
+                    .take(64 * 1024 + 1)
+                    .read_until(b'\n', &mut bytes)
+                {
+                    Ok(0) => return,
+                    Ok(_) if bytes.len() <= 64 * 1024 => {
+                        if frames.send(Ok(bytes)).is_err() {
+                            return;
+                        }
+                    }
+                    _ => {
+                        let _ = frames.send(Err(unavailable()));
+                        return;
+                    }
+                }
+            }
+        });
         let mut output = std::io::stdout().lock();
         let mut paths = None;
         let mut resident = None;
         let mut cohorts = cohort::Cohorts::default();
         loop {
-            let mut bytes = vec![];
-            let count = input
-                .by_ref()
-                .take(64 * 1024 + 1)
-                .read_until(b'\n', &mut bytes)
-                .map_err(|_| unavailable())?;
-            if count == 0 {
-                return Ok(());
-            }
-            if bytes.len() > 64 * 1024 {
-                return Err(unavailable());
-            }
+            let bytes = match input.recv_timeout(cohorts.until_expiry()) {
+                Ok(frame) => frame?,
+                Err(RecvTimeoutError::Timeout) => {
+                    cohorts.expire();
+                    continue;
+                }
+                Err(RecvTimeoutError::Disconnected) => return Ok(()),
+            };
             let legacy = bytes.last() != Some(&b'\n');
             let request: Request = serde_json::from_slice(&bytes).map_err(|_| unavailable())?;
             capture::validate_worker_paths(
@@ -3160,6 +3178,24 @@ impl SessionSearchReadPort for CodexAdapter {
             return Err(unavailable());
         };
         self.validate_search_hits(&page.sessions, &page.unresolved, &read.scope.excluded)?;
+        Ok(page)
+    }
+
+    fn cohort_queue(
+        &self,
+        scope: &CohortScope,
+        queue: CohortQueue,
+    ) -> Result<CohortQueuePage, ProviderError> {
+        let Response::CohortQueue(page) = self.content_worker(Operation::CohortQueue {
+            scope: scope.clone(),
+            queue,
+        })?
+        else {
+            return Err(unavailable());
+        };
+        if let CohortQueuePage::Candidates(rows) = &page {
+            self.validate_search_hits(rows, &[], &scope.excluded)?;
+        }
         Ok(page)
     }
 
@@ -3418,14 +3454,7 @@ mod tests {
             observed
         };
         let mut continuation = query.clone();
-        let first_page = search_batch(
-            root.path(),
-            &query,
-            until(),
-            batch(),
-            Some(&BTreeSet::new()),
-        )
-        .unwrap();
+        let first_page = search_batch(root.path(), &query, until(), batch(), true).unwrap();
         assert!(first_page.sessions.is_empty());
         continuation.continuation = first_page.next.unwrap();
         assert!(continuation.continuation.stream.is_some());
@@ -3435,14 +3464,7 @@ mod tests {
             message("user", "FlightProbe appended after the captured extent")
         )
         .unwrap();
-        let second_page = search_batch(
-            root.path(),
-            &continuation,
-            until(),
-            batch(),
-            Some(&BTreeSet::new()),
-        )
-        .unwrap();
+        let second_page = search_batch(root.path(), &continuation, until(), batch(), true).unwrap();
         assert_eq!(second_page.coverage.unreadable_sessions, 1);
         assert!(
             second_page
@@ -3460,7 +3482,7 @@ mod tests {
             &continuation,
             until(),
             inventory(&db, root.path(), &continuation, until()).unwrap(),
-            Some(&BTreeSet::new()),
+            true,
         )
         .unwrap();
         assert_eq!(final_page.sessions[0].metadata.native_session_id, id(2));

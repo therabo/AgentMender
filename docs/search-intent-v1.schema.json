@@ -533,6 +533,14 @@
     "SearchHintsInput": {
       "additionalProperties": false,
       "properties": {
+        "expansion_terms": {
+          "description": "Optional distinct alternatives planned before retrieval. Boolean filters carry their own aliases.",
+          "items": {
+            "$ref": "#/$defs/LexicalTerm"
+          },
+          "maxItems": 4,
+          "type": "array"
+        },
         "project_names": {
           "description": "Topical project names for assessment. They do not constrain stored membership.",
           "items": {

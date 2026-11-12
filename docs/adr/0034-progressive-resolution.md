@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted. [ADR-0035](0035-uuid-search-cohort.md) specifies the current UUID inventory and continuation.
+Superseded by [ADR-0036](0036-two-stage-luna-resolution.md) for orchestration and publication. [ADR-0035](0035-uuid-search-cohort.md) specifies the UUID inventory.
 
 ## Decision
 

@@ -1,8 +1,10 @@
 //! Per-run UUID inventory, owned by the confined read-only provider worker.
 use super::*;
+use std::collections::VecDeque;
 
 const RETENTION: Duration = Duration::from_secs(600);
 const COHORTS: usize = 4;
+const ROW_BYTES: usize = 20 * 1024;
 
 #[derive(Serialize, Deserialize)]
 struct FrozenRow {
@@ -53,6 +55,7 @@ struct Cohort {
     db: Connection,
     len: usize,
     touched: Instant,
+    scan_replies: VecDeque<(CohortPosition, CohortPage)>,
 }
 
 #[derive(Default)]
@@ -94,7 +97,9 @@ impl Cohort {
         db.execute_batch(
             "PRAGMA temp_store=FILE; PRAGMA cache_size=-512; PRAGMA journal_mode=MEMORY;
              CREATE TABLE cohort(id TEXT PRIMARY KEY NOT NULL, metadata BLOB NOT NULL,
-                                 offered INTEGER NOT NULL DEFAULT 0) WITHOUT ROWID;",
+                                 candidate BLOB, receipt BLOB) WITHOUT ROWID;
+             CREATE INDEX staged_candidates ON cohort(id) WHERE candidate IS NOT NULL;
+             CREATE INDEX pending_receipts ON cohort(id) WHERE receipt IS NOT NULL;",
         )
         .map_err(|_| unavailable())?;
         let started = Instant::now();
@@ -144,6 +149,7 @@ impl Cohort {
             db,
             len,
             touched: Instant::now(),
+            scan_replies: VecDeque::new(),
         })
     }
 
@@ -156,7 +162,6 @@ impl Cohort {
         if read.scope != self.scope
             || !read.parameters.valid()
             || read.parameters.purpose != SearchPurpose::Discovery
-            || read.remember.len() > 5
             || read.position.index > self.len
             || (read.position.index > 0) != read.position.after.is_some()
             || read
@@ -168,21 +173,15 @@ impl Cohort {
             return Err(cohort_unavailable());
         }
         self.touched = Instant::now();
-        if !read.remember.is_empty() {
-            let tx = self.db.transaction().map_err(|_| unavailable())?;
-            for id in &read.remember {
-                let changed = tx
-                    .execute("UPDATE cohort SET offered=1 WHERE id=?1", [id])
-                    .map_err(|_| unavailable())?;
-                if changed != 1 {
-                    return Err(cohort_unavailable());
-                }
-            }
-            tx.commit().map_err(|_| unavailable())?;
+        if read.refresh.is_none()
+            && let Some((_, page)) = self
+                .scan_replies
+                .iter()
+                .find(|(position, _)| position == &read.position)
+        {
+            return Ok(page.clone());
         }
-
         let mut candidates = Vec::new();
-        let mut skips = BTreeSet::new();
         let eligible = if let Some(id) = &read.refresh {
             if read.position.index != 0 || !metadata::uuid(id) {
                 return Err(cohort_unavailable());
@@ -216,7 +215,7 @@ impl Cohort {
         } else {
             let mut select = self
                 .db
-                .prepare("SELECT id,metadata,offered FROM cohort WHERE id>?1 ORDER BY id LIMIT ?2")
+                .prepare("SELECT id,metadata FROM cohort WHERE id>?1 ORDER BY id LIMIT ?2")
                 .map_err(|_| unavailable())?;
             let mut rows = select
                 .query(params![
@@ -228,9 +227,6 @@ impl Cohort {
                 deadline(end)?;
                 let id: String = row.get(0).map_err(|_| unavailable())?;
                 let bytes: Vec<u8> = row.get(1).map_err(|_| unavailable())?;
-                if read.expansion && row.get::<_, bool>(2).map_err(|_| unavailable())? {
-                    skips.insert(id.clone());
-                }
                 candidates.push(frozen_candidate(root, id, &bytes)?);
             }
             self.len
@@ -263,9 +259,9 @@ impl Cohort {
                 corpus_fingerprint: String::new(),
                 next_window: None,
             },
-            Some(&skips),
+            true,
         )?;
-        Ok(CohortPage {
+        let mut page = CohortPage {
             sessions: page.sessions,
             unresolved: page.unresolved,
             coverage: page.coverage,
@@ -281,8 +277,131 @@ impl Cohort {
                     stream: p.stream,
                 }
             }),
+        };
+        if read.refresh.is_none() {
+            let transaction = self.db.transaction().map_err(|_| unavailable())?;
+            for hit in &page.sessions {
+                let payload = encode_row(hit)?;
+                let changed = transaction
+                    .execute(
+                        "UPDATE cohort SET candidate=?2 WHERE id=?1 AND candidate IS NULL",
+                        params![hit.metadata.native_session_id, payload],
+                    )
+                    .map_err(|_| unavailable())?;
+                if changed != 1 {
+                    return Err(cohort_unavailable());
+                }
+            }
+            deadline(end)?;
+            transaction.commit().map_err(|_| unavailable())?;
+        }
+        page.coverage.work = rollout_reader::work();
+        page.coverage.work.provider.cohort_spool_bytes = self.spool_bytes();
+        if read.refresh.is_none() {
+            if self.scan_replies.len() == COHORT_SCAN_PAGES {
+                self.scan_replies.pop_front();
+            }
+            self.scan_replies
+                .push_back((read.position.clone(), page.clone()));
+        }
+        Ok(page)
+    }
+
+    fn spool_bytes(&self) -> u64 {
+        let pragma = |name| {
+            self.db
+                .pragma_query_value(None, name, |row| row.get::<_, i64>(0))
+                .ok()
+                .and_then(|value| u64::try_from(value).ok())
+                .unwrap_or_default()
+        };
+        pragma("page_count").saturating_mul(pragma("page_size"))
+    }
+
+    fn queue(
+        &mut self,
+        scope: &CohortScope,
+        queue: &CohortQueue,
+        end: Instant,
+    ) -> Result<CohortQueuePage, ProviderError> {
+        if scope != &self.scope {
+            return Err(cohort_unavailable());
+        }
+        deadline(end)?;
+        self.touched = Instant::now();
+        Ok(match queue {
+            CohortQueue::Candidates { after } => CohortQueuePage::Candidates(self.rows(
+                "SELECT candidate FROM cohort WHERE candidate IS NOT NULL AND id>?1 ORDER BY id LIMIT ?2",
+                after.as_deref(),
+            )?),
+            CohortQueue::Receipts { after } => CohortQueuePage::Receipts(self.rows(
+                "SELECT receipt FROM cohort WHERE receipt IS NOT NULL AND id>?1 ORDER BY id LIMIT ?2",
+                after.as_deref(),
+            )?),
+            CohortQueue::Record { receipts } => {
+                if receipts.len() > COHORT_BATCH {
+                    return Err(cohort_unavailable());
+                }
+                let transaction = self.db.transaction().map_err(|_| unavailable())?;
+                for receipt in receipts {
+                    let id = &receipt.metadata.native_session_id;
+                    if !metadata::uuid(id)
+                        || receipt.assessment.native_session_id != *id
+                        || !(1..=4).contains(&receipt.citations.len())
+                        || receipt.citations.iter().any(|reference| {
+                            reference.native_session_id != *id
+                                || reference.local_id != receipt.metadata.identity.local_id
+                                || reference.purpose != SearchPurpose::Discovery
+                        })
+                    {
+                        return Err(cohort_unavailable());
+                    }
+                    let payload = encode_row(receipt)?;
+                    let changed = transaction
+                        .execute(
+                            "UPDATE cohort SET receipt=?2 WHERE id=?1 AND candidate IS NOT NULL AND (receipt IS NULL OR receipt=?2)",
+                            params![id, payload],
+                        )
+                        .map_err(|_| unavailable())?;
+                    if changed != 1 {
+                        return Err(cohort_unavailable());
+                    }
+                }
+                deadline(end)?;
+                transaction.commit().map_err(|_| unavailable())?;
+                CohortQueuePage::Acknowledged { spool_bytes: self.spool_bytes() }
+            }
+            CohortQueue::KeepAlive => CohortQueuePage::Acknowledged { spool_bytes: self.spool_bytes() },
         })
     }
+
+    fn rows<T: serde::de::DeserializeOwned>(
+        &self,
+        query: &str,
+        after: Option<&str>,
+    ) -> Result<Vec<T>, ProviderError> {
+        if after.is_some_and(|id| !metadata::uuid(id)) {
+            return Err(cohort_unavailable());
+        }
+        let mut statement = self.db.prepare(query).map_err(|_| unavailable())?;
+        let mut rows = statement
+            .query(params![after.unwrap_or(""), COHORT_BATCH as i64])
+            .map_err(|_| unavailable())?;
+        let mut page = Vec::new();
+        while let Some(row) = rows.next().map_err(|_| unavailable())? {
+            let payload: Vec<u8> = row.get(0).map_err(|_| unavailable())?;
+            page.push(serde_json::from_slice(&payload).map_err(|_| unavailable())?);
+        }
+        Ok(page)
+    }
+}
+
+fn encode_row(row: &impl Serialize) -> Result<Vec<u8>, ProviderError> {
+    let payload = serde_json::to_vec(row).map_err(|_| unavailable())?;
+    if payload.len() > ROW_BYTES {
+        return Err(cohort_unavailable());
+    }
+    Ok(payload)
 }
 
 fn frozen_candidate(root: &Path, id: String, bytes: &[u8]) -> Result<Candidate, ProviderError> {
@@ -292,11 +411,23 @@ fn frozen_candidate(root: &Path, id: String, bytes: &[u8]) -> Result<Candidate, 
 }
 
 impl Cohorts {
+    pub(super) fn expire(&mut self) {
+        self.0
+            .retain(|_, cohort| cohort.touched.elapsed() < RETENTION);
+    }
+
+    pub(super) fn until_expiry(&self) -> Duration {
+        self.0
+            .values()
+            .map(|cohort| RETENTION.saturating_sub(cohort.touched.elapsed()))
+            .min()
+            .unwrap_or(RETENTION)
+    }
+
     pub(super) fn handle(&mut self, request: &Request) -> Option<Result<Response, ProviderError>> {
         let end = Instant::now() + Duration::from_secs(8);
         let root = &request.source_root;
-        self.0
-            .retain(|_, cohort| cohort.touched.elapsed() < RETENTION);
+        self.expire();
         rollout_reader::work_reset();
         Some(match &request.operation {
             Operation::CaptureCohort { scope, parameters } => {
@@ -304,8 +435,10 @@ impl Cohorts {
                     return Some(Err(cohort_unavailable()));
                 }
                 Cohort::capture(scope, parameters, root, end).map(|cohort| {
+                    let mut work = rollout_reader::work().provider;
+                    work.cohort_spool_bytes = cohort.spool_bytes();
                     self.0.insert(scope.id.clone(), cohort);
-                    Response::CapturedCohort(rollout_reader::work().provider)
+                    Response::CapturedCohort(work)
                 })
             }
             Operation::ReadCohort(read) => self
@@ -313,10 +446,13 @@ impl Cohorts {
                 .get_mut(&read.scope.id)
                 .ok_or_else(cohort_unavailable)
                 .and_then(|cohort| cohort.read(read, root, end))
-                .map(|mut page| {
-                    page.coverage.work = rollout_reader::work();
-                    Response::Cohort(page)
-                }),
+                .map(Response::Cohort),
+            Operation::CohortQueue { scope, queue } => self
+                .0
+                .get_mut(&scope.id)
+                .ok_or_else(cohort_unavailable)
+                .and_then(|cohort| cohort.queue(scope, queue, end))
+                .map(Response::CohortQueue),
             Operation::ReleaseCohort(id) => {
                 self.0.remove(id);
                 Ok(Response::ReleasedCohort)
@@ -382,5 +518,34 @@ impl Cohorts {
             }),
             _ => return None,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn idle_expiry_drops_only_expired_spools() {
+        let make = |id: &str, touched| Cohort {
+            scope: CohortScope {
+                id: id.into(),
+                caller: "00000000-0000-4000-8000-000000000001".into(),
+                excluded: vec![],
+            },
+            db: Connection::open("").unwrap(),
+            len: 0,
+            touched,
+            scan_replies: VecDeque::new(),
+        };
+        let now = Instant::now();
+        let mut cohorts = Cohorts(BTreeMap::from([
+            ("1".into(), make("1", now - RETENTION)),
+            ("2".into(), make("2", now)),
+        ]));
+        assert_eq!(cohorts.until_expiry(), Duration::ZERO);
+        cohorts.expire();
+        assert_eq!(cohorts.0.keys().collect::<Vec<_>>(), vec!["2"]);
+        assert!(cohorts.until_expiry() > Duration::ZERO);
     }
 }

@@ -346,7 +346,8 @@ for path in (ROOT / "crates").glob("*/src/**/*.rs"):
         if reviewed_cohort and pattern == patterns[-1]:
             # ADR-0035 admits only the fixed writes to an anonymous worker spool.
             for sql in ['"INSERT INTO cohort(id,metadata) VALUES (?1,?2)"',
-                        '"UPDATE cohort SET offered=1 WHERE id=?1"']:
+                        '"UPDATE cohort SET candidate=?2 WHERE id=?1 AND candidate IS NULL"',
+                        '"UPDATE cohort SET receipt=?2 WHERE id=?1 AND candidate IS NOT NULL AND (receipt IS NULL OR receipt=?2)"']:
                 inspected = inspected.replace(sql, '')
         if (re.search(pattern, inspected)
             and not (reviewed_capture and pattern in {patterns[1], patterns[2], patterns[-1]})

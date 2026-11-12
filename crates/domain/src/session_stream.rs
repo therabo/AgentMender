@@ -34,6 +34,8 @@ pub struct ProviderWork {
     pub cohort_rows: u64,
     #[serde(default, skip_serializing_if = "is_zero")]
     pub cohort_capture_us: u64,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub cohort_spool_bytes: u64,
     pub fts_builds: u64,
     pub fts_build_us: u64,
     pub fts_query_us: u64,
@@ -56,6 +58,7 @@ impl ProviderWork {
         self.metadata_rows += work.metadata_rows;
         self.cohort_rows += work.cohort_rows;
         self.cohort_capture_us += work.cohort_capture_us;
+        self.cohort_spool_bytes = self.cohort_spool_bytes.max(work.cohort_spool_bytes);
         self.fts_builds += work.fts_builds;
         self.fts_build_us += work.fts_build_us;
         self.fts_query_us += work.fts_query_us;

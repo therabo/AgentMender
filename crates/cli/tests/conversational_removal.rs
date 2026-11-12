@@ -997,7 +997,10 @@ fn resolution_binds_intent_context_and_outcomes_to_fresh_discovery_evidence() {
     let mut injected = start.clone();
     injected["search_intent"]["caller_id"] = json!(T);
     assert!(rpc(&mut client, &caller, injected).get("error").is_some());
-    let initial = call(&mut client, start);
+    let acquired = call(&mut client, start);
+    assert_eq!(acquired["phase"], "evaluating");
+    assert_eq!(acquired["candidates"], json!([]));
+    let initial = load_resolution_batch(acquired, |step| call(&mut client, step));
     assert_eq!(initial["result_policy"], "single_best");
     let run = initial["run"].clone();
     let rows = initial["candidates"].as_array().expect("candidate batch");
@@ -1054,6 +1057,11 @@ fn resolution_binds_intent_context_and_outcomes_to_fresh_discovery_evidence() {
         "assessments":[{"native_session_id":U,"disposition":"contradiction",
         "relationship":"contradiction","evidence":[opposite],"outcomes":["attempted","reverted","failed"],
         "explanation":"The reported test failed and the change was reverted."}]});
+    let judged = call(&mut client, finish);
+    assert_eq!(judged["matches"], json!([]));
+    assert_eq!(judged["progress"]["evaluation_complete"], true);
+    let mut finish = resolution_step(&judged, "publish");
+    finish["publish"] = json!(true);
     let final_view = call(&mut client, finish.clone());
     assert_eq!(
         final_view["outcome"], "completed_with_matches",
@@ -1070,29 +1078,23 @@ fn resolution_binds_intent_context_and_outcomes_to_fresh_discovery_evidence() {
     );
     assert_eq!(final_view["alternatives"], json!([]));
 
-    let first_pass = call(
+    let planned = call(
         &mut client,
         json!({"action":"start","search_intent":{
             "schema_version":"1","subject":"Find both camera attempts",
-            "hints":{"terms":["camera limits"]}
+            "hints":{"terms":["camera limits"],"expansion_terms":["telecamera","viewport"]}
         }}),
     );
-    assert_eq!(first_pass["candidates"].as_array().unwrap().len(), 1);
-    assert_eq!(first_pass["candidates"][0]["native_session_id"], T);
-    let expand = json!({"action":"advance","run":first_pass["run"],
-        "expected_revision":first_pass["step_revision"],"operation_id":"expand",
-        "expansion_terms":["telecamera","viewport"],
-        "assessments":[{"native_session_id":T,"disposition":"verified_relevant","relationship":"direct",
-            "evidence":[first_pass["candidates"][0]["evidence"][0]["handle"]],
-            "explanation":"This candidate contains the original camera attempt."}]});
-    let expanded = call(&mut client, expand.clone());
-    assert_eq!(expanded["matches"][0]["native_session_id"], T);
-    assert_eq!(expanded["candidates"].as_array().unwrap().len(), 1);
-    assert_eq!(expanded["candidates"][0]["native_session_id"], U);
+    assert_eq!(planned["candidates"], json!([]));
+    assert_eq!(planned["progress"]["candidates_staged"], 2);
+    let step = resolution_step(&planned, "load-planned");
+    let expanded = call(&mut client, step.clone());
+    assert_eq!(expanded["candidates"].as_array().unwrap().len(), 2);
+    assert_eq!(expanded["progress"]["expansion_only_candidates"], 1);
     assert_eq!(expanded["progress"]["lexical_candidates"], 2);
-    let replay = call(&mut client, expand);
+    let replay = call(&mut client, step);
     assert_eq!(replay["replayed"], true);
-    assert_eq!(replay["matches"], expanded["matches"]);
+    assert_eq!(replay["candidates"], expanded["candidates"]);
 
     let exact = call(
         &mut client,
@@ -1101,6 +1103,7 @@ fn resolution_binds_intent_context_and_outcomes_to_fresh_discovery_evidence() {
             "constraints":{"native_session_id":U}
         }}),
     );
+    let exact = load_resolution_batch(exact, |step| call(&mut client, step));
     let candidate = &exact["candidates"][0];
     assert_eq!(candidate["native_session_id"], U);
     assert!(
@@ -1125,6 +1128,29 @@ fn resolution_binds_intent_context_and_outcomes_to_fresh_discovery_evidence() {
     assert_eq!(stale["invalidated"], json!([T]));
     assert_eq!(stale["progress"]["freshness_failures"], 1);
     client.close();
+}
+
+fn resolution_step(page: &Value, operation: &str) -> Value {
+    json!({"action":"advance","run":page["run"],"expected_revision":page["step_revision"],
+           "operation_id":format!("{operation}-{}", page["step_revision"])})
+}
+
+fn load_resolution_batch(mut page: Value, mut call: impl FnMut(Value) -> Value) -> Value {
+    while page["execution_state"] == "in_progress"
+        && page["progress"]["publication_ready"] != true
+        && page["candidates"] == json!([])
+    {
+        let next = call(resolution_step(&page, "load"));
+        assert_ne!(page["step_revision"], next["step_revision"], "{next}");
+        page = next;
+    }
+    page
+}
+
+fn publish_resolution_page(page: &Value, mut call: impl FnMut(Value) -> Value) -> Value {
+    let mut step = resolution_step(page, "publish");
+    step["publish"] = json!(true);
+    call(step)
 }
 
 #[test]
@@ -1311,7 +1337,8 @@ fn search_intent_v1_preserves_cross_project_eligibility_and_verified_cardinality
         let result = rpc(&mut client, invalid, json!({}));
         assert_eq!(result["error"]["data"]["error"], code, "{result}");
     }
-    let initial = call(&mut client, start.clone());
+    let started = call(&mut client, start.clone());
+    let initial = load_resolution_batch(started, |step| call(&mut client, step));
     assert_eq!(ids(&initial, "candidates"), set(&[T, U, unknown]));
     assert_eq!(initial["progress"]["scan_complete"], true);
     assert_eq!(initial["coverage"]["goal"], "standard");
@@ -1345,7 +1372,8 @@ fn search_intent_v1_preserves_cross_project_eligibility_and_verified_cardinality
         call(&mut client, submit(&initial, forged))["error"],
         "invalid_assessment"
     );
-    let finished = call(&mut client, submit(&initial, assessment(&initial)));
+    let judged = call(&mut client, submit(&initial, assessment(&initial)));
+    let finished = publish_resolution_page(&judged, |step| call(&mut client, step));
     assert_eq!(finished["outcome"], "completed_with_matches");
     assert_eq!(ids(&finished, "matches"), set(&[T, U]));
     assert!(finished["matches"].as_array().unwrap().iter().all(|row| {
@@ -1354,18 +1382,24 @@ fn search_intent_v1_preserves_cross_project_eligibility_and_verified_cardinality
     let mut include = start.clone();
     include["search_intent"]["constraints"] =
         json!({"project_membership":{"mode":"include","names":["MISSION1"],"basis":"observed"}});
-    let result = call(&mut client, include.clone());
+    include["search_intent"]["hints"]["expansion_terms"] = json!(["lunch"]);
+    let started = call(&mut client, include.clone());
+    let result = load_resolution_batch(started, |step| call(&mut client, step));
     assert_eq!(ids(&result, "candidates"), set(&[T]));
-    let mut expand = submit(&result, assessment(&result));
-    expand["expansion_terms"] = json!(["lunch"]);
-    let result = call(&mut client, expand);
+    let judged = call(&mut client, submit(&result, assessment(&result)));
+    let result = publish_resolution_page(&judged, |step| call(&mut client, step));
     assert_eq!(result["execution_state"], "completed");
     assert_eq!(result["progress"]["lexical_candidates"], 1);
-    assert_eq!(result["progress"]["scan_passes"], 2);
+    assert_eq!(result["progress"]["scan_passes"], 1);
     assert_eq!(result["candidates"], json!([]));
+    include["search_intent"]["hints"]
+        .as_object_mut()
+        .unwrap()
+        .remove("expansion_terms");
     let mut exclude = include;
     exclude["search_intent"]["constraints"]["project_membership"]["mode"] = json!("exclude");
-    let result = call(&mut client, exclude);
+    let started = call(&mut client, exclude);
+    let result = load_resolution_batch(started, |step| call(&mut client, step));
     assert_eq!(ids(&result, "candidates"), set(&[U]));
     assert!(result["progress"]["unknown"].as_u64().unwrap() > 0);
 
@@ -1376,23 +1410,28 @@ fn search_intent_v1_preserves_cross_project_eligibility_and_verified_cardinality
     exhaustive["search_intent"]["coverage_goal"] = json!("exhaustive");
     exhaustive["search_intent"]["required_outcome"] = Value::Null;
     exhaustive["search_intent"]["constraints"] = Value::Null;
-    let batch = call(&mut client, exhaustive);
+    let started = call(&mut client, exhaustive);
+    let batch = load_resolution_batch(started, |step| call(&mut client, step));
     assert_eq!(ids(&batch, "candidates"), set(&[T, U, unknown]));
-    let result = call(&mut client, submit(&batch, assessment(&batch)));
+    let judged = call(&mut client, submit(&batch, assessment(&batch)));
+    let result = publish_resolution_page(&judged, |step| call(&mut client, step));
     assert_eq!(result["execution_state"], "completed");
     assert_eq!(result["coverage"]["eligible_evaluation_complete"], false);
     assert_eq!(ids(&result, "matches"), set(&[T, U]));
 
     let mut single = start.clone();
     single["search_intent"]["result_policy"] = json!("single_best");
-    let batch = call(&mut client, single);
+    let started = call(&mut client, single);
+    let batch = load_resolution_batch(started, |step| call(&mut client, step));
     assert_eq!(batch["result_policy"], "single_best");
-    let verified = call(&mut client, submit(&batch, assessment(&batch)));
+    let judged = call(&mut client, submit(&batch, assessment(&batch)));
+    let verified = publish_resolution_page(&judged, |step| call(&mut client, step));
     assert_eq!(verified["result_policy"], "single_best");
     assert_eq!(verified["execution_state"], "completed");
     assert_eq!(ids(&verified, "matches"), set(&[T, U]));
 
-    let unavailable = call(&mut client, start.clone());
+    let started = call(&mut client, start.clone());
+    let unavailable = load_resolution_batch(started, |step| call(&mut client, step));
     let mut mixed = submit(&unavailable, assessment(&unavailable));
     mixed["luna_unavailable"] = json!(true);
     assert_eq!(call(&mut client, mixed)["error"], "invalid_advance");
@@ -1406,7 +1445,8 @@ fn search_intent_v1_preserves_cross_project_eligibility_and_verified_cardinality
     let mut implementation = start;
     implementation["search_intent"]["activity"] = json!("implementation");
     implementation["search_intent"]["required_outcome"] = json!("validated");
-    let batch = call(&mut client, implementation);
+    let started = call(&mut client, implementation);
+    let batch = load_resolution_batch(started, |step| call(&mut client, step));
     assert_eq!(
         call(&mut client, submit(&batch, assessment(&batch)))["error"],
         "invalid_assessment"
@@ -1419,10 +1459,9 @@ fn search_intent_v1_preserves_cross_project_eligibility_and_verified_cardinality
             _ => {}
         }
     }
-    assert_eq!(
-        ids(&call(&mut client, submit(&batch, judgments)), "matches"),
-        set(&[U])
-    );
+    let judged = call(&mut client, submit(&batch, judgments));
+    let published = publish_resolution_page(&judged, |step| call(&mut client, step));
+    assert_eq!(ids(&published, "matches"), set(&[U]));
     client.close();
     assert_eq!(tree_bytes(&root), before);
 }
@@ -1462,8 +1501,7 @@ fn resolution_cannot_infer_absence_from_a_missing_source() {
             "schema_version":"1","subject":"Find a camera implementation",
             "constraints":{"native_session_id":id},"hints":{"terms":["camera"]}
         }}));
-        let finished = call(json!({"action":"advance","run":started["run"],
-            "expected_revision":started["step_revision"],"operation_id":"finish"}));
+        let finished = load_resolution_batch(started, &mut call);
         assert_eq!(finished["outcome"], expected, "{finished}");
         assert_eq!(
             finished["execution_state"],
@@ -1471,7 +1509,7 @@ fn resolution_cannot_infer_absence_from_a_missing_source() {
         );
         assert_eq!(
             finished["progressive_coverage"]["candidate_evaluation_complete"],
-            id != T
+            true
         );
         if id == T {
             assert_eq!(finished["progress"]["stop_reason"], "source_unavailable");
@@ -1533,22 +1571,47 @@ fn progressive_resolution_drains_all_batches_and_revalidates_replayed_publicatio
         }}),
         M,
     );
-    let run = response["run"].clone();
-    let mut published = std::collections::BTreeSet::new();
-    let mut last_step = Value::Null;
+    assert_eq!(response["phase"], "retrieving");
+    assert_eq!(response["candidates"], json!([]));
+    let mut premature = resolution_step(&response, "premature");
+    premature["publish"] = json!(true);
+    assert_eq!(call(&mut client, premature, M)["error"], "invalid_advance");
+    let mut premature = resolution_step(&response, "premature-assessment");
+    premature["assessments"] = json!([{"native_session_id":T,"disposition":"insufficient",
+        "explanation":"Synthetic premature judgment.","evidence":[]}]);
+    assert_eq!(call(&mut client, premature, M)["error"], "invalid_advance");
+    let cancelled_start = call(
+        &mut client,
+        json!({"action":"start","search_intent":{
+            "schema_version":"1","subject":"Cancel during lexical traversal","hints":{"terms":["FleetProbe"]}
+        }}),
+        M,
+    );
+    assert_eq!(cancelled_start["phase"], "retrieving");
+    let mut cancellation = resolution_step(&cancelled_start, "cancel");
+    cancellation["cancel"] = json!(true);
+    let cancelled = call(&mut client, cancellation, M);
+    assert_eq!(cancelled["phase"], "interrupted");
+    assert_eq!(cancelled["progress"]["retrieval_complete"], false);
+    assert_eq!(cancelled["progress"]["candidates_evaluated"], 0);
+    assert_eq!(cancelled["matches"], json!([]));
+
+    let mut evaluated = std::collections::BTreeSet::new();
     for index in 0..21 {
-        let candidates = response["candidates"]
-            .as_array()
-            .unwrap_or_else(|| panic!("batch {index}: {response}"));
+        response = load_resolution_batch(response, |step| call(&mut client, step, M));
+        assert_eq!(response["progress"]["snapshot_sessions"], 105);
+        assert_eq!(response["progress"]["sources_inspected"], 105);
+        assert_eq!(response["progress"]["retrieval_complete"], true);
+        let candidates = response["candidates"].as_array().unwrap();
         assert_eq!(candidates.len(), 5, "{response}");
-        let assessments: Vec<_> = candidates.iter().map(|row| json!({
-            "native_session_id":row["native_session_id"], "disposition":"verified_relevant",
-            "relationship":"direct","outcomes":["tested"],"evidence":[row["evidence"][0]["handle"]],
-            "explanation":"The fixture reports passing tests."
-        })).collect();
-        let step = json!({"action":"advance","run":run,"expected_revision":response["step_revision"],
-            "operation_id":format!("step-{index}"),"assessments":assessments});
-        last_step = step.clone();
+        let assessments: Vec<_> = candidates.iter().map(|row| {
+            assert!(evaluated.insert(row["native_session_id"].as_str().unwrap().to_owned()));
+            json!({"native_session_id":row["native_session_id"],"disposition":"verified_relevant",
+                "relationship":"direct","outcomes":["tested"],"evidence":[row["evidence"][0]["handle"]],
+                "explanation":"The fixture reports passing tests."})
+        }).collect();
+        let mut step = resolution_step(&response, "assess");
+        step["assessments"] = json!(assessments);
         if index == 0 {
             let mut wrong = step.clone();
             wrong["assessments"][0]["relationship"] = json!("retrospective");
@@ -1559,28 +1622,31 @@ fn progressive_resolution_drains_all_batches_and_revalidates_replayed_publicatio
             );
         }
         response = call(&mut client, step.clone(), M);
-        let matches = response["matches"]
-            .as_array()
-            .unwrap_or_else(|| panic!("{response}"));
-        assert_eq!(matches.len(), 5, "{response}");
-        for row in matches {
-            assert!(published.insert(row["native_session_id"].as_str().unwrap().to_owned()));
-            assert_eq!(row["can_request_preview"], false);
-        }
+        assert_eq!(response["matches"], json!([]));
+        assert_eq!(response["prepared_choices"].as_array().unwrap().len(), 5);
         assert_eq!(
-            response["progressive_coverage"]["released"],
+            response["progress"]["candidates_evaluated"],
             (index + 1) * 5
         );
-        assert_eq!(response["progress"]["publication_checks"], index + 1);
         if index == 0 {
             let retry = call(&mut client, step, M);
             assert_eq!(retry["replayed"], true);
             assert_eq!(retry["step_revision"], response["step_revision"]);
-            assert_eq!(retry["matches"], response["matches"]);
-            assert_eq!(retry["candidates"], response["candidates"]);
+            assert_eq!(retry["prepared_choices"], response["prepared_choices"]);
         }
-        if index < 20 {
-            assert!(response["outcome"].is_null(), "{response}");
+    }
+    assert_eq!(evaluated, sources.keys().cloned().collect());
+    assert_eq!(response["progress"]["publication_ready"], true);
+    assert_eq!(response["progress"]["evaluation_complete"], true);
+    let mut published = std::collections::BTreeSet::new();
+    let mut last_step = Value::Null;
+    while response["execution_state"] == "in_progress" {
+        last_step = resolution_step(&response, "publish");
+        last_step["publish"] = json!(true);
+        response = call(&mut client, last_step.clone(), M);
+        for row in response["matches"].as_array().unwrap() {
+            assert!(published.insert(row["native_session_id"].as_str().unwrap().to_owned()));
+            assert_eq!(row["can_request_preview"], false);
         }
     }
     assert_eq!(published, sources.keys().cloned().collect());
@@ -1617,7 +1683,7 @@ fn progressive_resolution_drains_all_batches_and_revalidates_replayed_publicatio
     assert_eq!(replay["execution_state"], "interrupted");
     assert_eq!(
         replay["progressive_coverage"]["candidate_evaluation_complete"],
-        false
+        true
     );
     assert_eq!(replay["invalidated"], json!([changed]));
     assert_eq!(replay["matches"].as_array().unwrap().len(), 4);
@@ -1631,6 +1697,7 @@ fn progressive_resolution_drains_all_batches_and_revalidates_replayed_publicatio
         }}),
         M,
     );
+    let batch = load_resolution_batch(batch, |step| call(&mut client, step, M));
     let candidates = batch["candidates"].as_array().unwrap();
     assert_eq!(candidates.len(), 5);
     let replaced = candidates[0]["native_session_id"].as_str().unwrap();
@@ -1651,14 +1718,15 @@ fn progressive_resolution_drains_all_batches_and_revalidates_replayed_publicatio
         M,
     );
     assert_eq!(
-        published["matches"].as_array().unwrap().len(),
+        published["prepared_choices"].as_array().unwrap().len(),
         4,
         "{published}"
     );
     assert_eq!(published["progress"]["freshness_failures"], 1);
     assert_eq!(published["execution_state"], "in_progress");
-    assert_eq!(published["candidates"].as_array().unwrap().len(), 1);
-    let refreshed = &published["candidates"][0];
+    let refreshed_page = load_resolution_batch(published, |step| call(&mut client, step, M));
+    assert_eq!(refreshed_page["candidates"].as_array().unwrap().len(), 1);
+    let refreshed = &refreshed_page["candidates"][0];
     assert_eq!(refreshed["native_session_id"], replaced);
     assert_ne!(
         refreshed["evidence"][0]["handle"],
@@ -1667,21 +1735,24 @@ fn progressive_resolution_drains_all_batches_and_revalidates_replayed_publicatio
     let restored = call(
         &mut client,
         json!({"action":"advance","run":batch["run"],
-        "expected_revision":published["step_revision"],"operation_id":"assess-new-revision",
+        "expected_revision":refreshed_page["step_revision"],"operation_id":"assess-new-revision",
         "assessments":[{"native_session_id":replaced,"disposition":"verified_relevant",
             "relationship":"direct","outcomes":["tested"],"evidence":[refreshed["evidence"][0]["handle"]],
             "explanation":"The fresh revision contains the original test result."}]}),
         M,
     );
     assert_eq!(
-        restored["matches"].as_array().unwrap().len(),
+        restored["prepared_choices"].as_array().unwrap().len(),
         1,
         "{restored}"
     );
-    assert_eq!(restored["matches"][0]["native_session_id"], replaced);
-    assert_eq!(restored["candidates"].as_array().unwrap().len(), 5);
+    assert_eq!(
+        restored["prepared_choices"][0]["native_session_id"],
+        replaced
+    );
+    assert_eq!(restored["candidates"], json!([]));
     assert_eq!(restored["progressive_coverage"]["confirmed"], 5);
-    assert_eq!(restored["progress"]["lexical_candidates"], 10);
+    assert_eq!(restored["progress"]["lexical_candidates"], 105);
     let exact = call(
         &mut client,
         json!({"action":"start","search_intent":{
@@ -1690,6 +1761,7 @@ fn progressive_resolution_drains_all_batches_and_revalidates_replayed_publicatio
         }}),
         M,
     );
+    let exact = load_resolution_batch(exact, |step| call(&mut client, step, M));
     let change_source = || {
         let mut file = fs::OpenOptions::new().append(true).open(path).unwrap();
         writeln!(file).unwrap();
@@ -1705,18 +1777,19 @@ fn progressive_resolution_drains_all_batches_and_revalidates_replayed_publicatio
         context["context_failures"][0]["reason"], "stale_search_evidence",
         "{context}"
     );
-    let retry = call(
+    let pending_refresh = call(
         &mut client,
         json!({"action":"advance","run":exact["run"],"expected_revision":context["step_revision"],
             "operation_id":"refresh-exact"}),
         M,
     );
+    let retry = load_resolution_batch(pending_refresh, |step| call(&mut client, step, M));
     assert_eq!(
         retry["candidates"][0]["native_session_id"], replaced,
         "{retry}"
     );
     change_source();
-    let interrupted = call(
+    let judged = call(
         &mut client,
         json!({"action":"advance","run":exact["run"],"expected_revision":retry["step_revision"],
             "operation_id":"stale-again","assessments":[{"native_session_id":replaced,
@@ -1725,6 +1798,7 @@ fn progressive_resolution_drains_all_batches_and_revalidates_replayed_publicatio
                 "explanation":"The excerpt reports the test result."}]}),
         M,
     );
+    let interrupted = publish_resolution_page(&judged, |step| call(&mut client, step, M));
     assert_eq!(
         interrupted["execution_state"], "interrupted",
         "{interrupted}"
@@ -1821,26 +1895,23 @@ fn progressive_resolution_publishes_two_independent_result_groups() {
         ("AllTests", "EmptyFirstPass", 7, 0, 0),
         ("MixedTests", "Atlas", 5, 3, 2),
     ] {
+        let expansion = if project == "AllTests" {
+            vec!["Atlas"]
+        } else {
+            vec![]
+        };
         let mut response = call(json!({"action":"start","search_intent":{
             "schema_version":"1","subject":"Find Atlas scraper testing and validation",
             "activity":"testing","required_outcome":"validated","coverage_goal":"exhaustive",
             "constraints":{"project_membership":{"mode":"include","basis":"observed","names":[project]}},
-            "hints":{"terms":[term]}
+            "hints":{"terms":[term],"expansion_terms":expansion}
         }}));
         let run = response["run"].clone();
         assert_eq!(response["execution_state"], "in_progress", "{response}");
+        assert_eq!(response["candidates"], json!([]));
+        response = load_resolution_batch(response, &mut call);
         if project == "AllTests" {
-            assert_eq!(response["candidates"], json!([]));
-            assert_eq!(response["progress"]["scan_complete"], true);
-            response = call(
-                json!({"action":"advance","run":run,"expected_revision":response["step_revision"],
-                "operation_id":"expand","expansion_terms":["Atlas"]}),
-            );
-            assert_eq!(
-                response["candidates"].as_array().unwrap().len(),
-                5,
-                "{response}"
-            );
+            assert_eq!(response["candidates"].as_array().unwrap().len(), 5);
             let partial = response["candidates"]
                 .as_array()
                 .unwrap()
@@ -1853,6 +1924,10 @@ fn progressive_resolution_publishes_two_independent_result_groups() {
         let mut alternatives = BTreeMap::new();
         let mut requested_context = false;
         for batch in 0..6 {
+            response = load_resolution_batch(response, &mut call);
+            if response["progress"]["publication_ready"] == true {
+                break;
+            }
             let candidates = response["candidates"].as_array().unwrap().clone();
             let mut revision = response["step_revision"].clone();
             let mut extra = None;
@@ -1900,6 +1975,13 @@ fn progressive_resolution_publishes_two_independent_result_groups() {
                 json!({"action":"advance","run":run,"expected_revision":revision,
                 "operation_id":format!("evaluate-{batch}"),"assessments":assessments}),
             );
+            assert_eq!(response["matches"], json!([]));
+            assert_eq!(response["alternatives"], json!([]));
+            assert_eq!(response["execution_state"], "in_progress", "{response}");
+        }
+        assert_eq!(response["progress"]["publication_ready"], true);
+        while response["execution_state"] == "in_progress" {
+            response = publish_resolution_page(&response, &mut call);
             for (field, state, rows) in [
                 ("matches", "confirmed", &mut matches),
                 ("alternatives", "unconfirmed", &mut alternatives),
@@ -1919,10 +2001,6 @@ fn progressive_resolution_publishes_two_independent_result_groups() {
                     );
                 }
             }
-            if response["execution_state"] == "completed" {
-                break;
-            }
-            assert_eq!(response["execution_state"], "in_progress", "{response}");
         }
         assert_eq!(response["execution_state"], "completed", "{response}");
         assert_eq!(response["outcome"], "completed_with_matches");
@@ -2011,7 +2089,7 @@ fn uuid_cohort_freezes_membership_and_reopens_sessions_after_completion() {
     }});
     let earlier = call(&mut client, "session_resolve", M, start.clone());
     assert_eq!(earlier["progressive_coverage"]["snapshot_sessions"], 12);
-    assert_eq!(earlier["candidates"].as_array().unwrap().len(), 5);
+    assert_eq!(earlier["candidates"], json!([]));
 
     // Every mutation is on this disposable fixture. None can change the old cohort.
     add(0, "/fixture/Fleet");
@@ -2032,28 +2110,29 @@ fn uuid_cohort_freezes_membership_and_reopens_sessions_after_completion() {
     };
     append(
         &sources[8],
-        "FleetProbe appended before this source was first read.",
+        "FleetProbe appended between retrieval and assessment.",
     );
     let later = call(&mut client, "session_resolve", M, start);
     assert_eq!(later["progressive_coverage"]["snapshot_sessions"], 12);
-    assert_eq!(later["candidates"][0]["native_session_id"], id(0));
+    assert_eq!(later["candidates"], json!([]));
 
-    let drain = |client: &mut Client, mut page: Value| {
-        let run = page["run"].clone();
-        let mut published = BTreeMap::new();
-        for batch in 0..10 {
+    let drain = |client: &mut Client, mut page: Value, stale_sources| {
+        let mut step = |arguments| call(client, "session_resolve", M, arguments);
+        while page["progress"]["publication_ready"] != true {
+            page = load_resolution_batch(page, &mut step);
+            assert_eq!(page["phase"], "evaluating", "{page}");
             let assessments: Vec<_> = page["candidates"].as_array().unwrap().iter().map(|candidate| {
                 json!({"native_session_id":candidate["native_session_id"],"disposition":"verified_relevant",
                     "relationship":"direct","explanation":"Fixture implementation",
                     "evidence":[candidate["evidence"][0]["handle"]]})
             }).collect();
-            page = call(
-                client,
-                "session_resolve",
-                M,
-                json!({"action":"advance","run":run,
-                "expected_revision":page["step_revision"],"operation_id":format!("batch-{batch}"),"assessments":assessments}),
-            );
+            let mut assessment = resolution_step(&page, "assess");
+            assessment["assessments"] = json!(assessments);
+            page = step(assessment);
+        }
+        let mut published = BTreeMap::new();
+        while page["execution_state"] == "in_progress" {
+            page = publish_resolution_page(&page, &mut step);
             for row in page["matches"].as_array().unwrap() {
                 assert!(
                     published
@@ -2064,20 +2143,17 @@ fn uuid_cohort_freezes_membership_and_reopens_sessions_after_completion() {
                         .is_none()
                 );
             }
-            if page["execution_state"] != "in_progress" {
-                break;
-            }
         }
         assert_eq!(page["execution_state"], "completed", "{page}");
         assert_eq!(page["progress"]["sources_inspected"], 12);
-        assert_eq!(page["progress"]["freshness_failures"], 0);
+        assert_eq!(page["progress"]["freshness_failures"], stale_sources);
         assert_eq!(page["progress"]["provider_work"]["metadata_hash_bytes"], 0);
         assert_eq!(page["progress"]["provider_work"]["sqlite_snapshots"], 0);
         assert_eq!(page["progress"]["provider_work"]["cohort_rows"], 12);
         published
     };
-    let old_rows = drain(&mut client, earlier);
-    let new_rows = drain(&mut client, later);
+    let old_rows = drain(&mut client, earlier, 1);
+    let new_rows = drain(&mut client, later, 0);
     assert_eq!(
         old_rows.keys().cloned().collect::<Vec<_>>(),
         (1..=12).map(id).collect::<Vec<_>>()
