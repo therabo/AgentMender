@@ -1,5 +1,6 @@
 # Milestone history and current product sequencing
 
+- [Luna host routing](luna-host-routing.md) records the Desktop incident and the completed real App Server search.
 - [Two-stage Luna resolution](two-stage-luna-resolution.md) records the separated host lifecycle and exhaustive retrieval acceptance.
 - [UUID search snapshot](uuid-search-snapshot.md) records the current resolver, reopening and benchmarks.
 - [Progressive session resolution](progressive-session-resolution.md) records the feature branch implementation, scale tests and acceptance limits.
