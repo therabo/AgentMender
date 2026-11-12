@@ -5,7 +5,9 @@ November 12, 2026 · Europe/Rome
 Local branch `feature/progressive-retrieval`, starting at `c9f8bc4`. The
 remote advertised `main` at `8c63ef6` and no head at the feature branch name.
 The [invalidation investigation](../research/search-index-invalidation-investigation.md)
-is a separate diagnostic result.
+is a separate diagnostic result. See the
+[UUID snapshot milestone](uuid-search-snapshot.md) for the current acquisition
+and continuation contract.
 
 ## MCP and responsibilities
 

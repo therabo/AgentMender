@@ -96,8 +96,10 @@ verify its own host events.
 ## Progressive workflow
 
 1. Ask Luna for one SearchIntent and verify it against the original request.
-   Use `start` with that object in all modes. The origin retains the immutable
-   plan, run, evidence handles and signed references.
+   Use `start` with that object in all modes. The worker captures one
+   consistent metadata view. UUID membership, filter metadata and native UUID
+   order are fixed for that run. New sessions are visible on a later start.
+   The origin retains the plan, run, evidence handles and signed references.
 2. Give Luna the candidate identities and bounded quoted evidence. Submit one
    judgment per candidate with `advance`. Direct original evidence can confirm
    a session with partial history. A recap of work done elsewhere does not
@@ -116,10 +118,8 @@ verify its own host events.
 5. Continue while `execution_state` is `in_progress`, even with empty pages.
    For ordinary lexical hints, one `expansion_terms` submission is allowed at
    the end of the first pass. Submit it with the last outstanding judgments.
-   The server preserves scope. After a nonempty first pass it requires a definite
-   nonmatch on the original terms to keep the lexical partitions disjoint.
-   Original terms that are UNKNOWN on partial history remain coverage gaps.
-   Sources can change between passes, so the origin upserts by exact identity.
+   The server keeps the original cohort and skips UUIDs already offered in
+   the first pass. A partial history can still leave a lexical coverage gap.
    Prefer known aliases in the initial SearchIntent. For Boolean intent include
    allowed alternatives in the explicit filter.
 6. Completion means the eligible lexical scan ended and all acquired candidates
@@ -131,7 +131,11 @@ verify its own host events.
 
 The queue holds up to five candidates. Per-operation and per-batch limits,
 one replayable reply and a ten-minute idle lease keep work bounded without a
-cumulative candidate ceiling. Process loss invalidates the run and references.
+cumulative candidate ceiling. The worker stores only metadata in its anonymous
+spool. A source read has a fixed physical extent and revision from first open.
+If the source changes during traversal, the resolver records a local gap
+and advances. Publication can reacquire an affected candidate once.
+Process loss invalidates the run and references.
 The route preserves signed source validation and cannot certify a session-wide
 negative from bounded excerpts or lexical recall alone.
 
@@ -146,13 +150,13 @@ second table with a blank session ID.
 
 **Sessioni confermate**
 
-| Sessione | Evidenza / motivazione | ID sessione |
+| Sessione | Motivazione | ID |
 | --- | --- | --- |
 | Nessuna sessione confermata | | |
 
 **Possibili candidate non confermate**
 
-| Sessione | Motivo della mancata conferma | ID sessione |
+| Sessione | Evidenza mancante | ID |
 | --- | --- | --- |
 | Nessuna candidata plausibile | | |
 
@@ -171,3 +175,21 @@ candidates. `session_context` independently navigates signed passages.
 These operations carry no semantic verification or management authorization.
 See [caller identity](mcp-caller-identity.md) and the
 [progressive decision](adr/0034-progressive-resolution.md).
+
+## Reopen a session by UUID
+
+In discovery mode, `session_context` accepts a canonical
+`native_session_id` on its own. It opens an independent view of the current
+source and returns a signed `target` and the first bounded window. To find
+distant material, start with an `occurrences` window and a short query.
+Use the returned `target`, `next_ref` or `previous_ref` as `evidence_ref`, and
+the corresponding suggested window to continue. The signed navigation is
+caller- and source-bound. Reopen by UUID to read a new revision after append.
+A missing or unsafe source reports `session_source_unavailable`.
+
+```json
+{
+  "native_session_id": "00000000-0000-4000-8000-000000000001",
+  "window": {"direction": "start", "max_messages": 5, "max_bytes": 4096}
+}
+```

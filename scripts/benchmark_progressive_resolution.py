@@ -190,13 +190,38 @@ def run(client, truth, contextual, exact):
             "first_verified_ms": None if first_verified is None else first_verified * 1000}
 
 
+def navigation(client, truth, signed_sample):
+    started = time.perf_counter()
+    ordered = sorted(truth)
+    selected = sorted({ordered[0], ordered[len(ordered) // 2], ordered[-1]}) if signed_sample else ordered
+    options = {"direction": "start", "max_messages": 1, "max_bytes": 512}
+    for identity in selected:
+        if signed_sample:
+            page = client.call(action="start", search_intent={
+                "schema_version": "1", "subject": "FlightProbe fixture lookup",
+                "hints": {"terms": ["FlightProbe"]}, "constraints": {"native_session_id": identity},
+            })
+            published = client.call(action="advance", run=page["run"], expected_revision=page["step_revision"],
+                                    operation_id="nav", assessments=assessments(page))
+            row = published["matches"][0]
+            window = client.call("session_context", target=row["target"],
+                                 evidence_ref=row["evidence_refs"][0], window=options)
+        else:
+            window = client.call("session_context", native_session_id=identity, window=options)
+        assert window["at_start"] and len(window["messages"]) == 1 and window["next_ref"]
+        assert "FlightProbe" in window["messages"][0]["excerpt"]
+    return {"scenario": "navigation", "count": len(truth), "navigable": len(selected),
+            "mcp_calls": sum(client.calls.values()), "elapsed_ms": (time.perf_counter() - started) * 1000}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("binary", type=Path)
-    parser.add_argument("--scenario", choices=("exact", "simple", "context", "exhaustive"), required=True)
+    parser.add_argument("--scenario", choices=("exact", "simple", "context", "exhaustive", "navigation"), required=True)
     parser.add_argument("--count", type=int, default=90)
     parser.add_argument("--repeats", type=int, default=20)
     parser.add_argument("--sample-rss", action="store_true", help="sample fixture process RSS separately from latency runs")
+    parser.add_argument("--signed-sample", action="store_true", help="navigation control for pre-UUID binaries")
     parser.add_argument("--index", action="store_true", help="build an opt-in index of the generated fixture")
     parser.add_argument("--hidden-bytes", type=int, default=0, help="ignored event bytes per fixture source")
     args = parser.parse_args()
@@ -204,7 +229,7 @@ def main():
         parser.error("count and repeats must be positive, hidden bytes must fit 8 MiB")
     with tempfile.TemporaryDirectory(prefix="agentmender-progressive-benchmark-") as temporary:
         root = Path(temporary).resolve() / "provider"
-        truth, caller = fixture(root, args.count if args.scenario == "exhaustive" else 1,
+        truth, caller = fixture(root, args.count if args.scenario in ("exhaustive", "navigation") else 1,
                                 args.hidden_bytes)
         index_root = None
         if args.index:
@@ -213,6 +238,13 @@ def main():
                             "--codex-executable", str(root / "unused"), "search-index", "--root",
                             str(index_root), "build", "--max-pages", str(len(truth) + 10)],
                            check=True, capture_output=True, text=True)
+        if args.scenario == "navigation":
+            client = Client(args.binary.resolve(), root, caller, index_root)
+            try:
+                print(json.dumps(navigation(client, truth, args.signed_sample)))
+            finally:
+                client.close()
+            return
         results = []
         for _ in range(args.repeats):
             usage_before = resource.getrusage(resource.RUSAGE_CHILDREN)

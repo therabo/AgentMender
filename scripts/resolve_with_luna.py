@@ -285,10 +285,10 @@ def render(matches, alternatives, status):
 
     return "\n".join([
         "**Sessioni confermate**", "",
-        "| Sessione | Motivazione / evidenza | ID sessione |", "|---|---|---|",
+        "| Sessione | Motivazione | ID |", "|---|---|---|",
         *rows(matches, "Nessuna sessione confermata", lambda item: item["explanation"]),
         "", "**Possibili candidate non confermate**", "",
-        "| Sessione | Motivo della mancata conferma | ID sessione |", "|---|---|---|",
+        "| Sessione | Evidenza mancante | ID |", "|---|---|---|",
         *rows(alternatives, "Nessuna candidata plausibile",
               lambda item: item.get("missing_evidence") or item["explanation"]),
         *([f"| Stato della ricerca | {cell(status)} | |"] if status else []),

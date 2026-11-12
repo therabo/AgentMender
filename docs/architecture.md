@@ -119,6 +119,11 @@ historical bounded-reader feature limits; historical receipts retain their
 original results. [Index privacy](full-text-index.md) and [Luna](luna-session-relevance.md)
 document data flow and limitations.
 
+Conversational retrieval freezes one eligible UUID cohort in a confined
+worker spool. It closes the source transaction before scanning and performs
+exact live source checks for publication and UUID navigation. See
+[ADR-0035](adr/0035-uuid-search-cohort.md).
+
 ## Core session lifecycle versus additional cleanup
 
 The target flow is:
