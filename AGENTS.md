@@ -2,24 +2,23 @@
 
 ## Past-conversation resolution
 
-Use the [Luna workflow](docs/intent-aware-resolution.md) in the originating
-chat. A GPT-6 Luna Medium chat can interpret and assess directly. Other hosts
-use the named `session_relevance` role, with explicit GPT-6 Luna Medium fallback
-when the role is unavailable. This instruction authorizes that delegation for
-past-conversation search. The parent owns the MCP calls and checks Luna's plan
-against the live user request.
+Follow the [Luna workflow](docs/intent-aware-resolution.md) in the originating
+chat. This instruction authorizes named `session_relevance` delegation for
+past-conversation search and an explicit GPT-6 Luna Medium fallback. Verify
+the resolved model and effort from the host execution. An originating Luna
+Medium chat can interpret and assess directly. If Luna execution is
+unavailable, stop before retrieval or terminate the run with
+`luna_unavailable:true` and no judgments. Never use another model or a
+deterministic inventory result as semantic verification.
 
-Use `start` with SearchIntent v1 and top-level `progressive:true` for ordinary
-`all_relevant` requests. Explicit `single_best` selection and advanced Boolean
-intent use the documented legacy workflow. Project names are topical hints
-unless the user asks for a membership restriction. Use `exhaustive` for
-explicit all-results requests. Give Luna quoted passages and evidence handles.
-Use `advance` for judgments, bounded context, continuation and publication.
-Assess every candidate and continue while `execution_state` is `in_progress`.
-Retain confirmed matches, plausible unconfirmed alternatives and signed
-evidence in the origin. A positive activity judgment requires direct evidence
-in that candidate. Use the two result tables in the Luna workflow. Put an
-explicit interruption or lexical coverage limit in a table status row.
+Use one SearchIntent and one progressive `start`/`advance` run for every
+mode. Preserve explicit Boolean and exact identity predicates. Treat project
+names as topical hints unless stored membership is requested. Send Luna
+bounded quoted evidence and handles. The parent keeps caller scope, the run
+and signed evidence. Assess every candidate and continue while
+`execution_state` is `in_progress`. For explicit `single_best`, Luna selects
+from the verified rows after traversal. Present the two result tables and
+state interruptions or lexical coverage limits in a table status row.
 
 ## P0-SR4 read-only caller-filtered discovery
 

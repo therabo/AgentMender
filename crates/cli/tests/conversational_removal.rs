@@ -967,7 +967,11 @@ fn resolution_binds_intent_context_and_outcomes_to_fresh_discovery_evidence() {
         .find(|t| t["name"] == "session_resolve")
         .unwrap();
     assert_eq!(resolve["inputSchema"]["type"], "object");
-    assert!(resolve["inputSchema"]["properties"].get("intent").is_some());
+    assert_eq!(
+        resolve["inputSchema"]["properties"]["action"]["enum"],
+        json!(["start", "advance"])
+    );
+    assert!(resolve["inputSchema"]["properties"].get("intent").is_none());
     assert_eq!(resolve["annotations"]["readOnlyHint"], true);
     let caller = json!({"threadId":M,"sessionId":M});
     let rpc = |client: &mut Client, meta: &Value, arguments| {
@@ -979,58 +983,40 @@ fn resolution_binds_intent_context_and_outcomes_to_fresh_discovery_evidence() {
     };
     let view = |result: Value| result["result"]["structuredContent"].clone();
     let call = |client: &mut Client, arguments| view(rpc(client, &caller, arguments));
-    let start = |cardinality, required_outcomes| {
-        json!({
-            "action":"start","intent":{
-                "question":"Find where we worked on camera performance in MISSION1.",
-                "cardinality":cardinality,"required_outcomes":required_outcomes,
-                "hard_filter":{"op":"and","args":[
-                    {"op":"project","values":["MISSION1"],"source":"observed_label"},
-                    {"op":"not","arg":{"op":"native_id","values":["12345678-1234-1234-1234-123456789aff"]}}
-                ]},
-                "literal":{"op":"text","value":"camera limits"},"expansion":{"op":"text","value":"telecamera"}
-            }
-        })
-    };
-    let start_args = start("single", json!(["validated"]));
-    let missing = view(rpc(&mut client, &json!({}), start_args.clone()));
-    assert_eq!(
-        missing["error"], "discovery_caller_unavailable",
-        "{missing}"
-    );
-    let mut injected = start_args.clone();
-    injected["intent"]["caller_id"] = json!(T);
+    let start = json!({"action":"start","search_intent":{
+        "schema_version":"1","subject":"Where did we validate the camera limits?",
+        "result_policy":"single_best","required_outcome":"validated","hints":{"terms":[]},
+        "filter":{"op":"and","args":[
+            {"op":"project","values":["MISSION1"],"source":"observed_label"},
+            {"op":"not","arg":{"op":"native_id","values":["12345678-1234-1234-1234-123456789aff"]}},
+            {"op":"or","args":[{"op":"text","value":"camera limits"},{"op":"text","value":"telecamera"}]}
+        ]}
+    }});
+    let missing = view(rpc(&mut client, &json!({}), start.clone()));
+    assert_eq!(missing["error"], "discovery_caller_unavailable");
+    let mut injected = start.clone();
+    injected["search_intent"]["caller_id"] = json!(T);
     assert!(rpc(&mut client, &caller, injected).get("error").is_some());
-    let initial = call(&mut client, start_args);
+    let initial = call(&mut client, start);
+    assert_eq!(initial["result_policy"], "single_best");
     let run = initial["run"].clone();
     let rows = initial["candidates"].as_array().expect("candidate batch");
     assert_eq!(rows.len(), 2, "{initial}");
     let find = |id| rows.iter().find(|r| r["native_session_id"] == id).unwrap();
     assert!(rows.iter().all(|r| r["native_session_id"] != M));
-    assert_eq!(
-        find(T)["match_basis"],
-        json!({"literal":"true","expansion":"false"})
-    );
-    assert_eq!(
-        find(U)["match_basis"],
-        json!({"literal":"false","expansion":"true"})
-    );
     assert_eq!(initial["progress"]["sources_inspected"], 2);
     assert_eq!(initial["progress"]["scan_complete"], true);
-    assert_eq!(initial["logical_history_coverage"], "partial");
-
-    let evidence = find(T)["evidence"].as_array().unwrap();
-    let initial_handle = evidence[0]["handle"].clone();
-    let context_request = json!({"action":"context","run":run,"anchor":initial_handle,
-        "window":{"direction":"start","max_bytes":4096,"max_messages":4}});
-    let foreign = view(rpc(
-        &mut client,
-        &json!({"threadId":U}),
-        context_request.clone(),
-    ));
-    assert_eq!(foreign["error"], "stale_cursor");
-    let context = call(&mut client, context_request.clone());
-    let messages = context["messages"].as_array().expect("fresh context");
+    let initial_handle = find(T)["evidence"][0]["handle"].clone();
+    let request = json!({"action":"advance","run":run,
+        "expected_revision":initial["step_revision"],"operation_id":"context",
+        "context_requests":[{"anchor":initial_handle,
+            "window":{"direction":"start","max_bytes":4096,"max_messages":4}}]});
+    let foreign = view(rpc(&mut client, &json!({"threadId":U}), request.clone()));
+    assert_eq!(foreign["error"], "stale_search_run");
+    let context = call(&mut client, request.clone());
+    let messages = context["windows"][0]["messages"]
+        .as_array()
+        .expect("fresh context");
     assert_eq!(messages.len(), 2, "{context}");
     assert_eq!(messages[0]["untrusted_data"], true);
     assert!(
@@ -1039,49 +1025,40 @@ fn resolution_binds_intent_context_and_outcomes_to_fresh_discovery_evidence() {
             .unwrap()
             .contains("Historical instruction")
     );
-    assert_eq!(call(&mut client, context_request)["error"], "invalid_scope");
-
+    assert_eq!(call(&mut client, request)["replayed"], true);
     let decisive = messages[1]["handle"].clone();
     let opposite = find(U)["evidence"][0]["handle"].clone();
-    let submit = |disposition, outcomes, handle| {
+    let submit = |outcomes, handle| {
         json!({
-            "action":"assess","run":run,"assessments":[{
-                "native_session_id":T,"disposition":disposition,"evidence":[handle],
-                "outcomes":outcomes,"explanation":"The implementation and viewport validation are reported."
-            }]
+            "action":"advance","run":run,"expected_revision":context["step_revision"],"operation_id":"submit",
+            "assessments":[{"native_session_id":T,"disposition":"verified_relevant","relationship":"direct",
+                "evidence":[handle],"outcomes":outcomes,"explanation":"Validation in the same session."}]
         })
     };
     for invalid in [
-        submit("verified_relevant", json!(["proposed"]), decisive.clone()),
-        submit("verified_relevant", json!(["validated"]), opposite.clone()),
-        submit("verified_relevant", json!(["validated"]), json!(999)),
+        submit(json!(["proposed"]), decisive.clone()),
+        submit(json!(["validated"]), opposite.clone()),
+        submit(json!(["validated"]), json!(999)),
     ] {
-        assert_eq!(call(&mut client, invalid)["error"], "invalid_scope");
+        assert_eq!(call(&mut client, invalid)["error"], "invalid_assessment");
     }
-    let verified = call(
+    let pending = call(
         &mut client,
-        submit(
-            "verified_relevant",
-            json!(["implemented", "tested", "validated"]),
-            decisive,
-        ),
+        submit(json!(["implemented", "tested", "validated"]), decisive),
     );
-    assert_eq!(verified["stage"], "assessed");
-    let finish = json!({"action":"finish","run":run});
-    assert_eq!(
-        call(&mut client, finish.clone())["outcome"],
-        "incomplete_search"
-    );
-    let contrast = call(
-        &mut client,
-        json!({"action":"assess","run":run,"assessments":[{
-            "native_session_id":U,"disposition":"contradiction","evidence":[opposite],
-            "outcomes":["attempted","reverted","failed"],"explanation":"The reported test failed and the change was reverted."
-        }]}),
-    );
-    assert_eq!(contrast["stage"], "assessed");
+    assert_eq!(pending["execution_state"], "in_progress");
+    assert_eq!(pending["candidates"][0]["native_session_id"], U);
+    assert_eq!(pending["matches"], json!([]));
+    let finish = json!({"action":"advance","run":run,
+        "expected_revision":pending["step_revision"],"operation_id":"reject-other",
+        "assessments":[{"native_session_id":U,"disposition":"contradiction",
+        "relationship":"contradiction","evidence":[opposite],"outcomes":["attempted","reverted","failed"],
+        "explanation":"The reported test failed and the change was reverted."}]});
     let final_view = call(&mut client, finish.clone());
-    assert_eq!(final_view["outcome"], "single_verified", "{final_view}");
+    assert_eq!(
+        final_view["outcome"], "completed_with_matches",
+        "{final_view}"
+    );
     assert_eq!(final_view["matches"][0]["native_session_id"], T);
     assert_eq!(final_view["matches"][0]["can_request_preview"], false);
     assert_eq!(
@@ -1091,77 +1068,48 @@ fn resolution_binds_intent_context_and_outcomes_to_fresh_discovery_evidence() {
             .len(),
         1
     );
-    assert_eq!(final_view["progress"]["invalid_assessments"], 3);
+    assert_eq!(final_view["alternatives"], json!([]));
 
-    let mut literal_only = start("multiple", json!(["investigated"]));
-    literal_only["intent"]["expansion"] = Value::Null;
-    let literal_result = call(&mut client, literal_only);
-    assert_eq!(literal_result["candidates"].as_array().unwrap().len(), 1);
-    let multi_run = literal_result["run"].clone();
-    let expand =
-        json!({"action":"expand","run":multi_run,"expansion":{"op":"text","value":"telecamera"}});
+    let first_pass = call(
+        &mut client,
+        json!({"action":"start","search_intent":{
+            "schema_version":"1","subject":"Find both camera attempts",
+            "hints":{"terms":["camera limits"]}
+        }}),
+    );
+    assert_eq!(first_pass["candidates"].as_array().unwrap().len(), 1);
+    assert_eq!(first_pass["candidates"][0]["native_session_id"], T);
+    let expand = json!({"action":"advance","run":first_pass["run"],
+        "expected_revision":first_pass["step_revision"],"operation_id":"expand",
+        "expansion_terms":["telecamera","viewport"],
+        "assessments":[{"native_session_id":T,"disposition":"verified_relevant","relationship":"direct",
+            "evidence":[first_pass["candidates"][0]["evidence"][0]["handle"]],
+            "explanation":"This candidate contains the original camera attempt."}]});
     let expanded = call(&mut client, expand.clone());
-    assert_eq!(expanded["progress"]["scan_passes"], 2);
-    assert_eq!(expanded["progress"]["literal_candidates"], 1);
-    assert_eq!(expanded["progress"]["expansion_only_candidates"], 1);
-    assert_eq!(expanded["candidates"][0]["native_session_id"], U);
+    assert_eq!(expanded["matches"][0]["native_session_id"], T);
     assert_eq!(expanded["candidates"].as_array().unwrap().len(), 1);
-    assert_eq!(call(&mut client, expand)["error"], "invalid_scope");
+    assert_eq!(expanded["candidates"][0]["native_session_id"], U);
+    assert_eq!(expanded["progress"]["lexical_candidates"], 2);
+    let replay = call(&mut client, expand);
+    assert_eq!(replay["replayed"], true);
+    assert_eq!(replay["matches"], expanded["matches"]);
 
-    let investigated = |id: &str, handle: &Value| {
-        json!({
-            "native_session_id":id,"disposition":"verified_relevant","evidence":[handle],
-            "outcomes":["investigated"],"explanation":"This session investigated camera performance."
-        })
-    };
-    let t2 = investigated(T, &literal_result["candidates"][0]["evidence"][0]["handle"]);
-    let u2 = investigated(U, &expanded["candidates"][0]["evidence"][0]["handle"]);
-    assert_eq!(
-        call(
-            &mut client,
-            json!({"action":"assess","run":multi_run,"assessments":[t2,u2]})
-        )["stage"],
-        "assessed"
+    let exact = call(
+        &mut client,
+        json!({"action":"start","search_intent":{
+            "schema_version":"1","subject":"Inspect this exact conversation","hints":{"terms":[]},
+            "constraints":{"native_session_id":U}
+        }}),
     );
-    let multiple = call(&mut client, json!({"action":"finish","run":multi_run}));
-    assert_eq!(multiple["outcome"], "multiple_verified", "{multiple}");
-    assert_eq!(multiple["matches"].as_array().unwrap().len(), 2);
-
-    let singular = call(&mut client, start("single", json!(["investigated"])));
-    let singular_run = singular["run"].clone();
-    let judgments: Vec<_> = singular["candidates"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|c| {
-            investigated(
-                c["native_session_id"].as_str().unwrap(),
-                &c["evidence"][0]["handle"],
-            )
-        })
-        .collect();
-    assert_eq!(
-        call(
-            &mut client,
-            json!({"action":"assess","run":singular_run,"assessments":judgments})
-        )["stage"],
-        "assessed"
+    let candidate = &exact["candidates"][0];
+    assert_eq!(candidate["native_session_id"], U);
+    assert!(
+        !candidate["evidence"][0]["excerpt"]
+            .as_str()
+            .unwrap()
+            .is_empty()
     );
-    assert_eq!(
-        call(&mut client, json!({"action":"finish","run":singular_run}))["outcome"],
-        "ambiguous"
-    );
-
-    let mut missing_implementation = start("single", json!(["resolved"]));
-    missing_implementation["intent"]["literal"]["value"] = json!("never present");
-    missing_implementation["intent"]["expansion"] = Value::Null;
-    let empty = call(&mut client, missing_implementation);
-    assert_eq!(empty["progress"]["scan_complete"], true);
-    let empty_run = empty["run"].clone();
-    assert_eq!(
-        call(&mut client, json!({"action":"finish","run":empty_run}))["outcome"],
-        "no_verified_match"
-    );
+    assert_eq!(exact["candidates"].as_array().unwrap().len(), 1);
     assert_eq!(tree_bytes(&root), before);
 
     let (source, _) = files
@@ -1172,8 +1120,9 @@ fn resolution_binds_intent_context_and_outcomes_to_fresh_discovery_evidence() {
     modified.extend(b"\n");
     fs::write(source, modified).unwrap();
     let stale = call(&mut client, finish);
-    assert_eq!(stale["outcome"], "incomplete_search");
+    assert_eq!(stale["execution_state"], "interrupted");
     assert_eq!(stale["matches"], json!([]));
+    assert_eq!(stale["invalidated"], json!([T]));
     assert_eq!(stale["progress"]["freshness_failures"], 1);
     client.close();
 }
@@ -1304,6 +1253,15 @@ fn search_intent_v1_preserves_cross_project_eligibility_and_verified_cardinality
     };
     let set = |ids: &[&str]| ids.iter().map(|id| id.to_string()).collect();
 
+    let advance = |batch: &Value| {
+        json!({"action":"advance","run":batch["run"],
+        "expected_revision":batch["step_revision"],"operation_id":"batch"})
+    };
+    let submit = |batch: &Value, judgments: Vec<Value>| {
+        let mut step = advance(batch);
+        step["assessments"] = json!(judgments);
+        step
+    };
     let mut unsupported = start.clone();
     unsupported["search_intent"]["schema_version"] = json!("2");
     let mut unknown_field = start.clone();
@@ -1341,11 +1299,11 @@ fn search_intent_v1_preserves_cross_project_eligibility_and_verified_cardinality
         (invalid_date, "invalid_date_range"),
         (
             json!({"action":"expand","run":"missing","terms":[]}),
-            "invalid_query_expansion",
+            "invalid_enum",
         ),
         (
             json!({"action":"assess","run":"missing","assessments":"not JSON judgments"}),
-            "invalid_resolution_request",
+            "invalid_enum",
         ),
     ] {
         // The real MCP server rejects malformed input before it needs caller
@@ -1358,16 +1316,14 @@ fn search_intent_v1_preserves_cross_project_eligibility_and_verified_cardinality
     assert_eq!(initial["progress"]["scan_complete"], true);
     assert_eq!(initial["coverage"]["goal"], "standard");
     assert_eq!(initial["coverage"]["eligible_evaluation_complete"], false);
-    let run = &initial["run"];
     assert_eq!(
-        call(&mut client, json!({"action":"next","run":"missing"}))["error"],
+        call(
+            &mut client,
+            json!({"action":"advance","run":"missing","expected_revision":1,"operation_id":"wrong"})
+        )["error"],
         "stale_search_run"
     );
-    let foreign = rpc(
-        &mut client,
-        json!({"action":"next","run":run}),
-        json!({"threadId":U}),
-    );
+    let foreign = rpc(&mut client, advance(&initial), json!({"threadId":U}));
     assert_eq!(
         foreign["result"]["structuredContent"]["error"],
         "stale_search_run"
@@ -1379,53 +1335,34 @@ fn search_intent_v1_preserves_cross_project_eligibility_and_verified_cardinality
             if id == unknown {
                 json!({"native_session_id":id,"disposition":"related","evidence":[handle],"explanation":"The term appears on an agenda only.","missing_evidence":["Measurements","Investigation conclusions"]})
             } else {
-                json!({"native_session_id":id,"disposition":"verified_relevant","evidence":[handle],"outcomes":["investigated"],"explanation":"The passage reports an investigation of MISSION1 rendering performance."})
+                json!({"native_session_id":id,"disposition":"verified_relevant","relationship":"direct","evidence":[handle],"outcomes":["investigated"],"explanation":"The passage reports an investigation of MISSION1 rendering performance."})
             }
         }).collect()
     };
     let mut forged = assessment(&initial);
     forged[0]["evidence"] = json!([9999]);
     assert_eq!(
-        call(
-            &mut client,
-            json!({"action":"assess","run":run,"assessments":forged})
-        )["error"],
+        call(&mut client, submit(&initial, forged))["error"],
         "invalid_assessment"
     );
-    assert_eq!(
-        call(
-            &mut client,
-            json!({"action":"assess","run":run,"assessments":assessment(&initial)})
-        )["stage"],
-        "assessed"
-    );
-    let finished = call(&mut client, json!({"action":"finish","run":run}));
-    assert_eq!(finished["outcome"], "multiple_verified");
+    let finished = call(&mut client, submit(&initial, assessment(&initial)));
+    assert_eq!(finished["outcome"], "completed_with_matches");
     assert_eq!(ids(&finished, "matches"), set(&[T, U]));
     assert!(finished["matches"].as_array().unwrap().iter().all(|row| {
         row["evidence_refs"].as_array().unwrap().len() == 1 && row["can_request_preview"] == false
     }));
-
     let mut include = start.clone();
     include["search_intent"]["constraints"] =
         json!({"project_membership":{"mode":"include","names":["MISSION1"],"basis":"observed"}});
     let result = call(&mut client, include.clone());
     assert_eq!(ids(&result, "candidates"), set(&[T]));
-    let result = call(
-        &mut client,
-        json!({"action":"expand","run":result["run"],"terms":["lunch"]}),
-    );
-    assert_eq!(result["stage"], "candidates");
+    let mut expand = submit(&result, assessment(&result));
+    expand["expansion_terms"] = json!(["lunch"]);
+    let result = call(&mut client, expand);
+    assert_eq!(result["execution_state"], "completed");
     assert_eq!(result["progress"]["lexical_candidates"], 1);
+    assert_eq!(result["progress"]["scan_passes"], 2);
     assert_eq!(result["candidates"], json!([]));
-    assert_eq!(
-        call(
-            &mut client,
-            json!({"action":"expand","run":result["run"],"terms":["FPS"]})
-        )["error"],
-        "invalid_query_expansion"
-    );
-
     let mut exclude = include;
     exclude["search_intent"]["constraints"]["project_membership"]["mode"] = json!("exclude");
     let result = call(&mut client, exclude);
@@ -1441,54 +1378,37 @@ fn search_intent_v1_preserves_cross_project_eligibility_and_verified_cardinality
     exhaustive["search_intent"]["constraints"] = Value::Null;
     let batch = call(&mut client, exhaustive);
     assert_eq!(ids(&batch, "candidates"), set(&[T, U, unknown]));
-    assert_eq!(
-        call(
-            &mut client,
-            json!({"action":"assess","run":batch["run"],"assessments":assessment(&batch)})
-        )["stage"],
-        "assessed"
-    );
-    let result = call(&mut client, json!({"action":"finish","run":batch["run"]}));
-    assert_eq!(result["outcome"], "incomplete_search");
+    let result = call(&mut client, submit(&batch, assessment(&batch)));
+    assert_eq!(result["execution_state"], "completed");
+    assert_eq!(result["coverage"]["eligible_evaluation_complete"], false);
     assert_eq!(ids(&result, "matches"), set(&[T, U]));
 
     let mut single = start.clone();
     single["search_intent"]["result_policy"] = json!("single_best");
     let batch = call(&mut client, single);
-    let run = &batch["run"];
-    assert_eq!(
-        call(
-            &mut client,
-            json!({"action":"assess","run":run,"assessments":assessment(&batch)})
-        )["stage"],
-        "assessed"
-    );
-    let alternatives = call(&mut client, json!({"action":"finish","run":run}));
-    assert_eq!(alternatives["outcome"], "ambiguous");
-    assert!(ids(&alternatives, "matches").is_empty());
-    assert_eq!(ids(&alternatives, "alternatives"), set(&[T, U]));
-    let selected = call(
-        &mut client,
-        json!({"action":"finish","run":run,"preferred_session_id":U}),
-    );
-    assert_eq!(selected["outcome"], "single_verified");
-    assert_eq!(ids(&selected, "matches"), set(&[U]));
-    let invalid = call(
-        &mut client,
-        json!({"action":"finish","run":run,"preferred_session_id":unknown}),
-    );
-    assert_eq!(invalid["error"], "invalid_preference");
+    assert_eq!(batch["result_policy"], "single_best");
+    let verified = call(&mut client, submit(&batch, assessment(&batch)));
+    assert_eq!(verified["result_policy"], "single_best");
+    assert_eq!(verified["execution_state"], "completed");
+    assert_eq!(ids(&verified, "matches"), set(&[T, U]));
+
+    let unavailable = call(&mut client, start.clone());
+    let mut mixed = submit(&unavailable, assessment(&unavailable));
+    mixed["luna_unavailable"] = json!(true);
+    assert_eq!(call(&mut client, mixed)["error"], "invalid_advance");
+    let mut abort = advance(&unavailable);
+    abort["luna_unavailable"] = json!(true);
+    let aborted = call(&mut client, abort);
+    assert_eq!(aborted["execution_state"], "interrupted");
+    assert_eq!(aborted["progress"]["stop_reason"], "luna_unavailable");
+    assert_eq!(aborted["matches"], json!([]));
 
     let mut implementation = start;
     implementation["search_intent"]["activity"] = json!("implementation");
     implementation["search_intent"]["required_outcome"] = json!("validated");
     let batch = call(&mut client, implementation);
-    let run = &batch["run"];
     assert_eq!(
-        call(
-            &mut client,
-            json!({"action":"assess","run":run,"assessments":assessment(&batch)})
-        )["error"],
+        call(&mut client, submit(&batch, assessment(&batch)))["error"],
         "invalid_assessment"
     );
     let mut judgments = assessment(&batch);
@@ -1500,17 +1420,7 @@ fn search_intent_v1_preserves_cross_project_eligibility_and_verified_cardinality
         }
     }
     assert_eq!(
-        call(
-            &mut client,
-            json!({"action":"assess","run":run,"assessments":judgments})
-        )["stage"],
-        "assessed"
-    );
-    assert_eq!(
-        ids(
-            &call(&mut client, json!({"action":"finish","run":run})),
-            "matches"
-        ),
+        ids(&call(&mut client, submit(&batch, judgments)), "matches"),
         set(&[U])
     );
     client.close();
@@ -1541,15 +1451,6 @@ fn resolution_cannot_infer_absence_from_a_missing_source() {
         }))["result"]["structuredContent"]
             .clone()
     };
-    let started = call(json!({"action":"start","search_intent":{
-        "schema_version":"1","subject":"Find a camera implementation",
-        "constraints":{"native_session_id":T},"hints":{"terms":["camera"]}
-    }}));
-    assert_eq!(started["progress"]["scan_complete"], true, "{started}");
-    assert_eq!(started["progress"]["unknown"], 1, "{started}");
-    let result = call(json!({"action":"finish","run":started["run"]}));
-    assert_eq!(result["outcome"], "incomplete_search", "{result}");
-    assert_eq!(result["matches"], json!([]));
     for (id, expected) in [
         (T, "partial"),
         (
@@ -1557,7 +1458,7 @@ fn resolution_cannot_infer_absence_from_a_missing_source() {
             "completed_no_matches",
         ),
     ] {
-        let started = call(json!({"action":"start","progressive":true,"search_intent":{
+        let started = call(json!({"action":"start","search_intent":{
             "schema_version":"1","subject":"Find a camera implementation",
             "constraints":{"native_session_id":id},"hints":{"terms":["camera"]}
         }}));
@@ -1625,7 +1526,7 @@ fn progressive_resolution_drains_all_batches_and_revalidates_replayed_publicatio
     };
     let mut response = call(
         &mut client,
-        json!({"action":"start","progressive":true,"search_intent":{
+        json!({"action":"start","search_intent":{
             "schema_version":"1","subject":"All FleetProbe tests","activity":"testing",
             "constraints":{"project_membership":{"mode":"include","basis":"observed","names":["Fleet"]}},
             "hints":{"terms":["FleetProbe"]}
@@ -1646,7 +1547,7 @@ fn progressive_resolution_drains_all_batches_and_revalidates_replayed_publicatio
             "explanation":"The fixture reports passing tests."
         })).collect();
         let step = json!({"action":"advance","run":run,"expected_revision":response["step_revision"],
-            "operation_id":format!("step-{index}"),"assessments":assessments,"finish_if_sufficient":true});
+            "operation_id":format!("step-{index}"),"assessments":assessments});
         last_step = step.clone();
         if index == 0 {
             let mut wrong = step.clone();
@@ -1724,7 +1625,7 @@ fn progressive_resolution_drains_all_batches_and_revalidates_replayed_publicatio
 
     let batch = call(
         &mut client,
-        json!({"action":"start","progressive":true,"search_intent":{
+        json!({"action":"start","search_intent":{
             "schema_version":"1","subject":"Find FleetProbe tests","activity":"testing",
             "hints":{"terms":["FleetProbe"]}
         }}),
@@ -1746,7 +1647,7 @@ fn progressive_resolution_drains_all_batches_and_revalidates_replayed_publicatio
         &mut client,
         json!({"action":"advance","run":batch["run"],
         "expected_revision":batch["step_revision"],"operation_id":"verify-replacement",
-        "assessments":assessments,"finish_if_sufficient":true}),
+        "assessments":assessments}),
         M,
     );
     assert_eq!(
@@ -1783,7 +1684,7 @@ fn progressive_resolution_drains_all_batches_and_revalidates_replayed_publicatio
     assert_eq!(restored["progress"]["lexical_candidates"], 10);
     let exact = call(
         &mut client,
-        json!({"action":"start","progressive":true,"search_intent":{
+        json!({"action":"start","search_intent":{
             "schema_version":"1","subject":"Find FleetProbe tests","activity":"testing",
             "constraints":{"native_session_id":replaced},"hints":{"terms":["FleetProbe"]}
         }}),
@@ -1920,7 +1821,7 @@ fn progressive_resolution_publishes_two_independent_result_groups() {
         ("AllTests", "EmptyFirstPass", 7, 0, 0),
         ("MixedTests", "Atlas", 5, 3, 2),
     ] {
-        let mut response = call(json!({"action":"start","progressive":true,"search_intent":{
+        let mut response = call(json!({"action":"start","search_intent":{
             "schema_version":"1","subject":"Find Atlas scraper testing and validation",
             "activity":"testing","required_outcome":"validated","coverage_goal":"exhaustive",
             "constraints":{"project_membership":{"mode":"include","basis":"observed","names":[project]}},

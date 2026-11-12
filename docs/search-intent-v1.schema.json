@@ -1,5 +1,4 @@
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
   "properties": {
     "activity": {
@@ -46,6 +45,17 @@
       ],
       "description": "Explicit session-wide outcome exclusion. Verification requires complete logical history."
     },
+    "filter": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/QueryExprInput"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Explicit Boolean predicate for advanced retrieval. Replaces lexical hints."
+    },
     "hints": {
       "$ref": "#/$defs/SearchHintsInput"
     },
@@ -87,6 +97,7 @@
     "hints"
   ],
   "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$defs": {
     "ActivityInput": {
       "enum": [
@@ -198,10 +209,242 @@
       "minLength": 1,
       "type": "string"
     },
+    "ProjectSourceInput": {
+      "enum": [
+        "observed_label",
+        "verified_label",
+        "verified_root"
+      ]
+    },
     "Provider": {
       "enum": [
         "codex",
         "claude"
+      ]
+    },
+    "QueryExprInput": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "args": {
+              "items": {
+                "$ref": "#/$defs/QueryExprInput"
+              },
+              "type": "array"
+            },
+            "op": {
+              "const": "and"
+            }
+          },
+          "required": [
+            "op",
+            "args"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "args": {
+              "items": {
+                "$ref": "#/$defs/QueryExprInput"
+              },
+              "type": "array"
+            },
+            "op": {
+              "const": "or"
+            }
+          },
+          "required": [
+            "op",
+            "args"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "arg": {
+              "$ref": "#/$defs/QueryExprInput"
+            },
+            "op": {
+              "const": "not"
+            }
+          },
+          "required": [
+            "op",
+            "arg"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "op": {
+              "const": "provider"
+            },
+            "values": {
+              "items": {
+                "$ref": "#/$defs/Provider"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "op",
+            "values"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "op": {
+              "const": "project"
+            },
+            "source": {
+              "$ref": "#/$defs/ProjectSourceInput"
+            },
+            "values": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "op",
+            "values"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "op": {
+              "const": "project_unknown"
+            },
+            "source": {
+              "$ref": "#/$defs/ProjectSourceInput"
+            }
+          },
+          "required": [
+            "op"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "op": {
+              "const": "state"
+            },
+            "values": {
+              "items": {
+                "$ref": "#/$defs/SessionStateInput"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "op",
+            "values"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "op": {
+              "const": "native_id"
+            },
+            "values": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "op",
+            "values"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "op": {
+              "const": "created"
+            },
+            "range": {
+              "$ref": "#/$defs/QueryRangeInput"
+            }
+          },
+          "required": [
+            "op",
+            "range"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "op": {
+              "const": "last_active"
+            },
+            "range": {
+              "$ref": "#/$defs/QueryRangeInput"
+            }
+          },
+          "required": [
+            "op",
+            "range"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "alternatives": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "kind": {
+              "$ref": "#/$defs/TextMatchInput"
+            },
+            "op": {
+              "const": "text"
+            },
+            "value": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "op",
+            "value"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "op": {
+              "const": "message_time"
+            },
+            "range": {
+              "$ref": "#/$defs/QueryRangeInput"
+            }
+          },
+          "required": [
+            "op",
+            "range"
+          ],
+          "type": "object"
+        }
       ]
     },
     "QueryRangeInput": {
@@ -304,7 +547,6 @@
             "$ref": "#/$defs/LexicalTerm"
           },
           "maxItems": 8,
-          "minItems": 1,
           "type": "array"
         }
       },
@@ -316,6 +558,20 @@
     "SearchIntentVersion": {
       "enum": [
         "1"
+      ]
+    },
+    "SessionStateInput": {
+      "enum": [
+        "active",
+        "archived",
+        "unknown"
+      ]
+    },
+    "TextMatchInput": {
+      "enum": [
+        "contains",
+        "phrase",
+        "exact"
       ]
     },
     "UtcRangeInput": {

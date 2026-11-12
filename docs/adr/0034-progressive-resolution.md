@@ -59,3 +59,21 @@ fields. The originating chat assembles the two result tables from streamed
 confirmed and plausible unconfirmed rows. The resolver keeps only the active
 batch, the continuation and one replayable reply. The legacy selector and
 Boolean workflow retain their existing actions and limits.
+
+## One resolver and required Luna orchestration
+
+Every conversational request uses one frozen SearchIntent and the same
+progressive stream. Structured Boolean predicates and exact identities use the
+same typed query evaluator as ordinary lexical plans. The origin accumulates
+signed rows, and Luna can select a single best from those rows after traversal.
+The origin retains the result policy, while acquisition, assessment and
+publication are identical. Existing bounded context navigation and
+deterministic discovery remain separate read-only primitives.
+
+The Codex host owns model selection, delegation and execution observations.
+Project instructions require the origin to confirm a Luna Medium execution
+before submitting any semantic judgment, including an explicit pinned fallback
+when the named role is unavailable. An unavailable interpreter stops before
+retrieval. An unavailable assessor interrupts publication. The MCP boundary
+accepts caller-scoped structured judgments and cannot authenticate their
+model origin. It admits no model-identity claim or new lifecycle authority.

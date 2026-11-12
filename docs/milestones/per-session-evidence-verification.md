@@ -1,6 +1,7 @@
 # Per-session evidence verification and lexical search completion
 
-Implemented on `feature/progressive-retrieval`. [ADR-0034](../adr/0034-progressive-resolution.md) records the decision. The [resolver workflow](../intent-aware-resolution.md#progressive-workflow) defines the MCP contract and the two conversational tables.
+This records the implementation at `c9f8bc4`. See the
+[unified resolver milestone](unified-progressive-resolver.md) for the current API. [ADR-0034](../adr/0034-progressive-resolution.md) records the decision. The [resolver workflow](../intent-aware-resolution.md#progressive-workflow) defines the MCP contract and the two conversational tables.
 
 ## Verification and publication
 

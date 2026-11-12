@@ -628,10 +628,7 @@ struct TransactionsView {
 #[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
 enum ResolutionInput {
     Start {
-        search_intent: Option<Box<SearchIntentInput>>,
-        intent: Option<Box<IntentInput>>,
-        #[serde(default)]
-        progressive: bool,
+        search_intent: Box<SearchIntentInput>,
     },
     Advance {
         run: String,
@@ -647,41 +644,10 @@ enum ResolutionInput {
         #[serde(default)]
         #[schemars(length(max = EXPANSION_LIMIT))]
         expansion_terms: Vec<LexicalTerm>,
-        /// Accepted for compatibility. Progressive searches drain all retrieved candidates.
-        #[serde(default)]
-        finish_if_sufficient: bool,
         #[serde(default)]
         cancel: bool,
         #[serde(default)]
         luna_unavailable: bool,
-    },
-    Next {
-        run: String,
-    },
-    Expand {
-        run: String,
-        #[schemars(length(min = 1, max = EXPANSION_LIMIT))]
-        terms: Option<Vec<LexicalTerm>>,
-        expansion: Option<Box<QueryExprInput>>,
-    },
-    Context {
-        run: String,
-        anchor: usize,
-        window: Option<ContextOptionsInput>,
-    },
-    Assess {
-        run: String,
-        #[schemars(length(min = 1, max = 5))]
-        assessments: Vec<AssessmentInput>,
-    },
-    Finish {
-        run: String,
-        #[serde(default)]
-        offset: usize,
-        revision: Option<usize>,
-        #[serde(default)]
-        luna_unavailable: bool,
-        preferred_session_id: Option<String>,
     },
 }
 
@@ -715,6 +681,9 @@ struct SearchIntentInput {
     hints: SearchHintsInput,
     /// Only restrictions the user actually requested. An omitted or null field leaves scope unrestricted.
     constraints: Option<SearchConstraintsInput>,
+    /// Explicit Boolean predicate for advanced retrieval. Replaces lexical hints.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    filter: Option<Box<QueryExprInput>>,
 }
 
 #[derive(Deserialize, Serialize, JsonSchema)]
@@ -762,7 +731,7 @@ struct ProjectName(#[schemars(length(min = 1, max = PROJECT_NAME_LIMIT))] String
 #[serde(deny_unknown_fields)]
 struct SearchHintsInput {
     /// One or a few distinctive content terms or phrases. Each term can independently retrieve a candidate.
-    #[schemars(length(min = 1, max = TERMS_LIMIT))]
+    #[schemars(length(max = TERMS_LIMIT))]
     terms: Vec<LexicalTerm>,
     /// Topical project names for assessment. They do not constrain stored membership.
     #[serde(default)]
@@ -815,36 +784,6 @@ enum MembershipModeInput {
 enum MembershipBasisInput {
     Observed,
     Verified,
-}
-
-#[derive(Deserialize, Serialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-struct IntentInput {
-    question: String,
-    cardinality: CardinalityInput,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    focus: Option<FocusInput>,
-    #[serde(default)]
-    required_outcomes: Vec<OutcomeInput>,
-    hard_filter: Option<QueryExprInput>,
-    literal: QueryExprInput,
-    expansion: Option<QueryExprInput>,
-}
-
-#[derive(Deserialize, Serialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-enum CardinalityInput {
-    Single,
-    Multiple,
-}
-
-#[derive(Deserialize, Serialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-enum FocusInput {
-    Conversation,
-    Decision,
-    Event,
-    Chronology,
 }
 
 #[derive(Deserialize, Serialize, JsonSchema)]
@@ -964,29 +903,10 @@ impl ResolutionInput {
                 })
         }
         Ok(match self {
-            Self::Start {
-                search_intent: Some(intent),
-                intent: None,
-                progressive,
-            } => {
-                let intent: SearchIntent = decode(intent)?;
-                Action::StartV1 {
-                    plan: Box::new(intent.validate().map_err(intent_error)?),
-                    progressive,
-                }
+            Self::Start { search_intent } => {
+                let intent: SearchIntent = decode(search_intent)?;
+                Action::Start(Box::new(intent.validate().map_err(intent_error)?))
             }
-            Self::Start {
-                search_intent: None,
-                intent: Some(intent),
-                progressive: false,
-            } => Action::Start(decode(intent)?),
-            Self::Start { .. } => {
-                return Err(resolution_invalid(
-                    "invalid_search_intent",
-                    "Start requires search_intent. Use intent only for the legacy Boolean contract.",
-                ));
-            }
-            Self::Next { run } => Action::Next { run },
             Self::Advance {
                 run,
                 expected_revision,
@@ -994,7 +914,6 @@ impl ResolutionInput {
                 assessments,
                 context_requests,
                 expansion_terms,
-                finish_if_sufficient,
                 cancel,
                 luna_unavailable,
             } => Action::Advance {
@@ -1013,64 +932,9 @@ impl ResolutionInput {
                         })
                         .collect::<Result<_, ErrorData>>()?,
                     expansion: expansion_terms.into_iter().map(|term| term.0).collect(),
-                    finish_if_sufficient,
                     cancel,
                     luna_unavailable,
                 }),
-            },
-            Self::Expand {
-                run,
-                terms: Some(terms),
-                expansion: None,
-            } => {
-                let terms: Vec<String> = terms.into_iter().map(|term| term.0).collect();
-                search_intent::compile_expansion(&terms).map_err(intent_error)?;
-                Action::ExpandTerms { run, terms }
-            }
-            Self::Expand {
-                run,
-                terms: None,
-                expansion: Some(expansion),
-            } => Action::Expand {
-                run,
-                expansion: decode(expansion)?,
-            },
-            Self::Expand { .. } => {
-                return Err(intent_error(SearchIntentError::InvalidQueryExpansion));
-            }
-            Self::Context {
-                run,
-                anchor,
-                window,
-            } => Action::Context {
-                run,
-                anchor,
-                window: window.map(decode).transpose()?,
-            },
-            Self::Assess { run, assessments } => {
-                if !(1..=5).contains(&assessments.len()) {
-                    return Err(resolution_invalid(
-                        "invalid_assessment",
-                        "Submit one to five assessments for presented candidates.",
-                    ));
-                }
-                Action::Assess {
-                    run,
-                    assessments: decode(normalize_assessments(assessments)?)?,
-                }
-            }
-            Self::Finish {
-                run,
-                offset,
-                revision,
-                luna_unavailable,
-                preferred_session_id,
-            } => Action::Finish {
-                run,
-                offset,
-                revision,
-                luna_unavailable,
-                preferred_session_id,
             },
         })
     }
@@ -1099,24 +963,6 @@ fn resolution_invalid(code: &'static str, correction: &str) -> ErrorData {
 }
 
 fn resolution_request(args: &serde_json::Value) -> Result<ResolutionAction, ErrorData> {
-    for (first, second, code, correction) in [
-        (
-            "search_intent",
-            "intent",
-            "invalid_search_intent",
-            "Supply exactly one of search_intent or legacy intent.",
-        ),
-        (
-            "terms",
-            "expansion",
-            "invalid_query_expansion",
-            "Supply terms for a v1 run or expansion for a legacy run.",
-        ),
-    ] {
-        if args.get(first).is_some() && args.get(second).is_some() {
-            return Err(resolution_invalid(code, correction));
-        }
-    }
     if let Some(version) = args
         .get("search_intent")
         .and_then(|intent| intent.get("schema_version"))
@@ -1134,8 +980,6 @@ fn resolution_request(args: &serde_json::Value) -> Result<ResolutionAction, Erro
             resolution_invalid("unknown_field", r#"Remove unknown fields. Minimal start: {"action":"start","search_intent":{"schema_version":"1","subject":"topic","hints":{"terms":["term"]}}}."#)
         } else if message.starts_with("unknown variant") {
             resolution_invalid("invalid_enum", "Use an enum value from the advertised schema.")
-        } else if args.get("action").and_then(serde_json::Value::as_str) == Some("expand") {
-            intent_error(SearchIntentError::InvalidQueryExpansion)
         } else {
             resolution_invalid("invalid_resolution_request",
                 "Use the required fields and types for this action. Start takes search_intent with schema_version, subject and hints. Follow-up actions take the returned run.")
@@ -1184,8 +1028,7 @@ struct ResolutionMatchView {
     #[serde(flatten)]
     session: SessionLabelView,
     assessment: serde_json::Value,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    verification_state: Option<VerificationStateView>,
+    verification_state: VerificationStateView,
     evidence_refs: Vec<String>,
 }
 
@@ -1196,16 +1039,12 @@ struct ResolutionView {
     management_exclusion: &'static str,
     logical_history_coverage: &'static str,
     authenticated_caller_binding: bool,
-    focus: serde_json::Value,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    coverage: Option<SemanticCoverageView>,
+    result_policy: ResultPolicyInput,
+    coverage: SemanticCoverageView,
     progress: serde_json::Value,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    step_revision: Option<usize>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    progressive_coverage: Option<serde_json::Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    execution_state: Option<SearchExecutionStateView>,
+    step_revision: usize,
+    progressive_coverage: serde_json::Value,
+    execution_state: SearchExecutionStateView,
     #[serde(flatten)]
     data: ResolutionDataView,
 }
@@ -1240,20 +1079,8 @@ struct SemanticCoverageView {
 enum ResolutionDataView {
     Candidates {
         candidates: Vec<ResolutionCandidateView>,
-        query: Option<serde_json::Value>,
         ranking: &'static str,
     },
-    Context {
-        messages: Vec<ResolutionCitationView>,
-        next: Option<usize>,
-        previous: Option<usize>,
-        source_coverage: SourceCoverageView,
-        work: ReadWorkView,
-        partial: bool,
-        at_start: bool,
-        at_end: bool,
-    },
-    Assessed,
     Advanced {
         matches: Vec<ResolutionMatchView>,
         alternatives: Vec<ResolutionMatchView>,
@@ -1265,13 +1092,6 @@ enum ResolutionDataView {
         replayed: bool,
         #[serde(skip_serializing_if = "Vec::is_empty")]
         invalidated: Vec<String>,
-    },
-    Finished {
-        outcome: &'static str,
-        matches: Vec<ResolutionMatchView>,
-        alternatives: Vec<ResolutionMatchView>,
-        next_offset: Option<usize>,
-        revision: usize,
     },
 }
 
@@ -1302,47 +1122,7 @@ fn resolution_schema() -> Arc<serde_json::Map<String, serde_json::Value>> {
     root.insert("required".into(), json!(["action"]));
     root.insert("additionalProperties".into(), json!(false));
     root.insert("properties".into(), Value::Object(properties));
-    let branches = variants
-        .into_iter()
-        .flat_map(|variant| {
-            let fields = match variant["properties"]["action"]["const"].as_str() {
-                Some("start") => ["search_intent", "intent"],
-                Some("expand") => ["terms", "expansion"],
-                _ => return vec![variant],
-            };
-            fields
-                .iter()
-                .map(|field| {
-                    let mut branch = variant.clone();
-                    let properties = branch["properties"]
-                        .as_object_mut()
-                        .expect("action properties");
-                    for key in fields {
-                        if key != *field {
-                            properties.remove(key);
-                        }
-                    }
-                    let schema = properties.get_mut(*field).expect("alternative field");
-                    if let Some(non_null) = schema
-                        .get("anyOf")
-                        .and_then(Value::as_array)
-                        .and_then(|items| items.iter().find(|item| item["type"] != "null"))
-                    {
-                        *schema = non_null.clone();
-                    } else if let Some(types) = schema.get_mut("type").and_then(Value::as_array_mut)
-                    {
-                        types.retain(|kind| kind != "null");
-                    }
-                    branch["required"]
-                        .as_array_mut()
-                        .expect("required action")
-                        .push(json!(field));
-                    branch
-                })
-                .collect()
-        })
-        .collect();
-    root.insert("oneOf".into(), Value::Array(branches));
+    root.insert("oneOf".into(), Value::Array(variants));
     schema
 }
 
@@ -1350,11 +1130,10 @@ fn resolution_view(
     result: session_resolution::ResolutionResponse,
     projector: &Projector,
 ) -> ResolutionView {
-    use session_resolution::{ResolutionData, ResolutionOutcome};
-    let progressive = result.revision.is_some();
+    use session_resolution::ResolutionData;
     let display = |value: &str| {
         let mut text = safe(value);
-        if progressive && text.len() > 256 {
+        if text.len() > 256 {
             let mut end = 256;
             while !text.is_char_boundary(end) {
                 end -= 1;
@@ -1371,10 +1150,8 @@ fn resolution_view(
         ),
     };
     let resolved = |mut r: session_resolution::ResolvedCandidate| {
-        if progressive {
-            r.metadata.title = r.metadata.title.as_deref().map(display);
-            r.metadata.project_label = r.metadata.project_label.as_deref().map(display);
-        }
+        r.metadata.title = r.metadata.title.as_deref().map(display);
+        r.metadata.project_label = r.metadata.project_label.as_deref().map(display);
         let mut session = label(projector, &r.metadata, false, true);
         let first = r
             .citations
@@ -1384,19 +1161,17 @@ fn resolution_view(
         session.removal_eligibility = "discovery_only";
         ResolutionMatchView {
             session,
-            verification_state: progressive.then(|| {
-                match r.assessment.disposition.verification_state() {
-                    agentmender_domain::CandidateVerificationState::Confirmed => {
-                        VerificationStateView::Confirmed
-                    }
-                    agentmender_domain::CandidateVerificationState::Unconfirmed => {
-                        VerificationStateView::Unconfirmed
-                    }
-                    agentmender_domain::CandidateVerificationState::Rejected => {
-                        VerificationStateView::Rejected
-                    }
+            verification_state: match r.assessment.disposition.verification_state() {
+                agentmender_domain::CandidateVerificationState::Confirmed => {
+                    VerificationStateView::Confirmed
                 }
-            }),
+                agentmender_domain::CandidateVerificationState::Unconfirmed => {
+                    VerificationStateView::Unconfirmed
+                }
+                agentmender_domain::CandidateVerificationState::Rejected => {
+                    VerificationStateView::Rejected
+                }
+            },
             assessment: serde_json::to_value(r.assessment).expect("typed assessment"),
             evidence_refs: r
                 .citations
@@ -1426,34 +1201,10 @@ fn resolution_view(
         at_end: w.at_end,
     };
     let data = match result.data {
-        ResolutionData::Candidates { candidates, query } => ResolutionDataView::Candidates {
+        ResolutionData::Candidates(candidates) => ResolutionDataView::Candidates {
             ranking: "provisional title-prior scan order within inventory windows; FTS5/BM25 passage selection within source slices",
-            query: query.map(|q| serde_json::to_value(q).expect("typed query")),
             candidates: candidates.into_iter().map(candidate).collect(),
         },
-        ResolutionData::Context(w) => {
-            let ResolutionWindowView {
-                messages,
-                next,
-                previous,
-                source_coverage,
-                work,
-                partial,
-                at_start,
-                at_end,
-            } = window(*w);
-            ResolutionDataView::Context {
-                messages,
-                next,
-                previous,
-                source_coverage,
-                work,
-                partial,
-                at_start,
-                at_end,
-            }
-        }
-        ResolutionData::Assessed => ResolutionDataView::Assessed,
         ResolutionData::Advanced(reply) => ResolutionDataView::Advanced {
             matches: reply.matches.into_iter().map(resolved).collect(),
             alternatives: reply.alternatives.into_iter().map(resolved).collect(),
@@ -1479,25 +1230,6 @@ fn resolution_view(
             replayed: reply.replayed,
             invalidated: reply.invalidated,
         },
-        ResolutionData::Finished {
-            outcome,
-            matches,
-            alternatives,
-            next_offset,
-            revision,
-        } => ResolutionDataView::Finished {
-            outcome: match outcome {
-                ResolutionOutcome::SingleVerified => "single_verified",
-                ResolutionOutcome::MultipleVerified => "multiple_verified",
-                ResolutionOutcome::Ambiguous => "ambiguous",
-                ResolutionOutcome::NoVerifiedMatch => "no_verified_match",
-                ResolutionOutcome::IncompleteSearch => "incomplete_search",
-            },
-            matches: matches.into_iter().map(resolved).collect(),
-            alternatives: alternatives.into_iter().map(resolved).collect(),
-            next_offset,
-            revision,
-        },
     };
     ResolutionView {
         run: result.run,
@@ -1505,18 +1237,21 @@ fn resolution_view(
         management_exclusion: "metadata_derived_not_host_authenticated",
         logical_history_coverage: "partial",
         authenticated_caller_binding: false,
-        focus: serde_json::to_value(result.focus).expect("typed focus"),
-        coverage: result.coverage_goal.map(|goal| SemanticCoverageView {
-            goal: match goal {
+        result_policy: match result.result_policy {
+            search_intent::ResultPolicy::AllRelevant => ResultPolicyInput::AllRelevant,
+            search_intent::ResultPolicy::SingleBest => ResultPolicyInput::SingleBest,
+        },
+        coverage: SemanticCoverageView {
+            goal: match result.coverage_goal {
                 search_intent::CoverageGoal::Standard => CoverageGoalInput::Standard,
                 search_intent::CoverageGoal::Exhaustive => CoverageGoalInput::Exhaustive,
             },
             eligible_evaluation_complete: false,
             limitation: "lexical_candidates_only",
-        }),
+        },
         progress: serde_json::to_value(result.progress).expect("typed progress"),
         step_revision: result.revision,
-        execution_state: result.execution_state.map(|state| match state {
+        execution_state: match result.execution_state {
             agentmender_domain::SearchExecutionState::InProgress => {
                 SearchExecutionStateView::InProgress
             }
@@ -1526,10 +1261,9 @@ fn resolution_view(
             agentmender_domain::SearchExecutionState::Interrupted => {
                 SearchExecutionStateView::Interrupted
             }
-        }),
-        progressive_coverage: result
-            .progressive_coverage
-            .map(|coverage| serde_json::to_value(coverage).expect("typed progressive coverage")),
+        },
+        progressive_coverage: serde_json::to_value(result.progressive_coverage)
+            .expect("typed progressive coverage"),
         data,
     }
 }
@@ -1601,7 +1335,7 @@ pub(super) fn tools(discovery: bool) -> Vec<Tool> {
         ));
         registry.insert(0, (
             "session_resolve",
-            r#"Find and verify past Codex conversations. Ordinary start: {"action":"start","progressive":true,"search_intent":{"schema_version":"1","subject":"Cesium rendering performance","hints":{"terms":["Cesium"]}}}. The originating chat keeps the run and calls advance with expected_revision from step_revision and a new operation_id. Assess every candidate with Luna Medium, require relationship:direct for verified_relevant, and collect fresh matches and plausible alternatives from every step. Request context through up to two bounded windows only when needed. Continue while execution_state is in_progress. Render confirmed and unconfirmed rows in two tables and disclose interruptions or lexical coverage limits in a table. Project hints do not constrain membership. Explicit single_best and the legacy Boolean intent use the original finish workflow. Read-only with implicit caller exclusion."#,
+            r#"Find and verify past Codex conversations. Luna Medium must interpret the request before start and assess every candidate. Start with {"action":"start","search_intent":{"schema_version":"1","subject":"Cesium rendering performance","hints":{"terms":["Cesium"]}}}. Use search_intent.filter for explicit Boolean queries. For exact identity use constraints.native_session_id. Use advance with the latest step_revision and a new operation_id. The originating chat collects fresh matches and plausible alternatives, uses Luna to select a best result if requested, and renders two tables. If Luna becomes unavailable, advance with luna_unavailable:true and no judgments. Read-only with implicit caller exclusion."#,
             resolution_schema(),
             schema::<ResolutionView>(),
             true,

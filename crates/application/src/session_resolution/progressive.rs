@@ -16,7 +16,6 @@ pub struct Advance {
     pub assessments: Vec<Assessment>,
     pub context_requests: Vec<ContextRequest>,
     pub expansion: Vec<String>,
-    pub finish_if_sufficient: bool,
     pub cancel: bool,
     pub luna_unavailable: bool,
 }
@@ -52,6 +51,7 @@ pub struct AdvanceResult {
     pub outcome: Option<TerminalOutcome>,
     pub replayed: bool,
     pub invalidated: Vec<String>,
+    replay_filter: Option<QueryExpr>,
     replay_observations: BTreeMap<String, (QueryObservation, bool)>,
 }
 
@@ -112,6 +112,12 @@ impl Stream {
         )
     }
 
+    pub(super) fn reset_order(&mut self) {
+        self.last_candidate = None;
+        self.inventory_boundary = None;
+        self.reanchored = None;
+    }
+
     pub(super) fn has_refresh_work(&self) -> bool {
         !self.refresh.is_empty()
     }
@@ -138,26 +144,13 @@ impl Stream {
 }
 
 impl Run {
-    pub(super) fn enable_stream(&mut self) -> Result<(), ApplicationError> {
-        // The legacy selector supports comparing several verified sessions and
-        // passing an explicit preferred identity to finish.
-        if self.intent.cardinality != AnswerCardinality::Multiple {
-            return Err(ResolutionError::InvalidPreference.into());
-        }
-        self.parameters.page_size = CANDIDATE_BATCH;
-        self.stream = Some(Stream::default());
-        Ok(())
-    }
-
     pub(super) fn can_reclaim(&self) -> bool {
-        self.stream
-            .as_ref()
-            .is_none_or(|stream| stream.terminal.is_some())
+        self.stream.terminal.is_some()
     }
 
     pub(super) fn blocked(&mut self, reason: &'static str) -> ResolutionData {
         self.progress.stop_reason = Some(reason);
-        self.stream.as_mut().expect("progressive run").terminal = Some(TerminalOutcome::Blocked);
+        self.stream.terminal = Some(TerminalOutcome::Blocked);
         ResolutionData::Advanced(Box::new(AdvanceResult {
             outcome: Some(TerminalOutcome::Blocked),
             ..Default::default()
@@ -165,15 +158,11 @@ impl Run {
     }
 
     pub(super) fn presented(&self) -> usize {
-        self.stream
-            .as_ref()
-            .map_or(self.progress.candidates_presented, |_| {
-                self.candidates.len()
-            })
+        self.candidates.len()
     }
 
     pub(super) fn anchor_base(&self) -> usize {
-        self.stream.as_ref().map_or(0, |s| s.anchor_base)
+        self.stream.anchor_base
     }
 
     pub(super) fn anchor(&self, handle: usize) -> Option<&Anchor> {
@@ -181,7 +170,7 @@ impl Run {
     }
 
     pub(super) fn active_context_bytes(&self) -> usize {
-        self.progress.context_bytes - self.stream.as_ref().map_or(0, |s| s.prior_context_bytes)
+        self.progress.context_bytes - self.stream.prior_context_bytes
     }
 
     pub(super) fn observe_batch_order(&mut self, hits: &mut Vec<SessionSearchHit>) -> bool {
@@ -190,7 +179,7 @@ impl Run {
             .as_ref()
             .and_then(|cursor| cursor.inventory_after.as_ref())
             .map(|key| key.native_session_id.clone());
-        let stream = self.stream.as_mut().expect("progressive run");
+        let stream = &mut self.stream;
         let mut previous = if stream.inventory_boundary == boundary {
             stream.last_candidate.clone()
         } else {
@@ -225,7 +214,7 @@ impl Run {
     }
 
     pub(super) fn stream_coverage(&self) -> Coverage {
-        let stream = self.stream.as_ref().expect("progressive run");
+        let stream = &self.stream;
         let p = &self.progress;
         let single_pass = p.scan_passes == 1;
         let physical = p.scan_complete && p.physically_traversed == p.sources_inspected;
@@ -260,7 +249,7 @@ impl Run {
     }
 
     pub(super) fn reanchor_source(&mut self) -> Option<SearchContinuation> {
-        let stream = self.stream.as_mut()?;
+        let stream = &mut self.stream;
         let cursor = self.next.as_ref()?;
         cursor.stream.as_ref()?;
         let position = (cursor.inventory_after.clone(), cursor.start);
@@ -275,13 +264,12 @@ impl Run {
     }
 
     fn release_batch(&mut self) {
-        let stream = self.stream.as_mut().expect("progressive run");
+        let stream = &mut self.stream;
         stream.anchor_base += self.anchors.len();
         stream.prior_context_bytes = self.progress.context_bytes;
         self.candidates.clear();
         self.anchors.clear();
         self.requested_windows.clear();
-        self.publication = None;
         self.refresh_assessment_counts();
     }
 
@@ -292,10 +280,7 @@ impl Run {
         id: String,
         step: Advance,
     ) -> Result<ResolutionResponse, ApplicationError> {
-        let stream = self
-            .stream
-            .as_ref()
-            .ok_or(ResolutionError::InvalidAdvance)?;
+        let stream = &self.stream;
         if !bounded_text(&step.operation_id, 64)
             || step.assessments.len() > CANDIDATE_BATCH
             || step.context_requests.len() > WINDOW_BATCH
@@ -305,18 +290,12 @@ impl Run {
                     .as_ref()
                     .is_some_and(|window| window.max_messages > 5 || window.max_bytes > 4096)
             })
-            || step.cancel
+            || (step.cancel || step.luna_unavailable)
                 && (!step.assessments.is_empty()
                     || !step.context_requests.is_empty()
-                    || !step.expansion.is_empty()
-                    || step.finish_if_sufficient
-                    || step.luna_unavailable)
-            || step.luna_unavailable
-                && (!step.context_requests.is_empty()
-                    || !step.expansion.is_empty()
-                    || step.finish_if_sufficient)
-            || !step.context_requests.is_empty()
-                && (!step.expansion.is_empty() || step.finish_if_sufficient)
+                    || !step.expansion.is_empty())
+            || step.cancel && step.luna_unavailable
+            || !step.context_requests.is_empty() && !step.expansion.is_empty()
         {
             return Err(ResolutionError::InvalidAdvance.into());
         }
@@ -341,7 +320,7 @@ impl Run {
         control.check()?;
         staged.revision += 1;
         staged.last_used = Instant::now();
-        let stream = staged.stream.as_mut().expect("progressive run");
+        let stream = &mut staged.stream;
         stream.terminal = reply.outcome;
         stream.previous = Some((step, reply.clone()));
         *self = staged;
@@ -357,13 +336,16 @@ impl Run {
         let mut reply = AdvanceResult::default();
         if step.cancel {
             self.progress.stop_reason = Some("cancelled_by_caller");
-            self.stream
-                .as_mut()
-                .expect("progressive run")
-                .refresh
-                .clear();
+            self.stream.refresh.clear();
             self.release_batch();
             reply.outcome = Some(TerminalOutcome::Cancelled);
+            return Ok(reply);
+        }
+        if step.luna_unavailable {
+            self.progress.stop_reason = Some("luna_unavailable");
+            self.stream.refresh.clear();
+            self.release_batch();
+            reply.outcome = Some(TerminalOutcome::Blocked);
             return Ok(reply);
         }
         if !step.assessments.is_empty() {
@@ -373,33 +355,14 @@ impl Run {
             self.context_step(service, control, &step.context_requests, &mut reply)?;
             return Ok(reply);
         }
-        if !step.expansion.is_empty() {
-            // An empty first pass can safely be broadened without retaining
-            // a corpus-sized seen set or publishing an identity twice.
-            if self.progress.candidates_presented != 0 || step.finish_if_sufficient {
-                return Err(ResolutionError::InvalidQueryExpansion.into());
-            }
-            let expansion = compile_expansion(&step.expansion)
-                .map_err(|_| ResolutionError::InvalidQueryExpansion)?;
-            if expansion
-                .text_terms()
-                .iter()
-                .any(|term| self.intent.literal.text_terms().contains(term))
-            {
-                return Err(ResolutionError::InvalidQueryExpansion.into());
-            }
-            let data = self.expand(service, control, expansion)?;
-            let ResolutionData::Candidates { candidates, .. } = data else {
-                unreachable!()
-            };
-            reply.candidates = candidates;
-            return Ok(reply);
-        }
         let needs_assessment = self
             .candidates
             .iter()
             .any(|candidate| candidate.assessment.is_none() && !candidate.stale_context);
-        if needs_assessment && !step.luna_unavailable {
+        if needs_assessment {
+            if !step.expansion.is_empty() {
+                return Err(ResolutionError::InvalidQueryExpansion.into());
+            }
             if step.assessments.is_empty() {
                 return Err(ResolutionError::AssessmentRequired.into());
             }
@@ -417,37 +380,29 @@ impl Run {
             self.publish_batch(service, control, &mut reply)?;
             self.release_batch();
         }
-        if step.luna_unavailable {
-            self.progress.stop_reason = Some("luna_unavailable");
-            self.stream
-                .as_mut()
-                .expect("progressive run")
-                .refresh
-                .clear();
-        }
-        if self
-            .stream
-            .as_ref()
-            .expect("progressive run")
-            .has_refresh_work()
-            && !step.luna_unavailable
-        {
+        if self.stream.has_refresh_work() {
+            // The caller can propose expansion again after stale candidates are settled.
             reply.candidates = self.refresh_candidates(service, control)?;
-            if !reply.candidates.is_empty()
-                || self
-                    .stream
-                    .as_ref()
-                    .expect("progressive run")
-                    .has_refresh_work()
-            {
+            if !reply.candidates.is_empty() || self.stream.has_refresh_work() {
                 return Ok(reply);
             }
         }
-        let published = self.stream.as_ref().expect("progressive run").confirmed;
+        if !step.expansion.is_empty() {
+            let expansion = compile_expansion(&step.expansion)
+                .map_err(|_| ResolutionError::InvalidQueryExpansion)?;
+            if expansion
+                .text_terms()
+                .iter()
+                .any(|term| self.retrieval.literal.text_terms().contains(term))
+            {
+                return Err(ResolutionError::InvalidQueryExpansion.into());
+            }
+            self.expand(expansion)?;
+        }
+        let published = self.stream.confirmed;
         if !self.progress.scan_complete && self.progress.stop_reason.is_none() {
             match self.scan(service, control, false) {
-                Ok(ResolutionData::Candidates { candidates, .. }) => reply.candidates = candidates,
-                Ok(_) => unreachable!(),
+                Ok(candidates) => reply.candidates = candidates,
                 Err(
                     error @ (ApplicationError::Cancelled
                     | ApplicationError::DiscoveryCallerUnavailable),
@@ -529,16 +484,13 @@ impl Run {
         service: &SessionSearchService<'_>,
         control: &QueryControl,
     ) -> Result<Vec<ResolutionCandidate>, ApplicationError> {
-        self.stream
-            .as_mut()
-            .expect("progressive run")
-            .refreshing_batch = true;
+        self.stream.refreshing_batch = true;
         let started = Instant::now();
         for _ in 0..CANDIDATE_BATCH {
             if started.elapsed() >= SCAN_TIME {
                 break;
             }
-            let stream = self.stream.as_mut().expect("progressive run");
+            let stream = &mut self.stream;
             let Some(mut refresh) = stream.refresh.pop_front() else {
                 break;
             };
@@ -580,7 +532,7 @@ impl Run {
                 .into_iter()
                 .find(|hit| hit.metadata.identity == refresh.identity)
             {
-                let basis = self.intent.match_basis(&hit);
+                let basis = self.retrieval.match_basis(&hit);
                 self.retain_candidate(hit, basis);
             } else if let Some(next) = page.next
                 && cursor_advances(refresh.next.as_ref(), &next)
@@ -592,17 +544,8 @@ impl Run {
             }
         }
         let candidates = self.candidate_batch(0, self.presented());
-        if candidates.is_empty()
-            && !self
-                .stream
-                .as_ref()
-                .expect("progressive run")
-                .has_refresh_work()
-        {
-            self.stream
-                .as_mut()
-                .expect("progressive run")
-                .refreshing_batch = false;
+        if candidates.is_empty() && !self.stream.has_refresh_work() {
+            self.stream.refreshing_batch = false;
         }
         Ok(candidates)
     }
@@ -670,14 +613,8 @@ impl Run {
             Err(_) => vec![None; checks.len()],
         };
         self.progress.publication_checks += usize::from(!checks.is_empty());
-        let filter = self
-            .parameters
-            .structured
-            .as_ref()
-            .expect("resolution query")
-            .filter
-            .clone();
-        let stream = self.stream.as_mut().expect("progressive run");
+        let filter = self.filter().clone();
+        let stream = &mut self.stream;
         for candidate in self
             .candidates
             .iter()
@@ -726,6 +663,9 @@ impl Run {
                 assessment: assessment.clone(),
                 citations,
             });
+        }
+        if !reply.replay_observations.is_empty() {
+            reply.replay_filter = Some(filter);
         }
         stream.refreshing_batch = false;
         Ok(())
@@ -822,7 +762,7 @@ impl Run {
         let original_matches = reply.matches.len();
         let original_alternatives = reply.alternatives.len();
         let mut fresh = fresh.sessions.into_iter();
-        let filter = self.filter();
+        let filter = reply.replay_filter.as_ref().expect("published query");
         let mut retain = |row: &mut ResolvedCandidate| {
             let id = &row.metadata.native_session_id;
             let (observation, content_complete) = &reply.replay_observations[id];
@@ -844,7 +784,7 @@ impl Run {
         let lost = anchors.len() - reply.matches.len() - reply.alternatives.len();
         if lost > 0 {
             self.progress.freshness_failures += lost;
-            let stream = self.stream.as_mut().expect("progressive run");
+            let stream = &mut self.stream;
             stream.confirmed -= original_matches - reply.matches.len();
             stream.unconfirmed -= original_alternatives - reply.alternatives.len();
             stream.verification_gap = Some("candidate_evidence_stale");
@@ -860,7 +800,7 @@ impl Run {
     }
 
     fn terminal_outcome(&mut self, published: usize) -> TerminalOutcome {
-        let stream = self.stream.as_ref().expect("progressive run");
+        let stream = &mut self.stream;
         self.progress.stop_reason = self
             .progress
             .stop_reason
@@ -990,14 +930,15 @@ mod tests {
 
     #[test]
     fn a_reanchor_preserves_scope_and_only_restarts_the_unfinished_source() {
-        let intent: Intent = serde_json::from_value(serde_json::json!({
-            "question":"Find matching discussions","cardinality":"multiple",
-            "literal":{"op":"text","value":"Cesium"}
-        }))
-        .unwrap();
-        let parameters = intent.parameters().unwrap();
-        let mut run = Run::new("caller".into(), "instance", intent, parameters, None);
-        run.enable_stream().unwrap();
+        let (intent, hard_filter, literal) = super::super::tests::example_intent().into_parts();
+        let retrieval = Retrieval {
+            hard_filter,
+            literal,
+            expansion: None,
+            exclude_literal_on_expansion: false,
+        };
+        let parameters = retrieval.compile_parameters().unwrap();
+        let mut run = Run::new("caller".into(), "instance", retrieval, parameters, intent);
         let cursor = SearchContinuation {
             scope: "frozen scope".into(),
             inventory_fingerprint: "window".into(),

@@ -116,23 +116,20 @@ class RssSampler:
         self.thread.join()
 
 
-def assessments(page, progressive, context_handles=None):
+def assessments(page, context_handles=None):
     return [
         {"native_session_id": candidate["native_session_id"],
          "disposition": "verified_relevant", "outcomes": ["implemented"],
          "evidence": context_handles or [candidate["evidence"][0]["handle"]],
-         "explanation": "Scripted fixture ground truth.",
-         **({"relationship": "direct"} if progressive else {})}
+         "explanation": "Scripted fixture ground truth.", "relationship": "direct"}
         for candidate in page["candidates"]
     ]
 
 
-def run(client, truth, progressive, contextual, exact):
+def run(client, truth, contextual, exact):
     started = time.perf_counter()
     first_verified = None
     seen = set()
-    terminal = None
-    progress = {}
     citations = 0
 
     def collect(page):
@@ -149,62 +146,38 @@ def run(client, truth, progressive, contextual, exact):
         if seen and first_verified is None:
             first_verified = time.perf_counter() - started
 
+    request = {"schema_version": "1", "subject": "Find the FlightProbe implementation",
+               "activity": "implementation", "hints": {"terms": ["FlightProbe"]}}
     if exact:
-        page = client.call("session_discover", structured={"filter": {"op": "native_id", "values": sorted(truth)}})
-        seen.update(row["native_session_id"] for row in page["sessions"])
-        first_verified = time.perf_counter() - started
-        terminal = "metadata"
-    else:
-        request = {"schema_version": "1", "subject": "Find the FlightProbe implementation",
-                   "activity": "implementation", "hints": {"terms": ["FlightProbe"]}}
-        if len(truth) > 1:
-            request["coverage_goal"] = "exhaustive"
-        page = client.call(action="start", search_intent=request,
-                           **({"progressive": True} if progressive else {}))
-        run_id = page["run"]
-        operation = 0
+        request["constraints"] = {"native_session_id": next(iter(truth))}
+        request["hints"]["terms"] = []
+    if len(truth) > 1:
+        request["coverage_goal"] = "exhaustive"
+    page = client.call(action="start", search_intent=request)
+    run_id = page["run"]
+    operation = 0
 
-        def advance(page, **changes):
-            nonlocal operation
-            operation += 1
-            return client.call(action="advance", run=run_id, expected_revision=page["step_revision"],
-                               operation_id=str(operation), **changes)
+    def advance(page, **changes):
+        nonlocal operation
+        operation += 1
+        return client.call(action="advance", run=run_id, expected_revision=page["step_revision"],
+                           operation_id=str(operation), **changes)
 
-        handles = None
-        if contextual:
-            anchor = page["candidates"][0]["evidence"][0]["handle"]
-            windows = [{"anchor": anchor, "window": {"direction": "occurrences",
-                         "query": query, "max_bytes": 4096, "max_messages": 5}}
-                       for query in ("Regression", "reverted")]
-            if progressive:
-                response = advance(page, context_requests=windows)
-                results = response["windows"]
-                page["step_revision"] = response["step_revision"]
-            else:
-                results = [client.call(action="context", run=run_id, **window) for window in windows]
-            handles = [anchor, *[result["messages"][0]["handle"] for result in results]]
+    handles = None
+    if contextual:
+        anchor = page["candidates"][0]["evidence"][0]["handle"]
+        windows = [{"anchor": anchor, "window": {"direction": "occurrences",
+                     "query": query, "max_bytes": 4096, "max_messages": 5}}
+                   for query in ("Regression", "reverted")]
+        response = advance(page, context_requests=windows)
+        page["step_revision"] = response["step_revision"]
+        handles = [anchor, *[window["messages"][0]["handle"] for window in response["windows"]]]
 
-        if progressive:
-            while terminal is None:
-                page = advance(page, assessments=assessments(page, True, handles))
-                collect(page)
-                terminal = page["outcome"]
-        else:
-            while True:
-                updates = assessments(page, False, handles)
-                if updates:
-                    client.call(action="assess", run=run_id, assessments=updates)
-                if not page["progress"]["more_candidates"]:
-                    break
-                page = client.call(action="next", run=run_id)
-            page = client.call(action="finish", run=run_id)
-            collect(page)
-            while page.get("next_offset") is not None:
-                page = client.call(action="finish", run=run_id, offset=page["next_offset"],
-                                   revision=page["revision"])
-                collect(page)
-            terminal = page["outcome"]
-        progress = page["progress"]
+    while page["execution_state"] == "in_progress":
+        page = advance(page, assessments=assessments(page, handles))
+        collect(page)
+    terminal = page["outcome"]
+    progress = page["progress"]
     return {"terminal": terminal, "mcp_calls": sum(client.calls.values()),
             "calls": dict(client.calls), "recall": len(seen) / len(truth), "citations": citations,
             "p5": min(5, len(seen)) / 5, "r10": min(10, len(seen)) / len(truth),
@@ -220,7 +193,6 @@ def run(client, truth, progressive, contextual, exact):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("binary", type=Path)
-    parser.add_argument("--mode", choices=("legacy", "progressive"), required=True)
     parser.add_argument("--scenario", choices=("exact", "simple", "context", "exhaustive"), required=True)
     parser.add_argument("--count", type=int, default=90)
     parser.add_argument("--repeats", type=int, default=20)
@@ -247,8 +219,7 @@ def main():
             client = Client(args.binary.resolve(), root, caller, index_root)
             try:
                 def run_once():
-                    return run(client, truth, args.mode == "progressive",
-                               args.scenario == "context", args.scenario == "exact")
+                    return run(client, truth, args.scenario == "context", args.scenario == "exact")
 
                 if args.sample_rss:
                     with RssSampler(client.child.pid) as sampler:
@@ -271,7 +242,7 @@ def main():
         assert all(row["recall"] == summary["recall"] for row in results)
         for metric in ("child_cpu_user_s", "child_cpu_system_s"):
             summary[metric] = statistics.median(row[metric] for row in results)
-        print(json.dumps({"scenario": args.scenario, "mode": args.mode,
+        print(json.dumps({"scenario": args.scenario,
                           "count": len(truth), "replicates": args.repeats,
                           "private_index": args.index, "hidden_bytes": args.hidden_bytes, **summary}))
 

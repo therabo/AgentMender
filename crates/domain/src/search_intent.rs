@@ -132,6 +132,9 @@ pub struct SearchIntent {
     pub coverage_goal: CoverageGoal,
     pub hints: SearchHints,
     pub constraints: Option<SearchConstraints>,
+    /// An explicit query expression can replace the lexical hints as the candidate predicate.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub filter: Option<QueryExpr>,
 }
 
 pub struct ValidatedSearchIntent {
@@ -194,7 +197,13 @@ impl SearchIntent {
             return Err(UnsupportedSchemaVersion);
         }
         if !bounded_text(&self.subject, SUBJECT_LIMIT)
-            || self.hints.terms.is_empty()
+            || (self.hints.terms.is_empty()
+                && self.filter.is_none()
+                && self
+                    .constraints
+                    .as_ref()
+                    .is_none_or(|c| c.native_session_id.is_none()))
+            || self.filter.as_ref().is_some_and(|query| !query.valid())
             || !bounded_list(&self.hints.terms, TERMS_LIMIT, TERM_LIMIT)
             || !bounded_list(&self.hints.project_names, PROJECT_LIMIT, PROJECT_NAME_LIMIT)
         {
@@ -212,7 +221,20 @@ impl SearchIntent {
             .map(SearchConstraints::compile)
             .transpose()?
             .flatten();
-        let lexical = lexical_query(&self.hints.terms);
+        let lexical = if let Some(filter) = &self.filter {
+            filter.clone()
+        } else if self.hints.terms.is_empty() {
+            QueryExpr::NativeId {
+                values: vec![
+                    self.constraints
+                        .as_ref()
+                        .and_then(|c| c.native_session_id.clone())
+                        .expect("validated identity lookup"),
+                ],
+            }
+        } else {
+            lexical_query(&self.hints.terms)
+        };
         Ok(ValidatedSearchIntent {
             intent: self,
             hard_filter,

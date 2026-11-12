@@ -12,102 +12,48 @@ use agentmender_domain::{
     *,
 };
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 use std::{
     collections::{BTreeMap, BTreeSet},
-    sync::Arc,
     time::{Duration, Instant},
 };
 
 const RUN_LIMIT: usize = 4;
-const LEGACY_WORK_TIME: Duration = Duration::from_secs(480);
 const RUN_RETENTION: Duration = Duration::from_secs(600);
 const SCAN_TIME: Duration = Duration::from_secs(5);
 const SCAN_BATCH: usize = 12;
-const LEGACY_SCAN_LIMIT: usize = 256;
-const LEGACY_CANDIDATE_LIMIT: usize = 96;
 const CANDIDATE_BATCH: usize = 5;
 const CONTEXT_LIMIT: usize = 24;
 const CONTEXT_BYTES: usize = 128 * 1024;
-const LEGACY_ASSESSMENT_LIMIT: usize = 48;
-const RESULT_BATCH: usize = 5;
 
-#[derive(Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum AnswerCardinality {
-    Single,
-    Multiple,
+#[derive(Clone)]
+struct Retrieval {
+    hard_filter: Option<QueryExpr>,
+    literal: QueryExpr,
+    expansion: Option<QueryExpr>,
+    exclude_literal_on_expansion: bool,
 }
 
-#[derive(Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum AnswerFocus {
-    #[default]
-    Conversation,
-    Decision,
-    Event,
-    Chronology,
-}
-
-#[derive(Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Intent {
-    pub question: String,
-    pub cardinality: AnswerCardinality,
-    #[serde(default)]
-    pub focus: AnswerFocus,
-    #[serde(default)]
-    pub required_outcomes: Vec<Outcome>,
-    #[serde(default)]
-    pub hard_filter: Option<QueryExpr>,
-    pub literal: QueryExpr,
-    #[serde(default)]
-    pub expansion: Option<QueryExpr>,
-}
-
-impl Intent {
-    fn parameters(&self) -> Result<SearchParameters, ApplicationError> {
-        fn hint_nodes(query: &QueryExpr) -> bool {
-            match query {
-                QueryExpr::Text { alternatives, .. } => alternatives.is_empty(),
-                QueryExpr::And { args } | QueryExpr::Or { args } => args.iter().all(hint_nodes),
-                _ => false,
-            }
-        }
-
-        let bounded_hint = |query: &QueryExpr| {
-            query.valid()
-                && query.node_count() <= 18
-                && hint_nodes(query)
-                && query.text_terms().iter().map(String::len).sum::<usize>() <= 384
-        };
-        if !bounded_text(&self.question, 1024)
-            || self.required_outcomes.len() > 4
-            || !bounded_hint(&self.literal)
-            || self
-                .expansion
-                .as_ref()
-                .is_some_and(|q| !bounded_hint(q) || q == &self.literal)
-        {
-            return Err(ApplicationError::InvalidSearch);
-        }
-        self.compile_parameters()
-    }
-
+impl Retrieval {
     fn compile_parameters(&self) -> Result<SearchParameters, ApplicationError> {
         let lexical = QueryExpr::Or {
             args: std::iter::once(self.literal.clone())
                 .chain(self.expansion.clone())
                 .collect(),
         };
+        let mut clauses: Vec<_> = std::iter::once(lexical)
+            .chain(self.hard_filter.clone())
+            .collect();
+        if self.exclude_literal_on_expansion {
+            clauses.push(QueryExpr::Not {
+                arg: Box::new(self.literal.clone()),
+            });
+        }
         let parameters = SearchParameters {
             structured: Some(StructuredQuery {
                 // Positions 0 and 1 are the outer AND and the lexical OR. Keep
                 // both lexical observations alongside the original hard filter.
-                filter: QueryExpr::And {
-                    args: std::iter::once(lexical)
-                        .chain(self.hard_filter.clone())
-                        .collect(),
-                },
+                filter: QueryExpr::And { args: clauses },
                 mode: SearchMode::Exhaustive,
                 sort: SearchSort::DiscoveryPriority,
                 coverage: CoverageRequirement::BestEffort,
@@ -117,7 +63,7 @@ impl Intent {
             include_content: true,
             project_label: None,
             purpose: SearchPurpose::Discovery,
-            page_size: 12,
+            page_size: CANDIDATE_BATCH,
             excerpts: true,
         };
         if !parameters.valid() {
@@ -197,47 +143,13 @@ pub struct Assessment {
 }
 
 pub enum ResolutionAction {
-    Start(Box<Intent>),
-    StartV1 {
-        plan: Box<ValidatedSearchIntent>,
-        progressive: bool,
-    },
-    Advance {
-        run: String,
-        step: Box<Advance>,
-    },
-    Next {
-        run: String,
-    },
-    Expand {
-        run: String,
-        expansion: Box<QueryExpr>,
-    },
-    ExpandTerms {
-        run: String,
-        terms: Vec<String>,
-    },
-    Context {
-        run: String,
-        anchor: usize,
-        window: Option<ContextOptions>,
-    },
-    Assess {
-        run: String,
-        assessments: Vec<Assessment>,
-    },
-    Finish {
-        run: String,
-        offset: usize,
-        revision: Option<usize>,
-        luna_unavailable: bool,
-        preferred_session_id: Option<String>,
-    },
+    Start(Box<ValidatedSearchIntent>),
+    Advance { run: String, step: Box<Advance> },
 }
 
 impl ResolutionAction {
     pub fn is_start(&self) -> bool {
-        matches!(self, Self::Start(_) | Self::StartV1 { .. })
+        matches!(self, Self::Start(_))
     }
 }
 
@@ -253,11 +165,7 @@ pub enum ResolutionError {
         "Assess presented candidates with their own evidence handles and the requested activity and outcome."
     )]
     InvalidAssessment,
-    #[error("The preferred session must be a verified match in a single_best run.")]
-    InvalidPreference,
-    #[error(
-        "The run's context, assessment or duration budget is exhausted. Finish with the available evidence."
-    )]
+    #[error("The current batch context budget is exhausted. Assess available evidence.")]
     BudgetExceeded,
     #[error("Use advance with the current run revision and a new operation ID.")]
     InvalidAdvance,
@@ -275,7 +183,6 @@ impl ResolutionError {
             Self::StaleSearchRun => "stale_search_run",
             Self::InvalidQueryExpansion => "invalid_query_expansion",
             Self::InvalidAssessment => "invalid_assessment",
-            Self::InvalidPreference => "invalid_preference",
             Self::BudgetExceeded => "budget_exceeded",
             Self::InvalidAdvance => "invalid_advance",
             Self::RevisionConflict => "resolution_revision_conflict",
@@ -311,16 +218,6 @@ pub struct ResolvedCandidate {
     pub metadata: SessionMetadata,
     pub assessment: Assessment,
     pub citations: Vec<ContextReference>,
-}
-
-#[derive(Clone, Copy, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ResolutionOutcome {
-    SingleVerified,
-    MultipleVerified,
-    Ambiguous,
-    NoVerifiedMatch,
-    IncompleteSearch,
 }
 
 #[derive(Clone, Default, Serialize)]
@@ -386,29 +283,17 @@ pub struct ResolutionWindow {
 
 #[derive(Clone)]
 pub enum ResolutionData {
-    Candidates {
-        candidates: Vec<ResolutionCandidate>,
-        query: Option<Box<QueryExpr>>,
-    },
-    Context(Box<ResolutionWindow>),
-    Assessed,
+    Candidates(Vec<ResolutionCandidate>),
     Advanced(Box<AdvanceResult>),
-    Finished {
-        outcome: ResolutionOutcome,
-        matches: Vec<ResolvedCandidate>,
-        alternatives: Vec<ResolvedCandidate>,
-        next_offset: Option<usize>,
-        revision: usize,
-    },
 }
 
 pub struct ResolutionResponse {
     pub run: String,
-    pub focus: AnswerFocus,
-    pub coverage_goal: Option<CoverageGoal>,
-    pub revision: Option<usize>,
-    pub progressive_coverage: Option<progressive::Coverage>,
-    pub execution_state: Option<SearchExecutionState>,
+    pub result_policy: ResultPolicy,
+    pub coverage_goal: CoverageGoal,
+    pub revision: usize,
+    pub progressive_coverage: progressive::Coverage,
+    pub execution_state: SearchExecutionState,
     pub progress: ResolutionProgress,
     pub data: ResolutionData,
 }
@@ -428,7 +313,6 @@ struct Candidate {
     basis: MatchBasis,
     handles: Vec<usize>,
     assessment: Option<Assessment>,
-    scan_pass: usize,
     stale_context: bool,
 }
 
@@ -436,29 +320,17 @@ struct Candidate {
 struct Run {
     binding: String,
     instance: String,
-    started: Instant,
-    intent: Intent,
-    search_intent: Option<Arc<SearchIntent>>,
+    retrieval: Retrieval,
+    search_intent: SearchIntent,
     parameters: SearchParameters,
-    original_filter: Option<QueryExpr>,
     next: Option<SearchContinuation>,
     progress: ResolutionProgress,
     candidates: Vec<Candidate>,
     anchors: Vec<Anchor>,
     requested_windows: Vec<(usize, ContextOptions)>,
-    assessment_batches: usize,
     revision: usize,
-    publication: Option<Publication>,
-    stream: Option<progressive::Stream>,
+    stream: progressive::Stream,
     last_used: Instant,
-}
-
-#[derive(Clone)]
-struct Publication {
-    luna_unavailable: bool,
-    preferred_session_id: Option<String>,
-    outcome: ResolutionOutcome,
-    choices: Vec<ResolvedCandidate>,
 }
 
 #[derive(Default)]
@@ -478,127 +350,36 @@ impl ResolutionStore {
         let binding = service.binding(SearchPurpose::Discovery)?;
         self.runs
             .retain(|_, run| run.last_used.elapsed() < RUN_RETENTION);
-        let (id, action) = match action {
-            ResolutionAction::Start(intent) => {
-                let parameters = intent.parameters()?;
-                return self.start(
-                    service,
-                    control,
-                    new_id,
-                    Run::new(binding, service.instance, *intent, parameters, None),
-                );
-            }
-            ResolutionAction::StartV1 { plan, progressive } => {
-                let (spec, hard_filter, literal) = plan.into_parts();
-                let intent = Intent {
-                    question: spec.subject.clone(),
-                    cardinality: match spec.result_policy {
-                        ResultPolicy::AllRelevant => AnswerCardinality::Multiple,
-                        ResultPolicy::SingleBest => AnswerCardinality::Single,
-                    },
-                    focus: if spec.activity == SearchActivity::Decision {
-                        AnswerFocus::Decision
-                    } else {
-                        AnswerFocus::Conversation
-                    },
-                    required_outcomes: spec
-                        .required_outcome
-                        .into_iter()
-                        .chain(spec.activity.evidence_outcome())
-                        .collect(),
+        match action {
+            ResolutionAction::Start(plan) => {
+                let (intent, hard_filter, literal) = plan.into_parts();
+                let retrieval = Retrieval {
                     hard_filter,
                     literal,
                     expansion: None,
+                    exclude_literal_on_expansion: false,
                 };
-                let parameters = intent.compile_parameters()?;
-                let mut run = Run::new(binding, service.instance, intent, parameters, Some(spec));
-                if progressive {
-                    run.enable_stream()?;
+                let parameters = retrieval.compile_parameters()?;
+                self.start(
+                    service,
+                    control,
+                    new_id,
+                    Run::new(binding, service.instance, retrieval, parameters, intent),
+                )
+            }
+            ResolutionAction::Advance { run, step } => {
+                let state = self
+                    .runs
+                    .get_mut(&run)
+                    .ok_or(ResolutionError::StaleSearchRun)?;
+                if state.binding != binding || state.instance != service.instance {
+                    return Err(ResolutionError::StaleSearchRun.into());
                 }
-                return self.start(service, control, new_id, run);
+                state.advance(service, control, run, *step)
             }
-            action => {
-                let id = match &action {
-                    ResolutionAction::Next { run }
-                    | ResolutionAction::Advance { run, .. }
-                    | ResolutionAction::Expand { run, .. }
-                    | ResolutionAction::ExpandTerms { run, .. }
-                    | ResolutionAction::Context { run, .. }
-                    | ResolutionAction::Assess { run, .. }
-                    | ResolutionAction::Finish { run, .. } => run.clone(),
-                    _ => unreachable!("start returned"),
-                };
-                (id, action)
-            }
-        };
-        let run = self
-            .runs
-            .get_mut(&id)
-            .ok_or(ResolutionError::StaleSearchRun)?;
-        if run.binding != binding || run.instance != service.instance {
-            return Err(run.contract_error(ResolutionError::StaleSearchRun));
         }
-        if let ResolutionAction::Advance { step, .. } = action {
-            return run.advance(service, control, id, *step);
-        }
-        if run.stream.is_some() {
-            return Err(ResolutionError::InvalidAdvance.into());
-        }
-        if run.started.elapsed() >= LEGACY_WORK_TIME && run.progress.stop_reason.is_none() {
-            run.progress.stop_reason = Some("resolution_duration_limit");
-            run.publication = None;
-            run.revision += 1;
-        }
-        let data = match action {
-            ResolutionAction::Start(_)
-            | ResolutionAction::StartV1 { .. }
-            | ResolutionAction::Advance { .. } => {
-                unreachable!("start returned")
-            }
-            ResolutionAction::Next { .. } => run.scan(service, control, false)?,
-            ResolutionAction::Expand { expansion, .. } => {
-                if run.search_intent.is_some() {
-                    return Err(ResolutionError::InvalidQueryExpansion.into());
-                }
-                run.expand(service, control, *expansion)?
-            }
-            ResolutionAction::ExpandTerms { terms, .. } => {
-                if run.search_intent.is_none() {
-                    return Err(ResolutionError::InvalidQueryExpansion.into());
-                }
-                let expansion = compile_expansion(&terms)
-                    .map_err(|_| ResolutionError::InvalidQueryExpansion)?;
-                let original = run.intent.literal.text_terms();
-                if expansion
-                    .text_terms()
-                    .iter()
-                    .any(|term| original.contains(term))
-                {
-                    return Err(ResolutionError::InvalidQueryExpansion.into());
-                }
-                run.expand(service, control, expansion)?
-            }
-            ResolutionAction::Context { anchor, window, .. } => {
-                ResolutionData::Context(Box::new(run.context(service, control, anchor, window)?))
-            }
-            ResolutionAction::Assess { assessments, .. } => run.assess(assessments)?,
-            ResolutionAction::Finish {
-                offset,
-                revision,
-                luna_unavailable,
-                preferred_session_id,
-                ..
-            } => run.finish(
-                service,
-                control,
-                offset,
-                revision,
-                luna_unavailable,
-                preferred_session_id,
-            )?,
-        };
-        Ok(run.response(id, data))
     }
+
     fn start(
         &mut self,
         service: &SessionSearchService<'_>,
@@ -623,10 +404,10 @@ impl ResolutionStore {
             None
         };
         let data = match run.scan(service, control, true) {
-            Ok(data) => data,
+            Ok(candidates) => ResolutionData::Candidates(candidates),
             Err(
                 error @ (ApplicationError::Provider(_) | ApplicationError::StaleSearchEvidence),
-            ) if run.stream.is_some() => run.blocked(error.public_code()),
+            ) => run.blocked(error.public_code()),
             Err(error) => return Err(error),
         };
         let result = run.response(id.clone(), data);
@@ -649,18 +430,16 @@ impl Run {
     fn new(
         binding: String,
         instance: &str,
-        intent: Intent,
+        retrieval: Retrieval,
         parameters: SearchParameters,
-        search_intent: Option<SearchIntent>,
+        search_intent: SearchIntent,
     ) -> Self {
         Self {
             binding,
             instance: instance.to_owned(),
-            started: Instant::now(),
-            intent,
-            search_intent: search_intent.map(Arc::new),
+            retrieval,
+            search_intent,
             parameters,
-            original_filter: None,
             next: None,
             progress: ResolutionProgress {
                 scan_passes: 1,
@@ -669,39 +448,23 @@ impl Run {
             candidates: Vec::new(),
             anchors: Vec::new(),
             requested_windows: Vec::new(),
-            assessment_batches: 0,
             revision: 0,
-            publication: None,
-            stream: None,
+            stream: progressive::Stream::default(),
             last_used: Instant::now(),
-        }
-    }
-
-    fn contract_error(&self, error: ResolutionError) -> ApplicationError {
-        if self.search_intent.is_some() {
-            error.into()
-        } else if error == ResolutionError::StaleSearchRun {
-            ApplicationError::StaleSearchEvidence
-        } else {
-            ApplicationError::InvalidSearch
         }
     }
 
     fn response(&self, run: String, data: ResolutionData) -> ResolutionResponse {
         let mut progress = self.progress.clone();
-        progress.more_candidates = self.presented() < self.candidates.len()
-            || (!progress.scan_complete && progress.stop_reason.is_none())
-            || self
-                .stream
-                .as_ref()
-                .is_some_and(|stream| stream.has_refresh_work());
+        progress.more_candidates = (!progress.scan_complete && progress.stop_reason.is_none())
+            || self.stream.has_refresh_work();
         ResolutionResponse {
             run,
-            focus: self.intent.focus,
-            coverage_goal: self.search_intent.as_ref().map(|p| p.coverage_goal),
-            revision: self.stream.as_ref().map(|_| self.revision),
-            progressive_coverage: self.stream.as_ref().map(|_| self.stream_coverage()),
-            execution_state: self.stream.as_ref().map(|stream| stream.execution_state()),
+            result_policy: self.search_intent.result_policy,
+            coverage_goal: self.search_intent.coverage_goal,
+            revision: self.revision,
+            progressive_coverage: self.stream_coverage(),
+            execution_state: self.stream.execution_state(),
             progress,
             data,
         }
@@ -712,22 +475,15 @@ impl Run {
         service: &SessionSearchService<'_>,
         control: &QueryControl,
         first: bool,
-    ) -> Result<ResolutionData, ApplicationError> {
+    ) -> Result<Vec<ResolutionCandidate>, ApplicationError> {
         let started = Instant::now();
         let mut reanchored = false;
-        let first_index = self.presented();
-        let want = first_index + CANDIDATE_BATCH;
         for _ in 0..SCAN_BATCH {
             if self.progress.scan_complete
                 || self.progress.stop_reason.is_some()
-                || self.candidates.len() >= want
-                || (self.stream.is_some() && self.candidates.len() > first_index)
+                || !self.candidates.is_empty()
                 || started.elapsed() >= SCAN_TIME
             {
-                break;
-            }
-            if self.stream.is_none() && self.progress.provider_pages >= LEGACY_SCAN_LIMIT {
-                self.progress.stop_reason = Some("search_work_limit");
                 break;
             }
             let tick = Instant::now();
@@ -785,14 +541,12 @@ impl Run {
             self.progress.suppressed_records += coverage.suppressed_records;
 
             if let Some(next) = &page.next
-                && (page.next == self.next
-                    || self.stream.is_some()
-                        && !progressive::cursor_advances(self.next.as_ref(), next))
+                && !progressive::cursor_advances(self.next.as_ref(), next)
             {
                 self.progress.stop_reason = Some("no_search_progress");
                 break;
             }
-            if self.stream.is_some() && !self.observe_batch_order(&mut page.sessions) {
+            if !self.observe_batch_order(&mut page.sessions) {
                 self.progress.stop_reason = Some("unstable_candidate_order");
                 break;
             }
@@ -802,15 +556,9 @@ impl Run {
                 self.add_candidate(hit);
             }
             self.revision += 1;
-            self.publication = None;
         }
-        let end = want.min(self.candidates.len());
-        let candidates = self.candidate_batch(first_index, end);
-        self.progress.candidates_presented += end - first_index;
-        Ok(ResolutionData::Candidates {
-            candidates,
-            query: (first && self.search_intent.is_none()).then(|| Box::new(self.filter().clone())),
-        })
+        self.progress.candidates_presented += self.candidates.len();
+        Ok(self.candidate_batch(0, self.presented()))
     }
 
     fn candidate_batch(&self, start: usize, end: usize) -> Vec<ResolutionCandidate> {
@@ -838,42 +586,25 @@ impl Run {
             .collect()
     }
 
-    fn expand(
-        &mut self,
-        service: &SessionSearchService<'_>,
-        control: &QueryControl,
-        expansion: QueryExpr,
-    ) -> Result<ResolutionData, ApplicationError> {
-        if self.intent.expansion.is_some()
+    fn expand(&mut self, expansion: QueryExpr) -> Result<(), ApplicationError> {
+        if self.retrieval.expansion.is_some()
+            || self.search_intent.filter.is_some()
+            || self.search_intent.hints.terms.is_empty()
             || !self.progress.scan_complete
             || self.progress.stop_reason.is_some()
-            || self.stream.is_none() && self.progress.provider_pages >= LEGACY_SCAN_LIMIT
         {
-            return Err(self.contract_error(ResolutionError::InvalidQueryExpansion));
+            return Err(ResolutionError::InvalidQueryExpansion.into());
         }
-        self.intent.expansion = Some(expansion);
-        let compiled = if self.search_intent.is_some() {
-            self.intent.compile_parameters()
-        } else {
-            self.intent.parameters()
-        };
-        let parameters = match compiled {
-            Ok(parameters) => parameters,
-            Err(_) => {
-                self.intent.expansion = None;
-                return Err(self.contract_error(ResolutionError::InvalidQueryExpansion));
-            }
-        };
-        self.original_filter = Some(self.filter().clone());
-        self.parameters = parameters;
-        if self.stream.is_some() {
-            self.parameters.page_size = CANDIDATE_BATCH;
-        }
+        self.retrieval.expansion = Some(expansion);
+        self.retrieval.exclude_literal_on_expansion = self.progress.lexical_candidates != 0;
+        self.parameters = self
+            .retrieval
+            .compile_parameters()
+            .map_err(|_| ResolutionError::InvalidQueryExpansion)?;
         self.progress.scan_passes += 1;
         self.progress.scan_complete = false;
-        self.revision += 1;
-        self.publication = None;
-        self.scan(service, control, true)
+        self.stream.reset_order();
+        Ok(())
     }
 
     fn filter(&self) -> &QueryExpr {
@@ -886,36 +617,12 @@ impl Run {
     }
 
     fn add_candidate(&mut self, hit: SessionSearchHit) {
-        let basis = self.intent.match_basis(&hit);
-        if let Some(previous) = self
-            .candidates
-            .iter_mut()
-            .find(|c| c.hit.metadata.identity == hit.metadata.identity)
-        {
-            if previous.scan_pass != self.progress.scan_passes
-                && previous
-                    .hit
-                    .evidence
-                    .first()
-                    .zip(hit.evidence.first())
-                    .is_some_and(|(a, b)| {
-                        a.source_fingerprint == b.source_fingerprint
-                            && a.source_bytes == b.source_bytes
-                    })
-            {
-                previous.basis.expansion = basis.expansion;
-            }
-            return;
-        }
+        let basis = self.retrieval.match_basis(&hit);
         self.progress.lexical_candidates += 1;
         if basis.literal == Truth::True {
             self.progress.literal_candidates += 1;
         } else if basis.expansion == Some(Truth::True) {
             self.progress.expansion_only_candidates += 1;
-        }
-        if self.stream.is_none() && self.candidates.len() >= LEGACY_CANDIDATE_LIMIT {
-            self.progress.stop_reason = Some("candidate_limit");
-            return;
         }
         self.retain_candidate(hit, basis);
     }
@@ -946,7 +653,6 @@ impl Run {
             basis,
             handles,
             assessment: None,
-            scan_pass: self.progress.scan_passes,
             stale_context: false,
         });
     }
@@ -982,11 +688,7 @@ impl Run {
             (None, Some(options)) => options,
             (None, None) => ContextOptions {
                 max_bytes: 4096,
-                max_messages: if self.stream.is_some() {
-                    5
-                } else {
-                    ContextOptions::default().max_messages
-                },
+                max_messages: 5,
                 ..Default::default()
             },
             (Some(_), Some(_)) => return Err(ApplicationError::InvalidSearch),
@@ -994,21 +696,13 @@ impl Run {
         if !options.valid() || self.requested_windows.contains(&(handle, options.clone())) {
             return Err(ApplicationError::InvalidSearch);
         }
-        let context_requests = if self.stream.is_some() {
-            self.requested_windows.len()
-        } else {
-            self.progress.context_requests
-        };
-        if (self.stream.is_none() && self.started.elapsed() >= LEGACY_WORK_TIME)
-            || context_requests >= CONTEXT_LIMIT
+        if self.requested_windows.len() >= CONTEXT_LIMIT
             || self.active_context_bytes() + options.max_bytes > CONTEXT_BYTES
         {
-            return Err(self.contract_error(ResolutionError::BudgetExceeded));
+            return Err(ResolutionError::BudgetExceeded.into());
         }
         self.progress.context_requests += 1;
-        if self.stream.is_some() {
-            self.requested_windows.push((handle, options.clone()));
-        }
+        self.requested_windows.push((handle, options.clone()));
         let result = service.context_window(
             anchor.reference.clone(),
             selector(&self.candidates[anchor.candidate].hit.metadata),
@@ -1028,9 +722,6 @@ impl Run {
             && next_options.as_ref() == Some(&options)
         {
             return Err(ApplicationError::StaleSearchEvidence);
-        }
-        if self.stream.is_none() {
-            self.requested_windows.push((handle, options.clone()));
         }
         let candidate = anchor.candidate;
         let messages = window
@@ -1092,20 +783,12 @@ impl Run {
         })
     }
 
-    fn assess(&mut self, assessments: Vec<Assessment>) -> Result<ResolutionData, ApplicationError> {
-        if self.stream.is_none()
-            && (self.started.elapsed() >= LEGACY_WORK_TIME
-                || self.assessment_batches >= LEGACY_ASSESSMENT_LIMIT)
-        {
-            return Err(self.contract_error(ResolutionError::BudgetExceeded));
-        }
-        self.assessment_batches += 1;
+    fn assess(&mut self, assessments: Vec<Assessment>) -> Result<(), ApplicationError> {
         let mut seen = BTreeSet::new();
         let updates: Option<Vec<_>> = assessments
             .into_iter()
             .map(|mut assessment| {
-                if self.search_intent.is_some()
-                    && assessment.disposition == Disposition::Insufficient
+                if assessment.disposition == Disposition::Insufficient
                     && assessment.missing_evidence.is_none()
                     && bounded_text(&assessment.explanation, 512)
                 {
@@ -1139,12 +822,11 @@ impl Run {
             .collect();
         let Some(updates) = updates.filter(|a| (1..=CANDIDATE_BATCH).contains(&a.len())) else {
             self.progress.invalid_assessments += 1;
-            return Err(self.contract_error(ResolutionError::InvalidAssessment));
+            return Err(ResolutionError::InvalidAssessment.into());
         };
-        if self.stream.is_some()
-            && updates
-                .iter()
-                .all(|(i, assessment)| self.candidates[*i].assessment.as_ref() == Some(assessment))
+        if updates
+            .iter()
+            .all(|(i, assessment)| self.candidates[*i].assessment.as_ref() == Some(assessment))
         {
             return Err(ResolutionError::InvalidAdvance.into());
         }
@@ -1153,21 +835,17 @@ impl Run {
         }
         self.refresh_assessment_counts();
         self.revision += 1;
-        self.publication = None;
-        Ok(ResolutionData::Assessed)
+        Ok(())
     }
 
     fn refresh_assessment_counts(&mut self) {
-        self.progress.assessments = self
-            .stream
-            .as_ref()
-            .map_or(0, progressive::Stream::evaluated)
+        self.progress.assessments = self.stream.evaluated()
             + self
                 .candidates
                 .iter()
                 .filter(|c| c.assessment.is_some())
                 .count();
-        self.progress.insufficient = self.stream.as_ref().map_or(0, |s| s.unconfirmed())
+        self.progress.insufficient = self.stream.unconfirmed()
             + self
                 .candidates
                 .iter()
@@ -1180,271 +858,16 @@ impl Run {
     }
 
     fn supports_intent(&self, assessment: &Assessment) -> bool {
-        assessment
-            .relationship
-            .is_none_or(|relationship| relationship == EvidenceRelationship::Direct)
-            && (self.stream.is_none()
-                || assessment.relationship == Some(EvidenceRelationship::Direct))
-            && self
-                .intent
-                .required_outcomes
-                .iter()
-                .all(|o| assessment.outcomes.contains(o))
-            && self.search_intent.as_ref().is_none_or(|intent| {
-                (intent.activity == SearchActivity::Any
-                    || assessment.activity == Some(intent.activity)
-                    || (intent.activity.evidence_outcome().is_some()
-                        && assessment.activity.is_none()))
-                    // A complete source scan certifies lexical observations.
-                    // The resolver has no complete semantic-review receipt.
-                    && intent.excluded_outcome.is_none()
-            })
-    }
-
-    fn finish(
-        &mut self,
-        service: &SessionSearchService<'_>,
-        control: &QueryControl,
-        offset: usize,
-        revision: Option<usize>,
-        luna_unavailable: bool,
-        preferred_session_id: Option<String>,
-    ) -> Result<ResolutionData, ApplicationError> {
-        if (offset > 0 || revision.is_some()) && revision != Some(self.revision) {
-            return Err(ApplicationError::StaleSearchEvidence);
-        }
-        let v1 = self.search_intent.as_deref();
-        if let Some(preferred) = &preferred_session_id
-            && (!v1.is_some_and(|spec| spec.result_policy == ResultPolicy::SingleBest)
-                || !self.candidates.iter().any(|candidate| {
-                    &candidate.hit.metadata.native_session_id == preferred
-                        && candidate.assessment.as_ref().is_some_and(|assessment| {
-                            assessment.disposition == Disposition::VerifiedRelevant
-                        })
-                }))
-        {
-            return Err(ResolutionError::InvalidPreference.into());
-        }
-        if self.publication.as_ref().is_none_or(|publication| {
-            publication.luna_unavailable != luna_unavailable
-                || publication.preferred_session_id != preferred_session_id
-        }) {
-            if offset != 0 {
-                return Err(ApplicationError::StaleSearchEvidence);
-            }
-            let positives = self
-                .candidates
-                .iter()
-                .filter(|c| {
-                    c.assessment
-                        .as_ref()
-                        .is_some_and(|a| a.disposition == Disposition::VerifiedRelevant)
-                })
-                .count();
-            let plausible = self
-                .candidates
-                .iter()
-                .filter(|c| {
-                    c.assessment
-                        .as_ref()
-                        .is_some_and(|a| a.plausible_alternative)
-                })
-                .count();
-            let complete = self.progress.scan_complete
-                && self.progress.stop_reason.is_none()
-                && self.progress.assessments == self.progress.lexical_candidates
-                && !luna_unavailable
-                && v1.is_none_or(|intent| {
-                    intent.coverage_goal == CoverageGoal::Standard
-                        && self.progress.insufficient == 0
-                });
-            let ambiguous = self.intent.cardinality == AnswerCardinality::Single
-                && preferred_session_id.is_none()
-                && positives + plausible > 1;
-            let unresolved_absence = v1.is_some() && positives == 0 && self.has_source_gaps();
-            let outcome = if unresolved_absence || !complete && (v1.is_some() || !ambiguous) {
-                ResolutionOutcome::IncompleteSearch
-            } else if ambiguous {
-                ResolutionOutcome::Ambiguous
-            } else if positives == 0 {
-                ResolutionOutcome::NoVerifiedMatch
-            } else if self.intent.cardinality == AnswerCardinality::Multiple
-                && (v1.is_none() || positives > 1)
-            {
-                ResolutionOutcome::MultipleVerified
-            } else {
-                ResolutionOutcome::SingleVerified
-            };
-            let choices = self
-                .candidates
-                .iter()
-                .filter_map(|c| {
-                    let assessment = c.assessment.as_ref()?;
-                    let relevant = assessment.disposition == Disposition::VerifiedRelevant;
-                    let competing = self.intent.cardinality == AnswerCardinality::Single
-                        && assessment.plausible_alternative;
-                    if preferred_session_id
-                        .as_ref()
-                        .is_some_and(|id| id != &c.hit.metadata.native_session_id)
-                    {
-                        return None;
-                    }
-                    let related = positives == 0
-                        && matches!(
-                            assessment.disposition,
-                            Disposition::Related | Disposition::Contradiction
-                        );
-                    (relevant || competing || related).then(|| ResolvedCandidate {
-                        metadata: c.hit.metadata.clone(),
-                        assessment: assessment.clone(),
-                        citations: assessment
-                            .evidence
-                            .iter()
-                            .map(|&i| {
-                                self.anchor(i)
-                                    .expect("active assessed anchor")
-                                    .reference
-                                    .clone()
-                            })
-                            .collect(),
-                    })
-                })
-                .collect();
-            self.publication = Some(Publication {
-                luna_unavailable,
-                preferred_session_id,
-                outcome,
-                choices,
-            });
-        }
-        let Publication {
-            outcome, choices, ..
-        } = self.publication.as_ref().expect("built");
-        let mut outcome = *outcome;
-        if offset > choices.len() {
-            return Err(ApplicationError::InvalidSearch);
-        }
-        let end = (offset + RESULT_BATCH).min(choices.len());
-        let single_best = v1.is_some_and(|spec| spec.result_policy == ResultPolicy::SingleBest);
-        let preferred = self
-            .publication
-            .as_ref()
-            .is_some_and(|p| p.preferred_session_id.is_some());
-        let selected = &choices[offset..end];
-        let mut matches = vec![];
-        let mut alternatives = vec![];
-        let mut failures = 0;
-        if !selected.is_empty() {
-            // Refresh metadata without re-decoding the scanned source. The
-            // frozen content facts can be reused only at the same revision.
-            let fresh = service.search(
-                SearchParameters {
-                    structured: Some(StructuredQuery {
-                        filter: QueryExpr::NativeId {
-                            values: selected
-                                .iter()
-                                .map(|c| c.metadata.native_session_id.clone())
-                                .collect(),
-                        },
-                        mode: SearchMode::Exhaustive,
-                        sort: SearchSort::Identity,
-                        coverage: CoverageRequirement::BestEffort,
-                    }),
-                    include_content: false,
-                    excerpts: false,
-                    ..self.parameters.clone()
-                },
-                None,
-                control.clone(),
-            )?;
-            for choice in selected {
-                let candidate = self
-                    .candidates
-                    .iter()
-                    .find(|c| c.hit.metadata.identity == choice.metadata.identity)
-                    .expect("selected candidate");
-                let valid = fresh
-                    .page
-                    .sessions
-                    .iter()
-                    .find(|h| h.metadata.identity == choice.metadata.identity)
-                    .filter(|h| {
-                        let filter = if candidate.scan_pass == self.progress.scan_passes {
-                            self.filter()
-                        } else {
-                            self.original_filter.as_ref().expect("first-pass filter")
-                        };
-                        filter.evaluate_observed(
-                            &h.metadata,
-                            &candidate.hit.query_observation,
-                            candidate.hit.content_complete,
-                        ) == Truth::True
-                    });
-                let Some(current) = valid else {
-                    failures += 1;
-                    continue;
-                };
-                let Some(anchor) = choice.citations.first() else {
-                    failures += 1;
-                    continue;
-                };
-                if choice.citations.iter().any(|r| {
-                    r.source_fingerprint != anchor.source_fingerprint
-                        || r.source_bytes != anchor.source_bytes
-                }) {
-                    failures += 1;
-                    continue;
-                }
-                match service.context_window(
-                    anchor.clone(),
-                    selector(&current.metadata),
-                    ContextOptions {
-                        direction: ContextDirection::Start,
-                        max_bytes: 64,
-                        max_messages: 1,
-                        ..Default::default()
-                    },
-                    control.clone(),
-                ) {
-                    Ok(_) => {}
-                    Err(
-                        error @ (ApplicationError::DiscoveryCallerUnavailable
-                        | ApplicationError::Cancelled),
-                    ) => {
-                        return Err(error);
-                    }
-                    Err(_) => {
-                        failures += 1;
-                        continue;
-                    }
-                }
-                let choice = ResolvedCandidate {
-                    metadata: current.metadata.clone(),
-                    assessment: choice.assessment.clone(),
-                    citations: choice.citations.clone(),
-                };
-                if choice.assessment.disposition == Disposition::VerifiedRelevant
-                    && (!single_best || preferred || choices.len() == 1)
-                {
-                    matches.push(choice);
-                } else {
-                    alternatives.push(choice);
-                }
-            }
-        }
-        if failures > 0 {
-            self.progress.freshness_failures += failures;
-        }
-        if self.progress.freshness_failures > 0 {
-            outcome = ResolutionOutcome::IncompleteSearch;
-        }
-        Ok(ResolutionData::Finished {
-            outcome,
-            matches,
-            alternatives,
-            next_offset: (!single_best && end < choices.len()).then_some(end),
-            revision: self.revision,
-        })
+        let intent = &self.search_intent;
+        let required_activity = intent.activity.evidence_outcome();
+        assessment.relationship == Some(EvidenceRelationship::Direct)
+            && intent.required_outcome.into_iter().chain(required_activity)
+                .all(|outcome| assessment.outcomes.contains(&outcome))
+            && (intent.activity == SearchActivity::Any
+                || assessment.activity == Some(intent.activity)
+                || (required_activity.is_some() && assessment.activity.is_none()))
+            // Bounded passages cannot establish a session-wide semantic exclusion.
+            && intent.excluded_outcome.is_none()
     }
 }
 
@@ -1513,24 +936,39 @@ mod tests {
         }
     }
 
-    fn example_intent() -> Intent {
-        serde_json::from_value(serde_json::json!({
-            "question":"Find all Codex conversations outside MISSION1 about a permission denied error.",
-            "cardinality":"multiple",
-            "focus":"event",
-            "hard_filter":{"op":"and","args":[
-                {"op":"provider","values":["codex"]},
-                {"op":"not","arg":{"op":"project","values":["MISSION1"],"source":"verified_label"}}
-            ]},
-            "literal":{"op":"text","value":"permission denied"},
-            "expansion":{"op":"text","value":"EPERM"}
-        })).unwrap()
+    pub(super) fn example_intent() -> ValidatedSearchIntent {
+        serde_json::from_value::<SearchIntent>(serde_json::json!({
+            "schema_version":"1",
+            "subject":"Find all Codex conversations outside MISSION1 about a permission denied error",
+            "hints":{"terms":["permission denied"]},
+            "constraints":{"target_provider":"codex","project_membership":{
+                "mode":"exclude","names":["MISSION1"],"basis":"verified"
+            }}
+        })).unwrap().validate().unwrap()
+    }
+
+    fn step(revision: usize) -> Box<Advance> {
+        Box::new(Advance {
+            expected_revision: revision,
+            operation_id: "next".into(),
+            assessments: vec![],
+            context_requests: vec![],
+            expansion: vec![],
+            cancel: false,
+            luna_unavailable: false,
+        })
     }
 
     #[test]
     fn expansion_cannot_override_unknown_hard_membership() {
-        let mut intent = example_intent();
-        let params = intent.parameters().unwrap();
+        let (_, hard_filter, literal) = example_intent().into_parts();
+        let retrieval = Retrieval {
+            hard_filter,
+            literal,
+            expansion: Some(compile_expansion(&["EPERM".into()]).unwrap()),
+            exclude_literal_on_expansion: true,
+        };
+        let params = retrieval.compile_parameters().unwrap();
         let metadata = SessionMetadata {
             identity: ApparentCodexCaller::from_metadata(CALLER, None)
                 .unwrap()
@@ -1558,13 +996,6 @@ mod tests {
             filter.evaluate_observed(&metadata, &observation, true),
             Truth::Unknown
         );
-        intent.expansion = Some(QueryExpr::Not {
-            arg: Box::new(intent.literal.clone()),
-        });
-        assert!(matches!(
-            intent.parameters(),
-            Err(ApplicationError::InvalidSearch)
-        ));
     }
 
     #[test]
@@ -1591,10 +1022,7 @@ mod tests {
         let start = store
             .execute(
                 &service,
-                ResolutionAction::StartV1 {
-                    plan: Box::new(spec.validate().unwrap()),
-                    progressive: false,
-                },
+                ResolutionAction::Start(Box::new(spec.validate().unwrap())),
                 Some("run".into()),
                 &control,
             )
@@ -1613,8 +1041,9 @@ mod tests {
             assert!(matches!(
                 store.execute(
                     &other,
-                    ResolutionAction::Next {
-                        run: start.run.clone()
+                    ResolutionAction::Advance {
+                        run: start.run.clone(),
+                        step: step(start.revision),
                     },
                     None,
                     &control
@@ -1657,20 +1086,21 @@ mod tests {
         let finish = store
             .execute(
                 &service,
-                ResolutionAction::Finish {
+                ResolutionAction::Advance {
                     run: first.run,
-                    offset: 0,
-                    revision: None,
-                    luna_unavailable: true,
-                    preferred_session_id: None,
+                    step: Box::new(Advance {
+                        luna_unavailable: true,
+                        ..*step(first.revision)
+                    }),
                 },
                 None,
                 &control,
             )
             .unwrap();
-        assert!(matches!(finish.data, ResolutionData::Finished {
-            outcome: ResolutionOutcome::IncompleteSearch,
-            matches, .. } if matches.is_empty()));
+        assert!(matches!(finish.data, ResolutionData::Advanced(reply)
+            if reply.outcome == Some(TerminalOutcome::Blocked) && reply.matches.is_empty()));
+        assert_eq!(finish.execution_state, SearchExecutionState::Interrupted);
+        assert_eq!(finish.progress.stop_reason, Some("luna_unavailable"));
         assert_eq!(reader.0.get(), 2);
     }
 }

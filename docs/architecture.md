@@ -105,8 +105,12 @@ Persistence adds a separate derived FTS5 store under an explicit OwnedStateRoot,
 with private files, contentless postings, opted-in safe text, source/chunk keys,
 transactions and fixed offline rebuild. It never reads providers. The ownership
 graph and lifecycle journal are unchanged. Message adjacency is a retrieval
-structure, not destructive ownership. MCP retains the existing search/context
-surface; CLI alone supplies persistent index paths and maintenance controls.
+structure, not destructive ownership. MCP keeps deterministic search/context primitives separate from
+`session_resolve`, which exposes a single progressive `start`/`advance`
+state machine. Application owns the run, context budget, backpressure and
+publication. Domain owns the typed intent and query predicates. The Codex
+host owns Luna execution and the final tables. CLI alone supplies persistent
+index paths and maintenance controls.
 
 Production management registration files now remain inadmissible as caller proof;
 only a future enforceable host transport can enable that guarantee. Missing binding

@@ -1491,6 +1491,12 @@ fn search_cached(
         {
             return Err(stale());
         }
+        let use_first_visible_passage = request.parameters.excerpts
+            && request.parameters.structured.as_ref().is_some_and(|q| {
+                q.sort == SearchSort::DiscoveryPriority
+                    && (terms.is_empty()
+                        || q.filter.metadata_truth(&candidate.metadata) == Truth::True)
+            });
         if prior.is_none()
             && let Some(cached) = request.cached.iter().find(|c| {
                 c.native_session_id == candidate.metadata.native_session_id
@@ -1519,6 +1525,7 @@ fn search_cached(
                 )
             {
                 let valid = cached.evidence.len() <= 2
+                    && (!use_first_visible_passage || !cached.evidence.is_empty())
                     && cached.evidence.iter().all(|e| {
                         e.source_fingerprint == observation.fingerprint
                             && e.source_bytes == observation.bytes
@@ -1654,6 +1661,16 @@ fn search_cached(
                                 format: observation.format.into(),
                             });
                         }
+                    }
+                    // An identity or metadata predicate can admit a session
+                    // with no lexical anchor. Seed Luna's context from the
+                    // first visible message on the resolver's search route.
+                    if evidence.is_empty()
+                        && use_first_visible_passage
+                        && let Some(message) = observation.messages.first()
+                    {
+                        let (excerpt, truncated) = bounded_excerpt(&message.text, &terms, 320);
+                        evidence.push(evidence_for(message, &observation, excerpt, 0, truncated));
                     }
                     let ranked = if evidence.len() > 1 && !ranking_query.is_empty() {
                         rank_passages(&observation.messages, &ranking_query, end)?
@@ -3258,6 +3275,74 @@ mod tests {
         encoder.finish().unwrap();
         fs::remove_file(path).unwrap();
         compressed
+    }
+
+    #[test]
+    fn discovery_priority_cursor_observes_titles_and_eligibility_before_lexical_content() {
+        let root = tempfile::tempdir().unwrap();
+        let db = db();
+        let hit = [message("assistant", "FlightProbe implementation")];
+        let unrelated = seed(&db, root.path(), 3, "neutral", &[message("user", "Lunch")]);
+        seed(&db, root.path(), 1, "neutral", &hit);
+        seed(&db, root.path(), 2, "neutral", &hit);
+        let mut query = request("");
+        query.parameters.page_size = 1;
+        query.parameters.structured = Some(StructuredQuery {
+            filter: QueryExpr::And {
+                args: vec![
+                    QueryExpr::State {
+                        values: vec![SessionState::Active],
+                    },
+                    QueryExpr::Text {
+                        value: "FlightProbe".into(),
+                        kind: Default::default(),
+                        alternatives: vec![],
+                    },
+                ],
+            },
+            mode: SearchMode::Exhaustive,
+            sort: SearchSort::DiscoveryPriority,
+            coverage: CoverageRequirement::BestEffort,
+        });
+        let before = inventory(&db, root.path(), &query, until()).unwrap();
+        let first = search(&db, root.path(), &query, until()).unwrap();
+        let cursor = first.next.unwrap();
+
+        db.execute("UPDATE threads SET updated_at=99 WHERE id=?1", [id(1)])
+            .unwrap();
+        let mut edited = fs::read(&unrelated).unwrap();
+        edited.push(b'\n');
+        fs::write(&unrelated, edited).unwrap();
+        let after = inventory(&db, root.path(), &query, until()).unwrap();
+        assert_eq!(before.corpus_fingerprint, after.corpus_fingerprint);
+        assert_eq!(before.fingerprint, after.fingerprint);
+        query.continuation = cursor.clone();
+        assert!(search(&db, root.path(), &query, until()).is_ok());
+
+        db.execute(
+            "UPDATE threads SET title='Different neutral title' WHERE id=?1",
+            [id(3)],
+        )
+        .unwrap();
+        assert!(matches!(search(&db, root.path(), &query, until()),
+            Err(ProviderError::InvalidScope(reason)) if reason == "stale_search_evidence"));
+        query.continuation = SearchContinuation::default();
+        let after = inventory(&db, root.path(), &query, until()).unwrap();
+        assert_ne!(before.corpus_fingerprint, after.corpus_fingerprint);
+        assert_ne!(before.fingerprint, after.fingerprint);
+        assert_eq!(before.eligible, after.eligible);
+
+        db.execute(
+            "UPDATE threads SET title='neutral', archived=1 WHERE id=?1",
+            [id(3)],
+        )
+        .unwrap();
+        let after = inventory(&db, root.path(), &query, until()).unwrap();
+        assert_ne!(before.corpus_fingerprint, after.corpus_fingerprint);
+        assert_eq!(after.eligible, before.eligible - 1);
+        query.continuation = cursor;
+        assert!(matches!(search(&db, root.path(), &query, until()),
+            Err(ProviderError::InvalidScope(reason)) if reason == "stale_search_evidence"));
     }
 
     #[test]
