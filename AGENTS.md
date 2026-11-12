@@ -2,29 +2,20 @@
 
 ## Past-conversation resolution
 
-Follow [ADR-0036](docs/adr/0036-two-stage-luna-resolution.md) and the
-[Luna workflow](docs/intent-aware-resolution.md) in the originating chat.
-Start one `session_planner` for the original request. Verify GPT-6 Luna
-Medium in host events and close the Planner before calling `start` with
-one validated SearchIntent. Preserve explicit Boolean and identity predicates.
-Treat project names as topical hints unless stored membership is requested.
-Plan lexical alternatives before retrieval.
+Follow [ADR-0037](docs/adr/0037-autonomous-mcp-session-find.md) and the
+[search workflow](docs/intent-aware-resolution.md). Call `session_find`
+with the original natural-language request. Use `session_find_status`
+or `session_find_result` with its job ID until terminal. Follow
+`results.next_offset` and render both result groups with the reported
+coverage and any interruption.
 
-Advance Rust through `retrieving` without a model. When retrieval is
-complete and there are candidates, start one distinct `session_evaluator`.
-Use that instance for every batch, contextual assessment and any
-`single_best` selection. Send only the immutable intent and bounded quoted
-evidence. Keep caller scope, the run and signed evidence in the parent.
-Close the Evaluator before requesting publication. Collect signed rows by
-UUID and render the two result tables with any coverage or interruption status.
-
-When a named role fails, attempt the host's explicit GPT-6 Luna Medium
-spawn. If the host cannot expose or verify the lifecycle, run the
-[controlled App Server host](scripts/resolve_with_luna.py) for the whole
-search. Verify model, effort and turn completion from host events.
-Report the concrete failure if both routes fail. Stop before retrieval
-or send `luna_unavailable:true` during the run. Each semantic judgment
-requires verified Luna execution.
+The MCP server owns both Luna stages and the typed Rust resolver. Preserve
+the order Planner exit, complete Rust traversal, Evaluator exit, Rust
+publication. Verify GPT-6 Luna Medium from App Server events. Reuse one
+Evaluator across all batches, context requests and any single-best choice.
+Keep the launcher, credentials and role assets independent of the caller
+workspace. The fixed subprocess boundary carries read-only search data.
+Job metadata grants no management authority.
 
 ## P0-SR4 read-only caller-filtered discovery
 

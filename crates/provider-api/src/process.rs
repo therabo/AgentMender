@@ -719,3 +719,138 @@ mod tests {
         }
     }
 }
+
+/// Fixed launcher for the embedded coordinator. No network, caller workspace or
+/// credential access. The private script name is an installation constant.
+pub fn spawn_luna_coordinator(sandbox: &EvidenceSandbox) -> Result<Child, ProviderError> {
+    #[cfg(target_os = "macos")]
+    {
+        let python = Path::new("/usr/bin/python3");
+        evidence_command(python, sandbox, false)?
+            .args(["-E", "-s", "-B", "-u"])
+            .arg(sandbox.path().join("scripts/resolve_with_luna.py"))
+            .arg("--internal-coordinator")
+            .spawn()
+            .map_err(|_| {
+                ProviderError::CapabilityUnavailable("Luna coordinator launch failed".into())
+            })
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = sandbox;
+        Err(ProviderError::CapabilityUnavailable(
+            "Luna isolation unavailable".into(),
+        ))
+    }
+}
+
+#[derive(Clone, Copy)]
+pub enum LunaRole {
+    Planner,
+    Evaluator,
+}
+
+impl LunaRole {
+    pub fn private_home(self, sandbox: &EvidenceSandbox) -> std::path::PathBuf {
+        sandbox.path().join(match self {
+            Self::Planner => "luna-planner",
+            Self::Evaluator => "luna-evaluator",
+        })
+    }
+}
+
+/// Fixed model client. Network is needed for inference. All writes are confined
+/// to the private home and access to real Codex state is limited to file auth.
+pub fn spawn_codex_luna(
+    executable: &Path,
+    sandbox: &EvidenceSandbox,
+    role: LunaRole,
+) -> Result<Child, ProviderError> {
+    #[cfg(target_os = "macos")]
+    {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt, symlink};
+        sandbox.validate()?;
+        if !executable.is_absolute() || !executable.is_file() {
+            return Err(ProviderError::CapabilityUnavailable(
+                "Codex executable unavailable".into(),
+            ));
+        }
+        let program = executable
+            .canonicalize()
+            .map_err(|e| crate::io_error(executable, e))?;
+        let auth = sandbox.source_root().join("auth.json");
+        let metadata = std::fs::symlink_metadata(&auth).map_err(|e| crate::io_error(&auth, e))?;
+        if !metadata.is_file()
+            || metadata.len() > 65536
+            || metadata.nlink() != 1
+            || metadata.permissions().mode() & 0o077 != 0
+        {
+            return Err(ProviderError::InvalidScope(
+                "private file credentials unavailable".into(),
+            ));
+        }
+        let home = role.private_home(sandbox);
+        let temp = home.join("tmp");
+        std::fs::create_dir(&home).map_err(|e| crate::io_error(&home, e))?;
+        std::fs::create_dir(&temp).map_err(|e| crate::io_error(&temp, e))?;
+        symlink(&auth, home.join("auth.json")).map_err(|e| crate::io_error(&home, e))?;
+        let writable = policy_literal(&home)?;
+        let source = policy_literal(sandbox.source_root())?;
+        let real_home = policy_literal(sandbox.real_home())?;
+        let auth = policy_literal(&auth)?;
+        let executable_rule = policy_literal(&program)?;
+        let profile = format!(
+            "(version 1)(allow default)(deny process-fork)\
+             (deny file-write* (require-not (subpath {writable})))\
+             (deny file-read-data (require-all (require-any (subpath {real_home}) (subpath {source}) (subpath \"/private/tmp\") (subpath \"/private/var/folders\"))\
+             (require-not (require-any (literal {auth}) (literal {executable_rule}) (subpath {writable})))))"
+        );
+        Command::new("/usr/bin/sandbox-exec")
+            .args(["-p", &profile])
+            .arg(&program)
+            .args([
+                "app-server",
+                "-c",
+                "cli_auth_credentials_store=\"file\"",
+                "-c",
+                "model_reasoning_effort=\"medium\"",
+                "-c",
+                "mcp_servers={}",
+                "-c",
+                "features.shell_tool=false",
+                "-c",
+                "web_search=\"disabled\"",
+                "-c",
+                "features.apps=false",
+                "-c",
+                "features.plugins=false",
+                "-c",
+                "features.memories=false",
+                "-c",
+                "features.multi_agent=false",
+                "-c",
+                "features.multi_agent_v2=false",
+                "-c",
+                "features.request_permissions_tool=false",
+            ])
+            .env_clear()
+            .env("HOME", &home)
+            .env("CODEX_HOME", &home)
+            .env("TMPDIR", &temp)
+            .current_dir(&home)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|_| {
+                ProviderError::CapabilityUnavailable("Codex App Server launch failed".into())
+            })
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (executable, sandbox, role);
+        Err(ProviderError::CapabilityUnavailable(
+            "Luna isolation unavailable".into(),
+        ))
+    }
+}

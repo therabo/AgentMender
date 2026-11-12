@@ -22,3 +22,6 @@ jobs:
       - run: python3 scripts/check_codex_lifecycle_evidence.py
       - run: python3 scripts/check_complete_removal_evidence.py
       - run: python3 scripts/test_semantic_assessment.py
+      - run: python3 scripts/test_luna_host.py
+      - if: runner.os == 'macOS'
+        run: python3 scripts/test_autonomous_session_find.py --agentmender target/debug/agentmender

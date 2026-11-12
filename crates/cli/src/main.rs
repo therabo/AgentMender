@@ -22,6 +22,7 @@ mod conversation;
 mod lifecycle;
 mod management;
 mod search_index;
+mod session_find;
 mod transactions;
 
 #[derive(Clone, Parser)]
@@ -755,6 +756,26 @@ fn run(args: Args) -> Result<bool, CliError> {
             }
             None
         };
+        let find = if *session_search {
+            Some(
+                session_find::executor(session_find::Launch {
+                    codex: config.codex_executable.clone(),
+                    root: config.codex_root.clone().expect("read-only root checked"),
+                    home: factory_environment
+                        .home
+                        .clone()
+                        .expect("read-only home checked"),
+                })
+                .map_err(|_| {
+                    CliError::new(
+                        ErrorCode::InvalidConfiguration,
+                        "search job runtime unavailable",
+                    )
+                })?,
+            )
+        } else {
+            None
+        };
         let executor = Arc::new(
             move |request: ReadOnlyRequest,
                   control: QueryControl|
@@ -787,12 +808,8 @@ fn run(args: Args) -> Result<bool, CliError> {
                     .dispatch(request, control)
             },
         );
-        agentmender_mcp_server::run_stdio_with_conversation(
-            executor,
-            conversation,
-            *session_search,
-        )
-        .map_err(|_| CliError::new(ErrorCode::OutputError, "MCP transport failed"))?;
+        agentmender_mcp_server::run_stdio_with_conversation(executor, conversation, find)
+            .map_err(|_| CliError::new(ErrorCode::OutputError, "MCP transport failed"))?;
         return Ok(false);
     }
     let mode = if args.fixture.is_some() {

@@ -1,16 +1,55 @@
 # Intent-aware session resolution
 
 Ask Codex for a past conversation in ordinary language. For example, “Where
-did we analyze Cesium rendering performance for MISSION1?” A current
-`mcp --session-search` registration exposes the read-only `session_resolve`
-workflow. Use `session_discover` for deterministic inventory, exact identities
-and possible deletion candidates. “Search only conversations labeled MISSION1”
-with no topic is a metadata inventory request.
+did we analyze Cesium rendering performance for MISSION1?” With the global
+read-only `mcp --session-search` registration, Codex calls `session_find`.
+
+```json
+{"query":"Where did we analyze Cesium rendering performance for MISSION1?"}
+```
+
+AgentMender starts the job immediately and returns `job_id` and `state`.
+Use `session_find_result` with that ID until the job completes, is interrupted
+or is cancelled. It waits up to 25 seconds by default. Set `wait_seconds`
+from 0 to 60, or call `session_find_status` for immediate progress. `session_find_result`
+returns `results.confirmed` and `results.possible_unconfirmed`, each with
+original title, UUID and signed source references. Pass `results.next_offset`
+back as `offset` to obtain the next page. `session_find_cancel` requests
+cancellation. Results use the originating connection's signed context
+references. Use `session_discover` for deterministic inventory.
+
+## Installation and connection lifetime
+
+Use the [global MCP registration](../README.md#read-only-conversational-search)
+with the compiled binary and the installed Codex CLI. The launcher is
+verified on macOS and uses `/usr/bin/python3`. The binary includes the
+coordinator, SearchIntent schema and both role profiles. The App Server
+processes use private working directories, controlled configuration and
+a private file credential from the configured Codex home. Keychain-only
+and alternative auth profiles require separate validation. The caller's
+project, model and workspace role files do not configure the search.
+
+A new chat uses the new catalog when it establishes a new MCP connection.
+For an existing chat, reconnect the AgentMender MCP server and verify that
+`session_find` appears in its tool list. A retained connection can keep
+using the previously launched executable and tool catalog. A server exit
+cancels active jobs, closes subprocesses and invalidates job IDs and signed
+references. A client turn ending leaves the job running while its MCP
+connection remains open.
+
+The job limit is 30 minutes, with per-RPC timeouts and bounded child cleanup.
+The server admits two concurrent jobs and retains at most eight total
+records, with terminal records expiring after ten minutes. A duplicate
+query from the same apparent caller returns its active job. Status,
+results and cancellation require the same apparent caller and opaque
+job ID. Caller metadata is a read-only scope signal and can be spoofed.
+Missing, malformed, discordant or unmapped metadata is refused.
 
 ## SearchIntent v1
 
-Call `session_resolve` with the following ordinary input. The final
-executable's `tools/list` advertises the exact [SearchIntent JSON Schema](search-intent-v1.schema.json).
+The internal typed `session_resolve` contract takes the following input.
+The diagnostic tool schema advertises the exact
+[SearchIntent JSON Schema](search-intent-v1.schema.json).
 
 ```json
 {
@@ -71,50 +110,26 @@ has supplied no text condition. Rust offers a bounded original passage even
 when that selection has no lexical anchor. Both modes use the same assessment
 and publication rules.
 
-## Required Luna execution
+## AgentMender-owned Luna execution
 
-The origin owns the request, MCP calls and signed references. Start one
-[session_planner](../.codex/agents/session-planner.toml) and check the actual
-host events for `gpt-6-luna` and medium effort. The Planner produces one
-SearchIntent. Validate it against the request and close the Planner.
+The Rust host starts an ephemeral Codex App Server for the Planner and
+requires `gpt-6-luna` with medium effort and provider fallback disabled.
+The coordinator checks the observed thread start, resolved model and
+effort, and turn completion. It validates the Planner payload against
+SearchIntent v1 and the Rust compiler. Corrections stay in the same
+Planner. Rust starts retrieval after the Planner process exits.
 
-Once Rust finishes retrieval, start a distinct
-[session_evaluator](../.codex/agents/session-evaluator.toml) only if candidates
-exist. Check the same model and effort and retain its thread ID for every
-assessment and any single-best selection. Close it before publication.
-Try the named role through the host's subagent interface when the
-AgentMender project roles are loaded. They live under the checkout's
-`.codex/agents` and are scoped to that project. A tool catalog lookup
-can inspect MCP capabilities. Role discovery uses the host interface.
-
-If a named role fails, attempt an explicit `gpt-6-luna` spawn at medium
-effort and check its resolved settings and lifecycle events. A Desktop
-surface that cannot expose that spawn or verify the role lifecycle can
-run the [controlled App Server host](../scripts/resolve_with_luna.py) for
-the entire search. Determine the configured command and provider root
-from the AgentMender MCP registration. Use the originating chat UUID
-from host metadata and the installed Codex executable.
-
-```sh
-python3 /path/to/AgentMender/scripts/resolve_with_luna.py \
-  --agentmender /path/to/agentmender --codex /path/to/codex \
-  --codex-root /path/to/codex-home --caller HOST_THREAD_UUID --trace \
-  "Find every conversation about the requested topic."
-```
-
-The controlled host creates one ephemeral thread in each role's own
-process. It observes the thread start and resolved model, checks
-turn completion and reroutes, and waits for each process to exit. It
-validates the Planner's JSON against the advertised schema before
-closing the thread. Trace events identify the role, stage and observed
-error, including a usage limit reported at turn completion. Report
-concrete startup, configuration, permission or runtime evidence. If
-both routes fail, stop before retrieval or use `luna_unavailable:true`
-during an active run. The host verifies Luna execution and MCP validates
-caller scope and evidence.
-
+The host starts a fresh Evaluator process only when Rust has traversed the
+cohort and has staged candidates. All batches, bounded context requests
+and any single-best choice use that same Evaluator. The host checks
+reroute and unexpected tools or threads, reaps the process and then
+publishes through the same typed Rust service. The private bridge keeps
+caller identity and signing keys in Rust. See [ADR-0037](adr/0037-autonomous-mcp-session-find.md).
+The standalone script is available for controlled diagnostics.
 
 ## Progressive workflow
+
+The following steps describe the internal coordinator and diagnostic API.
 
 1. Call `start` with the Planner's SearchIntent after the Planner closes.
    Rust freezes the eligible UUIDs, order and predicate metadata. Planned
@@ -175,13 +190,13 @@ second table with a blank session ID.
 
 **Sessioni confermate**
 
-| Sessione | Motivazione | ID |
+| Sessione | Motivazione | UUID |
 | --- | --- | --- |
 | Nessuna sessione confermata | | |
 
 **Possibili candidate non confermate**
 
-| Sessione | Evidenza mancante | ID |
+| Sessione | Evidenza mancante | UUID |
 | --- | --- | --- |
 | Nessuna candidata plausibile | | |
 

@@ -17,12 +17,10 @@ clap.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 getrandom.workspace = true
+rusqlite.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
-
-[target.'cfg(all(target_os = "macos", target_arch = "aarch64"))'.dev-dependencies]
-rusqlite.workspace = true
 
 [lints]
 workspace = true

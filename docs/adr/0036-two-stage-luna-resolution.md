@@ -3,6 +3,8 @@
 ## Status
 
 Accepted. Supersedes the interleaved assessment workflow in [ADR-0034](0034-progressive-resolution.md) and retains the UUID cohort in [ADR-0035](0035-uuid-search-cohort.md).
+[ADR-0037](0037-autonomous-mcp-session-find.md) places the host and its
+process lifecycle inside AgentMender's MCP installation.
 
 ## Decision
 

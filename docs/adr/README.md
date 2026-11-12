@@ -66,3 +66,5 @@ registered filtering fixed, content/binding implementation deferred).
 - [ADR-0035 — UUID cohort for conversational retrieval](0035-uuid-search-cohort.md)
 
 - [ADR-0036](0036-two-stage-luna-resolution.md) records the separate Planner, exhaustive acquisition, Evaluator and publication phases.
+
+- [ADR-0037 — Autonomous MCP session finding](0037-autonomous-mcp-session-find.md)

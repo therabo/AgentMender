@@ -13,7 +13,6 @@ import sys
 import tempfile
 import threading
 import time
-import tomllib
 
 from check_semantic_assessment import validate
 
@@ -30,7 +29,7 @@ class ResolverError(Exception):
 
 
 def public_code(code, fallback):
-    return code if isinstance(code, str) and re.fullmatch("[a-z_]{1,64}", code) else fallback
+    return code if isinstance(code, str) and re.fullmatch("[a-z_]{1,96}", code) else fallback
 
 
 class RpcRejected(ResolverError):
@@ -148,8 +147,12 @@ class Luna:
             rpc.call("initialize", {"clientInfo": {"name": "agentmender-luna-host", "version": "1"}})
             rpc.send({"method": "initialized"})
             stage = "role_profile"
-            profile = tomllib.loads((ROOT / f".codex/agents/session-{role}.toml").read_text())
-            instructions = profile["developer_instructions"]
+            profile = (ROOT / f".codex/agents/session-{role}.toml").read_text(encoding="utf-8")
+            # Embedded profiles use one TOML multiline basic string without escapes.
+            # The fixed delimiter also supports the macOS system Python 3.9.
+            _, body = profile.split('developer_instructions = """', 1)
+            instructions, _ = body.split('"""', 1)
+            instructions = instructions.removeprefix("\n")
             stage = "thread_start"
             thread = rpc.call("thread/start", {
                 "cwd": cwd, "ephemeral": True, "model": MODEL, "sandbox": "read-only",
@@ -177,6 +180,7 @@ class Luna:
         completed = {}
         reroutes = set()
         unexpected_threads = set()
+        unexpected_tools = set()
 
         def observe(event):
             method = event.get("method")
@@ -195,8 +199,12 @@ class Luna:
                 self.usage = params.get("tokenUsage", {}).get("total", self.usage)
             if method == "model/rerouted":
                 reroutes.add(turn_id)
-            if method in ("item/started", "item/completed") and params["item"]["type"] == "collabAgentToolCall":
-                unexpected_threads.add(self.thread)
+            if method in ("item/started", "item/completed"):
+                kind = params["item"]["type"]
+                if kind == "collabAgentToolCall":
+                    unexpected_threads.add(self.thread)
+                elif kind not in ("userMessage", "agentMessage", "reasoning", "contextCompaction", "plan"):
+                    unexpected_tools.add(kind)
             if method == "item/completed" and params["item"]["type"] == "agentMessage":
                 item = params["item"]
                 if item.get("phase") in (None, "final_answer"):
@@ -214,12 +222,14 @@ class Luna:
             turn_id = started["turn"]["id"]
             stage = "turn_completed_event"
             deadline = time.monotonic() + 120
-            while turn_id not in completed and turn_id not in reroutes and not unexpected_threads:
+            while turn_id not in completed and turn_id not in reroutes and not unexpected_threads and not unexpected_tools:
                 observe(self.rpc.receive(deadline))
         except (ResolverError, OSError, KeyError, TypeError) as error:
             raise LunaFailure.from_error(self.role, stage, error) from None
         if unexpected_threads:
             raise LunaFailure(self.role, stage, "unexpected_thread")
+        if unexpected_tools:
+            raise LunaFailure(self.role, stage, "unexpected_tool")
         if turn_id in reroutes:
             raise LunaFailure(self.role, stage, "model_rerouted")
         turn = completed[turn_id]
@@ -231,6 +241,9 @@ class Luna:
             reason = ("usage_limit_exceeded" if info == "usageLimitExceeded"
                       else public_code(turn["status"], "invalid_status"))
             raise LunaFailure(self.role, stage, reason, codex_error_info=info)
+        self.turns += 1
+        self.trace(event="luna_turn_completed", role=self.role, thread=self.thread, turn=turn_id,
+                   model=MODEL, effort=EFFORT, token_usage=self.usage)
         if turn_id not in messages:
             raise LunaFailure(self.role, stage, "missing_final_message")
         try:
@@ -239,9 +252,6 @@ class Luna:
             raise ResolverError("invalid_luna_response") from None
         if not isinstance(result, dict):
             raise ResolverError("invalid_luna_response")
-        self.turns += 1
-        self.trace(event="luna_turn_completed", role=self.role, thread=self.thread, turn=turn_id,
-                   model=MODEL, effort=EFFORT, token_usage=self.usage)
         return result
 
 
@@ -267,7 +277,7 @@ def passages(citations):
     return [{"handle": item["handle"], "excerpt": item.get("excerpt")} for item in citations]
 
 
-def plan(planner, question, trace):
+def plan(planner, question, trace, validate_intent=lambda _: None):
     schema = json.loads((ROOT / "docs/search-intent-v1.schema.json").read_text())
     correction = None
     for _ in range(3):
@@ -277,6 +287,7 @@ def plan(planner, question, trace):
                 "request": question, "search_intent_schema": schema, "correction": correction,
             })
             validate(schema, intent, schema)
+            validate_intent(intent)
             return intent
         except ValueError as error:
             correction = str(error)
@@ -288,11 +299,11 @@ def plan(planner, question, trace):
     raise ResolverError("invalid_search_intent")
 
 
-def resolve(spawn, mcp, question, trace=lambda **_: None):
+def resolve(spawn, mcp, question, trace=lambda **_: None, *, validate_intent=lambda _: None, sink=None):
     started = time.monotonic()
     with spawn("planner") as planner:
         planner_id = planner.thread
-        intent = plan(planner, question, trace)
+        intent = plan(planner, question, trace, validate_intent)
     trace(event="planner_complete", elapsed_ms=elapsed_ms(started))
 
     tick = time.monotonic()
@@ -347,6 +358,9 @@ def resolve(spawn, mcp, question, trace=lambda **_: None):
                 if page["phase"] != "publishing" and not page["progress"]["publication_ready"]:
                     raise ResolverError("evaluation_incomplete")
                 advance(publish=True)
+                if sink is not None:
+                    sink(page, winner)
+                    continue
                 for group, retained in results.items():
                     for identity in page.get("invalidated", []):
                         retained.pop(identity, None)
@@ -370,7 +384,7 @@ def resolve(spawn, mcp, question, trace=lambda **_: None):
         status.append(f"{phase} ({page['progress']['stop_reason']}).")
     if page["progressive_coverage"]["lexical_coverage_limited"]:
         status.append("Copertura lessicale limitata alla cronologia disponibile.")
-    if winner is not None:
+    if winner is not None and sink is None:
         matches = [row for row in matches if row["native_session_id"] == winner]
         if not matches:
             status.append("La fonte della sessione scelta è cambiata prima della pubblicazione.")
@@ -379,6 +393,9 @@ def resolve(spawn, mcp, question, trace=lambda **_: None):
     trace(event="resolver_terminal", state=page["execution_state"], mcp_calls=operation + 1,
           elapsed_ms=elapsed_ms(started), matches=len(matches), alternatives=len(alternatives),
           progress=page["progress"])
+    if sink is not None:
+        return {"state": page["execution_state"], "selection_ambiguous": selection_ambiguous,
+                "status": " ".join(status) or None, "winner": winner}
     return matches, alternatives, " ".join(status) or None
 
 
@@ -468,21 +485,32 @@ def validate_batch_change(changes, batch, windows_requested):
 def select_best(luna, question, matches, renew=lambda: None):
     best, ambiguous = matches[0], False
     for candidate in matches[1:]:
-        renew()
         choices = [best, candidate]
-        comparison = luna.turn({
-            "task": "Choose the uniquely better confirmed match for the request. Return JSON with native_session_id (null if tied).",
-            "request": question,
-            "choices": [{"native_session_id": row["native_session_id"],
-                         "explanation": row["explanation"]} for row in choices],
-        })
-        identity = comparison.get("native_session_id")
+        correction = None
+        for _ in range(3):
+            renew()
+            try:
+                comparison = luna.turn({
+                    "task": "Choose the uniquely better confirmed match for the request. Return JSON with native_session_id (null if tied).",
+                    "request": question,
+                    "choices": [{"native_session_id": row["native_session_id"],
+                                 "explanation": row["explanation"]} for row in choices],
+                    "correction": correction,
+                })
+                identity = comparison.get("native_session_id")
+                if set(comparison) == {"native_session_id"} and identity in (
+                        None, best["native_session_id"], candidate["native_session_id"]):
+                    break
+            except ResolverError as error:
+                if str(error) != "invalid_luna_response":
+                    raise
+            correction = "Return exactly native_session_id, using one of the offered UUIDs or null for a tie."
+        else:
+            raise ResolverError("invalid_luna_response")
         if identity is None:
             ambiguous = True
         elif identity == candidate["native_session_id"]:
             best, ambiguous = candidate, False
-        elif identity != best["native_session_id"]:
-            raise ResolverError("invalid_luna_response")
     return None if ambiguous else best
 
 
@@ -514,6 +542,86 @@ def child_usage():
         return None
     import resource
     return resource.getrusage(resource.RUSAGE_CHILDREN)
+
+
+class PrivateBridge:
+    """One stdio link to the parent. The Rust host owns processes and the resolver."""
+
+    def call(self, operation, **fields):
+        print(json.dumps({"operation": operation, **fields}), flush=True)
+        line = sys.stdin.buffer.readline(1024 * 1024 + 1)
+        if not line or len(line) > 1024 * 1024:
+            raise ResolverError("bridge_closed")
+        reply = json.loads(line)
+        if "error" in reply:
+            raise ResolverError(public_code(reply["error"], "bridge_failed"))
+        return reply["value"]
+
+    def resolve(self, **arguments):
+        return self.call("resolve", arguments=arguments)
+
+    def validate_intent(self, intent):
+        try:
+            self.call("validate", intent=intent)
+        except ResolverError as error:
+            raise ValueError(str(error)) from None
+
+    def trace(self, **event):
+        self.call("trace", event=event)
+
+    def publish(self, page, winner):
+        self.call("results", rows={group: [row for row in page[group]
+                   if group != "matches" or winner is None or row["native_session_id"] == winner]
+                   for group in ("matches", "alternatives")}, invalidated=page.get("invalidated", []))
+
+
+class RelayedRpc(Rpc):
+    def __init__(self, bridge):
+        self.bridge = bridge
+        self.serial = 0
+
+    def send(self, payload):
+        self.bridge.call("send", message={"jsonrpc": "2.0", **payload})
+
+    def receive(self, deadline):
+        return self.bridge.call("receive", wait_ms=max(0, round((deadline - time.monotonic()) * 1000)))
+
+
+def internal_coordinator():
+    bridge = PrivateBridge()
+    question = bridge.call("query")
+
+    @contextmanager
+    def spawn(role):
+        bridge.trace(event="luna_spawn_attempt", role=role, model=MODEL, effort=EFFORT)
+        try:
+            cwd = bridge.call("spawn", role=role)
+        except ResolverError as error:
+            raise LunaFailure.from_error(role, "app_server_launch", error) from None
+        try:
+            luna = Luna(RelayedRpc(bridge), cwd, role, bridge.trace)
+            yield luna
+        except BaseException:
+            # Preserve the stage-specific failure even if the App Server
+            # exited before it could process a graceful stdin closure.
+            try:
+                bridge.call("close")
+            except ResolverError:
+                pass
+            raise
+        else:
+            bridge.call("close")
+            bridge.trace(event="luna_closed", role=role, thread=luna.thread,
+                         turns=luna.turns, token_usage=luna.usage)
+
+    try:
+        result = resolve(spawn, bridge, question, bridge.trace,
+                         validate_intent=bridge.validate_intent, sink=bridge.publish)
+        bridge.call("done", result=result)
+    except (ResolverError, OSError, KeyError, TypeError, ValueError) as error:
+        if isinstance(error, LunaFailure):
+            bridge.trace(**error.event)
+        bridge.call("failed", reason=public_code(str(error), "host_failed"))
 
 
 def main():
@@ -578,4 +686,7 @@ def main():
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    if sys.argv[1:] == ["--internal-coordinator"]:
+        internal_coordinator()
+    else:
+        raise SystemExit(main())

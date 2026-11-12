@@ -1,7 +1,9 @@
 //! Read-only, bounded MCP adapter. Provider calls remain synchronous and local to workers.
 mod conversation;
 pub mod dto;
+mod find;
 mod frame;
+pub use find::{FindExecutor, FindRequest, ScopedResolver};
 pub mod projection;
 mod protocol;
 pub use conversation::ConversationExecutor;

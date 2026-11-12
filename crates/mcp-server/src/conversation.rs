@@ -987,7 +987,7 @@ fn resolution_invalid(code: &'static str, correction: &str) -> ErrorData {
     )
 }
 
-fn resolution_request(args: &serde_json::Value) -> Result<ResolutionAction, ErrorData> {
+pub(super) fn resolution_request(args: &serde_json::Value) -> Result<ResolutionAction, ErrorData> {
     if let Some(version) = args
         .get("search_intent")
         .and_then(|intent| intent.get("schema_version"))
@@ -1406,7 +1406,7 @@ pub(super) fn tools(discovery: bool) -> Vec<Tool> {
             .remove("SearchPurposeInput");
         registry.insert(0, (
             "session_discover",
-            "Read-only inventory for deterministic listing, exact identity and potential deletion candidates. Excludes the apparent caller. Results carry no removal authority. Use session_resolve for conversational intent.",
+            "Read-only inventory for deterministic listing, exact identity and potential deletion candidates. Excludes the apparent caller. Results carry no removal authority. Use session_find for conversational intent.",
             input,
             schema::<DiscoveryOutput>(),
             true,
@@ -1724,6 +1724,7 @@ pub(super) fn project(
 ) -> Result<serde_json::Value, crate::projection::ProjectionError> {
     use crate::projection::ProjectionError;
     let value = match response {
+        ConversationResponse::InternalAcknowledged => Ok(serde_json::Value::Null),
         ConversationResponse::Resolution(result) => serde_json::to_value(resolution_view(*result, projector)),
         ConversationResponse::EvidenceSearch(result) => {
             let search_purpose = result.parameters.purpose;

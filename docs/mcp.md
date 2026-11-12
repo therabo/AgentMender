@@ -2,15 +2,15 @@
 
 ## Conversational resolution
 
-The read-only `--session-search` catalog exposes `session_resolve`.
-One Luna Medium Planner creates SearchIntent v1 and closes before `start`.
-Empty `advance` requests drive Rust through `retrieving`. The
-`evaluating` phase pages staged candidates and accepts judgments and
-context requests from the host using one distinct Luna Medium Evaluator.
-After it closes, `advance` with `publish:true` returns fresh signed pages.
-The response reports `publishing`, `completed` or `interrupted` and
-separate traversal and assessment counters. See the
-[SearchIntent workflow](intent-aware-resolution.md) and [ADR-0036](adr/0036-two-stage-luna-resolution.md).
+The read-only `--session-search` catalog exposes `session_find` with one
+required argument, `query`. AgentMender starts a job that runs both Luna
+stages, Rust retrieval and publication. `session_find_status`,
+`session_find_result` and `session_find_cancel` take the returned job ID.
+Results include separate confirmed and plausible unconfirmed pages,
+signed context references and traversal, evaluation and source coverage.
+The typed `session_resolve` contract remains available for diagnostics.
+See the [search and installation contract](intent-aware-resolution.md)
+and [ADR-0037](adr/0037-autonomous-mcp-session-find.md).
 
 ## P0-SR4 ordinary discovery
 
@@ -64,7 +64,8 @@ The explicit mode locates the existing bundled macOS executable without PATH;
 trusted root/executable flags can override selection. See the
 [quick start](p0-c1-manual-acceptance.md) and [ADR-0024](adr/0024-adaptive-read-only-metadata.md).
 
-The discovery catalog includes `session_resolve`, `session_discover` and `session_context`.
+The discovery catalog includes autonomous `session_find` and its job tools,
+`session_resolve`, `session_discover` and `session_context`.
 `session_search` preserves the
 legacy metadata request and adds structured filters, content, purpose, project,
 excerpts and continuation. Guaranteed `purpose=management` requires enforceable

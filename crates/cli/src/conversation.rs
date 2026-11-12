@@ -178,6 +178,44 @@ pub(super) fn read_only_executor(
             instance: &instance,
         };
         match request {
+            ConversationRequest::ValidateResolutionCaller => {
+                use agentmender_domain::{
+                    QueryExpr, SearchParameters, SearchPurpose, StructuredQuery,
+                };
+                let id = apparent_caller
+                    .as_ref()
+                    .ok_or(ApplicationError::DiscoveryCallerUnavailable)?
+                    .native_id();
+                service.search(
+                    SearchParameters {
+                        structured: Some(StructuredQuery {
+                            filter: QueryExpr::NativeId {
+                                values: vec![id.into()],
+                            },
+                            mode: Default::default(),
+                            sort: Default::default(),
+                            coverage: Default::default(),
+                        }),
+                        query: String::new(),
+                        include_archived: true,
+                        include_content: false,
+                        project_label: None,
+                        purpose: SearchPurpose::Discovery,
+                        page_size: 1,
+                        excerpts: false,
+                    },
+                    None,
+                    control,
+                )?;
+                return Ok(agentmender_application::conversation::ConversationResponse::InternalAcknowledged);
+            }
+            ConversationRequest::ReleaseResolution(id) => {
+                resolution
+                    .lock()
+                    .map_err(|_| unavailable())?
+                    .release(&service, &id);
+                return Ok(agentmender_application::conversation::ConversationResponse::InternalAcknowledged);
+            }
             ConversationRequest::Resolve(action) => {
                 let id = if action.is_start() {
                     let mut random = [0u8; 16];
@@ -187,7 +225,7 @@ pub(super) fn read_only_executor(
                     None
                 };
                 return resolution
-                    .try_lock()
+                    .lock()
                     .map_err(|_| unavailable())?
                     .execute(&service, action, id, &control)
                     .map(|response| {

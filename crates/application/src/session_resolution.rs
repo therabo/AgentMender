@@ -291,6 +291,18 @@ pub struct ResolutionStore {
 }
 
 impl ResolutionStore {
+    pub fn release(&mut self, service: &SessionSearchService<'_>, id: &str) {
+        if self.runs.get(id).is_some_and(|run| {
+            run.instance == service.instance
+                && service
+                    .binding(SearchPurpose::Discovery)
+                    .is_ok_and(|binding| run.binding == binding)
+        }) {
+            self.runs.remove(id);
+            service.release_cohort(id);
+        }
+    }
+
     pub fn execute(
         &mut self,
         service: &SessionSearchService<'_>,

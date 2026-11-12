@@ -3,8 +3,9 @@
 ## Find the conversation that answers a question
 
 Ask Codex “Find the MISSION1 conversation where we implemented and validated
-the Earth View camera limits.” The read-only `session_resolve` workflow uses
-[SearchIntent v1](docs/intent-aware-resolution.md) and source-bound evidence.
+the Earth View camera limits.” The read-only `session_find` tool takes
+that request as its only required argument. AgentMender owns the search job
+and uses [SearchIntent v1](docs/intent-aware-resolution.md) and source-bound evidence.
 One Luna Medium Planner interprets the request and closes before Rust scans
 the full frozen UUID cohort. A distinct Luna Medium Evaluator assesses every
 selected candidate on one thread. Rust revalidates sources and signs result
@@ -18,7 +19,7 @@ Codex transcript independently of a search run. Discovery excludes the
 apparent calling chat and produces read-only results.
 See the [resolution workflow](docs/intent-aware-resolution.md),
 [search contract](docs/session-search.md) and
-[UUID snapshot acceptance](docs/milestones/uuid-search-snapshot.md).
+[autonomous search acceptance](docs/milestones/autonomous-session-find.md).
 
 ## P0-SR3 progressive history
 
@@ -139,14 +140,22 @@ The [private index](docs/full-text-index.md) is an explicit cache for independen
 The resolver scans the captured cohort live and uses
 [Luna Medium](docs/luna-session-relevance.md) for bounded evidence assessment.
 
-This mode uses the selected/default Codex home and locates the existing macOS
-bundled executable even without `codex` in PATH. Explicit developer diagnostics need no historical binary, synthetic
-provider root, approval store or caller UUID; specify `purpose:"diagnostic"`. Use explicit
-root/executable paths when configuring a particular installation. Refresh only
-that MCP connection in Codex and verify the chat can call `session_resolve`
-and `session_discover`. The repository supplies the named Luna Planner and Evaluator and
-an implicitly discoverable [lookup skill](.agents/skills/agentmender-session-resolution/SKILL.md).
-A failed discovery or management request has no automatic diagnostic fallback.
+### Read-only conversational search
+
+Register the compiled executable globally in Codex and use absolute paths
+for the executable, Codex home and installed Codex CLI. For example:
+
+```toml
+[mcp_servers.agentmender]
+command = "/absolute/path/to/agentmender"
+args = ["--provider", "codex", "--codex-root", "/absolute/path/to/.codex", "--codex-executable", "/absolute/path/to/codex", "mcp", "--session-search"]
+```
+
+The autonomous host runs on macOS with the system Python 3 and a signed-in
+Codex CLI with a private file credential in the configured root. AgentMender
+embeds the workflow and role profiles in its binary. Refresh the AgentMender
+MCP connection after replacing the binary and verify that the new catalog
+advertises `session_find`. See [connection and job behavior](docs/intent-aware-resolution.md).
 
 [Setup, current limits and human acceptance](docs/p0-c1-manual-acceptance.md).
 

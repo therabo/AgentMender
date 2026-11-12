@@ -108,9 +108,11 @@ graph and lifecycle journal are unchanged. Message adjacency is a retrieval
 structure, not destructive ownership. MCP keeps deterministic search/context primitives separate from
 `session_resolve`, which exposes a single progressive `start`/`advance`
 state machine. Application owns the run, context budget, backpressure and
-publication. Domain owns the typed intent and query predicates. The Codex
-host owns Luna execution and the final tables. CLI alone supplies persistent
-index paths and maintenance controls.
+publication. Domain owns the typed intent and query predicates. The CLI
+composition owns the autonomous `session_find` jobs, bounded private
+coordinator and App Server child processes. The MCP adapter projects verified
+rows and signs source references with the originating connection key. CLI
+alone supplies persistent index paths and maintenance controls.
 
 Production management registration files now remain inadmissible as caller proof;
 only a future enforceable host transport can enable that guarantee. Missing binding

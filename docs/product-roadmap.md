@@ -124,13 +124,13 @@ No speculative embeddings or GraphRAG milestone blocks useful local retrieval.
 
 ### Progressive conversational retrieval
 
-`session_resolve` uses one SearchIntent v1 and one `start`/`advance`
-workflow. A Luna Planner closes before Rust traverses the frozen UUID cohort.
+`session_find` starts an autonomous read-only job that uses the typed
+resolver with one SearchIntent v1. A Luna Planner closes before Rust traverses the frozen UUID cohort.
 One distinct Luna Evaluator handles every selected batch. Rust publishes
 source-bound evidence after evaluation and reports traversal and assessment
 coverage separately.
 `session_context` can reopen an exact UUID after the run.
-See [ADR-0036](adr/0036-two-stage-luna-resolution.md), the
+See [ADR-0037](adr/0037-autonomous-mcp-session-find.md), the
 [progressive workflow](intent-aware-resolution.md#progressive-workflow) and
 the [benchmark and acceptance report](milestones/uuid-search-snapshot.md).
 Installed app-server model controls and graphical Desktop acceptance remain

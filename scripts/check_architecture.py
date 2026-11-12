@@ -325,6 +325,30 @@ for path in (ROOT / "crates").glob("*/src/**/*.rs"):
                 errors.append(f'UUID cohort boundary lost: {marker}')
         if re.search(r'\b(?:fingerprint_metadata|read_snapshot|inventory_cached|bounded_backup)\s*\(', code):
             errors.append('UUID cohort reintroduced a global snapshot dependency')
+    find_host = path == ROOT / "crates/cli/src/session_find/host.rs"
+    find_jobs = path == ROOT / "crates/cli/src/session_find.rs"
+    process_boundary = path == ROOT / "crates/provider-api/src/process.rs"
+    if find_host or find_jobs:
+        if conversation_authority_violation(source):
+            errors.append(f"search job acquired lifecycle authority: {path.relative_to(ROOT)}")
+        if re.search(r'\b(?:agentmender_persistence|DurableEffectPort|Command::new|thread/(?:archive|unarchive|delete|resume))\b', source):
+            errors.append(f"search job acquired provider dispatch authority: {path.relative_to(ROOT)}")
+    if find_jobs and not all(marker in source for marker in [
+        "EvidenceSandbox::new(&launch.root, &launch.home)",
+        'Connection::open(directory.path().join("verified-results.sqlite"))',
+        "PRAGMA max_page_count",
+    ]):
+        errors.append("search results must use the bounded private job spool")
+    if process_boundary:
+        for method, required in {
+            "spawn_luna_coordinator": ["evidence_command(python, sandbox, false)", '"/usr/bin/python3"', '"--internal-coordinator"'],
+            "spawn_codex_luna": ["sandbox.validate()?", '"app-server"', "deny process-fork",
+                "deny file-write*", "deny file-read-data", ".env_clear()", '"mcp_servers={}"',
+                '"features.shell_tool=false"', '"features.multi_agent_v2=false"'],
+        }.items():
+            bodies = list(method_bodies(source, method))
+            if len(bodies) != 1 or not all(marker in bodies[0] for marker in required):
+                errors.append(f"fixed Luna launch boundary lost: {method}")
     for pattern in patterns:
         inspected = source
         if reviewed_lifecycle:
@@ -343,6 +367,27 @@ for path in (ROOT / "crates").glob("*/src/**/*.rs"):
             # derived files inside a validated OwnedStateRoot; checked below.
             for body in method_bodies(source, 'rebuild_search_index'):
                 inspected = inspected.replace(body, '')
+        if find_host and pattern in {patterns[0], patterns[1]}:
+            for body in method_bodies(source, "install_assets"):
+                if 'sandbox.validate()' not in body or 'for (name, bytes) in ASSETS' not in body or '.create_new(true)' not in body:
+                    errors.append("embedded Luna asset write escaped the private sandbox")
+                inspected = inspected.replace(body, "")
+        if find_host and pattern == patterns[3]:
+            for body in method_bodies(source, "handle_packet"):
+                allowlist = 'Some("initialize" | "initialized" | "thread/start" | "turn/start")'
+                if allowlist not in body or '"app_server_method_refused"' not in body:
+                    errors.append("Luna bridge lost its fixed App Server method allowlist")
+                inspected = inspected.replace(body, body.replace(allowlist, 'Some("fixed_model_method")'))
+        if process_boundary and pattern == patterns[0]:
+            for body in method_bodies(source, "spawn_codex_luna"):
+                private = body
+                for call in ["std::fs::create_dir(&home)", "std::fs::create_dir(&temp)"]:
+                    private = private.replace(call, "")
+                inspected = inspected.replace(body, private)
+        if find_jobs and pattern == patterns[-1]:
+            for sql in ['"DELETE FROM results WHERE id=?1"',
+                        '"INSERT OR REPLACE INTO results(id,kind,row) VALUES (?1,?2,?3)"']:
+                inspected = inspected.replace(sql, "")
         if reviewed_cohort and pattern == patterns[-1]:
             # ADR-0035 admits only the fixed writes to an anonymous worker spool.
             for sql in ['"INSERT INTO cohort(id,metadata) VALUES (?1,?2)"',

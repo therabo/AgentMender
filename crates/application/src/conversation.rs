@@ -7,6 +7,8 @@ use serde::Serialize;
 
 pub enum ConversationRequest {
     Resolve(crate::session_resolution::ResolutionAction),
+    ValidateResolutionCaller,
+    ReleaseResolution(String),
     EvidenceSearch {
         parameters: SearchParameters,
         continuation: Option<Box<SearchContinuation>>,
@@ -49,6 +51,7 @@ pub struct SessionMatch {
     pub can_request_preview: bool,
 }
 pub enum ConversationResponse {
+    InternalAcknowledged,
     Resolution(Box<crate::session_resolution::ResolutionResponse>),
     EvidenceSearch(crate::session_search::SearchResult),
     Context(crate::session_search::ContextResult),
@@ -220,6 +223,8 @@ impl ConversationService<'_> {
                 })
             }
             ConversationRequest::Resolve(_)
+            | ConversationRequest::ValidateResolutionCaller
+            | ConversationRequest::ReleaseResolution(_)
             | ConversationRequest::EvidenceSearch { .. }
             | ConversationRequest::Context { .. }
             | ConversationRequest::ContextWindow { .. }

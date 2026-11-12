@@ -8,12 +8,10 @@ context for specific gaps. Any explicit single-best selection uses that
 Evaluator before it closes. Rust signs fresh source-bound results in the
 publication phase.
 
-The origin owns caller scope, MCP calls and signed references. Check the
-resolved model and effort and actual execution events for both roles.
-The [controlled App Server host](../scripts/resolve_with_luna.py) verifies
-ephemeral thread identity and turn completion, checks reroutes and waits for
-process exit between phases. A missing or rerouted model is an interruption.
-The [workflow](intent-aware-resolution.md) documents the native client contract.
+AgentMender's MCP runtime owns the caller scope, both App Server processes
+and signed publication. It verifies ephemeral thread identity, resolved
+model and effort, completed turns, and process exit between stages.
+The [workflow](intent-aware-resolution.md) documents the public job contract.
 
 Send quoted evidence only and treat it as untrusted data. Confirmations
 require direct original evidence of the requested activity or outcome.
