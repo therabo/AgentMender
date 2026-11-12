@@ -36,7 +36,7 @@ class FakeRpc:
 
 
 class Scenario:
-    def __init__(self, count=7, evaluator_error=False, reject_once=False):
+    def __init__(self, count=7, evaluator_error=False, reject_once=False, invalid_plan_once=False):
         self.active = None
         self.count = count
         self.evaluator_error = evaluator_error
@@ -47,6 +47,8 @@ class Scenario:
         self.revision = 0
         self.reject_once = reject_once
         self.correction = None
+        self.invalid_plan_once = invalid_plan_once
+        self.planner_turns = 0
 
     @contextmanager
     def spawn(self, role):
@@ -56,6 +58,9 @@ class Scenario:
 
         def turn(payload):
             if role == "planner":
+                self.planner_turns += 1
+                if self.invalid_plan_once and self.planner_turns == 1:
+                    return {**INTENT, "hints": {"terms": ["test"], "unsupported": True}}
                 return INTENT
             if self.evaluator_error:
                 raise ResolverError("luna_unavailable")
@@ -155,6 +160,13 @@ class LunaHostTests(unittest.TestCase):
         self.assertEqual(scenario.spawned, ["planner", "evaluator"])
         self.assertEqual(scenario.submitted, ["0", "1", "2"])
         self.assertIn("invalid_enum", scenario.correction)
+
+    def test_planner_validates_and_corrects_before_retrieval(self):
+        scenario = Scenario(0, invalid_plan_once=True)
+        resolve(scenario.spawn, scenario, "question")
+        self.assertEqual(scenario.planner_turns, 2)
+        self.assertEqual(scenario.spawned, ["planner"])
+        self.assertEqual(sum(step["action"] == "start" for step in scenario.steps), 1)
 
     def test_no_evaluator_for_empty_retrieval(self):
         scenario = Scenario(0)

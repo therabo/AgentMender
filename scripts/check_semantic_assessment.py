@@ -12,7 +12,8 @@ from pathlib import Path
 def validate(schema, value, root):
     supported = {'$schema', '$ref', '$defs', 'title', 'type', 'properties', 'required',
                  'additionalProperties', 'enum', 'const', 'minimum', 'maximum',
-                 'minLength', 'maxLength', 'pattern', 'maxItems', 'uniqueItems', 'items'}
+                 'minLength', 'maxLength', 'pattern', 'minItems', 'maxItems', 'uniqueItems',
+                 'items', 'anyOf', 'oneOf', 'description', 'format'}
     if set(schema) - supported:
         raise ValueError('unsupported contract keyword')
     if '$ref' in schema:
@@ -20,11 +21,23 @@ def validate(schema, value, root):
         if not reference.startswith('#/$defs/'):
             raise ValueError('nonlocal schema reference')
         return validate(root['$defs'][reference.split('/')[-1]], value, root)
+    for combinator in ('anyOf', 'oneOf'):
+        if combinator in schema:
+            matched = 0
+            for variant in schema[combinator]:
+                try:
+                    validate(variant, value, root)
+                    matched += 1
+                except ValueError:
+                    continue
+            if matched == 0 or (combinator == 'oneOf' and matched != 1):
+                raise ValueError('invalid contract variant')
     kind = schema.get('type')
     types = {'object': lambda x: isinstance(x, dict), 'array': lambda x: isinstance(x, list),
              'string': lambda x: isinstance(x, str), 'integer': lambda x: type(x) is int,
-             'boolean': lambda x: type(x) is bool}
-    if kind is not None and (kind not in types or not types[kind](value)):
+             'boolean': lambda x: type(x) is bool, 'null': lambda x: x is None}
+    allowed = kind if isinstance(kind, list) else [kind]
+    if kind is not None and not any(k in types and types[k](value) for k in allowed):
         raise ValueError('invalid contract type')
     if 'const' in schema and (type(value) is not type(schema['const']) or value != schema['const']):
         raise ValueError('invalid constant')
@@ -47,7 +60,7 @@ def validate(schema, value, root):
     if type(value) is int and not schema.get('minimum', value) <= value <= schema.get('maximum', value):
         raise ValueError('numeric budget')
     if isinstance(value, list):
-        if len(value) > schema.get('maxItems', len(value)):
+        if not schema.get('minItems', 0) <= len(value) <= schema.get('maxItems', len(value)):
             raise ValueError('array budget')
         encoded = [json.dumps(item, sort_keys=True) for item in value]
         if schema.get('uniqueItems') and len(encoded) != len(set(encoded)):

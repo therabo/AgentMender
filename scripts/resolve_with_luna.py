@@ -14,6 +14,8 @@ import threading
 import time
 import tomllib
 
+from check_semantic_assessment import validate
+
 MODEL = "gpt-6-luna"
 EFFORT = "medium"
 CORRECTABLE = {"invalid_luna_response", "invalid_assessment", "invalid_enum", "unknown_field",
@@ -201,12 +203,32 @@ def passages(citations):
     return [{"handle": item["handle"], "excerpt": item.get("excerpt")} for item in citations]
 
 
+def plan(planner, question, trace):
+    schema = json.loads((ROOT / "docs/search-intent-v1.schema.json").read_text())
+    correction = None
+    for _ in range(3):
+        try:
+            intent = planner.turn({
+                "task": "Return one SearchIntent JSON object conforming to the schema.",
+                "request": question, "search_intent_schema": schema, "correction": correction,
+            })
+            validate(schema, intent, schema)
+            return intent
+        except ValueError as error:
+            correction = str(error)
+        except ResolverError as error:
+            if str(error) != "invalid_luna_response":
+                raise
+            correction = "The response was not a SearchIntent JSON object."
+        trace(event="planner_payload_rejected", reason=correction, thread=planner.thread)
+    raise ResolverError("invalid_search_intent")
+
+
 def resolve(spawn, mcp, question, trace=lambda **_: None):
     started = time.monotonic()
     with spawn("planner") as planner:
         planner_id = planner.thread
-        intent = planner.turn({"task": "Interpret the request. Return one SearchIntent JSON object.",
-                               "request": question})
+        intent = plan(planner, question, trace)
     trace(event="planner_complete", elapsed_ms=elapsed_ms(started))
 
     tick = time.monotonic()

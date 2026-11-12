@@ -90,7 +90,8 @@ and submit no substitute judgments.
 The [controlled App Server host](../scripts/resolve_with_luna.py) creates
 one ephemeral thread in each role's own process. It observes the thread
 start and resolved model, checks turn completion and reroutes, and waits
-for each process to exit before starting the next phase. In Desktop the
+for each process to exit before starting the next phase. It validates the
+Planner's JSON against the advertised schema before the thread closes. In Desktop the
 origin must check equivalent events. The direct MCP transport validates
 scope and evidence and leaves model lifecycle attestation to the host.
 
