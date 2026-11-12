@@ -18,11 +18,13 @@ evidence. Keep caller scope, the run and signed evidence in the parent.
 Close the Evaluator before requesting publication. Collect signed rows by
 UUID and render the two result tables with any coverage or interruption status.
 
-Use an explicit GPT-6 Luna Medium fallback when a named role is unavailable.
-Verify the resolved model and effort from host events. If the host cannot
-establish or retain the required instance, stop before retrieval or advance
-with `luna_unavailable:true` during the run. A semantic judgment requires
-verified Luna execution. The origin cannot substitute for either distinct role.
+When a named role fails, attempt the host's explicit GPT-6 Luna Medium
+spawn. If the host cannot expose or verify the lifecycle, run the
+[controlled App Server host](scripts/resolve_with_luna.py) for the whole
+search. Verify model, effort and turn completion from host events.
+Report the concrete failure if both routes fail. Stop before retrieval
+or send `luna_unavailable:true` during the run. Each semantic judgment
+requires verified Luna execution.
 
 ## P0-SR4 read-only caller-filtered discovery
 

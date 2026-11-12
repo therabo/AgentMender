@@ -25,6 +25,10 @@ fresh signed rows. Accumulate `matches` and `alternatives` by UUID and remove
 `invalidated` rows. Render the two localized result tables and put any
 coverage gap or interruption in a status row.
 
-When the host cannot start, verify or retain the required Luna instance,
-stop before retrieval or send `luna_unavailable:true` during the run.
-Deterministic `session_discover` is a separate inventory operation.
+Use the host's subagent interface to discover named roles. If a named
+role fails, attempt an explicit GPT-6 Luna Medium spawn. When the
+Desktop surface cannot attest that lifecycle, use the workflow's
+controlled App Server host for both stages. If the required instance
+still fails, report the observed stage and error. Stop before retrieval
+or send `luna_unavailable:true` during an active run. Deterministic
+`session_discover` is a separate inventory operation.

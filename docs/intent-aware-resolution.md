@@ -82,18 +82,37 @@ Once Rust finishes retrieval, start a distinct
 [session_evaluator](../.codex/agents/session-evaluator.toml) only if candidates
 exist. Check the same model and effort and retain its thread ID for every
 assessment and any single-best selection. Close it before publication.
-For an unavailable named role, use a pinned GPT-6 Luna Medium instance
-and verify its host events. If the host cannot guarantee the model,
-thread identity or lifecycle, interrupt the run with `luna_unavailable:true`
-and submit no substitute judgments.
+Try the named role through the host's subagent interface when the
+AgentMender project roles are loaded. They live under the checkout's
+`.codex/agents` and are scoped to that project. A tool catalog lookup
+can inspect MCP capabilities. Role discovery uses the host interface.
 
-The [controlled App Server host](../scripts/resolve_with_luna.py) creates
-one ephemeral thread in each role's own process. It observes the thread
-start and resolved model, checks turn completion and reroutes, and waits
-for each process to exit before starting the next phase. It validates the
-Planner's JSON against the advertised schema before the thread closes. In Desktop the
-origin must check equivalent events. The direct MCP transport validates
-scope and evidence and leaves model lifecycle attestation to the host.
+If a named role fails, attempt an explicit `gpt-6-luna` spawn at medium
+effort and check its resolved settings and lifecycle events. A Desktop
+surface that cannot expose that spawn or verify the role lifecycle can
+run the [controlled App Server host](../scripts/resolve_with_luna.py) for
+the entire search. Determine the configured command and provider root
+from the AgentMender MCP registration. Use the originating chat UUID
+from host metadata and the installed Codex executable.
+
+```sh
+python3 /path/to/AgentMender/scripts/resolve_with_luna.py \
+  --agentmender /path/to/agentmender --codex /path/to/codex \
+  --codex-root /path/to/codex-home --caller HOST_THREAD_UUID --trace \
+  "Find every conversation about the requested topic."
+```
+
+The controlled host creates one ephemeral thread in each role's own
+process. It observes the thread start and resolved model, checks
+turn completion and reroutes, and waits for each process to exit. It
+validates the Planner's JSON against the advertised schema before
+closing the thread. Trace events identify the role, stage and observed
+error, including a usage limit reported at turn completion. Report
+concrete startup, configuration, permission or runtime evidence. If
+both routes fail, stop before retrieval or use `luna_unavailable:true`
+during an active run. The host verifies Luna execution and MCP validates
+caller scope and evidence.
+
 
 ## Progressive workflow
 

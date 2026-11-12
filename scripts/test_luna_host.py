@@ -4,18 +4,19 @@
 from contextlib import contextmanager
 import unittest
 
-from resolve_with_luna import Luna, ResolverError, render, resolve, select_best
+from resolve_with_luna import Luna, LunaFailure, ResolverError, RpcRejected, render, resolve, select_best
 
 
 INTENT = {"schema_version": "1", "subject": "Test", "hints": {"terms": ["test"]}}
 
 
 class FakeRpc:
-    def __init__(self, model="gpt-6-luna", effort="medium", reroute=False, nested=False):
+    def __init__(self, model="gpt-6-luna", effort="medium", reroute=False, nested=False, usage_limit=False):
         self.model = model
         self.effort = effort
         self.reroute = reroute
         self.nested = nested
+        self.usage_limit = usage_limit
 
     def call(self, method, params, observe=None):
         if method == "thread/start":
@@ -28,6 +29,10 @@ class FakeRpc:
             if self.nested:
                 observe({"method": "item/started", "params": {"threadId": "test", "turnId": "turn",
                          "item": {"type": "collabAgentToolCall"}}})
+            if self.usage_limit:
+                observe({"method": "turn/completed", "params": {"threadId": "test", "turn": {
+                    "id": "turn", "status": "failed", "error": {"codexErrorInfo": "usageLimitExceeded"},
+                }}})
             return {"turn": {"id": "turn"}}
         return {}
 
@@ -36,7 +41,8 @@ class FakeRpc:
 
 
 class Scenario:
-    def __init__(self, count=7, evaluator_error=False, reject_once=False, invalid_plan_once=False):
+    def __init__(self, count=7, evaluator_error=False, reject_once=False, invalid_plan_once=False,
+                 invalid_context_once=False):
         self.active = None
         self.count = count
         self.evaluator_error = evaluator_error
@@ -48,6 +54,7 @@ class Scenario:
         self.reject_once = reject_once
         self.correction = None
         self.invalid_plan_once = invalid_plan_once
+        self.invalid_context_once = invalid_context_once
         self.planner_turns = 0
 
     @contextmanager
@@ -63,9 +70,12 @@ class Scenario:
                     return {**INTENT, "hints": {"terms": ["test"], "unsupported": True}}
                 return INTENT
             if self.evaluator_error:
-                raise ResolverError("luna_unavailable")
+                raise LunaFailure("evaluator", "thread_start", "rpc_rejected")
             assert payload["search_intent"] is INTENT
             self.correction = payload["correction"]
+            if self.invalid_context_once:
+                self.invalid_context_once = False
+                return {"context_requests": [{"anchor": 99}]}
             return {"assessments": [
                 {"native_session_id": row["native_session_id"]} for row in payload["candidates"]
             ]}
@@ -108,6 +118,9 @@ class Scenario:
             assert self.submitted == [str(i) for i in range(self.count)]
             return page("completed")
         assert self.active == "evaluator"
+        if "context_requests" in arguments:
+            self.revision -= 1
+            raise ResolverError("invalid_scope")
         if "assessments" in arguments:
             if self.reject_once:
                 self.reject_once = False
@@ -124,17 +137,19 @@ class Scenario:
 class LunaHostTests(unittest.TestCase):
     def test_rejects_wrong_model_or_effort(self):
         for rpc in (FakeRpc(model="gpt-6-sol"), FakeRpc(effort="low")):
-            with self.assertRaisesRegex(ResolverError, "luna_unavailable"):
+            with self.assertRaisesRegex(LunaFailure, "planner_thread_start_unexpected_model_or_effort") as caught:
                 Luna(rpc, ".", "planner")
+            self.assertEqual(caught.exception.event["model"], rpc.model)
+            self.assertEqual(caught.exception.event["effort"], rpc.effort)
 
     def test_rejects_turn_reroute(self):
         luna = Luna(FakeRpc(reroute=True), ".", "planner")
-        with self.assertRaisesRegex(ResolverError, "luna_unavailable"):
+        with self.assertRaisesRegex(LunaFailure, "planner_turn_completed_event_model_rerouted"):
             luna.turn({"task": "interpret"})
 
     def test_rejects_nested_agent_execution(self):
         luna = Luna(FakeRpc(nested=True), ".", "evaluator")
-        with self.assertRaisesRegex(ResolverError, "luna_unavailable"):
+        with self.assertRaisesRegex(LunaFailure, "evaluator_turn_completed_event_unexpected_thread"):
             luna.turn({"task": "assess"})
 
     def test_planner_failure_never_calls_mcp(self):
@@ -143,8 +158,21 @@ class LunaHostTests(unittest.TestCase):
             self.assertEqual(role, "planner")
             yield Luna(FakeRpc(reroute=True), ".", role)
 
-        with self.assertRaisesRegex(ResolverError, "luna_unavailable"):
+        with self.assertRaisesRegex(LunaFailure, "planner_turn_completed_event_model_rerouted"):
             resolve(spawn, object(), "question")
+
+    def test_records_model_rejection_without_copying_provider_message(self):
+        error = RpcRejected({"code": -32000, "message": "Model is not available for private account"})
+        failure = LunaFailure.from_error("planner", "thread_start", error)
+        self.assertEqual(str(failure), "luna_planner_thread_start_model_unavailable")
+        self.assertEqual(failure.event["rpc_code"], -32000)
+        self.assertNotIn("private account", str(failure.event))
+
+    def test_reports_usage_limit_from_completed_turn(self):
+        luna = Luna(FakeRpc(usage_limit=True), ".", "evaluator")
+        with self.assertRaisesRegex(LunaFailure, "evaluator_turn_completed_event_usage_limit_exceeded") as caught:
+            luna.turn({"task": "assess"})
+        self.assertEqual(caught.exception.event["codex_error_info"], "usageLimitExceeded")
 
     def test_two_stages_for_all_43_candidates(self):
         scenario = Scenario(43)
@@ -161,6 +189,14 @@ class LunaHostTests(unittest.TestCase):
         self.assertEqual(scenario.submitted, ["0", "1", "2"])
         self.assertIn("invalid_enum", scenario.correction)
 
+    def test_invalid_context_scope_can_be_corrected_without_restarting(self):
+        scenario = Scenario(3, invalid_context_once=True)
+        resolve(scenario.spawn, scenario, "question")
+        self.assertEqual(scenario.spawned, ["planner", "evaluator"])
+        self.assertEqual(scenario.submitted, ["0", "1", "2"])
+        self.assertIn("invalid_scope", scenario.correction)
+        self.assertEqual(sum(step["action"] == "start" for step in scenario.steps), 1)
+
     def test_planner_validates_and_corrects_before_retrieval(self):
         scenario = Scenario(0, invalid_plan_once=True)
         resolve(scenario.spawn, scenario, "question")
@@ -175,7 +211,7 @@ class LunaHostTests(unittest.TestCase):
 
     def test_evaluator_failure_interrupts_without_a_judgment(self):
         scenario = Scenario(evaluator_error=True)
-        with self.assertRaisesRegex(ResolverError, "luna_unavailable"):
+        with self.assertRaisesRegex(LunaFailure, "evaluator_thread_start_rpc_rejected"):
             resolve(scenario.spawn, scenario, "question")
         self.assertTrue(scenario.steps[-1]["luna_unavailable"])
         self.assertEqual(scenario.submitted, [])

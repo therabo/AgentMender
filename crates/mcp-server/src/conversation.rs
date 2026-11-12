@@ -1413,7 +1413,7 @@ pub(super) fn tools(discovery: bool) -> Vec<Tool> {
         ));
         registry.insert(0, (
             "session_resolve",
-            "Use one Luna Medium Planner and close it before start. Advance the frozen UUID retrieval without Luna. When retrieval completes, use one distinct Luna Medium Evaluator across all candidate batches and any single_best selection. Close it before advance with publish:true. Pass the latest step_revision and collect signed rows in two tables. If the required Luna execution is unavailable, interrupt without substitute judgments.",
+            "Use one Luna Medium Planner and close it before start. Advance the frozen UUID retrieval without Luna. When retrieval completes, use one distinct Luna Medium Evaluator across all candidate batches and any single_best selection. Close it before advance with publish:true. Pass the latest step_revision and collect signed rows in two tables. If a named role fails, attempt the explicit gpt-6-luna Medium host route or the controlled App Server described in the server instructions. Report the observed failure.",
             resolution_schema(),
             schema::<ResolutionView>(),
             true,
