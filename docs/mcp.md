@@ -1,13 +1,14 @@
 # MCP interface
 
-## P0-SR5.1 session resolution
+## Conversational resolution
 
 The read-only `--session-search` catalog includes `session_resolve`.
-Ordinary `start` takes `search_intent` v1. Legacy `intent` keeps exact Boolean
-constraints available. Use `next`, `expand`, `context`, `assess` and `finish`
-with the originating run. The server publishes the action schema and
-validates it before retrieval. See the
-[SearchIntent and Luna workflow](intent-aware-resolution.md).
+Use `start` with one SearchIntent v1 and `advance` for assessments, context,
+expansion, continuation and publication. SearchIntent carries Boolean
+filters and the result policy. The server freezes the UUID cohort and
+filter metadata at start. Luna Medium interprets the request and assesses
+each candidate. See the [SearchIntent and Luna workflow](intent-aware-resolution.md)
+and [ADR-0035](adr/0035-uuid-search-cohort.md).
 
 ## P0-SR4 ordinary discovery
 
@@ -61,15 +62,16 @@ The explicit mode locates the existing bundled macOS executable without PATH;
 trusted root/executable flags can override selection. See the
 [quick start](p0-c1-manual-acceptance.md) and [ADR-0024](adr/0024-adaptive-read-only-metadata.md).
 
-Its fifteen-tool catalog includes `session_discover` and `session_context`.
+The discovery catalog includes `session_resolve`, `session_discover` and `session_context`.
 `session_search` preserves the
 legacy metadata request and adds structured filters, content, purpose, project,
 excerpts and continuation. Guaranteed `purpose=management` requires enforceable
 host binding, currently unavailable; file-only registration cannot admit it.
 It returns `caller_identity_required` with zero candidates before any
-provider read. Diagnostic responses have no caller guarantee. `session_context`
-requires a prior process-authenticated evidence reference and fresh source/binding
-checks. These advanced reads are available in `--session-search` mode.
+provider read. Diagnostic responses have no caller guarantee. `session_context` opens a canonical
+UUID in discovery mode and returns a signed target and bounded window. Continue
+with that target and the signed evidence reference. Each navigation call rechecks
+source and caller binding. These advanced reads are available in `--session-search` mode.
 `preview_removal` returns a blocked compatibility
 assessment rather than a Ready plan. Its output schema admits either that typed
 assessment or the historical supported preview. A read-mode assessment has no plan

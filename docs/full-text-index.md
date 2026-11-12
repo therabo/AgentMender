@@ -1,32 +1,20 @@
 # Local full-text index
 
-## Progressive resolver
+## Conversational resolver and independent search
 
-The Codex worker can reuse one in-memory metadata snapshot and its current
-bounded title-prior inventory window when the root and exact DB/WAL/SHM
-fingerprints remain unchanged. It still fingerprints before and after each
-operation and revalidates on drift. The window is scoped to the query and
-caller. Transcript revisions remain separate.
+The progressive resolver scans its captured UUID cohort live. It uses
+transient FTS5/BM25 to rank passages within each source slice. Configuring
+a private index leaves this acquisition route on the live reader. See
+[ADR-0035](adr/0035-uuid-search-cohort.md) and the
+[resolution contract](intent-aware-resolution.md).
 
-The opt-in SQLite cache uses `MATCH` to propose sources for observation
-reconstruction within eligible, unprotected keys. The worker validates
-their exact source revisions and Rust applies its existing query semantics.
-Unmatched, missing, corrupt or stale cache entries fall back to live
-traversal. Token match does not prove absence or substitute for substring
-and phrase predicates. Cached candidates retain the existing inventory order.
-Transient BM25 ranks the full slice when passage order can affect the
-result, with batched writes and no derived disk data.
-
-## P0-SR5 candidate retrieval
-
-Resolution uses the same transient FTS5/BM25 passage ranking and the same
-explicit private-index policy. Within a metadata window, title terms prioritize
-which eligible sources are visited first. One traversal can observe the
-literal expression and a targeted expansion. Per-source-slice ranks choose
-candidate anchors, including evidence from early and later matching slices.
-Source selection and passage rank remain provisional. A terminal run
-reports traversed sources, bytes, records and gaps independently of whether
-Luna verified an outcome. [Resolution and coverage](intent-aware-resolution.md).
+Independent search can use the opt-in cache. SQLite `MATCH` proposes
+sources within eligible, unprotected keys. The worker verifies the exact
+source revisions and Rust evaluates the typed predicates. Unmatched,
+missing, corrupt or stale entries use the live reader. Substring and
+phrase predicates keep their ordinary semantics. The independent
+metadata snapshot can be reused at the same root when DB/WAL/SHM
+fingerprints agree.
 
 ## P0-SR3 traversal compatibility
 
@@ -107,7 +95,7 @@ Partial work returns explicit pending/unsupported/partial source counts and exit
 successful maintenance exits0. Cancellation does not execute source effects.
 No provider session is resumed. Status is diagnostics, never absence proof.
 
-To enable reuse, add to the MCP command's launch arguments before `mcp`:
+To enable reuse for independent search, add this flag before `mcp`:
 
 ```text
 --search-index-root /absolute/private/AgentMender-search

@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted for implementation on the retrieval feature branch.
+Accepted. [ADR-0035](0035-uuid-search-cohort.md) specifies the current UUID inventory and continuation.
 
 ## Decision
 
@@ -24,8 +24,7 @@ lifetime. A portable checkpoint would require a separate privacy and
 authentication design. Decoder state and transcript payloads stay in bounded
 memory.
 
-Legacy actions preserve the existing response shapes. For new clients,
-assessments distinguish the activity in the candidate from references to
+Assessments distinguish the activity in the candidate from references to
 another session. Fresh publication checks identity and cited source revisions
 in the confined worker. The Luna workflow judges the meaning of the evidence.
 
@@ -57,8 +56,8 @@ A lexical pass cannot certify semantic recall.
 The progressive MCP contract carries these states alongside the existing wire
 fields. The originating chat assembles the two result tables from streamed
 confirmed and plausible unconfirmed rows. The resolver keeps only the active
-batch, the continuation and one replayable reply. The legacy selector and
-Boolean workflow retain their existing actions and limits.
+batch, the continuation and one replayable reply. Selection and Boolean
+queries use the same progressive actions.
 
 ## One resolver and required Luna orchestration
 

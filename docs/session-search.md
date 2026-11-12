@@ -1,20 +1,22 @@
 # Intelligent session search
 
-## P0-SR5 outcome-aware resolution
+## Conversational resolution
 
-`session_resolve` starts with a typed answer cardinality, focus, requested
-outcomes, hard filters and positive lexical expressions. The originating
-chat freezes the user constraints and interprets evidence with Luna Medium.
-The same search service binds candidate and context reads to the apparent
-caller. Candidate order is provisional. Finalization checks exact identity,
-fresh hard filters and the revision of cited content. A related passage
-or explicit contradiction may clarify an outcome without proving
-session-wide absence. See the [resolution contract](intent-aware-resolution.md).
+`session_resolve` accepts a validated SearchIntent v1 and streams candidates
+with `start` and `advance`. The worker captures the eligible UUID cohort,
+metadata filters and native UUID order in one read transaction. It then
+scans current rollout revisions in bounded batches. An independent source
+change can limit coverage for that identity. The run continues across
+unrelated catalog writes and excludes chats created after capture.
+Luna Medium assesses each candidate. Publication validates its live
+identity and cited source revision against the frozen query scope.
+See the [resolution contract](intent-aware-resolution.md) and
+[ADR-0035](adr/0035-uuid-search-cohort.md).
 
 ## P0-SR4 discovery
 
-`session_discover` is the read-only entry point for ordinary searches and
-requests to find possible deletion candidates. It accepts the same search
+`session_discover` is the read-only entry point for deterministic inventory
+and requests to find possible deletion candidates. It accepts the same search
 filters, paging and excerpt options as `session_search` without a purpose
 switch or caller argument. An empty query browses the eligible inventory.
 For example, to discover sessions under the observed MISSION1 project:
@@ -43,7 +45,7 @@ caller or root, a changed source, a new process, or a modified token requires
 fresh discovery. Discovery targets are distinct from lifecycle target tokens.
 See the [caller identity contract](mcp-caller-identity.md).
 
-Current implementation contract, 2026-11-10. [ADR-0027](adr/0027-intelligent-session-retrieval.md)
+[ADR-0027](adr/0027-intelligent-session-retrieval.md)
 extends the historical P0-S1 reader. The [implementation report](milestones/intelligent-search-implementation.md)
 separates fixtures, real reads and actual conversational acceptance. Lifecycle
 admission, approval and transaction semantics are unchanged.
@@ -69,10 +71,10 @@ JSONL; `coverage.work`/context `work` separately report decoder and replay work.
 Signed search tokens accept at most32KiB; HMAC, kind/process binding and64KiB
 request/80KiB projection limits remain. Large evidence-bearing cursors round-trip.
 
-`session_search` and `session_context` remain the retrieval tools. The calling
-agent translates language into validated JSON, AgentMender applies deterministic
-conditions, and optional [Luna analysis](luna-session-relevance.md) interprets
-bounded quoted evidence. A model cannot change a hard condition or grant deletion.
+`session_search` and `session_discover` evaluate structured deterministic
+conditions. Conversational resolution uses [Luna Medium](luna-session-relevance.md)
+for intent and evidence assessment. Use `session_context` for bounded
+navigation by UUID or signed evidence.
 
 The existing eight crates remain: domain owns pure queries/evidence; provider-api
 owns read ports; provider-codex owns parsing in the attested worker; application
@@ -81,8 +83,10 @@ owns derived private SQLite; CLI composes capabilities; MCP projects bounded
 outputs. Claude retains its existing metadata adapter, with no general transcript
 reader or mutation profile. A provider filter does not manufacture Claude support.
 
-Codex reads `state_5.sqlite` through READ_ONLY/NOFOLLOW, query_only and bounded
-in-memory backup in the existing kernel-attested worker. Rollout paths come from
+The confined Codex worker opens `state_5.sqlite` with READ_ONLY, NOFOLLOW
+and query_only. Conversational resolution uses a temporary UUID metadata
+spool and exact source lookups. Independent search can use a bounded
+in-memory backup. Rollout paths come from
 validated metadata inside the selected root. Only ordinary unshared files below
 `sessions` and `archived_sessions` are admitted. Header UUID must match the exact
 metadata identity. No raw paths or SQL are accepted or exported by MCP. No source
@@ -172,14 +176,14 @@ counts, matched terms and bounded per-query leaf observations. Cross-page AND an
 NOT do not require retaining old raw text. Stop by cancellation/deadline or simply
 do not follow the cursor. Worker deadline is eight seconds; parent twelve seconds.
 
-Metadata inventory uses bounded 10,000-row keyset windows and 100 eligible sessions
+Independent `session_search` and `session_discover` use bounded 10,000-row keyset windows and 100 eligible sessions
 per scan batch, without a terminal 10,000-session corpus cutoff. Sort is ascending
 identity/created/last_active (missing times last), or relevance within a scanned
 page. Exact identity breaks ties. Exhaustive mode cannot select relevance sort;
 it enumerates rather than silently returning Top-K. Follow all `next_cursor`
 values, including empty result pages, to finish the eligible inventory.
 
-Cursors are HMAC sealed and bind parameters, root, exclusions, binding revision,
+The independent search cursors are HMAC sealed and bind parameters, root, exclusions, binding revision,
 query-scoped cohort fingerprint, inventory window and source progress. ADR-0028
 pins eligible identities, predicate leaf truth, lexical facts and sort keys.
 Unrelated excluded-project activity and unused display timestamps do not discard
@@ -220,10 +224,12 @@ nanoseconds where supported; it does not trust size/mtime alone. Descriptor and
 path identity are rechecked around source reads. Append, replacement or changed
 metadata invalidates old references rather than resolving them against new text.
 
-Default `session_context` preserves the prior bounded message operation. Optional
+In discovery mode, `session_context` can open or refresh a canonical UUID
+with `native_session_id` and return a signed target. With a signed target and
+evidence reference, the default operation returns one bounded message. Optional
 `window` supports `start`, `around`, `forward`, `backward`, `turn`, and `occurrences` with
 an explicit query. It returns at most twenty messages/16 KiB per request; before
-and after are at most100. Long messages use UTF-8-safe subchunks retaining their
+and after are at most 100. Long messages use UTF-8-safe subchunks retaining their
 parent ordinal and offsets. Set `window.message_offset:0` to retrieve a matched parent message from its
 beginning; omit it when following returned chunk continuation suggestions.
 Turn/message IDs are returned only when observed in
@@ -237,9 +243,9 @@ boundary from a work limit. Backward probing is bounded; larger windows can need
 further requests. Reference reuse revalidates source, exact target, current binding
 and exclusions. Old pre-upgrade in-process tokens should be discarded.
 
-Per-request limits are enforced. Luna's default eight-request/64 KiB aggregate
-analysis budget is an orchestration policy, not a server-wide replay authorization
-boundary. Custom-agent instructions do not sandbox inherited tools.
+The resolver accepts up to two context requests per `advance`. Each requested
+window is bounded to five messages and 4 KiB. The active assessment batch
+has a budget of 24 windows and 128 KiB in total.
 
 ## Management safety and privacy
 

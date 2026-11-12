@@ -5,16 +5,19 @@
 Ask Codex “Find the MISSION1 conversation where we implemented and validated
 the Earth View camera limits.” The read-only `session_resolve` workflow uses
 [SearchIntent v1](docs/intent-aware-resolution.md) and source-bound evidence.
-Luna Medium interprets the request and judges the evidence where supported.
-A topical project mention leaves cross-project discovery open. The default
-returns all supported matches found within the reported coverage.
+Luna Medium interprets the request and assesses each candidate. Rust freezes
+the eligible UUID cohort at start, scans it in bounded batches and validates
+each source before publishing signed evidence. A topical project mention
+leaves cross-project discovery open. The default returns all supported
+matches within the reported coverage.
 
-`session_discover` still handles deterministic inventory, exact identities
-and possible deletion candidates. Both discovery routes exclude the apparent
-calling chat before retrieval. They confer no removal eligibility.
+Use `session_discover` for deterministic inventory and possible deletion
+candidates. Use `session_context` with a native UUID to open or refresh a
+Codex transcript independently of a search run. Discovery excludes the
+apparent calling chat and produces read-only results.
 See the [resolution workflow](docs/intent-aware-resolution.md),
 [search contract](docs/session-search.md) and
-[SR5 acceptance status](docs/milestones/p0-sr5-intent-aware-session-resolution.md).
+[UUID snapshot acceptance](docs/milestones/uuid-search-snapshot.md).
 
 ## P0-SR3 progressive history
 
@@ -73,7 +76,7 @@ and all historical removal evidence are preserved.
 | Codex inventory | Real metadata search with validated column/value contract; historical App Server scans remain separate |
 | Claude inventory | Partial observed Desktop sidecar metadata; synthetic Code fixtures; no general live SDK inventory |
 | MCP | Eight default read-only tools. Explicit `--session-search` adds caller-scoped resolution, discovery and context alongside the existing opt-in tool catalog. |
-| Session search | Typed Boolean/time/project filters, unknown-safe negatives, FTS5 passages and bounded continuation. SR5 groups evidence and validates cited outcomes through the read-only resolver. |
+| Session search | Typed Boolean/time/project filters, unknown-safe negatives, FTS5 passages and bounded continuation. The read-only resolver uses a frozen UUID cohort, Luna assessments and source-bound publication. |
 | Management-session exclusion | Guaranteed real mode refuses with zero candidates until enforceable host binding exists; typed fixture exclusion precedes counts/ranking/paging/context; launch-protected diagnostic identities stay excluded |
 | Human approval and durable transactions | Implemented local terminal review, one-shot authenticated grants, journal and read-only reconciliation |
 | Codex primary cleanup | M8.2 PASS for exact 0.166.0/macOS arm64, unshared Legacy plain history and reviewed WAL schema |
@@ -130,9 +133,10 @@ command is the absolute AgentMender executable and arguments are:
 --provider codex mcp --session-search
 ```
 
-Search examples and semantics are in [session search](docs/session-search.md);
-[private indexing](docs/full-text-index.md) is optional and explicitly stores message
-text/terms, while [Luna Medium](docs/luna-session-relevance.md) analyzes bounded evidence.
+See [session search](docs/session-search.md) for examples and query semantics.
+The [private index](docs/full-text-index.md) is an explicit cache for independent search.
+The resolver scans the captured cohort live and uses
+[Luna Medium](docs/luna-session-relevance.md) for bounded evidence assessment.
 
 This mode uses the selected/default Codex home and locates the existing macOS
 bundled executable even without `codex` in PATH. Explicit developer diagnostics need no historical binary, synthetic

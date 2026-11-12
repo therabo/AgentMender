@@ -1,5 +1,6 @@
 # Milestone history and current product sequencing
 
+- [UUID search snapshot](uuid-search-snapshot.md) records the current resolver, reopening and benchmarks.
 - [Progressive session resolution](progressive-session-resolution.md) records the feature branch implementation, scale tests and acceptance limits.
 - [P0-SR5 intent-aware session resolution](p0-sr5-intent-aware-session-resolution.md) records the original resolver acceptance.
 

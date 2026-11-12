@@ -122,14 +122,17 @@ provider/format/coverage limits. Guaranteed production management requests refus
 without that host capability; a privileged registration file cannot substitute.
 No speculative embeddings or GraphRAG milestone blocks useful local retrieval.
 
-### Progressive retrieval branch
+### Progressive conversational retrieval
 
-The progressive `session_resolve` route uses bounded batches, incremental
-publication and typed coverage. The origin uses SearchIntent v1 and Luna for
-semantic assessment, and Rust for retrieval, source validation and progress.
-The legacy wire contract remains available. See [ADR-0034](adr/0034-progressive-resolution.md)
-and the [progressive workflow](intent-aware-resolution.md#progressive-workflow).
-Fixture and real-client acceptance remain distinct.
+`session_resolve` uses one SearchIntent v1 and one `start`/`advance`
+workflow. Luna assesses candidates in bounded batches. Rust freezes the
+UUID cohort, publishes source-bound evidence and reports coverage.
+`session_context` can reopen an exact UUID after the run.
+See [ADR-0035](adr/0035-uuid-search-cohort.md), the
+[progressive workflow](intent-aware-resolution.md#progressive-workflow) and
+the [benchmark and acceptance report](milestones/uuid-search-snapshot.md).
+Installed app-server model controls and graphical Desktop acceptance remain
+separate.
 
 ## P1 — Provider coverage and native lifecycle operations
 

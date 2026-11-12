@@ -14,12 +14,13 @@ streaming decoder from locked zstd 0.13.3 preserves its dictionary/window state
 inside the existing kernel-confined content worker. It handles concatenated frames
 and validates their termination; corrupt/truncated frames cannot certify EOF.
 
-The CLI retains one read adapter for its MCP connection. A serialized, bounded
-JSONL exchange reuses its isolated worker. Each operation takes a deadline and source validation. A worker can reuse
-the prior bounded metadata snapshot only at an unchanged root and exact
-DB/WAL/SHM fingerprints. It verifies the files again after the operation. EOF on the input closes the worker;
-parent drop terminates only its own reader. A failed transport operation is not
-retried. No live Codex App Server, external database or provider writer is started.
+The CLI retains one read adapter for its MCP connection. A serialized,
+bounded JSONL exchange reuses its isolated worker. Each operation has a
+deadline and validates the source it uses. Conversational resolution keeps
+a frozen UUID cohort in the worker. Independent search can reuse a bounded
+metadata snapshot when DB/WAL/SHM fingerprints match. EOF on the input
+closes the worker. Parent drop terminates only its own reader. See
+[ADR-0035](adr/0035-uuid-search-cohort.md).
 
 At most two compressed readers remain in the worker's LRU working set. Each has
 an 8 MiB maximum decoder window, 128 KiB compressed input buffer and a recent
@@ -65,8 +66,9 @@ owned worker when its parent operation fails, never the Codex application.
 
 ## Navigation
 
-`session_context` accepts `window.direction:"start"` with an existing verified
-source reference to begin at the first available supported message. Follow
+In discovery mode, open or refresh a transcript with
+`session_context.native_session_id`. A signed reference also supports
+`window.direction:"start"` to begin at the first available supported message. Follow
 `next_ref` with `next_window` to traverse all supported messages to `at_end`.
 Forward navigation ignores an inherited `before` setting; it cannot move behind
 its anchor. Completed messages advance; unfinished UTF-8 chunks retain their
@@ -86,12 +88,12 @@ bytes. Neither Luna nor the parent has a fixed total number of context requests
 imposed by this reader. Luna's orchestration budget and inherited-tool limitations
 remain separate. No context operation grants selection or deletion authority.
 
-Metadata churn during a read is checked against a fresh snapshot. Search retains
-its query-scoped cohort validation. Context retains its exact metadata locator,
-UUID/exclusions and source revision; an unrelated row update can pass, while target
-locator, source, root/DB identity or protection changes refuse. Files are still
-opened descriptor-relative with NOFOLLOW and checked for ordinary single-link
-identity, selected representation and revision before/after reads.
+Conversational acquisition uses its initial UUID cohort. Publication and
+discovery navigation check the applicable live row, locator, UUID,
+exclusions and exact source revision. Files are opened descriptor-relative
+with NOFOLLOW and checked for ordinary single-link identity, selected
+representation and revision around source reads. Independent search uses
+the scoped metadata cursor checks in [ADR-0028](adr/0028-search-reliability-and-scoped-freshness.md).
 
 ## Completeness and counters
 
