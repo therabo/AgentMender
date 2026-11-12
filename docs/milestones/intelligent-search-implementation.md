@@ -78,7 +78,7 @@ budgets remain orchestration policy, not connection-wide replay state.
 
 ## E. Luna
 
-[Configuration](../../.codex/agents/session-relevance.toml): session_relevance,
+[Historical configuration](https://github.com/therabo/AgentMender/blob/c9ea7aadaf6d09216142e6333bf98baf57acd015/.codex/agents/session-relevance.toml): session_relevance,
 gpt-6-luna, medium reasoning, feature reductions and read-only retrieval instructions.
 [Schema](../session-relevance-output.schema.json), [workflow](../luna-session-relevance.md)
 and [validator](../../scripts/check_semantic_assessment.py) define exact identities,

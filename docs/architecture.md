@@ -120,9 +120,10 @@ original results. [Index privacy](full-text-index.md) and [Luna](luna-session-re
 document data flow and limitations.
 
 Conversational retrieval freezes one eligible UUID cohort in a confined
-worker spool. It closes the source transaction before scanning and performs
-exact live source checks for publication and UUID navigation. See
-[ADR-0035](adr/0035-uuid-search-cohort.md).
+worker spool. It closes the source transaction before scanning and stages
+candidates before the host starts one separate Evaluator. The worker verifies
+source revisions for staged evidence, publication and UUID navigation. See
+[ADR-0035](adr/0035-uuid-search-cohort.md) and [ADR-0036](adr/0036-two-stage-luna-resolution.md).
 
 ## Core session lifecycle versus additional cleanup
 

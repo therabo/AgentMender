@@ -1,32 +1,30 @@
 ---
 name: agentmender-session-resolution
-description: Find and verify past Codex conversations with mandatory Luna Medium interpretation and assessment.
+description: Find past Codex conversations using one Luna Medium Planner, complete Rust retrieval and one Luna Medium Evaluator.
 ---
 
-Use the [resolution workflow](../../../docs/intent-aware-resolution.md).
-Require Luna Medium before starting a conversational search. If the host
-identifies the originating model as GPT-6 Luna with medium effort, interpret
-and assess directly. Otherwise start the named `session_relevance` agent
-once and verify the host's resolved model and effort on its start event.
-A role name or self-report alone is insufficient. If the role is unavailable
-or resolves incorrectly, explicitly spawn `gpt-6-luna` with medium effort and
-verify its execution. Use the same delegate for interpretation, batch
-assessments and any final selection. A failed or unobservable Luna execution
-is an availability error. Before a run, stop before retrieval. During a run,
-use `advance` with `luna_unavailable:true` and no judgments. Do not substitute
-another model or deterministic discovery for semantic verification.
+Follow the [resolution workflow](../../../docs/intent-aware-resolution.md).
+Start one named `session_planner`. Verify `gpt-6-luna` and medium effort
+from host events. Close it after obtaining one SearchIntent. Use a pinned
+Luna Medium fallback only when the host can verify its identity, effort
+and lifecycle. Keep explicit Boolean filters and UUIDs. Plan lexical
+aliases before calling `start`.
 
-The parent checks one SearchIntent against the original request and sends
-`start`. Use `filter` for advanced Boolean expressions and
-`constraints.native_session_id` for an exact identity. Keep the run and
-signed references in the parent. Give Luna only the user's intent, candidate
-identities and bounded passages with handles. Pass submitted judgments,
-context requests and continuation through `advance` with the returned
-`step_revision` and a new operation ID. Continue while the resolver reports
-`in_progress`. Accumulate confirmed and plausible unconfirmed rows by identity,
-removing invalidated rows. For `single_best`, ask the same Luna to choose among
-fresh confirmed rows, or report ambiguity. Render exactly the two localized
-tables in the workflow. Put any coverage limit or interruption in a status row.
+While `phase` is `retrieving`, send empty `advance` operations until
+retrieval completes. Start no model during this phase. If candidates exist
+after traversal, start one distinct `session_evaluator` and verify its model
+and effort. Send each batch to that same thread, with the immutable request
+and intent and bounded original evidence. Keep all MCP calls, revisions and
+signed references in the parent. Use context requests for specific gaps.
+Continue through every batch, including refreshed candidates.
 
-`session_discover` is an independent deterministic inventory primitive. Its
-results carry no Luna verification and do not answer conversational searches.
+When `progress.publication_ready` is true, ask the same Evaluator for any
+explicit `single_best` choice from provisional `prepared_choices`.
+Close the Evaluator. Call `advance` with `publish:true` to drain the
+fresh signed rows. Accumulate `matches` and `alternatives` by UUID and remove
+`invalidated` rows. Render the two localized result tables and put any
+coverage gap or interruption in a status row.
+
+When the host cannot start, verify or retain the required Luna instance,
+stop before retrieval or send `luna_unavailable:true` during the run.
+Deterministic `session_discover` is a separate inventory operation.

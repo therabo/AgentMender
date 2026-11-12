@@ -2,16 +2,16 @@
 
 ## Conversational resolution
 
-`session_resolve` accepts a validated SearchIntent v1 and streams candidates
-with `start` and `advance`. The worker captures the eligible UUID cohort,
-metadata filters and native UUID order in one read transaction. It then
-scans current rollout revisions in bounded batches. An independent source
-change can limit coverage for that identity. The run continues across
-unrelated catalog writes and excludes chats created after capture.
-Luna Medium assesses each candidate. Publication validates its live
-identity and cited source revision against the frozen query scope.
+One Luna Medium Planner produces SearchIntent v1 and closes before
+`session_resolve` starts. Rust captures the eligible UUIDs and metadata
+filters in one read transaction and scans the whole cohort in bounded
+pages. The worker stages selected candidates in its anonymous spool.
+After traversal, one distinct Luna Medium Evaluator assesses every
+candidate in bounded batches. Rust revalidates the selected sources and
+signs the result pages after the Evaluator closes. Partial source
+coverage and traversal completion are reported separately.
 See the [resolution contract](intent-aware-resolution.md) and
-[ADR-0035](adr/0035-uuid-search-cohort.md).
+[ADR-0036](adr/0036-two-stage-luna-resolution.md).
 
 ## P0-SR4 discovery
 

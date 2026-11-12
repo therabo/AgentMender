@@ -91,9 +91,17 @@ def probe(binary, case):
         client = Client(binary, root, caller, index)
         try:
             page = call(client, action="start", search_intent=intent)
-            for operation in range(8 if case == "late_corpus_insert" else 0):
-                page = advance(client, page, operation, assessments=judge(page))
-            candidate = page["candidates"][0]["native_session_id"]
+            staged = "phase" in page
+            if staged and case != "late_corpus_insert":
+                operation = 0
+                while not page["candidates"]:
+                    page = advance(client, page, operation)
+                    assert page["execution_state"] == "in_progress", page
+                    operation += 1
+            elif not staged:
+                for operation in range(8 if case == "late_corpus_insert" else 0):
+                    page = advance(client, page, operation, assessments=judge(page))
+            candidate = page["candidates"][0]["native_session_id"] if page["candidates"] else ids[0]
             before = fingerprints(root)
             modified = None
             if case in {"new_chat", "late_corpus_insert"}:
@@ -124,6 +132,12 @@ def probe(binary, case):
             if case == "wal_checkpoint":
                 db.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchall()
             after = fingerprints(root)
+            if staged and not page["candidates"]:
+                operation = 20
+                while not page["candidates"]:
+                    page = advance(client, page, operation)
+                    assert page["execution_state"] == "in_progress", page
+                    operation += 1
             reply = advance(client, page, 9, assessments=judge(page))
             assert "error" not in reply, reply.get("error")
             work = reply["progress"].get("provider_work", {})
@@ -134,7 +148,8 @@ def probe(binary, case):
                 "execution": reply["execution_state"], "stop": reply["progress"]["stop_reason"],
                 "freshness_failures": reply["progress"]["freshness_failures"],
                 "source_reanchors": reply["progress"].get("source_reanchors", 0),
-                "published": len(reply["matches"]), "next_candidates": len(reply["candidates"]),
+                "published": len(reply["matches"]), "prepared": len(reply.get("prepared_choices", [])),
+                "next_candidates": len(reply["candidates"]),
                 "snapshots_delta": work.get("sqlite_snapshots", 0) - page["progress"]["provider_work"]["sqlite_snapshots"],
                 "fts_builds_delta": work.get("fts_builds", 0) - page["progress"]["provider_work"]["fts_builds"],
             }))

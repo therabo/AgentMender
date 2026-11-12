@@ -122,7 +122,9 @@ coverage facts returns no new physical-completeness certificate.
 ## Privacy, compatibility and operational limits
 
 Raw decoded bytes are retained only in bounded worker RAM for the connection
-lifetime/eviction. No transcript spool/checkpoint file is written by default.
+lifetime/eviction. The anonymous UUID spool holds bounded evidence passages and
+pending receipts for the active resolver run. Transcript bodies and decoder
+checkpoints stay outside that spool.
 Sensitive-pattern suppression still precedes evidence/scoring/index storage;
 raw decoder RAM necessarily contains source bytes. Explicit private indexing
 remains the only persistent derived text cache and requires the existing user

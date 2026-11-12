@@ -5,9 +5,10 @@
 Ask Codex “Find the MISSION1 conversation where we implemented and validated
 the Earth View camera limits.” The read-only `session_resolve` workflow uses
 [SearchIntent v1](docs/intent-aware-resolution.md) and source-bound evidence.
-Luna Medium interprets the request and assesses each candidate. Rust freezes
-the eligible UUID cohort at start, scans it in bounded batches and validates
-each source before publishing signed evidence. A topical project mention
+One Luna Medium Planner interprets the request and closes before Rust scans
+the full frozen UUID cohort. A distinct Luna Medium Evaluator assesses every
+selected candidate on one thread. Rust revalidates sources and signs result
+pages after the Evaluator closes. A topical project mention
 leaves cross-project discovery open. The default returns all supported
 matches within the reported coverage.
 
@@ -143,7 +144,7 @@ bundled executable even without `codex` in PATH. Explicit developer diagnostics 
 provider root, approval store or caller UUID; specify `purpose:"diagnostic"`. Use explicit
 root/executable paths when configuring a particular installation. Refresh only
 that MCP connection in Codex and verify the chat can call `session_resolve`
-and `session_discover`. The repository supplies the named Luna agent and
+and `session_discover`. The repository supplies the named Luna Planner and Evaluator and
 an implicitly discoverable [lookup skill](.agents/skills/agentmender-session-resolution/SKILL.md).
 A failed discovery or management request has no automatic diagnostic fallback.
 

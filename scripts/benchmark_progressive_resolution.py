@@ -16,7 +16,7 @@ import time
 import uuid
 
 
-def fixture(root, count, hidden_bytes=0):
+def fixture(root, count, hidden_bytes=0, matched=None):
     root.mkdir()
     (root / "sessions").mkdir()
     with sqlite3.connect(root / "state_5.sqlite") as database:
@@ -26,11 +26,14 @@ def fixture(root, count, hidden_bytes=0):
         )""")
         ids = [str(uuid.UUID(int=i)) for i in range(1, count + 1)]
         caller = str(uuid.UUID(int=count + 1))
+        matched = count if matched is None else matched
+        selected = {ids[index * count // matched] for index in range(matched)}
         for identity in [*ids, caller]:
             path = root / "sessions" / f"rollout-{identity}.jsonl"
             rows = [{"type": "session_meta", "payload": {"id": identity, "cli_version": "0.166.0"}}]
             for text in (
-                "FlightProbe camera limits were implemented in this session.",
+                ("FlightProbe camera limits were implemented in this session."
+                 if identity in selected or identity == caller else "The meeting covered routine maintenance."),
                 "Regression checks passed after the projection fix.",
                 "A later test found a failure. The workaround was reverted.",
             ):
@@ -43,7 +46,7 @@ def fixture(root, count, hidden_bytes=0):
             path.write_text("".join(json.dumps(row) + "\n" for row in rows))
             database.execute("INSERT INTO threads VALUES(?,?,?,1,2,0,'0.166.0',?)",
                              (identity, "Duplicate fixture title", "/fixture/Fleet", str(path)))
-    return set(ids), caller
+    return selected, caller
 
 
 class Client:
@@ -163,6 +166,14 @@ def run(client, truth, contextual, exact):
         return client.call(action="advance", run=run_id, expected_revision=page["step_revision"],
                            operation_id=str(operation), **changes)
 
+    staged = "phase" in page
+    while page.get("phase") == "retrieving":
+        assert not page["candidates"], page
+        page = advance(page)
+    retrieval_ms = (time.perf_counter() - started) * 1000 if staged else None
+    if staged and page.get("phase") == "evaluating":
+        assert page["progress"]["retrieval_complete"] and not page["candidates"], page
+        page = advance(page)
     handles = None
     if contextual:
         anchor = page["candidates"][0]["evidence"][0]["handle"]
@@ -173,14 +184,45 @@ def run(client, truth, contextual, exact):
         page["step_revision"] = response["step_revision"]
         handles = [anchor, *[window["messages"][0]["handle"] for window in response["windows"]]]
 
-    while page["execution_state"] == "in_progress":
-        page = advance(page, assessments=assessments(page, handles))
-        collect(page)
+    evaluation_ms = publication_ms = None
+    if staged and page["phase"] == "evaluating":
+        tick = time.perf_counter()
+        evaluated = set()
+        while not page["progress"]["publication_ready"]:
+            assert page["phase"] == "evaluating" and not page["matches"], page
+            if page["candidates"]:
+                for candidate in page["candidates"]:
+                    identity = candidate["native_session_id"]
+                    assert identity in truth and identity not in evaluated, identity
+                    evaluated.add(identity)
+                page = advance(page, assessments=assessments(page, handles))
+            else:
+                page = advance(page)
+        assert evaluated == truth and page["progress"]["evaluation_complete"], page
+        evaluation_ms = (time.perf_counter() - tick) * 1000
+        tick = time.perf_counter()
+        while page["execution_state"] == "in_progress":
+            page = advance(page, publish=True)
+            collect(page)
+        publication_ms = (time.perf_counter() - tick) * 1000
+    elif not staged:
+        while page["execution_state"] == "in_progress":
+            page = advance(page, assessments=assessments(page, handles))
+            collect(page)
+    assert seen == truth, (len(seen), len(truth), page)
     terminal = page["outcome"]
     progress = page["progress"]
     return {"terminal": terminal, "mcp_calls": sum(client.calls.values()),
-            "calls": dict(client.calls), "recall": len(seen) / len(truth), "citations": citations,
-            "p5": min(5, len(seen)) / 5, "r10": min(10, len(seen)) / len(truth),
+            "calls": dict(client.calls), "recall": len(seen) / len(truth) if truth else None,
+            "citations": citations, "p5": min(5, len(seen)) / 5,
+            "r10": min(10, len(seen)) / len(truth) if truth else None,
+            "snapshot_sessions": progress.get("snapshot_sessions", page["progressive_coverage"]["snapshot_sessions"]),
+            "sources_inspected": progress.get("sources_inspected"),
+            "lexical_candidates": progress.get("lexical_candidates"),
+            "candidates_staged": progress.get("candidates_staged"),
+            "candidates_evaluated": progress.get("candidates_evaluated", progress.get("assessments")),
+            "retrieval_ms": retrieval_ms, "scripted_evaluation_ms": evaluation_ms,
+            "publication_ms": publication_ms,
             "provider_pages": progress.get("provider_pages"),
             "publication_checks": progress.get("publication_checks"),
             "worker": progress.get("provider_work"),
@@ -201,8 +243,16 @@ def navigation(client, truth, signed_sample):
                 "schema_version": "1", "subject": "FlightProbe fixture lookup",
                 "hints": {"terms": ["FlightProbe"]}, "constraints": {"native_session_id": identity},
             })
-            published = client.call(action="advance", run=page["run"], expected_revision=page["step_revision"],
-                                    operation_id="nav", assessments=assessments(page))
+            def step(state, operation, **changes):
+                return client.call(action="advance", run=state["run"], expected_revision=state["step_revision"],
+                                   operation_id=operation, **changes)
+
+            if page.get("phase") == "evaluating":
+                page = step(page, "nav-load")
+                page = step(page, "nav-assess", assessments=assessments(page))
+                published = step(page, "nav-publish", publish=True)
+            else:
+                published = step(page, "nav", assessments=assessments(page))
             row = published["matches"][0]
             window = client.call("session_context", target=row["target"],
                                  evidence_ref=row["evidence_refs"][0], window=options)
@@ -219,6 +269,7 @@ def main():
     parser.add_argument("binary", type=Path)
     parser.add_argument("--scenario", choices=("exact", "simple", "context", "exhaustive", "navigation"), required=True)
     parser.add_argument("--count", type=int, default=90)
+    parser.add_argument("--matched", type=int, help="number of eligible sources containing the term")
     parser.add_argument("--repeats", type=int, default=20)
     parser.add_argument("--sample-rss", action="store_true", help="sample fixture process RSS separately from latency runs")
     parser.add_argument("--signed-sample", action="store_true", help="navigation control for pre-UUID binaries")
@@ -227,10 +278,12 @@ def main():
     args = parser.parse_args()
     if args.count < 1 or args.repeats < 1 or not 0 <= args.hidden_bytes <= 8 * 1024 * 1024:
         parser.error("count and repeats must be positive, hidden bytes must fit 8 MiB")
+    if args.matched is not None and (args.scenario != "exhaustive" or not 0 <= args.matched <= args.count):
+        parser.error("--matched requires exhaustive and a value between zero and count")
     with tempfile.TemporaryDirectory(prefix="agentmender-progressive-benchmark-") as temporary:
         root = Path(temporary).resolve() / "provider"
         truth, caller = fixture(root, args.count if args.scenario in ("exhaustive", "navigation") else 1,
-                                args.hidden_bytes)
+                                args.hidden_bytes, args.matched)
         index_root = None
         if args.index:
             index_root = root.parent / "index"
@@ -275,7 +328,8 @@ def main():
         for metric in ("child_cpu_user_s", "child_cpu_system_s"):
             summary[metric] = statistics.median(row[metric] for row in results)
         print(json.dumps({"scenario": args.scenario,
-                          "count": len(truth), "replicates": args.repeats,
+                          "count": args.count if args.scenario == "exhaustive" else len(truth),
+                          "expected_candidates": len(truth), "replicates": args.repeats,
                           "private_index": args.index, "hidden_bytes": args.hidden_bytes, **summary}))
 
 

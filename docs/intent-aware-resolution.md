@@ -73,71 +73,76 @@ and publication rules.
 
 ## Required Luna execution
 
-The origin owns the user's request and MCP calls. If the host identifies the
-origin as GPT-6 Luna Medium, use it directly. Otherwise request the named
-`session_relevance` role once. Verify the host's start and completion events,
-including resolved `model:gpt-6-luna` and `reasoningEffort:medium`. If the
-role is unavailable or the resolved model/effort is wrong, explicitly request
-that model and effort and observe successful execution. The same delegate
-interprets once and assesses the batches. If the host cannot establish Luna
-execution, stop with an availability error. An active run can be interrupted
-with `luna_unavailable:true` and no judgments.
+The origin owns the request, MCP calls and signed references. Start one
+[session_planner](../.codex/agents/session-planner.toml) and check the actual
+host events for `gpt-6-luna` and medium effort. The Planner produces one
+SearchIntent. Validate it against the request and close the Planner.
 
-The repository provides [a controlled Codex app-server host](../scripts/resolve_with_luna.py).
-It uses an ephemeral pinned Luna Medium thread, disables provider-model fallback
-and checks the resolved configuration, reroute notifications and successful turn
-completion before allowing the corresponding tool step. It renders the same two
-tables and does not emit confirmations if the model fails. The direct MCP
-interface has caller exclusion and evidence validation. Its transport cannot
-authenticate model identity or delegation. Desktop instruction loading, the
-tool description and the role configuration guide the native origin, which must
-verify its own host events.
+Once Rust finishes retrieval, start a distinct
+[session_evaluator](../.codex/agents/session-evaluator.toml) only if candidates
+exist. Check the same model and effort and retain its thread ID for every
+assessment and any single-best selection. Close it before publication.
+For an unavailable named role, use a pinned GPT-6 Luna Medium instance
+and verify its host events. If the host cannot guarantee the model,
+thread identity or lifecycle, interrupt the run with `luna_unavailable:true`
+and submit no substitute judgments.
+
+The [controlled App Server host](../scripts/resolve_with_luna.py) creates
+one ephemeral thread in each role's own process. It observes the thread
+start and resolved model, checks turn completion and reroutes, and waits
+for each process to exit before starting the next phase. In Desktop the
+origin must check equivalent events. The direct MCP transport validates
+scope and evidence and leaves model lifecycle attestation to the host.
 
 ## Progressive workflow
 
-1. Ask Luna for one SearchIntent and verify it against the original request.
-   Use `start` with that object in all modes. The worker captures one
-   consistent metadata view. UUID membership, filter metadata and native UUID
-   order are fixed for that run. New sessions are visible on a later start.
-   The origin retains the plan, run, evidence handles and signed references.
-2. Give Luna the candidate identities and bounded quoted evidence. Submit one
-   judgment per candidate with `advance`. Direct original evidence can confirm
-   a session with partial history. A recap of work done elsewhere does not
-   establish original execution. Use `insufficient` when targeted context
-   cannot settle the question. Mark an insufficient result as a plausible
-   alternative only when a cited passage supports plausibility.
-3. To resolve a specific gap, request up to two context windows in an advance.
-   Each window allows five messages and 4,096 bytes. Follow navigation handles
-   without overriding their options. Reassess only the candidate whose context
-   was extended. `context_failures` identifies unavailable windows.
-4. Pass the last `step_revision` as `expected_revision` and a new
-   `operation_id` for each advance. Accumulate `matches` and `alternatives`
-   by exact identity and retain signed references. A changed source can return
-   with fresh handles for reassessment. If a reply is lost, repeat its operation
-   ID and exact arguments. Remove identities in `invalidated`.
-5. Continue while `execution_state` is `in_progress`, even with empty pages.
-   For ordinary lexical hints, one `expansion_terms` submission is allowed at
-   the end of the first pass. Submit it with the last outstanding judgments.
-   The server keeps the original cohort and skips UUIDs already offered in
-   the first pass. A partial history can still leave a lexical coverage gap.
-   Prefer known aliases in the initial SearchIntent. For Boolean intent include
-   allowed alternatives in the explicit filter.
-6. Completion means the eligible lexical scan ended and all acquired candidates
-   received a conclusive judgment. Coverage also reports physical and logical
-   history and independent lexical limitations. Interruption reports a reason.
-   Only for `single_best`, ask the same Luna to choose among the confirmed rows
-   after traversal. Report ambiguity if the evidence cannot select one.
-   `cancel:true` interrupts without further reads.
+1. Call `start` with the Planner's SearchIntent after the Planner closes.
+   Rust freezes the eligible UUIDs, order and predicate metadata. Planned
+   `hints.expansion_terms` take up to four distinct terms and form an OR
+   with literal hints under the original constraints. Put Boolean aliases
+   in the explicit filter. A typed constraints-only lookup can use empty
+   terms and receive an original passage when available.
+2. While `phase` is `retrieving`, call `advance` with no judgments or
+   context. Continue through empty replies. Candidate passages are staged
+   in the worker. `retrieval_complete` reports finished traversal
+   independently of partial transcript coverage. An interrupted traversal
+   ends without starting the Evaluator.
+3. In `evaluating`, call `advance` for the next batch. Give the same
+   Evaluator each candidate's identity, quoted evidence and coverage.
+   Submit one conclusive judgment per candidate. Request up to two windows
+   per advance for a specific evidence gap. Each window allows five
+   messages and 4,096 bytes. A changed source can return with fresh handles
+   for reassessment. A recap about another session does not prove original
+   execution. A plausible unconfirmed result requires a supporting passage
+   and a stated gap.
+4. When `publication_ready` becomes true, perform any explicit
+   `single_best` selection with the Evaluator using `prepared_choices`.
+   These choices contain provisional judgments. Close the Evaluator and
+   call `advance` with `publish:true` until terminal. Rust revalidates
+   references before signing `matches` and `alternatives`. Accumulate
+   them by UUID and remove any identity listed in `invalidated`.
+5. Use the returned `step_revision` as `expected_revision` and a new
+   `operation_id` for every operation. A long single-best comparison can
+   renew the active evaluation with `keep_alive:true`. Repeat the exact request if its
+   reply is lost. `cancel:true` interrupts the run and releases its spool.
+   The response distinguishes `completed` from `interrupted` and reports
+   coverage gaps even when UUID traversal finished.
 
-The queue holds up to five candidates. Per-operation and per-batch limits,
-one replayable reply and a ten-minute idle lease keep work bounded without a
-cumulative candidate ceiling. The worker stores only metadata in its anonymous
-spool. A source read has a fixed physical extent and revision from first open.
-If the source changes during traversal, the resolver records a local gap
-and advances. Publication can reacquire an affected candidate once.
-Process loss invalidates the run and references.
-The route preserves signed source validation and cannot certify a session-wide
-negative from bounded excerpts or lexical recall alone.
+Rust exposes `snapshot_sessions`, `sources_inspected`, `lexical_candidates`,
+`candidates_staged`, `candidates_evaluated` and `remaining_candidates`.
+Classifications and `retrieval_complete` and `evaluation_complete` have
+separate counters. A predicate-only candidate can be staged without a
+lexical match. Unrecoverable stale evidence has an explicit interruption
+and remains unevaluated. Completed lexical traversal does not establish
+absolute semantic recall.
+
+The application retains one five-candidate batch and one replayable reply.
+The worker's anonymous SQLite file holds frozen metadata, bounded sanitized
+passages with source revisions and positions, and pending receipts. It uses
+short transactions and a 512 KiB page-cache target. The oldest scan reply is
+evicted after twelve provider pages. A ten-minute idle lease refreshes with
+operations and the worker releases it on expiry, completion or cancellation.
+A new process requires a new run. See [ADR-0036](adr/0036-two-stage-luna-resolution.md).
 
 ### Conversational answer
 

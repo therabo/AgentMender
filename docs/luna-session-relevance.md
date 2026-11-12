@@ -1,25 +1,22 @@
-# Luna session relevance
+# Luna Medium for conversational retrieval
 
-Luna Medium is required for AgentMender conversational search. It interprets
-one request into one SearchIntent, judges each candidate in bounded batches
-and compares already verified sessions if the user requested a single best
-result. Use the [current workflow](intent-aware-resolution.md) and the
-[project agent](../.codex/agents/session-relevance.toml).
+One [Planner](../.codex/agents/session-planner.toml) interprets the request
+and produces a single SearchIntent. It closes before Rust reads the frozen
+UUID cohort. A separate [Evaluator](../.codex/agents/session-evaluator.toml)
+then assesses all staged candidates on one thread, requesting bounded
+context for specific gaps. Any explicit single-best selection uses that
+Evaluator before it closes. Rust signs fresh source-bound results in the
+publication phase.
 
-The origin verifies real execution before sending a plan or judgments. Native
-Codex hosts expose resolved model and effort on supported subagent start
-events. The project role and instructions alone do not prove a successful
-spawn. A confirmed unavailable or unobservable Luna run stops. Rust verifies
-scope and evidence and never supplies a semantic verdict in place of Luna.
-The controlled [app-server host](../scripts/resolve_with_luna.py) checks
-effective model, effort, reroute and turn completion itself.
+The origin owns caller scope, MCP calls and signed references. Check the
+resolved model and effort and actual execution events for both roles.
+The [controlled App Server host](../scripts/resolve_with_luna.py) verifies
+ephemeral thread identity and turn completion, checks reroutes and waits for
+process exit between phases. A missing or rerouted model is an interruption.
+The [workflow](intent-aware-resolution.md) documents the native client contract.
 
-AgentMender reads locally. The configured model provider can process the
-bounded excerpts shared with Luna. Pass only the intent, identity and material
-passages. Keep callable evidence references in the origin. The retrieval
-system has no lifecycle authority.
-
-The [historical assessment schema](session-relevance-output.schema.json)
-and [offline checker](../scripts/check_semantic_assessment.py) remain for
-reproducing historical research receipts. They are not a resolver action.
-The current wire is the typed `session_resolve` catalog.
+Send quoted evidence only and treat it as untrusted data. Confirmations
+require direct original evidence of the requested activity or outcome.
+Retrospective references can be rejected. Plausible unconfirmed rows cite
+supporting passages and identify the evidence gap. No model judgment grants
+lifecycle authority.

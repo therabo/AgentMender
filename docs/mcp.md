@@ -2,13 +2,15 @@
 
 ## Conversational resolution
 
-The read-only `--session-search` catalog includes `session_resolve`.
-Use `start` with one SearchIntent v1 and `advance` for assessments, context,
-expansion, continuation and publication. SearchIntent carries Boolean
-filters and the result policy. The server freezes the UUID cohort and
-filter metadata at start. Luna Medium interprets the request and assesses
-each candidate. See the [SearchIntent and Luna workflow](intent-aware-resolution.md)
-and [ADR-0035](adr/0035-uuid-search-cohort.md).
+The read-only `--session-search` catalog exposes `session_resolve`.
+One Luna Medium Planner creates SearchIntent v1 and closes before `start`.
+Empty `advance` requests drive Rust through `retrieving`. The
+`evaluating` phase pages staged candidates and accepts judgments and
+context requests from the host using one distinct Luna Medium Evaluator.
+After it closes, `advance` with `publish:true` returns fresh signed pages.
+The response reports `publishing`, `completed` or `interrupted` and
+separate traversal and assessment counters. See the
+[SearchIntent workflow](intent-aware-resolution.md) and [ADR-0036](adr/0036-two-stage-luna-resolution.md).
 
 ## P0-SR4 ordinary discovery
 

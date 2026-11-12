@@ -2,23 +2,27 @@
 
 ## Past-conversation resolution
 
-Follow the [Luna workflow](docs/intent-aware-resolution.md) in the originating
-chat. This instruction authorizes named `session_relevance` delegation for
-past-conversation search and an explicit GPT-6 Luna Medium fallback. Verify
-the resolved model and effort from the host execution. An originating Luna
-Medium chat can interpret and assess directly. If Luna execution is
-unavailable, stop before retrieval or terminate the run with
-`luna_unavailable:true` and no judgments. Never use another model or a
-deterministic inventory result as semantic verification.
+Follow [ADR-0036](docs/adr/0036-two-stage-luna-resolution.md) and the
+[Luna workflow](docs/intent-aware-resolution.md) in the originating chat.
+Start one `session_planner` for the original request. Verify GPT-6 Luna
+Medium in host events and close the Planner before calling `start` with
+one validated SearchIntent. Preserve explicit Boolean and identity predicates.
+Treat project names as topical hints unless stored membership is requested.
+Plan lexical alternatives before retrieval.
 
-Use one SearchIntent and one progressive `start`/`advance` run for every
-mode. Preserve explicit Boolean and exact identity predicates. Treat project
-names as topical hints unless stored membership is requested. Send Luna
-bounded quoted evidence and handles. The parent keeps caller scope, the run
-and signed evidence. Assess every candidate and continue while
-`execution_state` is `in_progress`. For explicit `single_best`, Luna selects
-from the verified rows after traversal. Present the two result tables and
-state interruptions or lexical coverage limits in a table status row.
+Advance Rust through `retrieving` without a model. When retrieval is
+complete and there are candidates, start one distinct `session_evaluator`.
+Use that instance for every batch, contextual assessment and any
+`single_best` selection. Send only the immutable intent and bounded quoted
+evidence. Keep caller scope, the run and signed evidence in the parent.
+Close the Evaluator before requesting publication. Collect signed rows by
+UUID and render the two result tables with any coverage or interruption status.
+
+Use an explicit GPT-6 Luna Medium fallback when a named role is unavailable.
+Verify the resolved model and effort from host events. If the host cannot
+establish or retain the required instance, stop before retrieval or advance
+with `luna_unavailable:true` during the run. A semantic judgment requires
+verified Luna execution. The origin cannot substitute for either distinct role.
 
 ## P0-SR4 read-only caller-filtered discovery
 
