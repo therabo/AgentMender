@@ -36,7 +36,7 @@ verified.
 Accepting runs `codex delete <UUID> --force` once with the configured executable
 and original provider root as `CODEX_HOME`. After dispatch the result has just
 `status` and `native_session_id`: exit zero is `succeeded`; a launch error,
-a 30-second execution timeout or nonzero exit is `failed`. A failure may follow
+a 180-second execution timeout or nonzero exit is `failed`. A failure may follow
 partial effects. No retry or artifact verification follows. See
 [ADR-0038](adr/0038-native-codex-delete-admission.md).
 

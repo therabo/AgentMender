@@ -99,7 +99,7 @@ pub(super) fn native_delete_executor(args: &Args) -> NativeDeleteExecutor {
             executable,
             &root,
             id,
-            std::time::Duration::from_secs(30),
+            std::time::Duration::from_secs(180),
         )
     })
 }
