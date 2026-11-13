@@ -33,6 +33,15 @@ pub type ConversationExecutor = Arc<
 
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+struct NativeDeleteInput {
+    #[schemars(regex(pattern = "^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$"))]
+    native_session_id: String,
+    #[schemars(length(max = 32768))]
+    evidence_ref: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct SearchInput {
     #[serde(default)]
     #[schemars(length(max = 256))]
@@ -1418,6 +1427,13 @@ pub(super) fn tools(discovery: bool) -> Vec<Tool> {
             schema::<ResolutionView>(),
             true,
         ));
+        registry.push((
+            "session_delete",
+            "For a user's deletion request, select one row from session_find_result and pass its native_session_id and one of its evidence_refs. Native deletion is currently blocked before confirmation. Report the reason returned to the user.",
+            schema::<NativeDeleteInput>(),
+            schema::<NativeDeleteBlockedView>(),
+            true,
+        ));
     }
     registry
         .into_iter()
@@ -1471,6 +1487,22 @@ pub(super) fn request(
     };
     match name {
         "session_resolve" => Ok(ConversationRequest::Resolve(resolution_request(args)?)),
+        "session_delete" => {
+            let v: NativeDeleteInput =
+                serde_json::from_value(args.clone()).map_err(|_| invalid())?;
+            if ApparentCodexCaller::from_metadata(&v.native_session_id, None).is_none() {
+                return Err(invalid());
+            }
+            let reference: ContextReference = projector
+                .open_search(b"evidence", &v.evidence_ref)
+                .ok_or_else(invalid)?;
+            if reference.purpose != SearchPurpose::Discovery
+                || reference.native_session_id != v.native_session_id
+            {
+                return Err(invalid());
+            }
+            Ok(ConversationRequest::NativeDeleteSelection(reference))
+        }
         "session_search" | "session_discover" => {
             let discovery = name == "session_discover";
             if discovery && args.get("purpose").is_some() {
@@ -1647,6 +1679,16 @@ fn safe(v: &str) -> String {
         })
         .collect()
 }
+
+#[derive(Serialize, JsonSchema)]
+struct NativeDeleteBlockedView {
+    status: &'static str,
+    reason: &'static str,
+    native_session_id: String,
+    title: Option<String>,
+    message: &'static str,
+}
+
 fn label(
     projector: &Projector,
     s: &agentmender_domain::SessionMetadata,
@@ -1725,6 +1767,13 @@ pub(super) fn project(
     use crate::projection::ProjectionError;
     let value = match response {
         ConversationResponse::InternalAcknowledged => Ok(serde_json::Value::Null),
+        ConversationResponse::NativeDeleteBlocked(session) => serde_json::to_value(NativeDeleteBlockedView {
+            status: "failed",
+            reason: "native_delete_not_admitted",
+            native_session_id: session.native_session_id,
+            title: session.title.as_deref().map(safe).filter(|s| !s.trim().is_empty()),
+            message: "Deletion was blocked before dispatch. The installed Codex deletion contract does not establish the full affected session scope.",
+        }),
         ConversationResponse::Resolution(result) => serde_json::to_value(resolution_view(*result, projector)),
         ConversationResponse::EvidenceSearch(result) => {
             let search_purpose = result.parameters.purpose;

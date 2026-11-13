@@ -479,7 +479,11 @@ impl ServerHandler for Server {
             }
             return Ok(response.into());
         }
-        if matches!(call.name.as_ref(), "session_discover" | "session_resolve") && !self.discovery {
+        if matches!(
+            call.name.as_ref(),
+            "session_discover" | "session_resolve" | "session_delete"
+        ) && !self.discovery
+        {
             return Err(ErrorData::invalid_params("tool unavailable", None));
         }
         if matches!(
@@ -487,6 +491,7 @@ impl ServerHandler for Server {
             "session_search"
                 | "session_resolve"
                 | "session_discover"
+                | "session_delete"
                 | "session_context"
                 | "preview_removal"
                 | "prepare_removal"
@@ -555,14 +560,23 @@ impl ServerHandler for Server {
                 Ok(Err(e)) => return Ok(error(application_error(&e))),
                 Err(_) => return Ok(error(ErrorCode::QueryFailed)),
             };
+            let failed = matches!(
+                &response,
+                agentmender_application::conversation::ConversationResponse::NativeDeleteBlocked(_)
+            );
             let value = match crate::conversation::project(response, &self.projector) {
                 Ok(v) => v,
                 Err(_) => return Ok(error(ErrorCode::ResponseTooLarge)),
             };
-            let mut result = CallToolResult::success(vec![ContentBlock::text(
+            let content = vec![ContentBlock::text(
                 serde_json::to_string(&value)
                     .map_err(|_| ErrorData::internal_error("response failed", None))?,
-            )]);
+            )];
+            let mut result = if failed {
+                CallToolResult::error(content)
+            } else {
+                CallToolResult::success(content)
+            };
             result.structured_content = Some(value);
             if Instant::now() >= deadline {
                 return Ok(error(ErrorCode::DeadlineExceeded));

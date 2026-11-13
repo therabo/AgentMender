@@ -21,6 +21,7 @@ pub enum ConversationRequest {
         native_session_id: String,
         options: ContextOptions,
     },
+    NativeDeleteSelection(ContextReference),
     ContextWindow {
         reference: ContextReference,
         target: TargetSelector,
@@ -69,7 +70,35 @@ pub enum ConversationResponse {
         session: SessionMetadata,
         compatibility: SessionReadCompatibility,
     },
+    NativeDeleteBlocked(SessionMetadata),
     Transactions(Vec<RemovalStatus>),
+}
+
+/// ADR-0038 admits exact selection only. The native cascade is unverified.
+pub fn native_delete_selection(
+    service: &crate::session_search::SessionSearchService<'_>,
+    reference: ContextReference,
+    control: &QueryControl,
+) -> Result<ConversationResponse, ApplicationError> {
+    let caller = service
+        .apparent_caller
+        .ok_or(ApplicationError::DiscoveryCallerUnavailable)?;
+    if caller.native_id() == reference.native_session_id
+        || service
+            .registered
+            .iter()
+            .any(|id| id.local_id == reference.local_id)
+        || service
+            .management
+            .is_some_and(|caller| caller.identity.local_id == reference.local_id)
+    {
+        return Err(ApplicationError::ProtectedManagementSession);
+    }
+    let session = service
+        .verify_search_evidence(&[reference], control)?
+        .and_then(|verified| verified.sessions.into_iter().next().flatten())
+        .ok_or(ApplicationError::StaleSearchEvidence)?;
+    Ok(ConversationResponse::NativeDeleteBlocked(session))
 }
 
 #[derive(Debug, Serialize)]
@@ -228,7 +257,8 @@ impl ConversationService<'_> {
             | ConversationRequest::EvidenceSearch { .. }
             | ConversationRequest::Context { .. }
             | ConversationRequest::ContextWindow { .. }
-            | ConversationRequest::ContextById { .. } => Err(unavailable()),
+            | ConversationRequest::ContextById { .. }
+            | ConversationRequest::NativeDeleteSelection(_) => Err(unavailable()),
             ConversationRequest::Search {
                 query,
                 include_archived,

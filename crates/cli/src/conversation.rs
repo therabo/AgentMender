@@ -178,6 +178,11 @@ pub(super) fn read_only_executor(
             instance: &instance,
         };
         match request {
+            ConversationRequest::NativeDeleteSelection(reference) => {
+                return agentmender_application::conversation::native_delete_selection(
+                    &service, reference, &control,
+                );
+            }
             ConversationRequest::ValidateResolutionCaller => {
                 use agentmender_domain::{
                     QueryExpr, SearchParameters, SearchPurpose, StructuredQuery,

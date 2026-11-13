@@ -12,6 +12,19 @@ The typed `session_resolve` contract remains available for diagnostics.
 See the [search and installation contract](intent-aware-resolution.md)
 and [ADR-0037](adr/0037-autonomous-mcp-session-find.md).
 
+## Native deletion request
+
+In `--session-search` mode, resolve an ordinal or label to one result row from
+`session_find_result`. Call `session_delete` with that row's canonical
+`native_session_id` and one `evidence_ref` from its `evidence_refs` array. The
+server checks the signed evidence against the exact source in the configured
+Codex root and excludes the apparent caller and configured protections.
+
+An exact selection returns the title, UUID, and `status: "failed"` with
+`reason: "native_delete_not_admitted"`. The installed native delete can remove
+descendants omitted by the native listing. AgentMender refuses before asking
+for confirmation or dispatching. See the [disposable native probes](adr/0038-native-codex-delete-admission.md).
+
 ## P0-SR4 ordinary discovery
 
 Use `session_discover` in `--session-search` mode for ordinary browsing and

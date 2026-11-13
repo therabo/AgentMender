@@ -238,6 +238,32 @@ def isolation(binary, codex, root):
         published = client.tool("session_find_result", different, job_id=other["job_id"])["results"]["confirmed"]
         assert len(published) == 1 and published[0]["native_session_id"] != different
         assert other["authenticated_caller_binding"] is False
+
+        delete = next(tool for tool in catalog["tools"] if tool["name"] == "session_delete")
+        assert delete["annotations"]["readOnlyHint"] is True
+        row = published[0]
+        selection = {"native_session_id": row["native_session_id"], "evidence_ref": row["evidence_refs"][0]}
+        before = inventory(root)
+        blocked = client.tool("session_delete", different, **selection)
+        assert blocked["status"] == "failed" and blocked["reason"] == "native_delete_not_admitted", blocked
+        assert blocked["native_session_id"] == row["native_session_id"] and blocked["title"] == row["title"], blocked
+        wrong_caller = client.tool("session_delete", **selection)
+        assert wrong_caller["error"] == "stale_cursor", wrong_caller
+        caller_target = client.tool("session_delete", row["native_session_id"], **selection)
+        assert caller_target["error"] == "protected_management_session", caller_target
+        no_caller = client.tool("session_delete", meta=False, **selection)
+        assert no_caller["error"] == "discovery_caller_unavailable", no_caller
+        for args in (dict(selection, confirm=True), dict(selection, native_session_id=different),
+                     dict(selection, native_session_id=[row["native_session_id"]]),
+                     dict(selection, evidence_ref=selection["evidence_ref"] + "0")):
+            client.serial += 1
+            client.send({"jsonrpc": "2.0", "id": client.serial, "method": "tools/call",
+                         "params": {"name": "session_delete", "arguments": args,
+                                    "_meta": {"threadId": different}}})
+            response = json.loads(client.child.stdout.readline())
+            assert response["id"] == client.serial and response["error"]["code"] == -32602, response
+        assert inventory(root) == before and not active_children(client.child.pid)
+        print("Native selection, protected caller, forged confirmation and unchanged provider files passed.")
     finally:
         client.close()
     for mode, reason in (("wrong_model", "unexpected_model_or_effort"),
