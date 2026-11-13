@@ -3,10 +3,10 @@
 One [Planner](../.codex/agents/session-planner.toml) interprets the request
 and produces a single SearchIntent. It closes before Rust reads the frozen
 UUID cohort. A separate [Evaluator](../.codex/agents/session-evaluator.toml)
-then assesses all staged candidates on one thread, requesting bounded
-context for specific gaps. Any explicit single-best selection uses that
-Evaluator before it closes. Rust signs fresh source-bound results in the
-publication phase.
+assesses candidates that require semantic judgment on one thread and
+requests bounded context for specific gaps. Semantic single-best comparisons
+use the same Evaluator. Rust signs freshly verified metadata or transcript
+references in the publication phase.
 
 AgentMender's MCP runtime owns the caller scope, both App Server processes
 and signed publication. It verifies ephemeral thread identity, resolved

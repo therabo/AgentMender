@@ -201,6 +201,13 @@ impl SearchIntentError {
 }
 
 impl SearchIntent {
+    /// Activity and outcome conditions apply to the entire expression.
+    pub fn requires_semantic_evidence(&self) -> bool {
+        self.activity != SearchActivity::Any
+            || self.required_outcome.is_some()
+            || self.excluded_outcome.is_some()
+    }
+
     pub fn validate(self) -> Result<ValidatedSearchIntent, SearchIntentError> {
         use SearchIntentError::*;
         if self.schema_version != SEARCH_INTENT_VERSION {

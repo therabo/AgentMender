@@ -25,3 +25,5 @@ jobs:
       - run: python3 scripts/test_luna_host.py
       - if: runner.os == 'macOS'
         run: python3 scripts/test_autonomous_session_find.py --agentmender target/debug/agentmender
+      - if: runner.os == 'macOS'
+        run: python3 scripts/test_hybrid_session_find.py --agentmender target/debug/agentmender

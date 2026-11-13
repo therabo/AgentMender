@@ -1104,15 +1104,13 @@ fn resolution_binds_intent_context_and_outcomes_to_fresh_discovery_evidence() {
         }}),
     );
     let exact = load_resolution_batch(exact, |step| call(&mut client, step));
-    let candidate = &exact["candidates"][0];
-    assert_eq!(candidate["native_session_id"], U);
-    assert!(
-        !candidate["evidence"][0]["excerpt"]
-            .as_str()
-            .unwrap()
-            .is_empty()
-    );
-    assert_eq!(exact["candidates"].as_array().unwrap().len(), 1);
+    assert_eq!(exact["candidates"], json!([]));
+    assert_eq!(exact["progress"]["publication_ready"], true);
+    assert_eq!(exact["progress"]["bytes_read"], 0);
+    let exact = publish_resolution_page(&exact, |step| call(&mut client, step));
+    assert_eq!(exact["matches"][0]["native_session_id"], U);
+    assert_eq!(exact["matches"][0]["match_basis"], "verified_metadata");
+    assert_eq!(exact["progress"]["candidates_evaluated"], 0);
     assert_eq!(tree_bytes(&root), before);
 
     let (source, _) = files
@@ -1388,7 +1386,9 @@ fn search_intent_v1_preserves_cross_project_eligibility_and_verified_cardinality
     assert_eq!(ids(&result, "candidates"), set(&[T]));
     let judged = call(&mut client, submit(&result, assessment(&result)));
     let result = publish_resolution_page(&judged, |step| call(&mut client, step));
-    assert_eq!(result["execution_state"], "completed");
+    assert_eq!(result["outcome"], "partial");
+    assert_eq!(result["progress"]["stop_reason"], "query_predicate_unknown");
+    assert_eq!(ids(&result, "matches"), set(&[T]));
     assert_eq!(result["progress"]["lexical_candidates"], 1);
     assert_eq!(result["progress"]["scan_passes"], 1);
     assert_eq!(result["candidates"], json!([]));
@@ -2037,8 +2037,9 @@ fn progressive_resolution_publishes_two_independent_result_groups() {
             );
             assert_eq!(
                 alternatives.keys().cloned().collect::<Vec<_>>(),
-                vec![id(13), id(14)]
+                vec![id(13), id(14), id(17)]
             );
+            assert_eq!(alternatives[&id(17)]["match_basis"], "retrieved_unverified");
         }
     }
     client.close();

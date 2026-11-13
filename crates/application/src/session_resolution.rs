@@ -31,6 +31,7 @@ struct Retrieval {
     hard_filter: Option<QueryExpr>,
     literal: QueryExpr,
     expansion: Option<QueryExpr>,
+    semantic_required: bool,
 }
 
 impl Retrieval {
@@ -54,7 +55,7 @@ impl Retrieval {
             }),
             query: String::new(),
             include_archived: true,
-            include_content: true,
+            include_content: self.semantic_required,
             project_label: None,
             purpose: SearchPurpose::Discovery,
             page_size: CANDIDATE_BATCH,
@@ -173,6 +174,7 @@ pub struct ResolutionProgress {
     pub decoded_bytes: u64,
     pub replay_bytes: u64,
     pub sources_inspected: usize,
+    pub sessions_examined: u64,
     pub physically_traversed: usize,
     pub unknown: usize,
     pub partial_sources: usize,
@@ -186,6 +188,9 @@ pub struct ResolutionProgress {
     pub confirmed: usize,
     pub unconfirmed: usize,
     pub rejected: usize,
+    pub metadata_verified: usize,
+    pub published: usize,
+    pub not_published: usize,
     pub retrieval_complete: bool,
     pub evaluation_complete: bool,
     pub publication_ready: bool,
@@ -262,6 +267,7 @@ struct Anchor {
 struct Candidate {
     hit: SessionSearchHit,
     basis: MatchBasis,
+    metadata_match: bool,
     handles: Vec<usize>,
     assessment: Option<Assessment>,
     stale_context: bool,
@@ -326,6 +332,7 @@ impl ResolutionStore {
                     hard_filter,
                     literal,
                     expansion,
+                    semantic_required: intent.requires_semantic_evidence(),
                 };
                 let parameters = retrieval.compile_parameters()?;
                 self.start(
@@ -533,6 +540,11 @@ impl Run {
     fn candidate_batch(&self, start: usize, end: usize) -> Vec<ResolutionCandidate> {
         self.candidates[start..end]
             .iter()
+            .filter(|candidate| {
+                !candidate.metadata_match
+                    && candidate.assessment.is_none()
+                    && !candidate.stale_context
+            })
             .map(|candidate| ResolutionCandidate {
                 metadata: candidate.hit.metadata.clone(),
                 match_basis: candidate.basis.clone(),
@@ -596,9 +608,12 @@ impl Run {
                 })
             })
             .collect();
+        let metadata_match = !self.retrieval.semantic_required
+            && self.filter().metadata_truth(&hit.metadata) == Truth::True;
         self.candidates.push(Candidate {
             hit,
             basis,
+            metadata_match,
             handles,
             assessment: None,
             stale_context: false,
@@ -743,7 +758,9 @@ impl Run {
                     assessment.missing_evidence = Some(assessment.explanation.clone());
                 }
                 let candidate = self.candidates[..self.presented()].iter().position(|c| {
-                    c.hit.metadata.native_session_id == assessment.native_session_id
+                    !c.metadata_match
+                        && !c.stale_context
+                        && c.hit.metadata.native_session_id == assessment.native_session_id
                 })?;
                 let refs: BTreeSet<_> = assessment.evidence.iter().copied().collect();
                 let insufficient = assessment.disposition == Disposition::Insufficient;
@@ -924,6 +941,7 @@ mod tests {
         let retrieval = Retrieval {
             hard_filter,
             literal,
+            semantic_required: false,
             expansion: Some(
                 agentmender_domain::search_intent::compile_expansion(&["EPERM".into()]).unwrap(),
             ),

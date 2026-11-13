@@ -53,7 +53,7 @@ enum Operation {
         excluded: Vec<ArtifactId>,
     },
     Verify {
-        references: Vec<ContextReference>,
+        references: Vec<SelectionReference>,
         excluded: Vec<ArtifactId>,
     },
     Context {
@@ -1410,28 +1410,32 @@ fn rank_passages(
         }
         Ok(())
     };
-    for message in messages {
+    let folded: Vec<_> = messages
+        .iter()
+        .map(|m| normalize_search_text(&m.text))
+        .collect();
+    for (message, text) in messages.iter().zip(&folded) {
         let mut start = 0;
         let mut chunk = 0;
-        while start < message.text.len() && Instant::now() < end {
-            let mut stop = (start + 64 * 1024).min(message.text.len());
-            while !message.text.is_char_boundary(stop) {
+        while start < text.len() && Instant::now() < end {
+            let mut stop = (start + 64 * 1024).min(text.len());
+            while !text.is_char_boundary(stop) {
                 stop -= 1;
             }
             documents.push(IndexDocument {
                 ordinal: message.index as u64,
                 chunk,
-                text: &message.text[start..stop],
+                text: &text[start..stop],
                 reference: "",
             });
             if documents.len() == documents.capacity() {
                 flush(&mut documents)?;
             }
-            if stop == message.text.len() {
+            if stop == text.len() {
                 break;
             }
             start = stop.saturating_sub(128);
-            while !message.text.is_char_boundary(start) {
+            while !text.is_char_boundary(start) {
                 start += 1;
             }
             chunk += 1;
@@ -1546,13 +1550,27 @@ fn search_batch(
         {
             return Err(stale());
         }
+        let metadata_truth = request
+            .parameters
+            .structured
+            .as_ref()
+            .map_or(Truth::True, |q| {
+                q.filter.metadata_truth(&candidate.metadata)
+            });
+        let read_content = request.parameters.reads_content()
+            && ((!cohort && request.parameters.include_content)
+                || !required_terms.is_empty()
+                || metadata_truth == Truth::Unknown
+                || request.parameters.include_content && metadata_truth == Truth::True);
         let use_first_visible_passage = request.parameters.excerpts
             && request.parameters.structured.as_ref().is_some_and(|q| {
                 q.sort == SearchSort::DiscoveryPriority
-                    && (terms.is_empty()
+                    && (cohort
+                        || terms.is_empty()
                         || q.filter.metadata_truth(&candidate.metadata) == Truth::True)
             });
-        if prior.is_none()
+        if read_content
+            && prior.is_none()
             && let Some(cached) = request.cached.iter().find(|c| {
                 c.native_session_id == candidate.metadata.native_session_id
                     && c.query_scope == request.continuation.scope
@@ -1676,13 +1694,7 @@ fn search_batch(
         let mut status = "not_requested";
         let mut content_complete = false;
         let mut source_coverage = None;
-        if request.parameters.include_content
-            || request
-                .parameters
-                .structured
-                .as_ref()
-                .is_some_and(|q| q.filter.needs_content())
-        {
+        if read_content {
             let limit = SESSION_SLICE_BYTES.min(SEARCH_BYTES.saturating_sub(coverage.bytes_read));
             match transcript_stream(candidate, root, limit, &mut coverage.bytes_read, end, prior) {
                 Ok(observation) => {
@@ -2068,22 +2080,7 @@ fn message_reference(
     result
 }
 fn occurrence_offset(text: &str, query: &str) -> usize {
-    let lower = text.to_lowercase();
-    let matched = query
-        .split_whitespace()
-        .filter_map(|q| lower.find(&q.to_lowercase()))
-        .min()
-        .unwrap_or(0);
-    let mut folded = 0;
-    let at = text
-        .char_indices()
-        .find_map(|(byte, c)| {
-            let here = folded;
-            folded += c.to_lowercase().map(char::len_utf8).sum::<usize>();
-            (here >= matched).then_some(byte)
-        })
-        .unwrap_or(0);
-    let mut start = at.saturating_sub(80);
+    let mut start = search_match_offset(text, query.split_whitespace()).saturating_sub(80);
     while !text.is_char_boundary(start) {
         start += 1;
     }
@@ -2362,14 +2359,16 @@ fn context_window(
                 .as_deref()
                 .unwrap_or_default()
                 .split_whitespace()
-                .map(str::to_lowercase)
+                .map(normalize_search_text)
                 .collect();
             observation
                 .messages
                 .iter()
                 .filter(|m| {
-                    m.index > reference.record_index
-                        && terms.iter().all(|q| m.text.to_lowercase().contains(q))
+                    m.index > reference.record_index && {
+                        let folded = normalize_search_text(&m.text);
+                        terms.iter().all(|q| folded.contains(q))
+                    }
                 })
                 .collect()
         }
@@ -2670,7 +2669,7 @@ fn revalidate_context_snapshot(
 fn verify_evidence(
     db: &Connection,
     root: &Path,
-    references: &[ContextReference],
+    references: &[SelectionReference],
     exclusions: &[ArtifactId],
     end: Instant,
 ) -> Result<Vec<Option<SessionMetadata>>, ProviderError> {
@@ -2678,12 +2677,10 @@ fn verify_evidence(
         return Err(unavailable());
     }
     let excluded = excluded_ids(exclusions, root)?;
-    let binding = &references[0].binding_revision;
+    let binding = references[0].binding_revision();
     let caller = excluded
         .iter()
-        .find(|id| {
-            identity(root, id).is_ok_and(|identity| discovery_binding(&identity) == *binding)
-        })
+        .find(|id| identity(root, id).is_ok_and(|identity| discovery_binding(&identity) == binding))
         .ok_or_else(discovery_caller_unavailable)?;
     if !has_one_thread(db, caller)? {
         return Err(discovery_caller_unavailable());
@@ -2696,15 +2693,12 @@ fn verify_evidence(
     let mut verified = Vec::with_capacity(references.len());
     for reference in references {
         deadline(end)?;
-        let id = &reference.native_session_id;
-        if reference.purpose != SearchPurpose::Discovery
-            || &reference.binding_revision != binding
+        let id = reference.native_session_id();
+        if !reference.is_discovery()
+            || reference.binding_revision() != binding
             || !metadata::uuid(id)
-            || identity(root, id)?.local_id != reference.local_id
-            || excluded.contains(id)
-            || reference.record_index == 0
-            || reference.position.is_none()
-            || reference.source_fingerprint.is_empty()
+            || &identity(root, id)?.local_id != reference.local_id()
+            || excluded.iter().any(|excluded_id| excluded_id == id)
             || !seen.insert(id)
         {
             return Err(stale());
@@ -2717,6 +2711,20 @@ fn verify_evidence(
         rollout_reader::record_metadata_row();
         let candidate = candidate_row(row, root)?;
         if rows.next().map_err(|_| unavailable())?.is_some() {
+            return Err(stale());
+        }
+        let reference = match reference {
+            SelectionReference::Metadata(reference) => {
+                let same = *reference == MetadataSelection::new(&candidate.metadata, binding);
+                verified.push(same.then_some(candidate.metadata));
+                continue;
+            }
+            SelectionReference::Transcript(reference) => reference,
+        };
+        if reference.record_index == 0
+            || reference.position.is_none()
+            || reference.source_fingerprint.is_empty()
+        {
             return Err(stale());
         }
         let current = (|| -> Result<_, ProviderError> {
@@ -3251,7 +3259,7 @@ impl SessionSearchReadPort for CodexAdapter {
     }
     fn verify_search_evidence(
         &self,
-        references: &[ContextReference],
+        references: &[SelectionReference],
         excluded: &[ArtifactId],
     ) -> Result<Option<EvidenceVerification>, ProviderError> {
         let Response::Verified(verified) = self.content_worker(Operation::Verify {

@@ -75,6 +75,13 @@ for line in sys.stdin:
             intent = dict(schema_version="1", subject="FlightProbe", activity="implementation", hints=dict(terms=terms))
             if request["request"] == "best":
                 intent["result_policy"] = "single_best"
+            elif "con titolo" in request["request"]:
+                intent = dict(schema_version="1", subject="Title fixture", hints={"terms": []},
+                              filter={"op": "title", "value": request["request"].split("con titolo ", 1)[1],
+                                      "kind": "exact"})
+            elif "per essere eliminate" in request["request"]:
+                intent = dict(schema_version="1", subject="Carte Pokémon", activity="discussion",
+                              hints={"terms": ["carte Pokemon"]})
             notify("item/completed", threadId=thread, turnId=turn,
                    item=dict(type="agentMessage", phase="final_answer", text=json.dumps(intent)))
             notify("turn/completed", threadId=thread, turn=dict(id=turn, status="completed"))
@@ -86,6 +93,14 @@ for line in sys.stdin:
             else:
                 rows = []
                 for candidate in request["candidates"]:
+                    if "per essere eliminate" in request["request"]:
+                        confirmed = candidate["title"] != "Riferimento importato"
+                        rows.append(dict(native_session_id=candidate["native_session_id"],
+                             disposition="verified_relevant" if confirmed else "insufficient",
+                             evidence=[candidate["evidence"][0]["handle"]] if confirmed else [],
+                             explanation="Fixture discussion or unverified tag.",
+                             activity="discussion", relationship="direct"))
+                        continue
                     rows.append(dict(native_session_id=candidate["native_session_id"],
                          disposition="verified_relevant", outcomes=["implemented"],
                          evidence=[candidate["evidence"][0]["handle"]],
@@ -300,6 +315,8 @@ def isolation(binary, codex, root):
         # and the apparent caller is excluded from the published selection.
         published = client.tool("session_find_result", different, job_id=other["job_id"])["results"]["confirmed"]
         assert len(published) == 1 and published[0]["native_session_id"] != different
+        assert other["progress"]["published"] == 1, other
+        assert other["coverage"]["not_published_reasons"] == {"single_best_selection": 2}, other
         assert other["authenticated_caller_binding"] is False
 
         delete = next(tool for tool in catalog["tools"] if tool["name"] == "session_delete")

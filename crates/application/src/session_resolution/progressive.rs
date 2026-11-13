@@ -35,6 +35,7 @@ pub enum ResolutionPhase {
 pub struct PreparedChoice {
     pub native_session_id: String,
     pub explanation: String,
+    pub match_basis: ReceiptBasis,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -89,6 +90,10 @@ pub struct Coverage {
     unconfirmed: usize,
     rejected: usize,
     published: usize,
+    metadata_verified: usize,
+    unresolved_predicates: usize,
+    not_published: usize,
+    not_published_reasons: BTreeMap<&'static str, usize>,
     released: usize,
     snapshot_sessions: u64,
     inventory_window_offset: usize,
@@ -105,8 +110,11 @@ pub(super) struct Stream {
     anchor_base: usize,
     prior_context_bytes: usize,
     confirmed: usize,
+    metadata_verified: usize,
+    assessed: usize,
     unconfirmed: usize,
     rejected: usize,
+    stale: usize,
     terminal: Option<TerminalOutcome>,
     previous: Option<(Advance, AdvanceResult)>,
     last_candidate: Option<String>,
@@ -158,12 +166,13 @@ impl Stream {
     fn unconfirmed_stale(&mut self) {
         self.verification_gap = Some("candidate_evidence_stale");
         self.unconfirmed += 1;
+        self.stale += 1;
         self.released += 1;
         self.unassessed += 1;
     }
 
     pub(super) fn evaluated(&self) -> usize {
-        self.confirmed + self.unconfirmed + self.rejected
+        self.assessed
     }
 }
 
@@ -237,17 +246,21 @@ impl Run {
             && self.stream.candidates_loaded == self.progress.candidates_staged
             && self.candidates.is_empty()
             && !self.stream.has_refresh_work()
-            && self.stream.evaluated() == self.progress.candidates_staged
+            && self.stream.released == self.progress.candidates_staged
     }
 
     pub(super) fn project_progress(&self, progress: &mut ResolutionProgress) {
         let stream = &self.stream;
         progress.snapshot_sessions = progress.provider_work.cohort_rows;
-        progress.candidates_evaluated = stream.evaluated() - stream.unassessed;
-        progress.remaining_candidates = progress.candidates_staged - progress.candidates_evaluated;
+        progress.sessions_examined = progress.provider_work.cohort_metadata_examined;
+        progress.candidates_evaluated = stream.evaluated();
+        progress.remaining_candidates = progress.candidates_staged - stream.released;
         progress.confirmed = stream.confirmed;
         progress.unconfirmed = stream.unconfirmed;
         progress.rejected = stream.rejected;
+        progress.metadata_verified = stream.metadata_verified;
+        progress.published = stream.published;
+        progress.not_published = self.not_published();
         progress.retrieval_complete = progress.scan_complete;
         progress.evaluation_complete = self.ready_to_publish() && stream.unassessed == 0;
         progress.publication_ready =
@@ -277,13 +290,37 @@ impl Run {
         ResolutionData::Candidates(Vec::new())
     }
 
+    fn not_published(&self) -> usize {
+        if self.stream.terminal.is_some() {
+            self.progress
+                .candidates_staged
+                .saturating_sub(self.stream.published)
+        } else {
+            self.stream.rejected + self.stream.stale
+        }
+    }
+
     pub(super) fn stream_coverage(&self) -> Coverage {
         let stream = &self.stream;
         let p = &self.progress;
         let single_pass = p.scan_passes == 1;
         let physical = p.scan_complete && p.physically_traversed == p.sources_inspected;
-        let lexical_coverage_limited = self.has_source_gaps() || stream.refresh_coverage_limited;
+        let lexical_coverage_limited = self.parameters.reads_content()
+            && (self.has_source_gaps() || stream.refresh_coverage_limited);
         let logical = physical && !lexical_coverage_limited;
+        let mut not_published_reasons = BTreeMap::new();
+        if stream.rejected > 0 {
+            not_published_reasons.insert("semantic_rejection", stream.rejected);
+        }
+        if stream.stale > 0 {
+            not_published_reasons.insert("verification_stale", stream.stale);
+        }
+        let not_published = self.not_published();
+        let interrupted = not_published.saturating_sub(stream.rejected + stream.stale);
+        if interrupted > 0 {
+            not_published_reasons.insert("publication_interrupted", interrupted);
+        }
+
         Coverage {
             inventory_complete: p.scan_complete,
             physical_history_complete: physical,
@@ -299,6 +336,10 @@ impl Run {
             unconfirmed: stream.unconfirmed,
             rejected: stream.rejected,
             published: stream.published,
+            metadata_verified: stream.metadata_verified,
+            unresolved_predicates: p.unknown,
+            not_published,
+            not_published_reasons,
             released: stream.released,
             snapshot_sessions: p.provider_work.cohort_rows,
             inventory_window_offset: self.next.as_ref().map_or(0, |cursor| cursor.index),
@@ -451,23 +492,15 @@ impl Run {
         if !step.assessments.is_empty() {
             self.assess(step.assessments.clone())?;
         }
-        let needs_assessment = self
-            .candidates
-            .iter()
-            .any(|candidate| candidate.assessment.is_none() && !candidate.stale_context);
+        let needs_assessment = self.candidates.iter().any(|candidate| {
+            !candidate.metadata_match && candidate.assessment.is_none() && !candidate.stale_context
+        });
         if needs_assessment {
             if step.assessments.is_empty() {
                 return Err(ResolutionError::AssessmentRequired.into());
             }
             self.keep_cohort(service, control)?;
-            reply.candidates = self
-                .candidate_batch(0, self.presented())
-                .into_iter()
-                .zip(&self.candidates)
-                .filter_map(|(view, candidate)| {
-                    (candidate.assessment.is_none() && !candidate.stale_context).then_some(view)
-                })
-                .collect();
+            reply.candidates = self.candidate_batch(0, self.presented());
             return Ok(reply);
         }
         if !self.candidates.is_empty() {
@@ -531,11 +564,9 @@ impl Run {
                 return Err(ResolutionError::CohortUnavailable.into());
             }
             next = Some(id);
-            checks.extend(
-                hit.evidence
-                    .first()
-                    .map(|e| reference(&self.binding, &hit.metadata, e)),
-            );
+            checks.extend(hit.evidence.first().map(|e| {
+                SelectionReference::Transcript(reference(&self.binding, &hit.metadata, e))
+            }));
         }
         self.stream.candidate_after = next.map(str::to_owned);
         self.stream.candidates_loaded += hits.len();
@@ -688,48 +719,70 @@ impl Run {
         control: &QueryControl,
         reply: &mut AdvanceResult,
     ) -> Result<(), ApplicationError> {
+        let mut receipts = Vec::new();
         let mut checks = Vec::new();
-        let mut choices = Vec::new();
+        let filter = self.filter();
         for candidate in &self.candidates {
-            let Some(assessment) = candidate
-                .assessment
-                .as_ref()
-                .filter(|_| !candidate.stale_context)
-            else {
+            if candidate.stale_context {
                 continue;
+            }
+            let assessment = candidate.assessment.as_ref();
+            let basis = if candidate.metadata_match {
+                ReceiptBasis::VerifiedMetadata
+            } else {
+                let assessment = assessment.ok_or(ResolutionError::AssessmentRequired)?;
+                match assessment.disposition.verification_state() {
+                    CandidateVerificationState::Confirmed => ReceiptBasis::SemanticEvidence,
+                    CandidateVerificationState::Unconfirmed if assessment.plausible_alternative => {
+                        ReceiptBasis::PlausibleEvidence
+                    }
+                    CandidateVerificationState::Unconfirmed => ReceiptBasis::RetrievedUnverified,
+                    CandidateVerificationState::Rejected => ReceiptBasis::RetrievedUnverified,
+                }
             };
             let citations: Vec<_> = assessment
-                .evidence
-                .iter()
+                .into_iter()
+                .flat_map(|a| &a.evidence)
                 .map(|&handle| {
                     self.anchor(handle)
-                        .expect("validated assessment anchor")
+                        .expect("validated citation")
                         .reference
                         .clone()
                 })
                 .collect();
-            let check = citations
-                .first()
-                .or_else(|| {
-                    candidate.handles.first().map(|&handle| {
-                        &self
-                            .anchor(handle)
-                            .expect("active candidate anchor")
-                            .reference
-                    })
-                })
-                .filter(|first| {
-                    citations.iter().all(|r| {
-                        r.source_bytes == first.source_bytes
-                            && r.source_fingerprint == first.source_fingerprint
-                    })
-                })
-                .map(|first| {
-                    let index = checks.len();
-                    checks.push(first.clone());
-                    index
-                });
-            choices.push((candidate, assessment, citations, check));
+            let metadata = &candidate.hit.metadata;
+            let metadata_ref = citations
+                .is_empty()
+                .then(|| MetadataSelection::new(metadata, &self.binding));
+            let title_match = candidate
+                .metadata_match
+                .then(|| filter.metadata_title_match(metadata))
+                .flatten();
+            let receipt = CohortReceipt {
+                metadata: metadata.clone(),
+                basis,
+                assessment: assessment.cloned(),
+                citations,
+                metadata_ref,
+                title_match,
+            };
+            let reference = receipt
+                .verification_reference()
+                .expect("receipt has a reference");
+            // All citations for one candidate must refer to the same source revision.
+            let check = match &reference {
+                SelectionReference::Transcript(first) => receipt.citations.iter().all(|r| {
+                    r.source_bytes == first.source_bytes
+                        && r.source_fingerprint == first.source_fingerprint
+                }),
+                SelectionReference::Metadata(_) => true,
+            }
+            .then(|| {
+                let index = checks.len();
+                checks.push(reference);
+                index
+            });
+            receipts.push((candidate, receipt, check));
         }
         let fresh = match self.verify_publication(service, control, &checks) {
             Ok(verified) => {
@@ -745,60 +798,60 @@ impl Run {
             Err(_) => vec![None; checks.len()],
         };
         self.progress.publication_checks += usize::from(!checks.is_empty());
-        let filter = self.filter().clone();
-        let mut receipts = Vec::new();
         let stream = &mut self.stream;
-        for candidate in self
-            .candidates
-            .iter()
-            .filter(|candidate| candidate.stale_context)
-        {
+        for candidate in self.candidates.iter().filter(|c| c.stale_context) {
             stream.queue_refresh(candidate);
         }
-        for (candidate, assessment, citations, check) in choices {
-            let current = check.and_then(|index| fresh[index].as_ref()).filter(|m| {
-                m.identity == candidate.hit.metadata.identity
-                    && filter.evaluate_observed(
-                        &candidate.hit.metadata,
-                        &candidate.hit.query_observation,
-                        candidate.hit.content_complete,
-                    ) == Truth::True
-            });
-            if current.is_none() && (check.is_some() || !citations.is_empty()) {
-                self.progress.freshness_failures += 1;
-                stream.queue_refresh(candidate);
-                continue;
-            }
-            stream.released += 1;
-            let state = assessment.disposition.verification_state();
-            match state {
-                CandidateVerificationState::Confirmed => stream.confirmed += 1,
-                CandidateVerificationState::Unconfirmed => stream.unconfirmed += 1,
-                CandidateVerificationState::Rejected => stream.rejected += 1,
-            }
-            if state == CandidateVerificationState::Confirmed {
-                reply.prepared_choices.push(PreparedChoice {
-                    native_session_id: candidate.hit.metadata.native_session_id.clone(),
-                    explanation: assessment.explanation.clone(),
-                });
-            } else if state != CandidateVerificationState::Unconfirmed
-                || !assessment.plausible_alternative
-            {
-                continue;
-            }
-            let current = current.expect("a publishable judgment requires current source evidence");
-            let mut metadata = candidate.hit.metadata.clone();
-            metadata.title.clone_from(&current.title);
-            metadata
-                .producer_version
-                .clone_from(&current.producer_version);
-            metadata.producer_version_matches = current.producer_version_matches;
-            receipts.push(CohortReceipt {
-                metadata,
-                assessment: assessment.clone(),
-                citations,
-            });
-        }
+        let receipts: Vec<_> = receipts
+            .into_iter()
+            .filter_map(|(candidate, mut row, check)| {
+                let Some(current) = check
+                    .and_then(|index| fresh[index].as_ref())
+                    .filter(|m| m.identity == row.metadata.identity)
+                else {
+                    self.progress.freshness_failures += 1;
+                    if row.basis == ReceiptBasis::VerifiedMetadata {
+                        stream.verification_gap = Some("candidate_metadata_stale");
+                        stream.unconfirmed += 1;
+                        stream.stale += 1;
+                        stream.released += 1;
+                    } else {
+                        stream.queue_refresh(candidate);
+                    }
+                    return None;
+                };
+                stream.released += 1;
+                stream.assessed += usize::from(row.assessment.is_some());
+                if row.assessment.as_ref().is_some_and(|assessment| {
+                    assessment.disposition.verification_state()
+                        == CandidateVerificationState::Rejected
+                }) {
+                    stream.rejected += 1;
+                    return None;
+                }
+                if row.basis.confirmed() {
+                    stream.confirmed += 1;
+                    stream.metadata_verified +=
+                        usize::from(row.basis == ReceiptBasis::VerifiedMetadata);
+                    reply.prepared_choices.push(PreparedChoice {
+                        native_session_id: row.metadata.native_session_id.clone(),
+                        explanation: row.assessment.as_ref().map_or_else(
+                            || "The recorded metadata satisfies the requested filter.".into(),
+                            |a| a.explanation.clone(),
+                        ),
+                        match_basis: row.basis,
+                    });
+                } else {
+                    stream.unconfirmed += 1;
+                }
+                row.metadata.title.clone_from(&current.title);
+                row.metadata
+                    .producer_version
+                    .clone_from(&current.producer_version);
+                row.metadata.producer_version_matches = current.producer_version_matches;
+                Some(row)
+            })
+            .collect();
         let count = receipts.len();
         // Acknowledge the evaluation only once its bounded receipt batch commits.
         let CohortQueuePage::Acknowledged { spool_bytes } =
@@ -851,10 +904,8 @@ impl Run {
             }
             last = Some(id);
             anchors.push(
-                row.citations
-                    .first()
-                    .ok_or(ResolutionError::CohortUnavailable)?
-                    .clone(),
+                row.verification_reference()
+                    .ok_or(ResolutionError::CohortUnavailable)?,
             );
         }
         let fresh = self.verify_publication(service, control, &anchors)?;
@@ -865,13 +916,13 @@ impl Run {
         stream.receipt_after = after;
         stream.receipts_read += receipts.len();
         for (mut row, current) in receipts.into_iter().zip(fresh.sessions) {
-            let state = row.assessment.disposition.verification_state();
+            let confirmed = row.basis.confirmed();
             if let Some(metadata) = current.filter(|m| m.identity == row.metadata.identity) {
                 row.metadata.title = metadata.title;
                 row.metadata.producer_version = metadata.producer_version;
                 row.metadata.producer_version_matches = metadata.producer_version_matches;
-                if state == CandidateVerificationState::Confirmed {
-                    stream.published += 1;
+                stream.published += 1;
+                if confirmed {
                     reply.matches.push(row);
                 } else {
                     reply.alternatives.push(row);
@@ -879,8 +930,11 @@ impl Run {
             } else {
                 self.progress.freshness_failures += 1;
                 stream.verification_gap = Some("candidate_evidence_stale");
-                if state == CandidateVerificationState::Confirmed {
+                stream.stale += 1;
+                if confirmed {
                     stream.confirmed -= 1;
+                    stream.metadata_verified -=
+                        usize::from(row.basis == ReceiptBasis::VerifiedMetadata);
                     stream.unconfirmed += 1;
                 }
             }
@@ -895,7 +949,7 @@ impl Run {
         &self,
         service: &SessionSearchService<'_>,
         control: &QueryControl,
-        references: &[ContextReference],
+        references: &[SelectionReference],
     ) -> Result<EvidenceVerification, ApplicationError> {
         if references.is_empty() {
             return Ok(EvidenceVerification {
@@ -918,13 +972,22 @@ impl Run {
             .matches
             .iter()
             .chain(&reply.alternatives)
-            .map(|r| r.citations[0].clone())
-            .collect();
+            .map(|r| {
+                r.verification_reference()
+                    .ok_or(ResolutionError::CohortUnavailable)
+            })
+            .collect::<Result<_, _>>()?;
         if anchors.is_empty() {
             return Ok(());
         }
         let fresh = self.verify_publication(service, control, &anchors)?;
         let original_matches = reply.matches.len();
+        let metadata_matches = |rows: &[ResolvedCandidate]| {
+            rows.iter()
+                .filter(|r| r.basis == ReceiptBasis::VerifiedMetadata)
+                .count()
+        };
+        let original_metadata = metadata_matches(&reply.matches);
         let mut fresh = fresh.sessions.into_iter();
         let mut retain = |row: &mut ResolvedCandidate| {
             let id = &row.metadata.native_session_id;
@@ -949,7 +1012,9 @@ impl Run {
             self.progress.freshness_failures += lost;
             let stream = &mut self.stream;
             stream.confirmed -= original_matches - reply.matches.len();
-            stream.published -= original_matches - reply.matches.len();
+            stream.metadata_verified -= original_metadata - metadata_matches(&reply.matches);
+            stream.published -= lost;
+            stream.stale += lost;
             stream.unconfirmed += original_matches - reply.matches.len();
             stream.verification_gap = Some("candidate_evidence_stale");
             if reply.outcome.is_some() {
@@ -969,12 +1034,13 @@ impl Run {
             .progress
             .stop_reason
             .or(stream.verification_gap)
-            .or((self.progress.unavailable_sources > 0).then_some("source_unavailable"));
+            .or((self.progress.unavailable_sources > 0).then_some("source_unavailable"))
+            .or((self.progress.unknown > 0).then_some("query_predicate_unknown"));
         if self.progress.stop_reason.is_some()
             || !self.stream_coverage().candidate_evaluation_complete
         {
             TerminalOutcome::Partial
-        } else if self.stream.published > 0 {
+        } else if self.stream.confirmed > 0 {
             TerminalOutcome::CompletedWithMatches
         } else {
             TerminalOutcome::CompletedNoMatches

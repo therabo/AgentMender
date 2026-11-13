@@ -21,7 +21,7 @@ pub enum ConversationRequest {
         native_session_id: String,
         options: ContextOptions,
     },
-    NativeDeleteSelection(ContextReference),
+    NativeDeleteSelection(SelectionReference),
     ContextWindow {
         reference: ContextReference,
         target: TargetSelector,
@@ -86,20 +86,20 @@ impl NativeDeleteSelection {
 /// Reuse the read-only evidence check before the MCP client asks for consent.
 pub fn native_delete_selection(
     service: &crate::session_search::SessionSearchService<'_>,
-    reference: ContextReference,
+    reference: SelectionReference,
     control: &QueryControl,
 ) -> Result<ConversationResponse, ApplicationError> {
     let caller = service
         .apparent_caller
         .ok_or(ApplicationError::DiscoveryCallerUnavailable)?;
-    if caller.native_id() == reference.native_session_id
+    if caller.native_id() == reference.native_session_id()
         || service
             .registered
             .iter()
-            .any(|id| id.local_id == reference.local_id)
+            .any(|id| &id.local_id == reference.local_id())
         || service
             .management
-            .is_some_and(|caller| caller.identity.local_id == reference.local_id)
+            .is_some_and(|caller| &caller.identity.local_id == reference.local_id())
     {
         return Err(ApplicationError::ProtectedManagementSession);
     }

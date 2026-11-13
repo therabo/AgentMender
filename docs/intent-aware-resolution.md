@@ -13,9 +13,11 @@ Use `session_find_result` with that ID until the job completes, is interrupted
 or is cancelled. It waits up to 25 seconds by default. Set `wait_seconds`
 from 0 to 60, or call `session_find_status` for immediate progress. `session_find_result`
 returns `results.confirmed` and `results.possible_unconfirmed`, each with
-original title, UUID and signed source references. Pass `results.next_offset`
+original title, UUID, verification basis and signed selection references.
+The first terminal page also includes the Planner's validated `search_intent`.
+Pass `results.next_offset`
 back as `offset` to obtain the next page. `session_find_cancel` requests
-cancellation. Results use the originating connection's signed context
+cancellation. Results use the originating connection's signed selection
 references. Use `session_discover` for deterministic inventory.
 
 ## Installation and connection lifetime
@@ -99,16 +101,28 @@ The diagnostic tool schema advertises the exact
   be absent. A target provider filters within the registered provider/root.
   The current resolver reads the configured Codex root.
 
-The Rust compiler validates values, compiles the explicit predicates, and
-uses the three-valued query evaluator. When the request specifies an exact
-Boolean expression, supply `search_intent.filter` as the structured query
-AST. It replaces the lexical hints as the candidate predicate and is
-conjoined with the explicit constraints. This preserves AND/OR/NOT and
-UNKNOWN semantics. For an exact session lookup set
-`constraints.native_session_id` and use `hints:{"terms":[]}` when the user
-has supplied no text condition. Rust offers a bounded original passage even
-when that selection has no lexical anchor. Both modes use the same assessment
-and publication rules.
+Luna Planner chooses the retrieval strategy from the original request.
+`search_intent.filter` accepts the same Boolean AST as structured search.
+It replaces the lexical hints as the candidate predicate and is conjoined
+with explicit constraints. For an exact title lookup:
+
+```json
+{
+  "schema_version": "1",
+  "subject": "Trova conversazioni sulle carte Pokèmon",
+  "hints": {"terms": []},
+  "filter": {"op": "title", "value": "Trova conversazioni sulle carte Pokèmon", "kind": "exact"}
+}
+```
+
+Use `kind: "contains"` for a title fragment. Title, creation and activity
+dates, provider, archive state, project and UUID can satisfy a lookup from
+metadata. A title OR text query can be satisfied by either branch. If the
+title proves the whole predicate and no global activity or outcome requires
+semantic judgment, Rust verifies the row without reading its transcript.
+Text predicates work on messages and lead to assessment when the result
+depends on the messages. A future action such as deleting the returned
+conversations contributes no historical terms or outcomes.
 
 ## AgentMender-owned Luna execution
 
@@ -119,8 +133,8 @@ effort, and turn completion. It validates the Planner payload against
 SearchIntent v1 and the Rust compiler. Corrections stay in the same
 Planner. Rust starts retrieval after the Planner process exits.
 
-The host starts a fresh Evaluator process only when Rust has traversed the
-cohort and has staged candidates. All batches, bounded context requests
+After Rust traverses the cohort, the host starts a fresh Evaluator process
+when the resolver supplies a candidate needing semantic assessment. All batches, bounded context requests
 and any single-best choice use that same Evaluator. The host checks
 reroute and unexpected tools or threads, reaps the process and then
 publishes through the same typed Rust service. The private bridge keeps
@@ -135,8 +149,7 @@ The following steps describe the internal coordinator and diagnostic API.
    Rust freezes the eligible UUIDs, order and predicate metadata. Planned
    `hints.expansion_terms` take up to four distinct terms and form an OR
    with literal hints under the original constraints. Put Boolean aliases
-   in the explicit filter. A typed constraints-only lookup can use empty
-   terms and receive an original passage when available.
+   in the explicit filter. Use empty terms for a metadata-only lookup.
 2. While `phase` is `retrieving`, call `advance` with no judgments or
    context. Continue through empty replies. Candidate passages are staged
    in the worker. `retrieval_complete` reports finished traversal
@@ -149,11 +162,13 @@ The following steps describe the internal coordinator and diagnostic API.
    messages and 4,096 bytes. A changed source can return with fresh handles
    for reassessment. A recap about another session does not prove original
    execution. A plausible unconfirmed result requires a supporting passage
-   and a stated gap.
-4. When `publication_ready` becomes true, perform any explicit
-   `single_best` selection with the Evaluator using `prepared_choices`.
-   These choices contain provisional judgments. Close the Evaluator and
-   call `advance` with `publish:true` until terminal. Rust revalidates
+   and a stated gap. A candidate with insufficient evidence can still be
+   published with its metadata identity and the reason it remains unverified.
+4. When `publication_ready` becomes true, use `prepared_choices` for an
+   explicit `single_best` request. A tie among metadata matches preserves
+   the UUIDs for the user to choose. Semantic comparisons use the same
+   Evaluator. Close it if started, then call `advance` with `publish:true`
+   until terminal. Rust revalidates
    references before signing `matches` and `alternatives`. Accumulate
    them by UUID and remove any identity listed in `invalidated`.
 5. Use the returned `step_revision` as `expected_revision` and a new
@@ -163,13 +178,20 @@ The following steps describe the internal coordinator and diagnostic API.
    The response distinguishes `completed` from `interrupted` and reports
    coverage gaps even when UUID traversal finished.
 
-Rust exposes `snapshot_sessions`, `sources_inspected`, `lexical_candidates`,
-`candidates_staged`, `candidates_evaluated` and `remaining_candidates`.
-Classifications and `retrieval_complete` and `evaluation_complete` have
-separate counters. A predicate-only candidate can be staged without a
-lexical match. Unrecoverable stale evidence has an explicit interruption
-and remains unevaluated. Completed lexical traversal does not establish
-absolute semantic recall.
+Rust reports metadata rows examined after caller exclusions in
+`sessions_examined`, eligible cohort size in `snapshot_sessions`, and rows
+traversed in `sources_inspected`. `candidates_staged` counts true retrieval
+predicates, `candidates_evaluated` counts processed semantic assessments,
+and `metadata_verified` counts verified metadata matches. `confirmed`
+includes both kinds of verification. `published` includes unconfirmed rows
+that passed freshness checks. `not_published_reasons` counts semantic
+rejections, stale verification, interruption, and rows omitted by a
+single-best choice. `unresolved_predicates` counts rows
+whose filter remained UNKNOWN, outside the staged candidates. A missing
+title, date or message can produce partial coverage alongside verified
+matches. Exhausting a lexical scan does not establish absolute semantic
+recall. Unread history skipped because metadata proved the predicate does
+not make that match partial.
 
 The application retains one five-candidate batch and one replayable reply.
 The worker's anonymous SQLite file holds frozen metadata, bounded sanitized
@@ -183,7 +205,10 @@ A new process requires a new run. See [ADR-0036](adr/0036-two-stage-luna-resolut
 
 Render exactly these two tables, localized to the user. Use the title as the
 session label, the grounded explanation for a confirmed row, and the concrete
-gap for a plausible unconfirmed row. Keep signed references in the origin.
+gap for an unconfirmed row. Identify the `match_basis` as `verified_metadata`,
+`semantic_evidence`, `plausible_evidence` or `retrieved_unverified`.
+`title_match` distinguishes `original_exact`, `normalized_exact` and `partial`
+when a positive title predicate supports the metadata match. Keep signed references in the origin.
 Use a clearly labeled empty row if a table contains no results. If the run was
 interrupted or lexical coverage is limited, put one short status row in the
 second table with a blank session ID.

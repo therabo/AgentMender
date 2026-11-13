@@ -33,6 +33,8 @@ pub struct ProviderWork {
     #[serde(default, skip_serializing_if = "is_zero")]
     pub cohort_rows: u64,
     #[serde(default, skip_serializing_if = "is_zero")]
+    pub cohort_metadata_examined: u64,
+    #[serde(default, skip_serializing_if = "is_zero")]
     pub cohort_capture_us: u64,
     #[serde(default, skip_serializing_if = "is_zero")]
     pub cohort_spool_bytes: u64,
@@ -57,6 +59,7 @@ impl ProviderWork {
         self.sqlite_backup_us += work.sqlite_backup_us;
         self.metadata_rows += work.metadata_rows;
         self.cohort_rows += work.cohort_rows;
+        self.cohort_metadata_examined += work.cohort_metadata_examined;
         self.cohort_capture_us += work.cohort_capture_us;
         self.cohort_spool_bytes = self.cohort_spool_bytes.max(work.cohort_spool_bytes);
         self.fts_builds += work.fts_builds;

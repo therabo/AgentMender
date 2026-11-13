@@ -332,10 +332,18 @@ def resolve(spawn, mcp, question, trace=lambda **_: None, *, validate_intent=lam
             if not page["progress"]["retrieval_complete"]:
                 raise ResolverError("retrieval_incomplete")
             tick = time.monotonic()
-            with spawn("evaluator") as evaluator:
-                if evaluator.thread == planner_id:
-                    raise LunaFailure("evaluator", "thread_start", "planner_thread_reused")
-                evaluate(evaluator, question, intent, page, advance, choices, trace)
+            with ExitStack() as evaluation:
+                evaluator = None
+
+                def get_evaluator():
+                    nonlocal evaluator
+                    if evaluator is None:
+                        evaluator = evaluation.enter_context(spawn("evaluator"))
+                        if evaluator.thread == planner_id:
+                            raise LunaFailure("evaluator", "thread_start", "planner_thread_reused")
+                    return evaluator
+
+                evaluate(get_evaluator, question, intent, page, advance, choices, trace)
                 if (page["phase"] == "evaluating" and page["progress"]["publication_ready"]
                         and intent.get("result_policy") == "single_best" and choices):
                     last_renewal = time.monotonic()
@@ -348,8 +356,11 @@ def resolve(spawn, mcp, question, trace=lambda **_: None, *, validate_intent=lam
                                 raise ResolverError("evaluation_interrupted")
                             last_renewal = time.monotonic()
 
-                    best = select_best(evaluator, question, choices, renew)
-                    winner = best["native_session_id"] if best else None
+                    if len(choices) == 1:
+                        winner = choices[0]["native_session_id"]
+                    elif any(row.get("match_basis") != "verified_metadata" for row in choices):
+                        best = select_best(get_evaluator(), question, choices, renew)
+                        winner = best["native_session_id"] if best else None
                     selection_ambiguous = winner is None
             trace(event="evaluation_finished", elapsed_ms=elapsed_ms(tick), progress=page["progress"])
 
@@ -389,7 +400,7 @@ def resolve(spawn, mcp, question, trace=lambda **_: None, *, validate_intent=lam
         if not matches:
             status.append("La fonte della sessione scelta è cambiata prima della pubblicazione.")
     elif selection_ambiguous:
-        status.append("Luna non ha individuato un unico risultato migliore.")
+        status.append("La ricerca ha lasciato più risultati a pari merito.")
     trace(event="resolver_terminal", state=page["execution_state"], mcp_calls=operation + 1,
           elapsed_ms=elapsed_ms(started), matches=len(matches), alternatives=len(alternatives),
           progress=page["progress"])
@@ -403,11 +414,14 @@ def elapsed_ms(started):
     return round((time.monotonic() - started) * 1000, 3)
 
 
-def evaluate(evaluator, question, intent, page, advance, choices, trace):
+def evaluate(get_evaluator, question, intent, page, advance, choices, trace):
     while page["phase"] == "evaluating" and not page["progress"]["publication_ready"]:
         page = advance()
+        if intent.get("result_policy") == "single_best":
+            choices.extend(page.get("prepared_choices", []))
         if not page["candidates"]:
             continue
+        evaluator = get_evaluator()
         batch = page["candidates"]
         packet = [{"native_session_id": row["native_session_id"], "title": row.get("title"),
                    "evidence": passages(row["evidence"])} for row in batch]
@@ -522,7 +536,10 @@ def render(matches, alternatives, status):
     def rows(items, empty, reason):
         if not items:
             return [f"| {empty} | | |"]
+        labels = {"verified_metadata": "Metadati verificati", "semantic_evidence": "Evidenza semantica",
+                  "plausible_evidence": "Alternativa plausibile", "retrieved_unverified": "Non verificata"}
         return [f"| {cell(item.get('title') or item['native_session_id'])} | "
+                f"{cell(labels.get(item.get('match_basis'), ''))} · "
                 f"{cell(reason(item['assessment']))} | `{item['native_session_id']}` |" for item in items]
 
     return "\n".join([
@@ -570,9 +587,8 @@ class PrivateBridge:
         self.call("trace", event=event)
 
     def publish(self, page, winner):
-        self.call("results", rows={group: [row for row in page[group]
-                   if group != "matches" or winner is None or row["native_session_id"] == winner]
-                   for group in ("matches", "alternatives")}, invalidated=page.get("invalidated", []))
+        self.call("results", rows={group: page[group] for group in ("matches", "alternatives")},
+                  invalidated=page.get("invalidated", []), winner=winner)
 
 
 class RelayedRpc(Rpc):

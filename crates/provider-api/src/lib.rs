@@ -84,7 +84,7 @@ pub trait SessionSearchReadPort {
     /// entire batch means the adapter uses the existing single-source path.
     fn verify_search_evidence(
         &self,
-        _references: &[agentmender_domain::ContextReference],
+        _references: &[agentmender_domain::SelectionReference],
         _excluded: &[agentmender_domain::ArtifactId],
     ) -> Result<Option<agentmender_domain::EvidenceVerification>, ProviderError> {
         Ok(None)

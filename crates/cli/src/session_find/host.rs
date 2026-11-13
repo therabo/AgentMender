@@ -398,6 +398,7 @@ impl Bridge<'_> {
                 job.state.lock().map_err(|_| "job_unavailable")?.insert(
                     &packet["rows"],
                     &packet["invalidated"],
+                    packet["winner"].as_str(),
                     self.launch,
                 )?;
             }
@@ -418,13 +419,25 @@ impl Bridge<'_> {
             return Err("resolver_run_mismatch".into());
         }
         let publish = args["publish"] == true;
-        if publish && (self.child.is_some() || self.spawned != 2) {
+        if publish
+            && (self.child.is_some()
+                || !matches!(self.phase, Phase::Evaluating | Phase::Publishing))
+        {
             return Err("publication_out_of_order".into());
+        }
+        if ["assessments", "context_requests"].iter().any(|field| {
+            args[*field]
+                .as_array()
+                .is_some_and(|items| !items.is_empty())
+        }) && (self.spawned != 2 || self.child.is_none())
+        {
+            return Err("evaluation_out_of_order".into());
         }
         let mut state = self.job.state.lock().map_err(|_| "job_unavailable")?;
         state.resolver_operations += 1;
         if self.run_id.is_none() {
             state.phase(Phase::Retrieving);
+            state.search_intent = Some(args["search_intent"].clone());
         } else if publish {
             state.phase(Phase::Publishing);
         }

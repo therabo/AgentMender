@@ -89,6 +89,19 @@ impl Projector {
         mac.verify_slice(&tag).ok()?;
         serde_json::from_slice(&data).ok()
     }
+    pub(crate) fn seal_metadata_selection(&self, reference: &d::MetadataSelection) -> String {
+        self.seal_search(b"metadata-selection", reference)
+    }
+
+    pub(crate) fn open_selection(&self, token: &str) -> Option<d::SelectionReference> {
+        self.open_search(b"evidence", token)
+            .map(d::SelectionReference::Transcript)
+            .or_else(|| {
+                self.open_search(b"metadata-selection", token)
+                    .map(d::SelectionReference::Metadata)
+            })
+    }
+
     fn mac(&self, domain: &[u8], data: &[u8]) -> Vec<u8> {
         let mut m = <HmacSha256 as KeyInit>::new_from_slice(&self.key).expect("HMAC key");
         m.update(domain);

@@ -3,11 +3,16 @@
 ## Conversational resolution
 
 The read-only `session_find` tool in `--session-search` mode has one
-required argument, `query`. AgentMender starts a job that runs both Luna
-stages, Rust retrieval and publication. `session_find_status`,
+required argument, `query`. AgentMender starts a job that runs Luna
+Planner, typed Rust retrieval, conditional Luna evaluation and verified
+publication. `session_find_status`,
 `session_find_result` and `session_find_cancel` take the returned job ID.
-Results include separate confirmed and plausible unconfirmed pages,
-signed context references and traversal, evaluation and source coverage.
+Results include confirmed and possible unconfirmed rows, signed selection
+references, and traversal and evaluation coverage. The first terminal page
+includes the validated `search_intent`. Each row carries a `match_basis`:
+`verified_metadata`, `semantic_evidence`, `plausible_evidence`, or
+`retrieved_unverified`. Only transcript evidence references can open
+`session_context`; open a metadata-only result by UUID if history is needed.
 The typed `session_resolve` contract remains available for diagnostics.
 See the [search and installation contract](intent-aware-resolution.md)
 and [ADR-0037](adr/0037-autonomous-mcp-session-find.md).
@@ -17,8 +22,12 @@ and [ADR-0037](adr/0037-autonomous-mcp-session-find.md).
 In `--session-search` mode, resolve an ordinal or label to one result row from
 `session_find_result`. Call `session_delete` with that row's canonical
 `native_session_id` and one `evidence_ref` from its `evidence_refs` array. The
-server checks the signed evidence against the exact source in the configured
-Codex root and excludes the apparent caller and configured protections.
+server accepts a transcript citation or a metadata selection signed by the
+same MCP process. It revalidates the exact session, caller scope and selected
+source in the configured Codex root, with existing caller and configured
+exclusions. A metadata selection commits to the title, observed project,
+state and dates from the Codex thread row. A changed row or a server restart
+requires a fresh selection.
 
 After validation, AgentMender sends one MCP form elicitation with the title, UUID
 and a warning that Codex can delete spawned subagents. Use a client that

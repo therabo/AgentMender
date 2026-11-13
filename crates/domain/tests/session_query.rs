@@ -111,6 +111,57 @@ fn negative_projects_preserve_unknown_and_observations_are_not_verified_ownershi
 }
 
 #[test]
+fn title_and_message_predicates_share_bounded_unicode_normalization() {
+    let mut m = metadata(None);
+    m.title = Some("Carte Pokèmon".into());
+    for (value, quality) in [
+        ("Carte Pokèmon", TitleMatchQuality::OriginalExact),
+        ("CARTE POKEMON", TitleMatchQuality::NormalizedExact),
+        ("Carte Poke\u{301}mon", TitleMatchQuality::NormalizedExact),
+    ] {
+        let title = QueryExpr::Title {
+            value: value.into(),
+            kind: TitleMatch::Exact,
+        };
+        assert_eq!(title.metadata_title_match(&m), Some(quality));
+        assert_eq!(
+            text(value).evaluate(&facts(
+                &m,
+                &[QueryText {
+                    text: "Mi piacciono le carte Pokémon.",
+                    timestamp: None,
+                }],
+                true
+            )),
+            Truth::True
+        );
+    }
+    let title = QueryExpr::Title {
+        value: "Pokémon".into(),
+        kind: TitleMatch::Contains,
+    };
+    assert_eq!(
+        title.metadata_title_match(&m),
+        Some(TitleMatchQuality::Partial)
+    );
+    let hybrid = QueryExpr::Or {
+        args: vec![title.clone(), text("Pokémon")],
+    };
+    assert_eq!(hybrid.metadata_truth(&m), Truth::True);
+    m.title = None;
+    assert_eq!(not(title).metadata_truth(&m), Truth::Unknown);
+    assert_eq!(hybrid.metadata_truth(&m), Truth::Unknown);
+
+    for (left, right) in [
+        ("año", "ano"),
+        ("côté", "cote"),
+        ("ＰＯＫＥＭＯＮ", "pokemon"),
+    ] {
+        assert_ne!(normalize_search_text(left), normalize_search_text(right));
+    }
+}
+
+#[test]
 fn date_ranges_are_half_open_and_calendar_end_dates_inclusive() {
     let range =
         TimeRange::calendar_dates(Some("2026-10-10"), Some("2026-10-20"), "Europe/Rome").unwrap();

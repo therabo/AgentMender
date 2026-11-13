@@ -1,5 +1,8 @@
 //! Bounded read evidence only. No caller, ownership, approval or effect authority.
-use crate::{ArtifactId, EntityId, GraphNodeKind, ProviderKind, SessionMetadata};
+use crate::{
+    ArtifactId, EntityId, GraphNodeKind, ProviderKind, SessionMetadata, normalize_search_text,
+    search_match_offset,
+};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
@@ -120,7 +123,7 @@ impl SearchParameters {
     pub fn terms(&self) -> Vec<String> {
         self.query
             .split_whitespace()
-            .map(str::to_lowercase)
+            .map(normalize_search_text)
             .collect::<BTreeSet<_>>()
             .into_iter()
             .collect()
@@ -129,7 +132,7 @@ impl SearchParameters {
 
 /// DiscoveryPriority uses this key within each native-ID inventory window.
 pub fn discovery_title_weight(metadata: &SessionMetadata, terms: &[String]) -> usize {
-    let title = metadata.title.as_deref().unwrap_or_default().to_lowercase();
+    let title = normalize_search_text(metadata.title.as_deref().unwrap_or_default());
     terms
         .iter()
         .filter(|term| title.contains(term.as_str()))
@@ -253,13 +256,44 @@ pub struct CohortRead {
 pub const COHORT_BATCH: usize = 5;
 pub const COHORT_SCAN_PAGES: usize = 12;
 
-/// A validated judgment awaiting fresh source verification before publication.
+/// A staged result awaiting fresh verification before publication.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CohortReceipt {
     pub metadata: SessionMetadata,
-    pub assessment: Assessment,
+    pub basis: ReceiptBasis,
+    pub assessment: Option<Assessment>,
     pub citations: Vec<ContextReference>,
+    pub metadata_ref: Option<MetadataSelection>,
+    pub title_match: Option<crate::TitleMatchQuality>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReceiptBasis {
+    VerifiedMetadata,
+    SemanticEvidence,
+    PlausibleEvidence,
+    RetrievedUnverified,
+}
+
+impl ReceiptBasis {
+    pub fn confirmed(self) -> bool {
+        matches!(self, Self::VerifiedMetadata | Self::SemanticEvidence)
+    }
+}
+
+impl CohortReceipt {
+    pub fn verification_reference(&self) -> Option<SelectionReference> {
+        if let Some(reference) = &self.metadata_ref {
+            Some(SelectionReference::Metadata(reference.clone()))
+        } else {
+            self.citations
+                .first()
+                .cloned()
+                .map(SelectionReference::Transcript)
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -372,6 +406,78 @@ pub struct ContextReference {
     pub binding_revision: String,
 }
 
+/// A commitment to the observed row in the configured Codex metadata store.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MetadataSelection {
+    pub provider: ProviderKind,
+    pub local_id: EntityId,
+    pub native_session_id: String,
+    pub binding_revision: String,
+    pub metadata_fingerprint: String,
+}
+
+impl MetadataSelection {
+    pub fn new(metadata: &SessionMetadata, binding: &str) -> Self {
+        let bytes = serde_json::to_vec(&(
+            "agentmender/codex-thread-metadata/v1",
+            &metadata.identity,
+            &metadata.native_session_id,
+            &metadata.title,
+            &metadata.project_label,
+            metadata.state,
+            metadata.created_at,
+            metadata.last_active_at,
+        ))
+        .expect("metadata facts serialize");
+        Self {
+            provider: metadata.identity.provider,
+            local_id: metadata.identity.local_id.clone(),
+            native_session_id: metadata.native_session_id.clone(),
+            binding_revision: binding.into(),
+            metadata_fingerprint: search_digest(&bytes),
+        }
+    }
+}
+
+/// The two sources of read-only selection. Preserve the transcript wire shape.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum SelectionReference {
+    Transcript(ContextReference),
+    Metadata(MetadataSelection),
+}
+
+impl SelectionReference {
+    pub fn native_session_id(&self) -> &str {
+        match self {
+            Self::Transcript(r) => &r.native_session_id,
+            Self::Metadata(r) => &r.native_session_id,
+        }
+    }
+
+    pub fn local_id(&self) -> &EntityId {
+        match self {
+            Self::Transcript(r) => &r.local_id,
+            Self::Metadata(r) => &r.local_id,
+        }
+    }
+
+    pub fn binding_revision(&self) -> &str {
+        match self {
+            Self::Transcript(r) => &r.binding_revision,
+            Self::Metadata(r) => &r.binding_revision,
+        }
+    }
+
+    pub fn is_discovery(&self) -> bool {
+        match self {
+            Self::Transcript(r) => r.purpose == SearchPurpose::Discovery,
+            Self::Metadata(r) => r.provider == ProviderKind::Codex,
+        }
+    }
+}
+
 pub fn search_scope(
     parameters: &SearchParameters,
     root: &std::path::Path,
@@ -434,24 +540,8 @@ fn safe_lowered_conversation_text(lower: &str) -> bool {
 
 pub fn bounded_excerpt(text: &str, terms: &[String], max: usize) -> (String, bool) {
     let chars: Vec<_> = text.chars().collect();
-    let lower = text.to_lowercase();
-    let offset = terms
-        .iter()
-        .filter_map(|term| lower.find(term))
-        .min()
-        .unwrap_or(0);
-    // Map the lowercased byte offset back to original characters in one pass,
-    // including expanding case folds, without splitting UTF-8.
-    let mut lower_bytes = 0;
-    let at = chars
-        .iter()
-        .enumerate()
-        .find_map(|(i, c)| {
-            let here = lower_bytes;
-            lower_bytes += c.to_lowercase().map(char::len_utf8).sum::<usize>();
-            (here >= offset).then_some(i)
-        })
-        .unwrap_or(0);
+    let offset = search_match_offset(text, terms);
+    let at = text[..offset].chars().count();
     let start = at.saturating_sub(80);
     let end = chars.len().min(start + max);
     let excerpt: String = chars[start..end]
@@ -494,10 +584,10 @@ impl SearchRelevance {
     }
 
     pub fn observe_prepared(&mut self, source: &str, text: &crate::PreparedText<'_>) -> usize {
-        let lower = text.lowercase();
-        if !safe_lowered_conversation_text(lower) {
+        if !safe_lowered_conversation_text(text.lowercase()) {
             return 0;
         }
+        let folded = text.normalized();
         let weight = match source {
             "title" => 2,
             "user_message" => 4,
@@ -506,7 +596,7 @@ impl SearchRelevance {
         };
         let mut hits = 0;
         for term in &self.terms {
-            if lower.contains(term) {
+            if folded.contains(term) {
                 self.matched.insert(term.clone());
                 hits += 1;
                 self.score = self.score.saturating_add(weight);

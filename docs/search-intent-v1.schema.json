@@ -407,6 +407,25 @@
         {
           "additionalProperties": false,
           "properties": {
+            "kind": {
+              "$ref": "#/$defs/TitleMatchInput"
+            },
+            "op": {
+              "const": "title"
+            },
+            "value": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "op",
+            "value"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
             "alternatives": {
               "items": {
                 "type": "string"
@@ -601,6 +620,12 @@
         }
       },
       "type": "object"
+    },
+    "TitleMatchInput": {
+      "enum": [
+        "contains",
+        "exact"
+      ]
     }
   }
 }

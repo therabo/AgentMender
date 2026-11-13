@@ -118,6 +118,13 @@ enum TextMatchInput {
     Phrase,
     Exact,
 }
+#[derive(Clone, Copy, Default, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+enum TitleMatchInput {
+    #[default]
+    Contains,
+    Exact,
+}
 #[derive(Clone, Copy, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 enum SessionStateInput {
@@ -183,6 +190,11 @@ enum QueryExprInput {
     },
     LastActive {
         range: QueryRangeInput,
+    },
+    Title {
+        value: String,
+        #[serde(default)]
+        kind: TitleMatchInput,
     },
     Text {
         value: String,
@@ -1046,7 +1058,6 @@ struct ResolutionCandidateView {
 enum VerificationStateView {
     Confirmed,
     Unconfirmed,
-    Rejected,
 }
 
 #[derive(Serialize, JsonSchema)]
@@ -1062,6 +1073,9 @@ struct ResolutionMatchView {
     #[serde(flatten)]
     session: SessionLabelView,
     assessment: serde_json::Value,
+    match_basis: serde_json::Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    title_match: Option<serde_json::Value>,
     verification_state: VerificationStateView,
     evidence_refs: Vec<String>,
 }
@@ -1098,6 +1112,7 @@ enum ResolutionPhaseView {
 struct PreparedChoiceView {
     native_session_id: String,
     explanation: String,
+    match_basis: serde_json::Value,
 }
 
 #[derive(Serialize, JsonSchema)]
@@ -1203,34 +1218,38 @@ fn resolution_view(
         ),
     };
     let resolved = |mut r: session_resolution::ResolvedCandidate| {
-        r.metadata.title = r.metadata.title.as_deref().map(display);
         r.metadata.project_label = r.metadata.project_label.as_deref().map(display);
         let mut session = label(projector, &r.metadata, false, true);
         let first = r
-            .citations
-            .first()
-            .expect("fresh resolution requires a citation");
-        session.target = projector.discovery_ref(&r.metadata.identity, &first.binding_revision);
+            .verification_reference()
+            .expect("fresh resolution requires a selection reference");
+        session.target = projector.discovery_ref(&r.metadata.identity, first.binding_revision());
         session.removal_eligibility = "discovery_only";
-        ResolutionMatchView {
-            session,
-            verification_state: match r.assessment.disposition.verification_state() {
-                agentmender_domain::CandidateVerificationState::Confirmed => {
-                    VerificationStateView::Confirmed
-                }
-                agentmender_domain::CandidateVerificationState::Unconfirmed => {
-                    VerificationStateView::Unconfirmed
-                }
-                agentmender_domain::CandidateVerificationState::Rejected => {
-                    VerificationStateView::Rejected
-                }
-            },
-            assessment: serde_json::to_value(r.assessment).expect("typed assessment"),
-            evidence_refs: r
-                .citations
+        let evidence_refs = if let Some(reference) = &r.metadata_ref {
+            vec![projector.seal_metadata_selection(reference)]
+        } else {
+            r.citations
                 .iter()
                 .map(|r| projector.seal_search(b"evidence", r))
-                .collect(),
+                .collect()
+        };
+        let assessment = r.assessment.map_or_else(
+            || serde_json::json!({"explanation": "The recorded metadata satisfies the requested filter."}),
+            |assessment| serde_json::to_value(assessment).expect("typed assessment"),
+        );
+        ResolutionMatchView {
+            session,
+            verification_state: if r.basis.confirmed() {
+                VerificationStateView::Confirmed
+            } else {
+                VerificationStateView::Unconfirmed
+            },
+            match_basis: serde_json::to_value(r.basis).expect("typed basis"),
+            title_match: r
+                .title_match
+                .map(|quality| serde_json::to_value(quality).expect("typed title quality")),
+            assessment,
+            evidence_refs,
         }
     };
     let candidate = |c: session_resolution::ResolutionCandidate| ResolutionCandidateView {
@@ -1288,6 +1307,7 @@ fn resolution_view(
                 .map(|choice| PreparedChoiceView {
                     native_session_id: choice.native_session_id,
                     explanation: safe(&choice.explanation),
+                    match_basis: serde_json::to_value(choice.match_basis).expect("typed basis"),
                 })
                 .collect(),
         },
@@ -1351,7 +1371,7 @@ pub(super) fn tools(discovery: bool) -> Vec<Tool> {
     let mut registry = vec![
         (
             "session_search",
-            "Search typed filters and text evidence. UNKNOWN stays separate. Management requires verified caller binding.",
+            "Search typed metadata and text predicates. Management requires verified caller binding.",
             schema::<SearchInput>(),
             schema::<SearchOutput>(),
             true,
@@ -1373,28 +1393,28 @@ pub(super) fn tools(discovery: bool) -> Vec<Tool> {
         ),
         (
             "preview_removal",
-            "Fresh removal review when admitted; read-only deployments return a compatibility assessment without a plan or execution authority",
+            "Review removal eligibility. Read-only mode returns a compatibility assessment.",
             schema::<PreviewInput>(),
             schema::<PreviewOutput>(),
             true,
         ),
         (
             "prepare_removal",
-            "Persist the exact reviewed plan and recovery metadata; never grant human approval or delete",
+            "Persist the reviewed plan and recovery metadata.",
             schema::<PrepareInput>(),
             schema::<TransactionsView>(),
             false,
         ),
         (
             "removal_status",
-            "Recover durable primary-removal results across client disconnect or restart; no redispatch",
+            "Read durable primary-removal status and results.",
             schema::<StatusInput>(),
             schema::<TransactionsView>(),
             true,
         ),
         (
             "request_removal_execution",
-            "Return transaction status and trusted external-terminal handoff; this deployment cannot execute via MCP",
+            "Read status and the trusted external-terminal execution handoff.",
             schema::<HandoffInput>(),
             schema::<TransactionsView>(),
             true,
@@ -1422,7 +1442,7 @@ pub(super) fn tools(discovery: bool) -> Vec<Tool> {
         ));
         registry.insert(0, (
             "session_resolve",
-            "Use one Luna Medium Planner and close it before start. Advance the frozen UUID retrieval without Luna. When retrieval completes, use one distinct Luna Medium Evaluator across all candidate batches and any single_best selection. Close it before advance with publish:true. Pass the latest step_revision and collect signed rows in two tables. If a named role fails, attempt the explicit gpt-6-luna Medium host route or the controlled App Server described in the server instructions. Report the observed failure.",
+            "Diagnostic resolver. Run and close Luna Medium Planner before start. Advance Rust retrieval, then use one Luna Medium Evaluator for semantic candidates and close it before publication. Use the latest step_revision and collect both result groups.",
             resolution_schema(),
             schema::<ResolutionView>(),
             true,
@@ -1493,12 +1513,10 @@ pub(super) fn request(
             if ApparentCodexCaller::from_metadata(&v.native_session_id, None).is_none() {
                 return Err(invalid());
             }
-            let reference: ContextReference = projector
-                .open_search(b"evidence", &v.evidence_ref)
+            let reference = projector
+                .open_selection(&v.evidence_ref)
                 .ok_or_else(invalid)?;
-            if reference.purpose != SearchPurpose::Discovery
-                || reference.native_session_id != v.native_session_id
-            {
+            if !reference.is_discovery() || reference.native_session_id() != v.native_session_id {
                 return Err(invalid());
             }
             Ok(ConversationRequest::NativeDeleteSelection(reference))

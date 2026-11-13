@@ -83,10 +83,12 @@ struct State {
     progress: Value,
     coverage: Value,
     selection: Value,
+    search_intent: Option<Value>,
     elapsed: BTreeMap<&'static str, u64>,
     luna: BTreeMap<String, Value>,
     resolver_operations: usize,
     result_spool_bytes: u64,
+    selection_omitted: usize,
     spool: Option<ResultSpool>,
 }
 
@@ -100,10 +102,12 @@ impl State {
             progress: Value::Null,
             coverage: Value::Null,
             selection: Value::Null,
+            search_intent: None,
             elapsed: BTreeMap::new(),
             luna: BTreeMap::new(),
             resolver_operations: 0,
             result_spool_bytes: 0,
+            selection_omitted: 0,
             spool: None,
         }
     }
@@ -134,6 +138,7 @@ impl State {
         &mut self,
         rows: &Value,
         invalidated: &Value,
+        winner: Option<&str>,
         launch: &Launch,
     ) -> Result<(), &'static str> {
         let unavailable = |_| "result_spool_unavailable";
@@ -149,9 +154,14 @@ impl State {
             )
             .map_err(unavailable)?;
         }
+        let mut omitted = 0;
         for kind in ["matches", "alternatives"] {
             for row in rows[kind].as_array().ok_or("bridge_protocol")? {
                 let id = row["native_session_id"].as_str().ok_or("bridge_protocol")?;
+                if kind == "matches" && winner.is_some_and(|winner| winner != id) {
+                    omitted += 1;
+                    continue;
+                }
                 let encoded = row.to_string();
                 if encoded.len() > PAGE_BYTES {
                     return Err("result_row_too_large");
@@ -164,6 +174,7 @@ impl State {
             }
         }
         tx.commit().map_err(unavailable)?;
+        self.selection_omitted += omitted;
         let pages: i64 = db
             .pragma_query_value(None, "page_count", |row| row.get(0))
             .map_err(unavailable)?;
@@ -172,6 +183,43 @@ impl State {
             .map_err(unavailable)?;
         self.result_spool_bytes = self.result_spool_bytes.max((pages * size) as u64);
         Ok(())
+    }
+
+    fn finalize_counts(&mut self) {
+        if !self.progress.is_object() || !self.coverage.is_object() {
+            return;
+        }
+        let omitted = self.selection_omitted as u64;
+        let published = self.progress["published"]
+            .as_u64()
+            .unwrap_or_default()
+            .saturating_sub(omitted)
+            * u64::from(self.spool.is_some());
+        let staged = self.progress["candidates_staged"]
+            .as_u64()
+            .unwrap_or_default();
+        let not_published = staged.saturating_sub(published);
+        for data in [&mut self.progress, &mut self.coverage] {
+            data["published"] = json!(published);
+            data["not_published"] = json!(not_published);
+        }
+        let reasons = &mut self.coverage["not_published_reasons"];
+        if omitted > 0 {
+            reasons["single_best_selection"] = json!(omitted);
+        }
+        let accounted = reasons
+            .as_object()
+            .into_iter()
+            .flat_map(|r| r.values())
+            .filter_map(Value::as_u64)
+            .sum::<u64>();
+        if not_published > accounted {
+            let already_interrupted = reasons["publication_interrupted"]
+                .as_u64()
+                .unwrap_or_default();
+            reasons["publication_interrupted"] =
+                json!(already_interrupted + not_published - accounted);
+        }
     }
 
     fn results(&self, offset: usize) -> Result<Value, &'static str> {
@@ -250,6 +298,11 @@ impl Job {
             && state.phase.terminal()
         {
             value["results"] = state.results(offset)?;
+            if offset == 0
+                && let Some(intent) = &state.search_intent
+            {
+                value["search_intent"] = intent.clone();
+            }
         }
         Ok(value)
     }
@@ -374,6 +427,7 @@ impl FindHost {
                                     }
                                 }
                             };
+                            state.finalize_counts();
                             state.reason = reason;
                             state.phase(phase);
                         }

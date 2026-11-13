@@ -314,7 +314,7 @@ impl SessionSearchService<'_> {
 
     pub(crate) fn verify_search_evidence(
         &self,
-        references: &[ContextReference],
+        references: &[SelectionReference],
         control: &QueryControl,
     ) -> Result<Option<EvidenceVerification>, ApplicationError> {
         control.check()?;
@@ -322,9 +322,11 @@ impl SessionSearchService<'_> {
         let excluded = self.excluded(SearchPurpose::Discovery)?;
         if !(1..=5).contains(&references.len())
             || references.iter().any(|reference| {
-                reference.binding_revision != binding
-                    || reference.purpose != SearchPurpose::Discovery
-                    || excluded.iter().any(|id| id.local_id == reference.local_id)
+                reference.binding_revision() != binding
+                    || !reference.is_discovery()
+                    || excluded
+                        .iter()
+                        .any(|id| &id.local_id == reference.local_id())
             })
         {
             return Err(ApplicationError::StaleSearchEvidence);
@@ -342,8 +344,8 @@ impl SessionSearchService<'_> {
                         m.identity.provider != self.provider
                             || m.identity.state_root != self.provider_root
                             || m.identity.class != GraphNodeKind::Session
-                            || m.identity.local_id != r.local_id
-                            || m.native_session_id != r.native_session_id
+                            || &m.identity.local_id != r.local_id()
+                            || m.native_session_id != r.native_session_id()
                     })
                 })
         }) {

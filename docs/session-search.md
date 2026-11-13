@@ -6,10 +6,12 @@ One Luna Medium Planner produces SearchIntent v1 and closes before
 `session_resolve` starts. Rust captures the eligible UUIDs and metadata
 filters in one read transaction and scans the whole cohort in bounded
 pages. The worker stages selected candidates in its anonymous spool.
-After traversal, one distinct Luna Medium Evaluator assesses every
-candidate in bounded batches. Rust revalidates the selected sources and
-signs the result pages after the Evaluator closes. Partial source
-coverage and traversal completion are reported separately.
+After traversal, one distinct Luna Medium Evaluator assesses candidates
+that require semantic evidence in bounded batches. A deterministic title
+or metadata match can skip transcript access and evaluation. Rust
+revalidates the selected rows or sources and signs result pages after
+any Evaluator closes. Coverage distinguishes UNKNOWN predicates, incomplete
+sources, semantic assessments, verified metadata and publication.
 See the [resolution contract](intent-aware-resolution.md) and
 [ADR-0036](adr/0036-two-stage-luna-resolution.md).
 
@@ -105,7 +107,7 @@ sensitive messages and unavailable files prevent proof of content absence.
 
 Legacy calls retain `query`, `include_archived`, opt-in `include_content`, exact
 observed `project_label`, `purpose`, `page_size`, `cursor` and `excerpts`. Query
-words are Unicode-lowercase substrings, all required across metadata/messages;
+words are normalized Unicode substrings, all required across metadata/messages;
 maximum 256 bytes and sixteen whitespace terms. `page_size` is 1–20.
 
 `structured` adds a typed AST independent of any model:
@@ -122,14 +124,18 @@ maximum 256 bytes and sixteen whitespace terms. `page_size` is 1–20.
 Supported operations: `and{args}`, `or{args}`, `not{arg}`, `provider{values}`,
 `project{values,source}`, `project_unknown{source}`, `state{values}`,
 `native_id{values}`, `created{range}`, `last_active{range}`, `message_time{range}`
-and `text{value,kind,alternatives}`. Membership is exact; exclusion is NOT over
+`title{value,kind}`, and `text{value,kind,alternatives}`. Membership is exact; exclusion is NOT over
 membership. Nesting is bounded to twelve levels and 128 nodes. Empty groups,
 unknown fields, invalid intervals and unbounded expression growth refuse.
 
 Text `kind` is `contains` (default substring), `phrase` (whitespace-normalized
-contiguous phrase) or `exact` (whole message, lowercase comparison). Text applies
-to supported conversation messages, not titles. Metadata NOT and textual NOT
-therefore have different facts. `alternatives` explicitly expands a text leaf's
+contiguous phrase) or `exact` (whole message). Text applies to supported
+conversation messages. Title applies to the stored session title with
+`contains` or whole-title `exact` matching. Missing titles are UNKNOWN,
+including under NOT. Matching and lexical ranking lowercase Unicode,
+normalize canonical forms and fold acute and grave accents on Latin vowels.
+Other marks, punctuation and compatibility distinctions are retained.
+Display uses the original recorded title. `alternatives` explicitly expands a text leaf's
 acceptable wording; it never changes another hard filter. No raw FTS syntax or SQL
 is accepted. Provider/session identity always includes the selected hidden root.
 

@@ -175,9 +175,9 @@ pub(super) fn request(name: &str, args: Value) -> Result<FindRequest, ErrorData>
 
 pub(super) fn tools() -> Vec<Tool> {
     [
-        ("session_find", "Start autonomous read-only search of past Codex sessions. Pass the original natural-language request in query. AgentMender runs Luna Planner, complete Rust lexical retrieval, Luna Evaluator and verified publication internally. Use session_find_status or session_find_result with the returned job_id.", schema::<FindInput>(), false),
+        ("session_find", "Start autonomous read-only search of past Codex sessions. Pass the original natural-language request in query. Luna plans the query, Rust retrieves, and Luna evaluates when needed. Poll the returned job_id.", schema::<FindInput>(), false),
         ("session_find_status", "Read progress, stage and terminal status of an autonomous search.", schema::<JobInput>(), true),
-        ("session_find_result", "Read final verified confirmed and possible unconfirmed session rows with signed evidence. Wait up to 60 seconds for a terminal result. Follow results.next_offset until all rows are read.", schema::<ResultInput>(), true),
+        ("session_find_result", "Read confirmed and unconfirmed rows with signed selection references and coverage. Follow results.next_offset for all rows.", schema::<ResultInput>(), true),
         ("session_find_cancel", "Cancel an autonomous search and release its temporary resources. This does not modify any Codex session.", schema::<JobInput>(), true),
     ].into_iter().map(|(name, description, input, idempotent)| {
         Tool::new(name, description, input).with_annotations(

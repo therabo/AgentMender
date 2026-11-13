@@ -70,3 +70,5 @@ registered filtering fixed, content/binding implementation deferred).
 - [ADR-0037 — Autonomous MCP session finding](0037-autonomous-mcp-session-find.md)
 
 - [ADR-0038 — Native Codex deletion admission](0038-native-codex-delete-admission.md)
+
+- [ADR-0039 — Luna-planned hybrid retrieval and verified publication](0039-luna-hybrid-query-publication.md)

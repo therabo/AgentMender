@@ -7,9 +7,10 @@ the Earth View camera limits.” The read-only `session_find` tool takes
 that request as its only required argument. AgentMender owns the search job
 and uses [SearchIntent v1](docs/intent-aware-resolution.md) and source-bound evidence.
 One Luna Medium Planner interprets the request and closes before Rust scans
-the full frozen UUID cohort. A distinct Luna Medium Evaluator assesses every
-selected candidate on one thread. Rust revalidates sources and signs result
-pages after the Evaluator closes. A topical project mention
+the full frozen UUID cohort. A distinct Luna Medium Evaluator assesses
+candidates requiring semantic judgment on one thread. Rust verifies metadata
+matches without opening their transcripts and signs fresh results after any
+Evaluator closes. A topical project mention
 leaves cross-project discovery open. The default returns all supported
 matches within the reported coverage.
 

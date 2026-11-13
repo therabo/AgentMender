@@ -104,7 +104,7 @@ impl Cohort {
         .map_err(|_| unavailable())?;
         let started = Instant::now();
         let sink = db.transaction().map_err(|_| unavailable())?;
-        let len = provider_read(root, |source| {
+        let (len, examined) = provider_read(root, |source| {
             if !has_one_thread(source, &scope.caller)? {
                 return Err(discovery_caller_unavailable());
             }
@@ -126,9 +126,11 @@ impl Cohort {
                 .prepare("INSERT INTO cohort(id,metadata) VALUES (?1,?2)")
                 .map_err(|_| unavailable())?;
             let mut len = 0;
+            let mut examined = 0;
             while let Some(row) = rows.next().map_err(|_| unavailable())? {
                 deadline(end)?;
                 rollout_reader::record_metadata_row();
+                examined += 1;
                 let candidate = candidate_row(row, root)?;
                 if candidate_eligible(&candidate, parameters) {
                     let id = candidate.metadata.native_session_id.clone();
@@ -140,10 +142,10 @@ impl Cohort {
                     len += 1;
                 }
             }
-            Ok(len)
+            Ok((len, examined))
         })?;
         sink.commit().map_err(|_| unavailable())?;
-        rollout_reader::record_cohort(len, started.elapsed());
+        rollout_reader::record_cohort(len, examined, started.elapsed());
         Ok(Self {
             scope: scope.clone(),
             db,
@@ -322,6 +324,7 @@ impl Cohort {
         &mut self,
         scope: &CohortScope,
         queue: &CohortQueue,
+        root: &Path,
         end: Instant,
     ) -> Result<CohortQueuePage, ProviderError> {
         if scope != &self.scope {
@@ -345,13 +348,33 @@ impl Cohort {
                 let transaction = self.db.transaction().map_err(|_| unavailable())?;
                 for receipt in receipts {
                     let id = &receipt.metadata.native_session_id;
+                    let binding = discovery_binding(&identity(root, &scope.caller)?);
+                    let valid_basis = match receipt.basis {
+                        ReceiptBasis::VerifiedMetadata => receipt.assessment.is_none() && receipt.citations.is_empty(),
+                        ReceiptBasis::SemanticEvidence => receipt.assessment.as_ref().is_some_and(|a| {
+                            a.disposition == Disposition::VerifiedRelevant && !receipt.citations.is_empty()
+                        }),
+                        ReceiptBasis::PlausibleEvidence => receipt.assessment.as_ref().is_some_and(|a| {
+                            a.disposition == Disposition::Insufficient && a.plausible_alternative && !receipt.citations.is_empty()
+                        }),
+                        ReceiptBasis::RetrievedUnverified => receipt.assessment.as_ref().is_some_and(|a| {
+                            a.disposition == Disposition::Insufficient && !a.plausible_alternative
+                        }),
+                    };
                     if !metadata::uuid(id)
-                        || receipt.assessment.native_session_id != *id
-                        || !(1..=4).contains(&receipt.citations.len())
+                        || receipt.metadata.identity != identity(root, id)?
+                        || !valid_basis
+                        || receipt.assessment.as_ref().is_some_and(|a| a.native_session_id != *id)
+                        || receipt.citations.len() > 4
+                        || receipt.citations.is_empty() != receipt.metadata_ref.is_some()
+                        || receipt.metadata_ref.as_ref().is_some_and(|r| {
+                            *r != MetadataSelection::new(&receipt.metadata, &binding)
+                        })
                         || receipt.citations.iter().any(|reference| {
                             reference.native_session_id != *id
                                 || reference.local_id != receipt.metadata.identity.local_id
                                 || reference.purpose != SearchPurpose::Discovery
+                                || reference.binding_revision != binding
                         })
                     {
                         return Err(cohort_unavailable());
@@ -451,7 +474,7 @@ impl Cohorts {
                 .0
                 .get_mut(&scope.id)
                 .ok_or_else(cohort_unavailable)
-                .and_then(|cohort| cohort.queue(scope, queue, end))
+                .and_then(|cohort| cohort.queue(scope, queue, root, end))
                 .map(Response::CohortQueue),
             Operation::ReleaseCohort(id) => {
                 self.0.remove(id);

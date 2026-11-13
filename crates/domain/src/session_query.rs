@@ -5,6 +5,7 @@ use chrono::{NaiveDate, TimeZone};
 use chrono_tz::Tz;
 use serde::{Deserialize, Serialize};
 use std::{cell::OnceCell, cmp::Ordering};
+use unicode_normalization::UnicodeNormalization;
 
 /// Strong Kleene truth tables; in particular NOT UNKNOWN is UNKNOWN.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -119,13 +120,46 @@ pub enum ProjectSource {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TextMatch {
-    /// Unicode lowercase substring; explicit alternatives expand recall.
+    /// Normalized Unicode substring; explicit alternatives expand recall.
     #[default]
     Contains,
-    /// Whitespace-normalized, Unicode lowercase contiguous phrase.
+    /// Whitespace-normalized contiguous phrase.
     Phrase,
-    /// Complete message equality after Unicode lowercase conversion.
+    /// Complete message equality after Unicode normalization.
     Exact,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TitleMatch {
+    #[default]
+    Contains,
+    Exact,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TitleMatchQuality {
+    Partial,
+    NormalizedExact,
+    OriginalExact,
+}
+
+impl TitleMatch {
+    fn quality(self, title: &str, value: &str) -> Option<TitleMatchQuality> {
+        if title == value {
+            return Some(TitleMatchQuality::OriginalExact);
+        }
+        let title = normalize_search_text(title);
+        let value = normalize_search_text(value);
+        if title == value {
+            Some(TitleMatchQuality::NormalizedExact)
+        } else if self == Self::Contains && title.contains(&value) {
+            Some(TitleMatchQuality::Partial)
+        } else {
+            None
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -163,6 +197,11 @@ pub enum QueryExpr {
     },
     LastActive {
         range: QueryRange,
+    },
+    Title {
+        value: String,
+        #[serde(default)]
+        kind: TitleMatch,
     },
     Text {
         value: String,
@@ -328,6 +367,7 @@ impl QueryExpr {
             Self::Created { range } | Self::LastActive { range } | Self::MessageTime { range } => {
                 range.bounds().is_ok()
             }
+            Self::Title { value, .. } => valid_text(value, 256),
             Self::Text {
                 value,
                 alternatives,
@@ -369,8 +409,8 @@ impl QueryExpr {
                 alternatives,
                 ..
             } => {
-                result.push(value.to_lowercase());
-                result.extend(alternatives.iter().map(|v| v.to_lowercase()));
+                result.push(normalize_search_text(value));
+                result.extend(alternatives.iter().map(|v| normalize_search_text(v)));
             }
             _ => {}
         }
@@ -504,6 +544,21 @@ impl QueryExpr {
     pub fn metadata_truth(&self, metadata: &SessionMetadata) -> Truth {
         self.evaluate(&QueryFacts::metadata_only(metadata))
     }
+    /// Strongest positive title match among the metadata branches proving this filter.
+    pub fn metadata_title_match(&self, metadata: &SessionMetadata) -> Option<TitleMatchQuality> {
+        if self.metadata_truth(metadata) != Truth::True {
+            return None;
+        }
+        match self {
+            Self::And { args } | Self::Or { args } => args
+                .iter()
+                .filter_map(|arg| arg.metadata_title_match(metadata))
+                .max(),
+            Self::Title { value, kind } => kind.quality(metadata.title.as_deref()?, value),
+            _ => None,
+        }
+    }
+
     pub fn evaluate(&self, facts: &QueryFacts<'_>) -> Truth {
         match self {
             Self::And { args } => args
@@ -534,6 +589,13 @@ impl QueryExpr {
             }
             Self::Created { range } => timestamp_truth(range, facts.metadata.created_at),
             Self::LastActive { range } => timestamp_truth(range, facts.metadata.last_active_at),
+            Self::Title { value, kind } => facts
+                .metadata
+                .title
+                .as_deref()
+                .map_or(Truth::Unknown, |title| {
+                    Truth::known(kind.quality(title, value).is_some())
+                }),
             Self::Text {
                 value,
                 kind,
@@ -583,16 +645,62 @@ fn timestamp_truth(range: &QueryRange, timestamp: Option<i64>) -> Truth {
         .zip(timestamp)
         .map_or(Truth::Unknown, |(r, t)| Truth::known(r.contains(t)))
 }
-fn normalized_phrase(value: &str) -> String {
+/// Canonical normalization plus lowercasing and acute/grave folding on Latin
+/// vowels. Keep other marks, punctuation, and compatibility distinctions.
+pub fn normalize_search_text(value: &str) -> String {
+    let mut vowel = false;
     value
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
-        .to_lowercase()
+        .chars()
+        .flat_map(char::to_lowercase)
+        .nfd()
+        .filter(|&c| keep_search_char(c, &mut vowel))
+        .nfc()
+        .collect()
 }
+
+fn keep_search_char(c: char, vowel: &mut bool) -> bool {
+    if !unicode_normalization::char::is_combining_mark(c) {
+        *vowel = matches!(c, 'a' | 'e' | 'i' | 'o' | 'u');
+    }
+    !(*vowel && matches!(c, '\u{0300}' | '\u{0301}'))
+}
+
+/// Find the first normalized term and map the byte offset to the source text.
+pub fn search_match_offset(text: &str, terms: impl IntoIterator<Item = impl AsRef<str>>) -> usize {
+    let folded = normalize_search_text(text);
+    let Some(offset) = terms
+        .into_iter()
+        .filter_map(|term| folded.find(&normalize_search_text(term.as_ref())))
+        .min()
+    else {
+        return 0;
+    };
+    let offset: usize = folded[..offset].nfd().map(char::len_utf8).sum();
+    let mut folded_bytes = 0;
+    let mut vowel = false;
+    for (byte, c) in text.char_indices() {
+        for lower in c.to_lowercase() {
+            unicode_normalization::char::decompose_canonical(lower, |part| {
+                if keep_search_char(part, &mut vowel) {
+                    folded_bytes += part.len_utf8();
+                }
+            });
+        }
+        if folded_bytes > offset {
+            return byte;
+        }
+    }
+    0
+}
+
+fn normalized_phrase(value: &str) -> String {
+    normalize_search_text(&value.split_whitespace().collect::<Vec<_>>().join(" "))
+}
+
 pub struct PreparedText<'a> {
     original: &'a str,
     lower: OnceCell<String>,
+    normalized: OnceCell<String>,
     phrase: OnceCell<String>,
 }
 impl<'a> PreparedText<'a> {
@@ -600,18 +708,23 @@ impl<'a> PreparedText<'a> {
         Self {
             original,
             lower: OnceCell::new(),
+            normalized: OnceCell::new(),
             phrase: OnceCell::new(),
         }
     }
     pub fn lowercase(&self) -> &str {
         self.lower.get_or_init(|| self.original.to_lowercase())
     }
+    pub fn normalized(&self) -> &str {
+        self.normalized
+            .get_or_init(|| normalize_search_text(self.original))
+    }
     fn matches(&self, query: &str, kind: TextMatch) -> bool {
         // A large message is folded once per observed record, not once per
         // query leaf/alternative. Both allocations are bounded by record size.
         match kind {
-            TextMatch::Contains => self.lowercase().contains(&query.to_lowercase()),
-            TextMatch::Exact => self.lowercase() == query.to_lowercase(),
+            TextMatch::Contains => self.normalized().contains(&normalize_search_text(query)),
+            TextMatch::Exact => self.normalized() == normalize_search_text(query),
             TextMatch::Phrase => self
                 .phrase
                 .get_or_init(|| normalized_phrase(self.original))

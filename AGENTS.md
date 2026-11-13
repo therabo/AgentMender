@@ -9,10 +9,11 @@ or `session_find_result` with its job ID until terminal. Follow
 `results.next_offset` and render both result groups with the reported
 coverage and any interruption.
 
-The MCP server owns both Luna stages and the typed Rust resolver. Preserve
-the order Planner exit, complete Rust traversal, Evaluator exit, Rust
+The MCP server owns Luna and the typed Rust resolver. Preserve the order
+Planner exit, complete Rust traversal, conditional Evaluator exit, Rust
 publication. Verify GPT-6 Luna Medium from App Server events. Reuse one
-Evaluator across all batches, context requests and any single-best choice.
+Evaluator across semantic batches, context requests and single-best semantic
+comparisons. Follow ADR-0039 for metadata verification and selection.
 Keep the launcher, credentials and role assets independent of the caller
 workspace. The fixed subprocess boundary carries read-only search data.
 Job metadata grants no management authority.

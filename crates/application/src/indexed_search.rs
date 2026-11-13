@@ -279,7 +279,7 @@ impl SessionSearchReadPort for IndexedSearchReader<'_> {
     }
     fn verify_search_evidence(
         &self,
-        references: &[ContextReference],
+        references: &[SelectionReference],
         excluded: &[ArtifactId],
     ) -> Result<Option<EvidenceVerification>, ProviderError> {
         self.reader.verify_search_evidence(references, excluded)

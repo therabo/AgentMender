@@ -117,7 +117,8 @@ class Scenario:
             assert self.closed == ["planner", "evaluator"]
             assert self.submitted == [str(i) for i in range(self.count)]
             return page("completed")
-        assert self.active == "evaluator"
+        if {"context_requests", "assessments"} & arguments.keys():
+            assert self.active == "evaluator"
         if "context_requests" in arguments:
             self.revision -= 1
             raise ResolverError("invalid_scope")
