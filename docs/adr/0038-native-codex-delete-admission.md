@@ -1,6 +1,27 @@
 # ADR-0038 — Native Codex deletion admission
 
-## Decision
+## MVP decision — 2026-11-13
+
+The native MVP retains exact selection and caller exclusion, then requests one
+human confirmation through MCP form elicitation. The form identifies the selected
+title and UUID and discloses that native deletion may remove spawned descendants.
+Only a client acceptance on that request can proceed. If the client cannot
+deliver the confirmation, the tool stops before execution.
+
+After consent, the configured Codex executable runs `codex delete <UUID> --force`
+once in the original provider home. The MVP delegates cascade and writer behavior
+to the installed command. It uses no compatibility allowlist, transaction,
+fallback, or post-delete probe. Exit zero returns `succeeded`; a nonzero exit,
+timeout or launch error returns `failed`. These states describe the command's
+outcome. A failed command can have partial effects, and a successful command is
+not proof of complete artifact removal or physical storage reclaim.
+
+The bundled Codex App Server `0.167.0-alpha.4.1` advertised form elicitation
+and routed accept and decline for the AgentMender binary in a disposable probe
+with a fake native executable. Desktop GUI consent was not verified. Historical decisions and evidence below retain their original
+scope and results.
+
+## Historical decision
 
 The native deletion MVP accepts one selected Codex UUID and one signed evidence
 reference from the existing search results. It revalidates the selected source
@@ -38,7 +59,7 @@ while the [listing query joins thread rows and excludes attachments](https://git
 The disposable attachment case proves that a successful list can understate the
 effects. This blocks dispatch even for an apparently childless result.
 
-## Admission requirements
+## Historical admission requirements
 
 A native route needs an enforceable scope that covers every affected UUID and
 prevents deletion during a running turn. Once that route is verified, AgentMender
@@ -53,7 +74,7 @@ identity check and profile-supported postconditions for `deleted`. An error
 after possible partial effects is `unknown` and bars automatic retry. A verified
 pre-dispatch refusal is `failed`.
 
-## Local validation
+## Historical local validation
 
 The stdio fixture ran from outside the repository and verified selection from a
 published search row, protected-caller refusal, rejection of forged or malformed

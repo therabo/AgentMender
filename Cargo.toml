@@ -32,6 +32,7 @@ chrono = { version = "0.4.45", default-features = false, features = ["std"] }
 chrono-tz = { version = "0.10.4", default-features = false, features = ["std"] }
 hmac = "0.13.0"
 getrandom = "0.4.3"
+uuid = { version = "1.29.0", default-features = false }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

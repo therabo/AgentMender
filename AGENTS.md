@@ -74,6 +74,16 @@ Keep its immutable UUID cohort separate from live rollout revisions. Only
 independent diagnostic and management search retain the cursor contract in
 [ADR-0028](docs/adr/0028-search-reliability-and-scoped-freshness.md). Its fingerprints bind eligible identities, predicate leaf truth, lexical facts and sort keys; unused display facts are read fresh. Relevant membership/order and selected source changes still refuse. Only fixed active/archive counterparts of missing locators may be tried, with exact header UUID, NOFOLLOW, single-link and revision checks. No recursive scanner or root widening. Positive next offsets mean unfinished messages; completed messages advance. Reject identical continuation pairs. Session-wide semantic negatives require trusted complete coverage, fresh source/filter validation and parent-vetted negative evidence. Keep real receipts outside Git. No management admission is added.
 
+## Native Codex delete MVP (ADR-0038)
+
+The [MVP decision](docs/adr/0038-native-codex-delete-admission.md#mvp-decision--2026-11-13)
+applies specifically to `session_delete`. Keep signed exact selection and existing
+caller exclusions. Obtain one human confirmation through the MCP client before
+running the fixed Codex delete command once with the configured executable and
+original root. Return the command outcome; never retry, fall back, or verify
+artifact removal. The historical compatibility, durable approval and isolation
+rules below still govern their existing paths.
+
 ## Current product direction
 
 Read [ADR-0022](docs/adr/0022-product-first-session-lifecycle.md), the
@@ -136,8 +146,8 @@ or infer caller protection. Synthetic onboarding is retired; preserve determinis
 regression fixtures, not the standalone onboarding generator.
 
 The existing P0-C1 destructive fallback selects exact stable 0.166.0 Darwin arm64 scoped-cleanup-v1 Legacy/WAL.
-Native delete remains unadmitted; no fallback after unknown native effects. Keep
-schema-3/4, old hashes/journals/outcomes and historical CLI meanings unchanged.
+This fallback is independent of the ADR-0038 native delete MVP. Keep schema-3/4,
+old hashes/journals/outcomes and historical CLI meanings unchanged.
 Protected conversational schema-2 plans have operation-qualified primary reporting.
 Do not start Claude deletion, bulk/project cleanup, Desktop global mutation or
 additional artifact families. Full P0-C1 PASS needs actual Codex client + independent

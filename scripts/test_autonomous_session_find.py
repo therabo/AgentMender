@@ -17,6 +17,7 @@ TERMINAL = {"completed", "interrupted", "cancelled"}
 APP_SERVER = r'''#!/usr/bin/python3
 import json
 from pathlib import Path
+import os
 import sys
 import time
 import uuid
@@ -24,6 +25,13 @@ import uuid
 if "--version" in sys.argv:
     print("codex-cli 0.166.0")
     raise SystemExit()
+
+if sys.argv[1:2] == ["delete"]:
+    root = Path(os.environ["CODEX_HOME"])
+    assert root == Path.cwd() and (root / "state_5.sqlite").exists(), root
+    with (root.parent / "native-delete.calls").open("a") as log:
+        print(json.dumps({"argv": sys.argv[1:], "root": str(root)}), file=log)
+    raise SystemExit(json.loads((root / "auth.json").read_text())["delete_exit"])
 
 def write(value):
     print(json.dumps(value), flush=True)
@@ -96,7 +104,7 @@ for line in sys.stdin:
 
 
 class FindClient(Client):
-    def __init__(self, binary, root, caller, codex, *, protect=(), cwd=None):
+    def __init__(self, binary, root, caller, codex, *, protect=(), cwd=None, elicit=False):
         self.child = subprocess.Popen(
             [str(binary), "--provider", "codex", "--codex-root", str(root),
              "--codex-executable", str(codex),
@@ -106,8 +114,9 @@ class FindClient(Client):
         )
         self.caller = caller
         self.serial = 0
+        capabilities = {"elicitation": {"form": {}}} if elicit else {}
         self.info = self.exchange("initialize", {"protocolVersion": "2025-11-25",
-                   "capabilities": {}, "clientInfo": {"name": "session-find-fixture", "version": "1"}})
+                   "capabilities": capabilities, "clientInfo": {"name": "session-find-fixture", "version": "1"}})
         self.send({"jsonrpc": "2.0", "method": "notifications/initialized"})
 
     def tool(self, name, caller=None, meta=True, **arguments):
@@ -136,9 +145,9 @@ class FindClient(Client):
         return groups
 
 
-def auth(root, mode=None):
+def auth(root, mode=None, delete_exit=0):
     path = root / "auth.json"
-    path.write_text(json.dumps({"fixture": mode}))
+    path.write_text(json.dumps({"fixture": mode, "delete_exit": delete_exit}))
     path.chmod(0o600)
 
 
@@ -198,6 +207,10 @@ def scale(binary, codex, root, count, protect=False):
         evidence = next(iter(rows["confirmed"]))
         context = client.tool("session_context", target=evidence["target"], evidence_ref=evidence["evidence_refs"][0])
         assert context.get("error") is None, context
+        if protect:
+            delete = client.tool("session_delete", native_session_id=evidence["native_session_id"],
+                                 evidence_ref=evidence["evidence_refs"][0])
+            assert delete == {"error": "confirmation_unavailable"}, delete
     finally:
         client.close()
     after = resource.getrusage(resource.RUSAGE_CHILDREN)
@@ -208,10 +221,60 @@ def scale(binary, codex, root, count, protect=False):
                      "system_cpu_s": round(after.ru_stime - before.ru_stime, 3)}), flush=True)
 
 
+def delete_outcomes(client, root, codex, caller, row, selection):
+    calls = root.parent / "native-delete.calls"
+
+    def count():
+        return len(calls.read_text().splitlines()) if calls.exists() else 0
+
+    def request(action, *, content=None, missing=False):
+        before = count()
+        client.serial += 1
+        client.send({"jsonrpc": "2.0", "id": client.serial, "method": "tools/call",
+                     "params": {"name": "session_delete", "arguments": selection,
+                                "_meta": {"threadId": caller}}})
+        prompt = json.loads(client.child.stdout.readline())
+        assert prompt["method"] == "elicitation/create", prompt
+        assert prompt["params"]["mode"] == "form" and prompt["params"]["requestedSchema"]["properties"] == {}, prompt
+        message = prompt["params"]["message"]
+        assert row["title"] in message and row["native_session_id"] in message and "subagents" in message, prompt
+        assert count() == before, "Codex ran before consent"
+        parked = codex.with_suffix(".parked")
+        if missing:
+            codex.rename(parked)
+        try:
+            client.send({"jsonrpc": "2.0", "id": prompt["id"],
+                         "result": {"action": action, "content": content}})
+            reply = json.loads(client.child.stdout.readline())
+            assert "method" not in reply and reply["id"] == client.serial, reply
+            return reply["result"]
+        finally:
+            if missing:
+                parked.rename(codex)
+
+    before = inventory(root)
+    for action in ("decline", "cancel"):
+        assert request(action)["structuredContent"] == {"error": "cancelled"}
+    assert request("accept", content={"confirm": True})["structuredContent"] == {"error": "confirmation_unavailable"}
+    assert count() == 0 and inventory(root) == before
+
+    for status, exit_code, missing, expected_count in (
+        ("succeeded", 0, False, 1), ("failed", 9, False, 2), ("failed", 0, True, 2)
+    ):
+        auth(root, delete_exit=exit_code)
+        before = inventory(root)
+        reply = request("accept", content={}, missing=missing)
+        assert reply["structuredContent"] == {"status": status, "native_session_id": row["native_session_id"]}, reply
+        assert reply.get("isError", False) == (status == "failed"), reply
+        assert count() == expected_count and inventory(root) == before
+    for call in calls.read_text().splitlines():
+        assert json.loads(call) == {"argv": ["delete", row["native_session_id"], "--force"], "root": str(root)}
+
+
 def isolation(binary, codex, root):
     truth, caller = fixture(root, 6, matched=3)
     auth(root)
-    client = FindClient(binary, root, caller, codex, cwd="/private/tmp")
+    client = FindClient(binary, root, caller, codex, cwd="/private/tmp", elicit=True)
     try:
         catalog = client.exchange("tools/list", {})
         schema = next(tool["inputSchema"] for tool in catalog["tools"] if tool["name"] == "session_find")
@@ -240,13 +303,13 @@ def isolation(binary, codex, root):
         assert other["authenticated_caller_binding"] is False
 
         delete = next(tool for tool in catalog["tools"] if tool["name"] == "session_delete")
-        assert delete["annotations"]["readOnlyHint"] is True
+        annotations = delete["annotations"]
+        assert (annotations["readOnlyHint"], annotations["destructiveHint"],
+                annotations["idempotentHint"]) == (False, True, False)
+        assert set(delete["outputSchema"]["properties"]) == {"status", "native_session_id"}
         row = published[0]
         selection = {"native_session_id": row["native_session_id"], "evidence_ref": row["evidence_refs"][0]}
         before = inventory(root)
-        blocked = client.tool("session_delete", different, **selection)
-        assert blocked["status"] == "failed" and blocked["reason"] == "native_delete_not_admitted", blocked
-        assert blocked["native_session_id"] == row["native_session_id"] and blocked["title"] == row["title"], blocked
         wrong_caller = client.tool("session_delete", **selection)
         assert wrong_caller["error"] == "stale_cursor", wrong_caller
         caller_target = client.tool("session_delete", row["native_session_id"], **selection)
@@ -263,7 +326,8 @@ def isolation(binary, codex, root):
             response = json.loads(client.child.stdout.readline())
             assert response["id"] == client.serial and response["error"]["code"] == -32602, response
         assert inventory(root) == before and not active_children(client.child.pid)
-        print("Native selection, protected caller, forged confirmation and unchanged provider files passed.")
+        delete_outcomes(client, root, codex, different, row, selection)
+        print("Native selection, protected caller, single consent, exact argv/root and process outcomes passed.")
     finally:
         client.close()
     for mode, reason in (("wrong_model", "unexpected_model_or_effort"),

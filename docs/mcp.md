@@ -2,7 +2,7 @@
 
 ## Conversational resolution
 
-The read-only `--session-search` catalog exposes `session_find` with one
+The read-only `session_find` tool in `--session-search` mode has one
 required argument, `query`. AgentMender starts a job that runs both Luna
 stages, Rust retrieval and publication. `session_find_status`,
 `session_find_result` and `session_find_cancel` take the returned job ID.
@@ -20,10 +20,25 @@ In `--session-search` mode, resolve an ordinal or label to one result row from
 server checks the signed evidence against the exact source in the configured
 Codex root and excludes the apparent caller and configured protections.
 
-An exact selection returns the title, UUID, and `status: "failed"` with
-`reason: "native_delete_not_admitted"`. The installed native delete can remove
-descendants omitted by the native listing. AgentMender refuses before asking
-for confirmation or dispatching. See the [disposable native probes](adr/0038-native-codex-delete-admission.md).
+After validation, AgentMender sends one MCP form elicitation with the title, UUID
+and a warning that Codex can delete spawned subagents. Use a client that
+supports form elicitation and routes it to a human. For Codex this requires an
+interactive approval policy that allows MCP elicitation; see the
+[Codex configuration reference](https://learn.chatgpt.com/docs/config-file/config-reference).
+The MCP client displays the accept and cancel controls. Declining or cancelling
+returns `{"error":"cancelled"}`; unavailable confirmation returns
+`{"error":"confirmation_unavailable"}`. Neither starts Codex. The tool takes
+no approval argument. Caller metadata and signed evidence identify the selection;
+neither authorizes deletion. The bundled Codex App Server routed accept and
+decline for AgentMender in a disposable test. The Desktop GUI has not been
+verified.
+
+Accepting runs `codex delete <UUID> --force` once with the configured executable
+and original provider root as `CODEX_HOME`. After dispatch the result has just
+`status` and `native_session_id`: exit zero is `succeeded`; a launch error,
+a 30-second execution timeout or nonzero exit is `failed`. A failure may follow
+partial effects. No retry or artifact verification follows. See
+[ADR-0038](adr/0038-native-codex-delete-admission.md).
 
 ## P0-SR4 ordinary discovery
 
@@ -91,8 +106,9 @@ source and caller binding. These advanced reads are available in `--session-sear
 `preview_removal` returns a blocked compatibility
 assessment rather than a Ready plan. Its output schema admits either that typed
 assessment or the historical supported preview. A read-mode assessment has no plan
-or digest and `execution_permitted: false`. Other removal calls fail explicitly
-with `read_only_removal_unavailable`, without initializing/reading owned state.
+or digest and `execution_permitted: false`. Historical preparation, status and
+execution handoff fail with `read_only_removal_unavailable`, without opening
+owned state. The separate `session_delete` tool uses the native flow above.
 `--session-search` and `--session-removal` are mutually exclusive; default remains
 eight tools. Read-only metadata availability never transfers mutation authority.
 

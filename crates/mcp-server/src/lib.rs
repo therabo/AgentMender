@@ -1,4 +1,4 @@
-//! Read-only, bounded MCP adapter. Provider calls remain synchronous and local to workers.
+//! Bounded MCP adapter. Native deletion uses a separate, human-confirmed dispatch.
 mod conversation;
 pub mod dto;
 mod find;
@@ -8,5 +8,6 @@ pub mod projection;
 mod protocol;
 pub use conversation::ConversationExecutor;
 pub use protocol::{
-    Executor, run_stdio, run_stdio_with_conversation, serve_io, serve_io_with_conversation,
+    Executor, NativeDeleteExecutor, SessionSearch, run_stdio, run_stdio_with_conversation,
+    serve_io, serve_io_with_conversation,
 };

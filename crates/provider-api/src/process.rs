@@ -1,17 +1,16 @@
-//! Provider processes are unavailable without verified OS write denial (ADR-0001).
+//! Read-only launches require OS write denial. Confirmed Codex delete is separate (ADR-0038).
 use crate::ProviderError;
 use crate::evidence::EvidenceSandbox;
 use agentmender_domain::ProviderKind;
-use std::{path::Path, process::Child};
-
-#[cfg(target_os = "macos")]
 use std::{
-    io::Read,
-    process::{Command, Stdio},
-    sync::mpsc,
+    path::Path,
+    process::{Child, Command, Stdio},
     thread,
     time::{Duration, Instant},
 };
+
+#[cfg(target_os = "macos")]
+use std::{io::Read, sync::mpsc};
 
 #[cfg(target_os = "macos")]
 const PROFILE: &str = "(version 1)(allow default)(deny file-write*)(deny network*)(deny process-fork)(deny mach-lookup)";
@@ -37,6 +36,52 @@ fn command(executable: &Path) -> Result<Command, ProviderError> {
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
     Ok(command)
+}
+
+/// Run one already-confirmed native delete in the original provider home.
+pub fn run_codex_delete(executable: &Path, root: &Path, id: uuid::Uuid, timeout: Duration) -> bool {
+    if !executable.is_absolute() || !root.is_absolute() {
+        return false;
+    }
+    let mut command = Command::new(executable);
+    command.env_clear();
+    for name in [
+        "HOME",
+        "PATH",
+        "TMPDIR",
+        "SystemRoot",
+        "USERPROFILE",
+        "TEMP",
+        "TMP",
+    ] {
+        if let Some(value) = std::env::var_os(name) {
+            command.env(name, value);
+        }
+    }
+    let Ok(mut child) = command
+        .arg("delete")
+        .arg(id.hyphenated().to_string())
+        .arg("--force")
+        .env("CODEX_HOME", root)
+        .current_dir(root)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+    else {
+        return false;
+    };
+    let started = Instant::now();
+    while started.elapsed() < timeout {
+        match child.try_wait() {
+            Ok(Some(status)) => return status.success(),
+            Ok(None) => thread::sleep(Duration::from_millis(10)),
+            Err(_) => break,
+        }
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+    false
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -646,6 +691,37 @@ mod tests {
         assert!(!status.success());
         assert_eq!(std::fs::read(&db).unwrap(), b"allowed");
     }
+    #[cfg(unix)]
+    #[test]
+    fn native_delete_timeout_stops_the_fixture_process() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tempfile::tempdir().unwrap();
+        let executable = root.path().join("fake-codex");
+        std::fs::write(
+            &executable,
+            "#!/bin/sh\nprintf '%s\\n' \"$$\" > pid\nexec /bin/sleep 15\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
+
+        assert!(!run_codex_delete(
+            &executable,
+            root.path(),
+            uuid::Uuid::nil(),
+            Duration::from_millis(500),
+        ));
+        let pid = std::fs::read_to_string(root.path().join("pid")).unwrap();
+        let status = Command::new("/bin/kill")
+            .args(["-0", pid.trim()])
+            .stderr(Stdio::null())
+            .status()
+            .unwrap();
+        assert!(
+            !status.success(),
+            "timed out fixture should have been reaped"
+        );
+    }
+
     #[test]
     fn banner_parser_keeps_exact_prereleases_and_rejects_ambiguous_output() {
         assert_eq!(

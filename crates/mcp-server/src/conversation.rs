@@ -1429,10 +1429,10 @@ pub(super) fn tools(discovery: bool) -> Vec<Tool> {
         ));
         registry.push((
             "session_delete",
-            "For a user's deletion request, select one row from session_find_result and pass its native_session_id and one of its evidence_refs. Native deletion is currently blocked before confirmation. Report the reason returned to the user.",
+            "Delete one selected Codex session. Pass native_session_id and one evidence_ref from the selected session_find_result row. The client asks the user once before native deletion, which may also delete spawned subagents. Report the result and do not retry automatically.",
             schema::<NativeDeleteInput>(),
-            schema::<NativeDeleteBlockedView>(),
-            true,
+            schema::<NativeDeleteView>(),
+            false,
         ));
     }
     registry
@@ -1443,8 +1443,8 @@ pub(super) fn tools(discovery: bool) -> Vec<Tool> {
             tool.annotations = Some(
                 ToolAnnotations::new()
                     .read_only(read)
-                    .destructive(false)
-                    .idempotent(name != "session_resolve")
+                    .destructive(name == "session_delete")
+                    .idempotent(!matches!(name, "session_resolve" | "session_delete"))
                     .open_world(true),
             );
             tool
@@ -1681,12 +1681,43 @@ fn safe(v: &str) -> String {
 }
 
 #[derive(Serialize, JsonSchema)]
-struct NativeDeleteBlockedView {
-    status: &'static str,
-    reason: &'static str,
-    native_session_id: String,
-    title: Option<String>,
-    message: &'static str,
+#[serde(deny_unknown_fields)]
+struct NativeDeleteView<'a> {
+    status: NativeDeleteStatus,
+    native_session_id: &'a str,
+}
+
+#[derive(Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+enum NativeDeleteStatus {
+    Succeeded,
+    Failed,
+}
+
+pub(super) fn native_delete_result(id: &str, succeeded: bool) -> serde_json::Value {
+    serde_json::to_value(NativeDeleteView {
+        status: if succeeded {
+            NativeDeleteStatus::Succeeded
+        } else {
+            NativeDeleteStatus::Failed
+        },
+        native_session_id: id,
+    })
+    .expect("native delete result serializes")
+}
+
+pub(super) fn native_delete_prompt(session: &agentmender_domain::SessionMetadata) -> String {
+    let title = session
+        .title
+        .as_deref()
+        .map(safe)
+        .filter(|s| !s.trim().is_empty());
+    let title = title.as_deref().unwrap_or("Untitled");
+    format!(
+        "Permanently delete the Codex session {} — {}? Codex may also delete subagents spawned by this session.",
+        serde_json::to_string(title).expect("title serializes"),
+        session.native_session_id,
+    )
 }
 
 fn label(
@@ -1767,13 +1798,7 @@ pub(super) fn project(
     use crate::projection::ProjectionError;
     let value = match response {
         ConversationResponse::InternalAcknowledged => Ok(serde_json::Value::Null),
-        ConversationResponse::NativeDeleteBlocked(session) => serde_json::to_value(NativeDeleteBlockedView {
-            status: "failed",
-            reason: "native_delete_not_admitted",
-            native_session_id: session.native_session_id,
-            title: session.title.as_deref().map(safe).filter(|s| !s.trim().is_empty()),
-            message: "Deletion was blocked before dispatch. The installed Codex deletion contract does not establish the full affected session scope.",
-        }),
+        ConversationResponse::NativeDeleteSelection(_) => unreachable!("selection stays internal"),
         ConversationResponse::Resolution(result) => serde_json::to_value(resolution_view(*result, projector)),
         ConversationResponse::EvidenceSearch(result) => {
             let search_purpose = result.parameters.purpose;

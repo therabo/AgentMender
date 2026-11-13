@@ -1,10 +1,10 @@
-//! Fixed trusted launch composition. Human approval remains in approvals.rs.
+//! Fixed launch composition for conversation tools and the native delete executor.
 use super::{Args, CliError, ErrorCode, SelectedProvider};
 use agentmender_application::{
     ApplicationError,
     conversation::{ConversationRequest, ConversationService},
 };
-use agentmender_mcp_server::ConversationExecutor;
+use agentmender_mcp_server::{ConversationExecutor, NativeDeleteExecutor};
 use agentmender_provider_api::ProviderError;
 use std::{path::Path, sync::Arc};
 
@@ -84,6 +84,26 @@ pub(super) fn executor(
         .dispatch(request, root, control)
     }))
 }
+/// Composed separately from the reader; MCP invokes this only after confirmation.
+pub(super) fn native_delete_executor(args: &Args) -> NativeDeleteExecutor {
+    let root = args.codex_root.clone().expect("configured Codex root");
+    let executable = args.codex_executable.clone();
+    Arc::new(move |selection| {
+        let (Some(executable), Ok(id)) = (
+            &executable,
+            uuid::Uuid::parse_str(&selection.session().native_session_id),
+        ) else {
+            return false;
+        };
+        agentmender_provider_api::process::run_codex_delete(
+            executable,
+            &root,
+            id,
+            std::time::Duration::from_secs(30),
+        )
+    })
+}
+
 fn unavailable() -> ApplicationError {
     ProviderError::CapabilityUnavailable(
         "protected conversation configuration or state unavailable".into(),

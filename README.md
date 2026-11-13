@@ -21,6 +21,16 @@ See the [resolution workflow](docs/intent-aware-resolution.md),
 [search contract](docs/session-search.md) and
 [autonomous search acceptance](docs/milestones/autonomous-session-find.md).
 
+## Delete one selected Codex session
+
+Ask Codex to delete a session from the search results. AgentMender checks the
+selected UUID and signed evidence, then the MCP client asks once for confirmation,
+showing the title, UUID and possible deletion of spawned subagents. On acceptance,
+AgentMender runs `codex delete <UUID> --force` using the configured executable
+and original Codex home. The result is `succeeded` or `failed` with the UUID.
+These states report the command outcome. A failure can follow partial effects.
+See the [MCP client requirements](docs/mcp.md#native-deletion-request).
+
 ## P0-SR3 progressive history
 
 Compressed sources are no longer refused because their total size exceeds 64 MiB.
@@ -35,7 +45,7 @@ See [traversal and operational limits](docs/progressive-history.md) and
 until an authenticated host route exists. Diagnostics require explicit
 `purpose:"diagnostic"`; they are not manageable-session lists. Real caller
 identification remains **OPEN**; [the missing host contract](docs/mcp-caller-identity.md)
-is explicit. No new deletion capability is introduced.
+is explicit and separate from native delete selection and consent.
 
 AgentMender is an **MCP-native session lifecycle manager for AI coding agents**.
 Its initial target providers are **OpenAI Codex and Anthropic Claude Code**.
@@ -66,9 +76,9 @@ search returns `caller_identity_required` with zero candidates because the insta
 MCP transport does not attest exclusive chat routing. A privileged declaration
 alone cannot admit it. Diagnostic browsing is not a manageable deletion list.
 
-Read-only search remains independent of destructive compatibility. No current
-native delete or Claude mutation profile is added; approval/recovery semantics
-and all historical removal evidence are preserved.
+Read-only search remains independent of destructive compatibility. The native
+Codex delete MVP is separate from historical durable removal and its acceptance
+criteria. There is no Claude mutation profile.
 
 ## What works today
 
@@ -77,12 +87,12 @@ and all historical removal evidence are preserved.
 | Provider discovery, scan and inspection | Implemented with explicit partial coverage and exact compatibility limits |
 | Codex inventory | Real metadata search with validated column/value contract; historical App Server scans remain separate |
 | Claude inventory | Partial observed Desktop sidecar metadata; synthetic Code fixtures; no general live SDK inventory |
-| MCP | Eight default read-only tools. Explicit `--session-search` adds caller-scoped resolution, discovery and context alongside the existing opt-in tool catalog. |
+| MCP | Eight default read-only tools. Explicit `--session-search` adds caller-scoped search and context, plus human-confirmed native Codex deletion. |
 | Session search | Typed Boolean/time/project filters, unknown-safe negatives, FTS5 passages and bounded continuation. The read-only resolver uses a frozen UUID cohort, Luna assessments and source-bound publication. |
 | Management-session exclusion | Guaranteed real mode refuses with zero candidates until enforceable host binding exists; typed fixture exclusion precedes counts/ranking/paging/context; launch-protected diagnostic identities stay excluded |
 | Human approval and durable transactions | Implemented local terminal review, one-shot authenticated grants, journal and read-only reconciliation |
 | Codex primary cleanup | M8.2 PASS for exact 0.166.0/macOS arm64, unshared Legacy plain history and reviewed WAL schema |
-| Native Codex mutation | Conditional historical unarchive handoff; real native plans remain blocked; archive/delete unsupported |
+| Native Codex mutation | Single-session delete after MCP client confirmation; separate historical unarchive handoff |
 | Claude mutation | No enabled adapter/profile; investigated project-purge contracts remain unsafe for session removal |
 | Complete Desktop removal | Unfinished/deferred; schema-4 candidates unadmitted; unsafe shared global writes refused |
 | Bulk management / broad artifact cleanup | Deferred |
@@ -98,8 +108,9 @@ its stronger Desktop assessment remains incomplete. See the
 Eight Rust crates keep the domain, read-only provider ports, application services,
 Codex/Claude adapters, persistence, CLI and MCP interface separate.
 [Architecture](docs/architecture.md) describes the current dependency boundaries.
-Core session lifecycle and optional deep artifact cleanup share the existing
-protected execution engine; exhaustive Desktop cleanup is not an MVP prerequisite.
+Historical session lifecycle and artifact cleanup use the protected execution
+engine below. The native delete MVP uses the separate
+[ADR-0038 decision](docs/adr/0038-native-codex-delete-admission.md#mvp-decision--2026-11-13).
 
 - Exact provider/root/session identity and fresh immutable plans bound scope.
 - Native provider operations are preferred when their exact-version effects fit
@@ -140,7 +151,7 @@ The [private index](docs/full-text-index.md) is an explicit cache for independen
 The resolver scans the captured cohort live and uses
 [Luna Medium](docs/luna-session-relevance.md) for bounded evidence assessment.
 
-### Read-only conversational search
+### Conversational search and native deletion
 
 Register the compiled executable globally in Codex and use absolute paths
 for the executable, Codex home and installed Codex CLI. For example:
@@ -155,7 +166,7 @@ The autonomous host runs on macOS with the system Python 3 and a signed-in
 Codex CLI with a private file credential in the configured root. AgentMender
 embeds the workflow and role profiles in its binary. Refresh the AgentMender
 MCP connection after replacing the binary and verify that the new catalog
-advertises `session_find`. See [connection and job behavior](docs/intent-aware-resolution.md).
+advertises `session_find` and `session_delete`. See [connection and job behavior](docs/intent-aware-resolution.md).
 
 [Setup, current limits and human acceptance](docs/p0-c1-manual-acceptance.md).
 

@@ -2,7 +2,7 @@
 
 Ask Codex for a past conversation in ordinary language. For example, “Where
 did we analyze Cesium rendering performance for MISSION1?” With the global
-read-only `mcp --session-search` registration, Codex calls `session_find`.
+`mcp --session-search` registration, Codex calls `session_find`.
 
 ```json
 {"query":"Where did we analyze Cesium rendering performance for MISSION1?"}
@@ -20,7 +20,7 @@ references. Use `session_discover` for deterministic inventory.
 
 ## Installation and connection lifetime
 
-Use the [global MCP registration](../README.md#read-only-conversational-search)
+Use the [global MCP registration](../README.md#conversational-search-and-native-deletion)
 with the compiled binary and the installed Codex CLI. The launcher is
 verified on macOS and uses `/usr/bin/python3`. The binary includes the
 coordinator, SearchIntent schema and both role profiles. The App Server

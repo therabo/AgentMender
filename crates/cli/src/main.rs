@@ -108,7 +108,7 @@ enum Action {
     },
     Providers,
     Mcp {
-        /// Opt in to bounded real-session metadata/content reads and blocked assessment.
+        /// Opt in to Codex session search and human-confirmed native deletion.
         #[arg(long, conflicts_with = "session_removal")]
         session_search: bool,
         /// Opt in to metadata disclosure and durable primary-removal preparation.
@@ -756,9 +756,9 @@ fn run(args: Args) -> Result<bool, CliError> {
             }
             None
         };
-        let find = if *session_search {
-            Some(
-                session_find::executor(session_find::Launch {
+        let session_search = if *session_search {
+            Some(agentmender_mcp_server::SessionSearch {
+                find: session_find::executor(session_find::Launch {
                     codex: config.codex_executable.clone(),
                     root: config.codex_root.clone().expect("read-only root checked"),
                     home: factory_environment
@@ -772,7 +772,8 @@ fn run(args: Args) -> Result<bool, CliError> {
                         "search job runtime unavailable",
                     )
                 })?,
-            )
+                native_delete: conversation::native_delete_executor(&config),
+            })
         } else {
             None
         };
@@ -808,7 +809,7 @@ fn run(args: Args) -> Result<bool, CliError> {
                     .dispatch(request, control)
             },
         );
-        agentmender_mcp_server::run_stdio_with_conversation(executor, conversation, find)
+        agentmender_mcp_server::run_stdio_with_conversation(executor, conversation, session_search)
             .map_err(|_| CliError::new(ErrorCode::OutputError, "MCP transport failed"))?;
         return Ok(false);
     }

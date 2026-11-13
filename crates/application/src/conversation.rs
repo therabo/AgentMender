@@ -70,11 +70,20 @@ pub enum ConversationResponse {
         session: SessionMetadata,
         compatibility: SessionReadCompatibility,
     },
-    NativeDeleteBlocked(SessionMetadata),
+    NativeDeleteSelection(NativeDeleteSelection),
     Transactions(Vec<RemovalStatus>),
 }
 
-/// ADR-0038 admits exact selection only. The native cascade is unverified.
+/// An exact selection revalidated against the original Codex root. Carries no consent.
+pub struct NativeDeleteSelection(SessionMetadata);
+
+impl NativeDeleteSelection {
+    pub fn session(&self) -> &SessionMetadata {
+        &self.0
+    }
+}
+
+/// Reuse the read-only evidence check before the MCP client asks for consent.
 pub fn native_delete_selection(
     service: &crate::session_search::SessionSearchService<'_>,
     reference: ContextReference,
@@ -98,7 +107,9 @@ pub fn native_delete_selection(
         .verify_search_evidence(&[reference], control)?
         .and_then(|verified| verified.sessions.into_iter().next().flatten())
         .ok_or(ApplicationError::StaleSearchEvidence)?;
-    Ok(ConversationResponse::NativeDeleteBlocked(session))
+    Ok(ConversationResponse::NativeDeleteSelection(
+        NativeDeleteSelection(session),
+    ))
 }
 
 #[derive(Debug, Serialize)]
