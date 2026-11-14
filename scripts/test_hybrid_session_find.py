@@ -136,21 +136,25 @@ def rust_cases(binary, root):
         assert set(rows) == {exact, archived}
         assert all(row["title_match"] == "partial" for row in rows.values())
 
-        rows, alternatives, page = resolve(client, group("or", title("Pokémon", "contains"), TEXT), assess)
-        assert set(rows) == {exact, archived, discussion}, rows
+        rows, alternatives, page = resolve(client, group("or", title("Pokémon", "contains"), TEXT))
+        assert set(rows) == {exact, archived, discussion, uncertain, outside, rejected}, rows
+        assert not alternatives and not seen
+        assert page["progress"]["candidates_evaluated"] == 0
+        assert rows[discussion]["match_basis"] == "verified_lexical"
+        assert all(row["evidence_refs"] for row in rows.values())
+
+        rows, alternatives, page = resolve(client, TEXT, assess, activity="event")
+        assert set(rows) == {discussion}, rows
         assert seen == {discussion, uncertain, outside, rejected}
         assert page["progress"]["candidates_evaluated"] == 4
-        assert page["progress"]["published"] == 5
-        assert page["progressive_coverage"]["not_published_reasons"] == {"semantic_rejection": 1}
-        assert page["progressive_coverage"]["unresolved_predicates"] == 1
         assert rows[discussion]["match_basis"] == "semantic_evidence"
         assert alternatives[outside]["match_basis"] == "plausible_evidence"
         assert alternatives[uncertain]["match_basis"] == "retrieved_unverified"
-        assert alternatives[uncertain]["title"] == "Riferimento importato"
+        assert page["progressive_coverage"]["not_published_reasons"]["semantic_rejection"] == 1
         assert all(row["evidence_refs"] for row in (*rows.values(), *alternatives.values()))
 
         seen.clear()
-        rows, alternatives, _ = resolve(client, group("and", PROJECT, DATE, TEXT), assess, activity="discussion")
+        rows, alternatives, _ = resolve(client, group("and", PROJECT, DATE, TEXT), assess, activity="event")
         assert seen == {discussion, uncertain, rejected}
         assert set(rows) == {discussion} and set(alternatives) == {uncertain}
         rows, _, page = resolve(client, {"op": "not", "arg": PROJECT})
@@ -198,10 +202,11 @@ def simulated_model_cases(binary, root, fake):
 
         second = client.terminal(client.tool("session_find", query=CONTENT_QUERY))
         assert second["reason"] == "source_unavailable", second
-        assert set(second["metrics"]["luna"]) == {"planner", "evaluator"}, second
+        assert set(second["metrics"]["luna"]) == {"planner"}, second
         rows = client.rows(second)
         assert discussion in {row["native_session_id"] for row in rows["confirmed"]}, rows
-        assert uncertain in {row["native_session_id"] for row in rows["possible_unconfirmed"]}, rows
+        assert uncertain in {row["native_session_id"] for row in rows["confirmed"]}, rows
+        assert {row["match_basis"] for row in rows["confirmed"]} == {"verified_lexical"}
         with sqlite3.connect(root / "state_5.sqlite") as db:
             db.execute("UPDATE threads SET archived=1 WHERE id=?", (exact,))
         assert "error" in client.tool("session_delete", **selection)
@@ -237,7 +242,7 @@ def live(binary, root, codex, credential_file):
                                            ("sessions_examined", "sources_inspected", "candidates_staged", "candidates_evaluated",
                                             "bytes_read", "compressed_bytes", "published")
                                            if terminal["progress"] and key in terminal["progress"]},
-                              "rows": {kind: [{key: row[key] for key in ("native_session_id", "title", "match_basis")}
+                              "rows": {kind: [{key: row[key] for key in ("native_session_id", "title", "match_basis") if key in row}
                                               for row in group] for kind, group in rows.items()}},
                              ensure_ascii=False), flush=True)
             assert plan, terminal
@@ -249,15 +254,52 @@ def live(binary, root, codex, credential_file):
                 assert set(terminal["metrics"]["luna"]) == {"planner"}, terminal
                 assert ids == {exact, archived} and terminal["progress"]["bytes_read"] == 0, rows
             else:
-                assert plan.get("activity") == "discussion", plan
+                assert plan.get("activity") in (None, "any", "discussion"), plan
                 assert not plan.get("required_outcome") and not plan.get("excluded_outcome"), plan
                 search_terms = json.dumps([plan["hints"], plan.get("filter")], ensure_ascii=False).lower()
                 unaccented = "".join(c for c in unicodedata.normalize("NFD", search_terms)
                                      if not unicodedata.combining(c))
                 assert "pokemon" in unaccented and "elimin" not in unaccented and "delet" not in unaccented, plan
-                assert set(terminal["metrics"]["luna"]) == {"planner", "evaluator"}, terminal
+                assert set(terminal["metrics"]["luna"]) == {"planner"}, terminal
                 assert discussion in ids, rows
                 assert all(row["native_session_id"] and row["title"] for group in rows.values() for row in group)
+    finally:
+        client.close()
+
+
+def live_evaluation(binary, root, codex, credential_file):
+    truth, caller = fixture(root, 2)
+    implementation, decision = sorted(truth)
+    for identity, text in [
+        (implementation, "We implemented FlightProbe in this session. I added the camera guard in the source and ran the regression checks."),
+        (decision, "We completed the design review. We decided against using FlightProbe because its latency is unacceptable. We will use the existing guard instead."),
+    ]:
+        path = root / "sessions" / f"rollout-{identity}.jsonl"
+        header = path.read_text().splitlines()[0]
+        message = {"type": "response_item", "payload": {"type": "message", "role": "assistant",
+                   "content": [{"type": "output_text", "text": text}]}}
+        path.write_text(header + "\n" + json.dumps(message) + "\n")
+    (root / "auth.json").touch(mode=0o600)
+    shutil.copyfile(credential_file, root / "auth.json")
+    client = FindClient(binary, root, caller, codex)
+    try:
+        for query, activity, expected in [
+            ("Find the conversation where we actually implemented FlightProbe.", "implementation", implementation),
+            ("Find the conversation where we decided against using FlightProbe.", "decision", decision),
+        ]:
+            job = client.terminal(client.tool("session_find", query=query))
+            result = client.tool("session_find_result", job_id=job["job_id"])
+            roles = result["metrics"]["luna"]
+            assert result["search_intent"]["activity"] == activity, result
+            assert set(roles) == {"planner", "evaluator"}, result
+            assert all((r["model"], r["effort"], r["closed"]) == ("gpt-6-luna", "medium", True)
+                       for r in roles.values()), result
+            rows = client.rows(job)
+            assert {row["native_session_id"] for row in rows["confirmed"]} == {expected}, rows
+            print(json.dumps({"activity": activity, "reason": job["reason"],
+                              "turns": {name: role["turns"] for name, role in roles.items()},
+                              "confirmed": len(rows["confirmed"]), "possible": len(rows["possible_unconfirmed"]),
+                              "excluded": len(rows["excluded"])}), flush=True)
     finally:
         client.close()
 
@@ -277,6 +319,7 @@ def main():
         base = Path(tmp)
         if args.live_codex:
             live(binary, base / "live", args.live_codex.resolve(), args.credentials)
+            live_evaluation(binary, base / "live-evaluator", args.live_codex.resolve(), args.credentials)
         else:
             fake = base / "fake-codex"
             fake.write_text(APP_SERVER)

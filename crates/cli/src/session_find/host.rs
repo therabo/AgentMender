@@ -8,7 +8,7 @@ use std::{
     process::Child,
     sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, sync_channel},
     thread::{self, JoinHandle},
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 const FRAME: u64 = 1024 * 1024;
@@ -223,7 +223,7 @@ pub(super) fn run(
         child: None,
         spawned: 0,
         validated_intent: None,
-        run_id: None,
+        run: None,
         phase: Phase::Planning,
     };
     job.state
@@ -275,15 +275,21 @@ struct Bridge<'a> {
     child: Option<ManagedChild>,
     spawned: usize,
     validated_intent: Option<Value>,
-    run_id: Option<String>,
+    run: Option<RunCursor>,
     phase: Phase,
+}
+
+struct RunCursor {
+    id: String,
+    revision: u64,
+    operation: u64,
 }
 
 impl Drop for Bridge<'_> {
     fn drop(&mut self) {
         self.child.take();
-        if let Some(run) = self.run_id.take() {
-            self.resolver.release(run);
+        if let Some(run) = self.run.take() {
+            self.resolver.release(run.id);
         }
     }
 }
@@ -293,6 +299,17 @@ impl Bridge<'_> {
         let job = self.job;
         match operation {
             "query" => return Ok(json!(self.query.take().ok_or("bridge_protocol")?)),
+            "date_context" => {
+                let now = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .map_err(|_| "clock_unavailable")?;
+                let zone = std::fs::read_link("/etc/localtime").ok().and_then(|path| {
+                    path.to_str()?
+                        .split_once("/zoneinfo/")
+                        .map(|(_, zone)| zone.to_owned())
+                });
+                return Ok(json!({"unix_seconds": now.as_secs(), "local_timezone": zone}));
+            }
             "spawn" => {
                 let expected = match (self.spawned, self.phase) {
                     (0, Phase::Planning) => "planner",
@@ -386,65 +403,74 @@ impl Bridge<'_> {
                     }
                 }
             }
-            "results" => {
-                if self.child.is_some()
-                    || !matches!(
-                        self.phase,
-                        Phase::Publishing | Phase::Completed | Phase::Interrupted
-                    )
-                {
-                    return Err("publication_out_of_order".into());
-                }
-                job.state.lock().map_err(|_| "job_unavailable")?.insert(
-                    &packet["rows"],
-                    &packet["invalidated"],
-                    packet["winner"].as_str(),
-                    self.launch,
-                )?;
-            }
             _ => return Err("bridge_protocol".into()),
         }
         Ok(Value::Null)
     }
 
     fn resolve(&mut self, args: &Value) -> Result<Value, String> {
-        if self.run_id.is_none() {
-            if self.child.is_some()
-                || self.validated_intent.as_ref() != Some(args)
-                || self.spawned != 1
-            {
-                return Err("retrieval_out_of_order".into());
-            }
-        } else if args["action"] != "advance" || args["run"].as_str() != self.run_id.as_deref() {
-            return Err("resolver_run_mismatch".into());
-        }
+        let mut request = args
+            .as_object()
+            .ok_or("invalid_resolution_request")?
+            .clone();
+        let winner = request.remove("winner");
         let publish = args["publish"] == true;
-        if publish
+        if winner.is_some() && (!publish || winner.as_ref().and_then(Value::as_str).is_none()) {
+            return Err("invalid_resolution_request".into());
+        }
+        if let Some(run) = &mut self.run {
+            if args["action"] != "advance"
+                || ["run", "expected_revision", "operation_id"]
+                    .iter()
+                    .any(|field| request.contains_key(*field))
+            {
+                return Err("resolver_run_mismatch".into());
+            }
+            run.operation += 1;
+            request.insert("run".into(), json!(&run.id));
+            request.insert("expected_revision".into(), json!(run.revision));
+            request.insert("operation_id".into(), json!(run.operation.to_string()));
+        } else if self.child.is_some()
+            || self.validated_intent.as_ref() != Some(args)
+            || self.spawned != 1
+        {
+            return Err("retrieval_out_of_order".into());
+        }
+        if (publish
+            || args.get("interrupt_evaluation").is_some()
+            || args["luna_unavailable"] == true)
             && (self.child.is_some()
                 || !matches!(self.phase, Phase::Evaluating | Phase::Publishing))
         {
             return Err("publication_out_of_order".into());
         }
-        if ["assessments", "context_requests"].iter().any(|field| {
-            args[*field]
-                .as_array()
-                .is_some_and(|items| !items.is_empty())
-        }) && (self.spawned != 2 || self.child.is_none())
+        if (args.get("assessments").is_some() || args.get("context_requests").is_some())
+            && (self.spawned != 2 || self.child.is_none())
         {
             return Err("evaluation_out_of_order".into());
         }
-        let mut state = self.job.state.lock().map_err(|_| "job_unavailable")?;
-        state.resolver_operations += 1;
-        if self.run_id.is_none() {
-            state.phase(Phase::Retrieving);
-            state.search_intent = Some(args["search_intent"].clone());
-        } else if publish {
-            state.phase(Phase::Publishing);
+        {
+            let mut state = self.job.state.lock().map_err(|_| "job_unavailable")?;
+            state.resolver_operations += 1;
+            if self.run.is_none() {
+                state.phase(Phase::Retrieving);
+                state.search_intent = Some(args["search_intent"].clone());
+            } else if publish {
+                state.phase(Phase::Publishing);
+            }
         }
-        drop(state);
-        let value = self.resolver.resolve(args, self.job.control.clone())?;
-        if self.run_id.is_none() {
-            self.run_id = Some(value["run"].as_str().ok_or("bridge_protocol")?.to_owned());
+        let mut value = self
+            .resolver
+            .resolve(&Value::Object(request), self.job.control.clone())?;
+        let revision = value["step_revision"].as_u64().ok_or("bridge_protocol")?;
+        if let Some(run) = &mut self.run {
+            run.revision = revision;
+        } else {
+            self.run = Some(RunCursor {
+                id: value["run"].as_str().ok_or("bridge_protocol")?.into(),
+                revision,
+                operation: 0,
+            });
         }
         self.phase = match value["phase"].as_str() {
             Some("retrieving") => Phase::Retrieving,
@@ -455,6 +481,13 @@ impl Bridge<'_> {
             _ => return Err("bridge_protocol".into()),
         };
         let mut state = self.job.state.lock().map_err(|_| "job_unavailable")?;
+        if publish {
+            state.insert(&value, winner.as_ref().and_then(Value::as_str), self.launch)?;
+            let page = value.as_object_mut().ok_or("bridge_protocol")?;
+            for group in ["matches", "alternatives", "excluded", "invalidated"] {
+                page.remove(group);
+            }
+        }
         if !self.phase.terminal() {
             state.phase(self.phase);
         }

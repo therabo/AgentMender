@@ -66,7 +66,8 @@ impl ResultSpool {
             .map_err(|_| unavailable)?;
         db.execute_batch("PRAGMA journal_mode=MEMORY; PRAGMA cache_size=-512;
             PRAGMA max_page_count=32768;
-            CREATE TABLE results(id TEXT PRIMARY KEY, kind TEXT NOT NULL, row TEXT NOT NULL) WITHOUT ROWID;")
+            CREATE TABLE results(id TEXT PRIMARY KEY, kind TEXT NOT NULL, quality INTEGER NOT NULL, row TEXT NOT NULL) WITHOUT ROWID;
+            CREATE INDEX results_order ON results(quality DESC, id);")
             .map_err(|_| unavailable)?;
         Ok(Self {
             db,
@@ -137,7 +138,6 @@ impl State {
     fn insert(
         &mut self,
         rows: &Value,
-        invalidated: &Value,
         winner: Option<&str>,
         launch: &Launch,
     ) -> Result<(), &'static str> {
@@ -147,15 +147,8 @@ impl State {
         }
         let db = &mut self.spool.as_mut().expect("opened spool").db;
         let tx = db.transaction().map_err(unavailable)?;
-        for id in invalidated.as_array().ok_or("bridge_protocol")? {
-            tx.execute(
-                "DELETE FROM results WHERE id=?1",
-                [id.as_str().ok_or("bridge_protocol")?],
-            )
-            .map_err(unavailable)?;
-        }
         let mut omitted = 0;
-        for kind in ["matches", "alternatives"] {
+        for kind in ["matches", "alternatives", "excluded"] {
             for row in rows[kind].as_array().ok_or("bridge_protocol")? {
                 let id = row["native_session_id"].as_str().ok_or("bridge_protocol")?;
                 if kind == "matches" && winner.is_some_and(|winner| winner != id) {
@@ -166,9 +159,16 @@ impl State {
                 if encoded.len() > PAGE_BYTES {
                     return Err("result_row_too_large");
                 }
+                let quality = match row["lexical_match"].as_str() {
+                    Some("exact") => 4,
+                    Some("normalized") => 3,
+                    Some("partial") => 2,
+                    Some("approximate") => 1,
+                    _ => 0,
+                };
                 tx.execute(
-                    "INSERT OR REPLACE INTO results(id,kind,row) VALUES (?1,?2,?3)",
-                    params![id, kind, encoded],
+                    "INSERT INTO results(id,kind,quality,row) VALUES (?1,?2,?3,?4)",
+                    params![id, kind, quality, encoded],
                 )
                 .map_err(unavailable)?;
             }
@@ -225,6 +225,7 @@ impl State {
     fn results(&self, offset: usize) -> Result<Value, &'static str> {
         let mut confirmed = Vec::new();
         let mut possible = Vec::new();
+        let mut excluded = Vec::new();
         let mut next = None;
         if self.phase.terminal()
             && let Some(spool) = &self.spool
@@ -232,7 +233,9 @@ impl State {
             let unavailable = |_| "result_spool_unavailable";
             let mut statement = spool
                 .db
-                .prepare("SELECT kind,row FROM results ORDER BY id LIMIT ?1 OFFSET ?2")
+                .prepare(
+                    "SELECT kind,row FROM results ORDER BY quality DESC, id LIMIT ?1 OFFSET ?2",
+                )
                 .map_err(unavailable)?;
             let offset = i64::try_from(offset).map_err(|_| "invalid_result_offset")?;
             let mut rows = statement
@@ -251,14 +254,17 @@ impl State {
                 count += 1;
                 let value = serde_json::from_str::<Value>(&encoded)
                     .map_err(|_| "result_spool_unavailable")?;
-                if kind == "matches" {
-                    confirmed.push(value);
-                } else {
-                    possible.push(value);
+                match kind.as_str() {
+                    "matches" => confirmed.push(value),
+                    "alternatives" => possible.push(value),
+                    "excluded" => excluded.push(value),
+                    _ => return Err("result_spool_unavailable"),
                 }
             }
         }
-        Ok(json!({"confirmed": confirmed, "possible_unconfirmed": possible, "next_offset": next}))
+        Ok(
+            json!({"confirmed": confirmed, "possible_unconfirmed": possible, "excluded": excluded, "next_offset": next}),
+        )
     }
 }
 
@@ -275,6 +281,13 @@ struct Job {
 impl Job {
     fn snapshot(&self, id: &str, offset: Option<usize>) -> Result<Value, &'static str> {
         let state = self.state.lock().map_err(|_| "job_unavailable")?;
+        let luna = if state.phase.terminal() {
+            json!(state.luna)
+        } else {
+            json!(state.luna.iter().map(|(role, metrics)| {
+                (role, json!({"started": metrics.get("thread").is_some(), "turns": metrics["turns"]}))
+            }).collect::<BTreeMap<_, _>>())
+        };
         let mut value = json!({
             "job_id": id,
             "state": state.phase,
@@ -283,12 +296,12 @@ impl Job {
             "authenticated_caller_binding": false,
             "progress": state.progress,
             "coverage": state.coverage,
-            "selection": state.selection,
+            "selection": if state.phase.terminal() { &state.selection } else { &Value::Null },
             "metrics": {
                 "elapsed_ms": state.finished.unwrap_or_else(Instant::now)
                     .duration_since(self.started).as_millis(),
                 "phase_ms": state.elapsed,
-                "luna": state.luna,
+                "luna": luna,
                 "resolver_operations": state.resolver_operations,
                 "result_spool_peak_bytes": state.result_spool_bytes,
                 "mcp_tool_calls": self.calls.load(Ordering::Relaxed),

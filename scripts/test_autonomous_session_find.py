@@ -54,6 +54,7 @@ def notify(method, **params):
 
 thread = str(uuid.uuid4())
 mode = json.loads(Path("auth.json").read_text()).get("fixture")
+batches = 0
 for line in sys.stdin:
     rpc = json.loads(line)
     method, params = rpc.get("method"), rpc.get("params")
@@ -84,6 +85,7 @@ for line in sys.stdin:
         elif mode == "tool":
             notify("item/started", threadId=thread, turnId=turn, item=dict(type="commandExecution"))
         elif "search_intent_schema" in request:
+            assert request["date_context"]["unix_seconds"] > 0
             terms = ["NonexistentTerm"] if request["request"] == "zero" else ["FlightProbe"]
             intent = dict(schema_version="1", subject="FlightProbe", activity="implementation", hints=dict(terms=terms))
             if request["request"] == "best":
@@ -92,6 +94,17 @@ for line in sys.stdin:
                 intent = dict(schema_version="1", subject="Title fixture", hints={"terms": []},
                               filter={"op": "title", "value": request["request"].split("con titolo ", 1)[1],
                                       "kind": "exact"})
+            elif "titolo approssimativo" in request["request"]:
+                intent = dict(schema_version="1", subject="Remembered title", hints={"terms": []},
+                              filter={"op": "title", "value": "Carte Pokemon", "kind": "approximate"})
+            elif request["request"] in {"Chiacchiere di inizio novembre", "Chiacchiere del 7 novembre"}:
+                exact = request["request"] == "Chiacchiere del 7 novembre"
+                intent = dict(schema_version="1", subject="Fixture date range", hints={"terms": []},
+                              constraints={"created_range": {"start_date": "2026-11-07" if exact else "2026-11-01",
+                                           "end_date": "2026-11-07" if exact else "2026-11-10",
+                                           "timezone": "Europe/Rome"}})
+            elif request["request"] == "Find the decision not to use FlightProbe":
+                intent.update(activity="decision", subject="Decision against using FlightProbe")
             elif "per essere eliminate" in request["request"]:
                 intent = dict(schema_version="1", subject="Carte Pokémon", activity="discussion",
                               hints={"terms": ["carte Pokemon"]})
@@ -99,28 +112,37 @@ for line in sys.stdin:
                    item=dict(type="agentMessage", phase="final_answer", text=json.dumps(intent)))
             notify("turn/completed", threadId=thread, turn=dict(id=turn, status="completed"))
         else:
-            if mode == "stale":
+            if mode in {"stale", "mixed_assessments"}:
                 time.sleep(0.75)
             if "choices" in request:
                 data = {"native_session_id": request["choices"][0]["native_session_id"]}
+                text = json.dumps(data)
             else:
-                rows = []
-                for candidate in request["candidates"]:
-                    if "per essere eliminate" in request["request"]:
-                        confirmed = candidate["title"] != "Riferimento importato"
-                        rows.append(dict(native_session_id=candidate["native_session_id"],
-                             disposition="verified_relevant" if confirmed else "insufficient",
-                             evidence=[candidate["evidence"][0]["handle"]] if confirmed else [],
-                             explanation="Fixture discussion or unverified tag.",
-                             activity="discussion", relationship="direct"))
-                        continue
-                    rows.append(dict(native_session_id=candidate["native_session_id"],
-                         disposition="verified_relevant", outcomes=["implemented"],
-                         evidence=[candidate["evidence"][0]["handle"]],
-                         explanation="Fixture states that FlightProbe was implemented.", relationship="direct"))
+                batches += 1
+                rows = [dict(native_session_id=candidate["native_session_id"],
+                             relevance="relevant", evidence=[candidate["evidence"][0]["handle"]],
+                             reason="Fixture passage identifies completed FlightProbe work.")
+                        for candidate in request["candidates"]]
+                if mode == "mixed_assessments" and batches == 1:
+                    rows[1]["relevance"] = "unknown_value"
+                    rows[3]["evidence"] = rows[0]["evidence"]
+                if mode == "mixed_assessments" and batches == 2:
+                    rows[1]["evidence"] = "malformed"
+                if mode == "sparse_assessments" and batches == 1:
+                    rows.pop(1)
+                    rows[2]["native_session_id"] = "ffffffff-ffff-4fff-8fff-ffffffffffff"
+                if mode == "mixed_assessments" and batches == 3:
+                    for row in rows[-2:]:
+                        row.update(relevance="not_relevant", evidence=[])
                 data = {"assessments": rows}
+                if mode == "invalid_request" and batches == 2:
+                    data = {"context_requests": [{"anchor": rows[0]["evidence"][0],
+                             "window": {"max_messages": "five", "max_bytes": 4096}}]}
+                if mode == "evaluator_exit" and batches == 2:
+                    raise SystemExit(1)
+                text = "not valid JSON" if mode == "malformed_response" else json.dumps(data)
             notify("item/completed", threadId=thread, turnId=turn,
-                   item=dict(type="agentMessage", phase="final_answer", text=json.dumps(data)))
+                   item=dict(type="agentMessage", phase="final_answer", text=text))
             notify("turn/completed", threadId=thread, turn=dict(id=turn, status="completed"))
         continue
     elif method == "initialized":
@@ -163,7 +185,7 @@ class FindClient(Client):
         return job
 
     def rows(self, job):
-        groups = {"confirmed": [], "possible_unconfirmed": []}
+        groups = {"confirmed": [], "possible_unconfirmed": [], "excluded": []}
         offset = 0
         while offset is not None:
             results = self.tool("session_find_result", job_id=job["job_id"], offset=offset)["results"]
@@ -194,7 +216,7 @@ def active_children(parent):
 
 def wait_for_luna(client, job, role):
     deadline = time.monotonic() + 10
-    while not job["metrics"]["luna"].get(role, {}).get("thread"):
+    while not job["metrics"]["luna"].get(role, {}).get("started"):
         assert time.monotonic() < deadline and job["state"] not in TERMINAL, job
         time.sleep(0.02)
         job = client.tool("session_find_status", job_id=job["job_id"])
@@ -480,6 +502,112 @@ def source_change(binary, codex, root):
 
 
 
+def resilient_assessments(binary, codex, base):
+    scenarios = [
+        ("mixed_assessments", 508, 10, 3, 2, "assessment_incomplete", 3),
+        ("sparse_assessments", 18, 13, 2, 0, "assessment_incomplete", 3),
+        ("malformed_response", 18, 0, 15, 0, "invalid_luna_response", 1),
+        ("invalid_request", 18, 5, 10, 0, "invalid_resolution_request", 2),
+        ("evaluator_exit", 18, 5, 10, 0, "luna_unavailable", 1),
+    ]
+    for mode, count, confirmed, possible, excluded, reason, turns in scenarios:
+        root = base / mode
+        truth, caller = fixture(root, count, matched=15)
+        auth(root, mode)
+        client = FindClient(binary, root, caller, codex)
+        try:
+            job = client.tool("session_find", query="Find every FlightProbe implementation.")
+            if mode == "mixed_assessments":
+                job = wait_for_luna(client, job, "evaluator")
+                active = client.tool("session_find_result", job_id=job["job_id"], wait_seconds=0)
+                assert active["state"] == "evaluating", active
+                assert "results" not in active and "search_intent" not in active
+                assert all(identity not in json.dumps(active) for identity in truth)
+                assert "Duplicate fixture title" not in json.dumps(active)
+            job = client.terminal(job)
+            rows = client.rows(job)
+            assert job["state"] == "interrupted" and job["reason"] == reason, job
+            assert (len(rows["confirmed"]), len(rows["possible_unconfirmed"]), len(rows["excluded"])) == (
+                confirmed, possible, excluded), (mode, rows, job)
+            assert job["progress"]["sources_inspected"] == count, job
+            assert job["progress"]["candidates_evaluated"] == confirmed + excluded, job
+            assert job["metrics"]["luna"]["planner"]["turns"] == 1, job
+            assert job["metrics"]["luna"]["evaluator"]["turns"] == turns, job
+            ids = [row["native_session_id"] for group in rows.values() for row in group]
+            assert len(ids) == len(set(ids)) == 15 and set(ids) == truth, (mode, ids)
+            ordered = sorted(truth)
+            if mode == "mixed_assessments":
+                assert {row["native_session_id"] for row in rows["possible_unconfirmed"]} == {
+                    ordered[1], ordered[3], ordered[6]}
+                assert {row["native_session_id"] for row in rows["excluded"]} == set(ordered[-2:])
+            elif mode == "sparse_assessments":
+                assert {row["native_session_id"] for row in rows["possible_unconfirmed"]} == {
+                    ordered[1], ordered[3]}
+            elif confirmed:
+                assert {row["native_session_id"] for row in rows["confirmed"]} == set(ordered[:5])
+            assert all(row.get("evidence_refs") for key in ("confirmed", "possible_unconfirmed") for row in rows[key])
+            assert all("target" not in row and "evidence_refs" not in row for row in rows["excluded"])
+            for identity in truth:
+                (root / "sessions" / f"rollout-{identity}.jsonl").unlink()
+            assert client.rows(job) == rows, mode
+            assert not active_children(client.child.pid)
+        finally:
+            client.close()
+        print(f"{mode}: {count} examined, {confirmed} confirmed, {possible} possible, "
+              f"{excluded} excluded, {turns} completed Evaluator turns.", flush=True)
+
+    root = base / "decision"
+    truth, caller = fixture(root, 3, matched=2)
+    auth(root)
+    client = FindClient(binary, root, caller, codex)
+    try:
+        job = client.terminal(client.tool("session_find", query="Find the decision not to use FlightProbe"))
+        result = client.tool("session_find_result", job_id=job["job_id"])
+        assert result["search_intent"]["activity"] == "decision"
+        assert result["metrics"]["luna"]["evaluator"]["turns"] == 1
+        assert {row["native_session_id"] for row in result["results"]["confirmed"]} == truth
+    finally:
+        client.close()
+
+
+def approximate_lookup(binary, codex, root):
+    from datetime import datetime, timedelta, timezone
+
+    truth, caller = fixture(root, 5)
+    fuzzy, partial, normalized, exact, generic = sorted(truth)
+    rome_november = datetime(2026, 11, 1, tzinfo=timezone(timedelta(hours=1)))
+    with sqlite3.connect(root / "state_5.sqlite") as database:
+        for identity, title, day in [
+            (fuzzy, "Pokémon sulle carte", 4),
+            (partial, "Guida alle Carte Pokemon da collezione", 7),
+            (normalized, "Carte -- Pokémon!", 10),
+            (exact, "Carte Pokemon", 11),
+            (generic, "Trova conversazioni sulle carte", 31),
+            (caller, "Carte Pokemon", 7),
+        ]:
+            created = int((rome_november + timedelta(days=day - 1)).timestamp())
+            database.execute("UPDATE threads SET title=?,created_at=? WHERE id=?", (title, created, identity))
+    auth(root)
+    client = FindClient(binary, root, caller, codex)
+    try:
+        job = client.terminal(client.tool("session_find", query="Trova per titolo approssimativo Carte Pokemon"))
+        rows = client.rows(job)["confirmed"]
+        assert [row["native_session_id"] for row in rows] == [exact, normalized, partial, fuzzy], rows
+        assert [row["lexical_match"] for row in rows] == ["exact", "normalized", "partial", "approximate"]
+        for request, expected in [
+            ("Chiacchiere di inizio novembre", {fuzzy, partial, normalized}),
+            ("Chiacchiere del 7 novembre", {partial}),
+        ]:
+            job = client.terminal(client.tool("session_find", query=request))
+            assert set(job["metrics"]["luna"]) == {"planner"}, job
+            rows = client.rows(job)["confirmed"]
+            assert {row["native_session_id"] for row in rows} == expected, rows
+            assert all(row["created_at"] for row in rows)
+    finally:
+        client.close()
+    print("Approximate title ranking and approximate/exact calendar bounds passed.", flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--agentmender", type=Path, required=True)
@@ -496,6 +624,8 @@ def main():
         codex.chmod(0o700)
         isolation(binary, codex, base / "isolation")
         source_change(binary, codex, base / "stale")
+        resilient_assessments(binary, codex, base)
+        approximate_lookup(binary, codex, base / "approximate")
         for count in args.scale:
             scale(binary, codex, base / f"provider-{count}", count)
         scale(binary, codex, base / "protected", 6, protect=True)

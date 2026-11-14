@@ -266,20 +266,39 @@ pub struct CohortReceipt {
     pub citations: Vec<ContextReference>,
     pub metadata_ref: Option<MetadataSelection>,
     pub title_match: Option<crate::TitleMatchQuality>,
+    pub lexical_match: Option<crate::MatchQuality>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ReceiptBasis {
     VerifiedMetadata,
+    VerifiedLexical,
     SemanticEvidence,
     PlausibleEvidence,
     RetrievedUnverified,
+    Rejected,
 }
 
 impl ReceiptBasis {
+    pub fn explanation(self) -> &'static str {
+        match self {
+            Self::VerifiedMetadata => "The recorded metadata satisfies the requested filter.",
+            Self::VerifiedLexical => "The recorded text satisfies the requested filter.",
+            Self::SemanticEvidence | Self::PlausibleEvidence | Self::Rejected => {
+                "See the evaluator judgment."
+            }
+            Self::RetrievedUnverified => {
+                "The candidate lacks a fresh, citable passage for verification."
+            }
+        }
+    }
+
     pub fn confirmed(self) -> bool {
-        matches!(self, Self::VerifiedMetadata | Self::SemanticEvidence)
+        matches!(
+            self,
+            Self::VerifiedMetadata | Self::VerifiedLexical | Self::SemanticEvidence
+        )
     }
 }
 

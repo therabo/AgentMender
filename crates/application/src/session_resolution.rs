@@ -1,15 +1,14 @@
 //! Read-only resolution state for one originating Codex conversation.
 mod progressive;
 pub use progressive::{
-    Advance, AdvanceResult, ContextRequest, ResolutionPhase, TerminalOutcome, WINDOW_BATCH,
+    Advance, AdvanceResult, AssessmentEntry, ContextRequest, EvaluationInterruption,
+    ResolutionPhase, TerminalOutcome, WINDOW_BATCH,
 };
 
 use crate::{ApplicationError, QueryControl, TargetSelector, session_search::SessionSearchService};
 pub use agentmender_domain::search_intent::Outcome;
 use agentmender_domain::{
-    search_intent::{
-        CoverageGoal, ResultPolicy, SearchActivity, SearchIntent, ValidatedSearchIntent,
-    },
+    search_intent::{CoverageGoal, ResultPolicy, SearchIntent, ValidatedSearchIntent},
     *,
 };
 use serde::Serialize;
@@ -107,10 +106,6 @@ impl ResolutionAction {
 pub enum ResolutionError {
     #[error("The run is stale or belongs to another originating conversation. Start a fresh run.")]
     StaleSearchRun,
-    #[error(
-        "Assess presented candidates with their own evidence handles and the requested activity and outcome."
-    )]
-    InvalidAssessment,
     #[error("The current batch context budget is exhausted. Assess available evidence.")]
     BudgetExceeded,
     #[error("Use advance with the current run revision and a new operation ID.")]
@@ -129,7 +124,6 @@ impl ResolutionError {
     pub fn code(self) -> &'static str {
         match self {
             Self::StaleSearchRun => "stale_search_run",
-            Self::InvalidAssessment => "invalid_assessment",
             Self::BudgetExceeded => "budget_exceeded",
             Self::InvalidAdvance => "invalid_advance",
             Self::RevisionConflict => "resolution_revision_conflict",
@@ -267,7 +261,8 @@ struct Anchor {
 struct Candidate {
     hit: SessionSearchHit,
     basis: MatchBasis,
-    metadata_match: bool,
+    deterministic: Option<ReceiptBasis>,
+    unassessed: bool,
     handles: Vec<usize>,
     assessment: Option<Assessment>,
     stale_context: bool,
@@ -541,7 +536,7 @@ impl Run {
         self.candidates[start..end]
             .iter()
             .filter(|candidate| {
-                !candidate.metadata_match
+                candidate.deterministic.is_none()
                     && candidate.assessment.is_none()
                     && !candidate.stale_context
             })
@@ -608,12 +603,18 @@ impl Run {
                 })
             })
             .collect();
-        let metadata_match = !self.retrieval.semantic_required
-            && self.filter().metadata_truth(&hit.metadata) == Truth::True;
+        let deterministic = (!self.retrieval.semantic_required).then(|| {
+            if self.filter().metadata_truth(&hit.metadata) == Truth::True {
+                ReceiptBasis::VerifiedMetadata
+            } else {
+                ReceiptBasis::VerifiedLexical
+            }
+        });
         self.candidates.push(Candidate {
             hit,
             basis,
-            metadata_match,
+            deterministic,
+            unassessed: false,
             handles,
             assessment: None,
             stale_context: false,
@@ -645,7 +646,7 @@ impl Run {
             .anchor(handle)
             .filter(|a| a.candidate < self.presented())
             .cloned()
-            .ok_or(ApplicationError::InvalidSearch)?;
+            .ok_or(ResolutionError::InvalidAdvance)?;
         let options = match (anchor.continuation.clone(), options) {
             (Some(fixed), None) => fixed,
             (None, Some(options)) => options,
@@ -654,10 +655,10 @@ impl Run {
                 max_messages: 5,
                 ..Default::default()
             },
-            (Some(_), Some(_)) => return Err(ApplicationError::InvalidSearch),
+            (Some(_), Some(_)) => return Err(ResolutionError::InvalidAdvance.into()),
         };
         if !options.valid() || self.requested_windows.contains(&(handle, options.clone())) {
-            return Err(ApplicationError::InvalidSearch);
+            return Err(ResolutionError::InvalidAdvance.into());
         }
         if self.requested_windows.len() >= CONTEXT_LIMIT
             || self.active_context_bytes() + options.max_bytes > CONTEXT_BYTES
@@ -746,61 +747,65 @@ impl Run {
         })
     }
 
-    fn assess(&mut self, assessments: Vec<Assessment>) -> Result<(), ApplicationError> {
-        let mut seen = BTreeSet::new();
-        let updates: Option<Vec<_>> = assessments
-            .into_iter()
-            .map(|mut assessment| {
-                if assessment.disposition == Disposition::Insufficient
-                    && assessment.missing_evidence.is_none()
-                    && bounded_text(&assessment.explanation, 512)
-                {
-                    assessment.missing_evidence = Some(assessment.explanation.clone());
+    fn assess(&mut self, assessments: &[AssessmentEntry]) {
+        for index in 0..self.candidates.len() {
+            let candidate = &self.candidates[index];
+            if candidate.deterministic.is_some() || candidate.stale_context {
+                continue;
+            }
+            let id = &candidate.hit.metadata.native_session_id;
+            let mut entries = assessments
+                .iter()
+                .filter(|entry| entry.native_session_id.as_deref() == Some(id));
+            let first = entries.next();
+            let valid = first
+                .filter(|_| entries.next().is_none())
+                .and_then(|entry| entry.assessment.as_ref())
+                .filter(|assessment| self.valid_assessment(index, assessment));
+            let candidate = &mut self.candidates[index];
+            candidate.unassessed = valid.is_none();
+            candidate.assessment = Some(valid.cloned().unwrap_or_else(|| {
+                let reason = if first.is_some() {
+                    self.progress.invalid_assessments += 1;
+                    "The evaluation for this candidate was structurally invalid."
+                } else {
+                    "No usable evaluation was received for this candidate."
+                };
+                Assessment {
+                    native_session_id: candidate.hit.metadata.native_session_id.clone(),
+                    disposition: Disposition::Insufficient,
+                    evidence: vec![],
+                    outcomes: vec![],
+                    activity: None,
+                    relationship: None,
+                    explanation: reason.into(),
+                    missing_evidence: Some(reason.into()),
+                    plausible_alternative: false,
                 }
-                let candidate = self.candidates[..self.presented()].iter().position(|c| {
-                    !c.metadata_match
-                        && !c.stale_context
-                        && c.hit.metadata.native_session_id == assessment.native_session_id
-                })?;
-                let refs: BTreeSet<_> = assessment.evidence.iter().copied().collect();
-                let insufficient = assessment.disposition == Disposition::Insufficient;
-                let valid = seen.insert(candidate)
-                    && bounded_text(&assessment.explanation, 1024)
-                    && assessment
-                        .missing_evidence
-                        .as_ref()
-                        .is_none_or(|v| bounded_text(v, 512))
-                    && (!insufficient || assessment.missing_evidence.is_some())
-                    && (!assessment.plausible_alternative || insufficient && !refs.is_empty())
-                    && assessment.outcomes.len() <= 8
-                    && refs.len() == assessment.evidence.len()
-                    && refs.len() <= 4
-                    && (insufficient || !refs.is_empty())
-                    && refs.iter().all(|&i| {
-                        self.anchor(i)
-                            .is_some_and(|a| a.candidate == candidate && a.citable)
-                    })
-                    && (assessment.disposition != Disposition::VerifiedRelevant
-                        || self.supports_intent(&assessment));
-                valid.then_some((candidate, assessment))
-            })
-            .collect();
-        let Some(updates) = updates.filter(|a| (1..=CANDIDATE_BATCH).contains(&a.len())) else {
-            self.progress.invalid_assessments += 1;
-            return Err(ResolutionError::InvalidAssessment.into());
-        };
-        if updates
-            .iter()
-            .all(|(i, assessment)| self.candidates[*i].assessment.as_ref() == Some(assessment))
-        {
-            return Err(ResolutionError::InvalidAdvance.into());
-        }
-        for (i, assessment) in updates {
-            self.candidates[i].assessment = Some(assessment);
+            }));
         }
         self.refresh_assessment_counts();
-        self.revision += 1;
-        Ok(())
+    }
+
+    fn valid_assessment(&self, candidate: usize, assessment: &Assessment) -> bool {
+        let refs: BTreeSet<_> = assessment.evidence.iter().copied().collect();
+        assessment.native_session_id == self.candidates[candidate].hit.metadata.native_session_id
+            && bounded_text(&assessment.explanation, 1024)
+            && assessment.missing_evidence.as_ref().is_none_or(|v| bounded_text(v, 512))
+            && (!assessment.plausible_alternative
+                || assessment.disposition == Disposition::Insufficient && !refs.is_empty())
+            && assessment.outcomes.len() <= 8
+            && refs.len() == assessment.evidence.len()
+            && refs.len() <= 4
+            && (assessment.disposition != Disposition::VerifiedRelevant || !refs.is_empty())
+            && refs.iter().all(|&i| {
+                self.anchor(i).is_some_and(|anchor| anchor.candidate == candidate && anchor.citable)
+            })
+            // A session-wide claim of absence requires complete logical history.
+            && (assessment.disposition != Disposition::VerifiedRelevant
+                || self.search_intent.excluded_outcome.is_none()
+                || self.candidates[candidate].hit.source_coverage.as_ref()
+                    .is_some_and(|coverage| coverage.logical_complete))
     }
 
     fn refresh_assessment_counts(&mut self) {
@@ -808,7 +813,7 @@ impl Run {
             + self
                 .candidates
                 .iter()
-                .filter(|c| c.assessment.is_some())
+                .filter(|c| c.assessment.is_some() && !c.unassessed)
                 .count();
         self.progress.insufficient = self.stream.unconfirmed()
             + self
@@ -820,19 +825,6 @@ impl Run {
                         .is_some_and(|a| a.disposition == Disposition::Insufficient)
                 })
                 .count();
-    }
-
-    fn supports_intent(&self, assessment: &Assessment) -> bool {
-        let intent = &self.search_intent;
-        let required_activity = intent.activity.evidence_outcome();
-        assessment.relationship == Some(EvidenceRelationship::Direct)
-            && intent.required_outcome.into_iter().chain(required_activity)
-                .all(|outcome| assessment.outcomes.contains(&outcome))
-            && (intent.activity == SearchActivity::Any
-                || assessment.activity == Some(intent.activity)
-                || (required_activity.is_some() && assessment.activity.is_none()))
-            // Bounded passages cannot establish a session-wide semantic exclusion.
-            && intent.excluded_outcome.is_none()
     }
 }
 
@@ -926,12 +918,12 @@ mod tests {
         Box::new(Advance {
             expected_revision: revision,
             operation_id: "next".into(),
-            assessments: vec![],
+            assessments: None,
             context_requests: vec![],
             publish: false,
             keep_alive: false,
             cancel: false,
-            luna_unavailable: false,
+            interrupt_evaluation: None,
         })
     }
 

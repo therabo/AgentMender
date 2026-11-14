@@ -74,3 +74,5 @@ registered filtering fixed, content/binding implementation deferred).
 - [ADR-0039 — Luna-planned hybrid retrieval and verified publication](0039-luna-hybrid-query-publication.md)
 
 - [ADR-0040 — Request Desktop catalog reconciliation after native Codex delete](0040-desktop-catalog-reconciliation.md)
+
+- [ADR-0041 — Fault-tolerant session finding](0041-fault-tolerant-session-find.md)

@@ -2,6 +2,7 @@
 //! language. Only explicit constraints contribute to eligible scope.
 use crate::{
     ApparentCodexCaller, ProjectSource, ProviderKind, QueryExpr, QueryRange, SessionState,
+    TextMatch, session_query::distinctive_term,
 };
 
 pub const SEARCH_INTENT_VERSION: &str = "1";
@@ -19,6 +20,7 @@ pub enum SearchActivity {
     Any,
     Discussion,
     Investigation,
+    Event,
     Implementation,
     Testing,
     Validation,
@@ -203,8 +205,10 @@ impl SearchIntentError {
 impl SearchIntent {
     /// Activity and outcome conditions apply to the entire expression.
     pub fn requires_semantic_evidence(&self) -> bool {
-        self.activity != SearchActivity::Any
-            || self.required_outcome.is_some()
+        !matches!(
+            self.activity,
+            SearchActivity::Any | SearchActivity::Discussion
+        ) || self.required_outcome.is_some()
             || self.excluded_outcome.is_some()
     }
 
@@ -276,7 +280,7 @@ impl SearchConstraints {
             let clause = QueryExpr::Project {
                 values: project.names.clone(),
                 source: match project.basis {
-                    MembershipBasis::Observed => ProjectSource::ObservedLabel,
+                    MembershipBasis::Observed => ProjectSource::NormalizedLabel,
                     MembershipBasis::Verified => ProjectSource::VerifiedLabel,
                 },
             };
@@ -336,12 +340,14 @@ pub fn compile_expansion(terms: &[String]) -> Result<QueryExpr, SearchIntentErro
 }
 
 fn lexical_query(terms: &[String]) -> QueryExpr {
+    let has_distinctive_term = terms.iter().any(|term| distinctive_term(term));
     QueryExpr::Or {
         args: terms
             .iter()
+            .filter(|term| !has_distinctive_term || distinctive_term(term))
             .map(|value| QueryExpr::Text {
                 value: value.trim().to_owned(),
-                kind: Default::default(),
+                kind: TextMatch::Approximate,
                 alternatives: vec![],
             })
             .collect(),

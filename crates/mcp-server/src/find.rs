@@ -177,7 +177,7 @@ pub(super) fn tools() -> Vec<Tool> {
     [
         ("session_find", "Start autonomous read-only search of past Codex sessions. Pass the original natural-language request in query. Luna plans the query, Rust retrieves, and Luna evaluates when needed. Poll the returned job_id.", schema::<FindInput>(), false),
         ("session_find_status", "Read progress, stage and terminal status of an autonomous search.", schema::<JobInput>(), true),
-        ("session_find_result", "Read confirmed and unconfirmed rows with signed selection references and coverage. Follow results.next_offset for all rows.", schema::<ResultInput>(), true),
+        ("session_find_result", "Read finalized confirmed, possible and excluded rows with coverage. Confirmed and possible rows carry signed selection references. Follow results.next_offset for all rows.", schema::<ResultInput>(), true),
         ("session_find_cancel", "Cancel an autonomous search and release its temporary resources. This does not modify any Codex session.", schema::<JobInput>(), true),
     ].into_iter().map(|(name, description, input, idempotent)| {
         Tool::new(name, description, input).with_annotations(

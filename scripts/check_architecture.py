@@ -390,9 +390,9 @@ for path in (ROOT / "crates").glob("*/src/**/*.rs"):
                     private = private.replace(call, "")
                 inspected = inspected.replace(body, private)
         if find_jobs and pattern == patterns[-1]:
-            for sql in ['"DELETE FROM results WHERE id=?1"',
-                        '"INSERT OR REPLACE INTO results(id,kind,row) VALUES (?1,?2,?3)"']:
-                inspected = inspected.replace(sql, "")
+            # ADR-0041 stages each finalized row once in the private result spool.
+            sql = '"INSERT INTO results(id,kind,quality,row) VALUES (?1,?2,?3,?4)"'
+            inspected = inspected.replace(sql, "")
         if path == desktop_refresh_path and pattern == patterns[-1]:
             # ADR-0040 admits one exact marker reset after confirmed native delete.
             for body in method_bodies(source, "request_full_reconciliation"):

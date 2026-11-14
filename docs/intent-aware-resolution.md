@@ -12,8 +12,10 @@ AgentMender starts the job immediately and returns `job_id` and `state`.
 Use `session_find_result` with that ID until the job completes, is interrupted
 or is cancelled. It waits up to 25 seconds by default. Set `wait_seconds`
 from 0 to 60, or call `session_find_status` for immediate progress. `session_find_result`
-returns `results.confirmed` and `results.possible_unconfirmed`, each with
-original title, UUID, verification basis and signed selection references.
+returns one finalized snapshot. `results.confirmed` and
+`results.possible_unconfirmed` include the title, UUID, verification basis
+and signed selection references. `results.excluded` includes rejected
+candidates with their UUID, title and reason.
 The first terminal page also includes the Planner's validated `search_intent`.
 Pass `results.next_offset`
 back as `offset` to obtain the next page. `session_find_cancel` requests
@@ -70,20 +72,22 @@ The diagnostic tool schema advertises the exact
 
 - `activity` defaults to `any`. The specific activities are `discussion`,
   `investigation`, `implementation`, `testing`, `validation`, `decision` and
-  `troubleshooting`. An activity requires supporting conversation evidence.
+  `troubleshooting`. A specific event, action or outcome requires supporting conversation
+  evidence. Ordinary topics use `any` or `discussion` and can be verified
+  from lexical observations. `event` covers a requested occurrence that
+  has no more specific activity.
 - `required_outcome` and `excluded_outcome` accept null or an observed outcome
   (`investigated`, `proposed`, `attempted`, `implemented`, `tested`, `validated`,
   `resolved`, `reverted`, `failed`, `unresolved`). An investigation can match
   without an implementation. A claim that an outcome never occurred requires
-  complete logical history and an assessment of that history. The resolver
-  cannot publish a positive verification of a session-wide exclusion from
-  its current bounded assessment contract. Paginated Codex history
-  remains Partial.
+  trusted complete logical history and an assessment of that history.
+  A bounded or paginated source with incomplete logical coverage keeps
+  such a candidate possible.
 - `result_policy` defaults to `all_relevant`, including singular wording.
   Use `single_best` when the user asks to choose one. `coverage_goal` defaults
   to `standard`. Use `exhaustive` for explicit complete-coverage requests.
-- `hints.terms` takes one to eight distinctive terms or phrases. The compiler
-  creates a lexical OR. Keep the initial list short and selective. Project
+- `hints.terms` takes up to eight terms or phrases. The compiler creates
+  a lexical OR and skips generic hints when distinctive terms are present. Project
   names in `hints.project_names` inform semantic assessment and leave eligible
   scope unchanged. A relevant session may have any stored label or none.
 - `constraints` may be omitted or null. Set `project_membership` with mode
@@ -115,13 +119,20 @@ with explicit constraints. For an exact title lookup:
 }
 ```
 
-Use `kind: "contains"` for a title fragment. Title, creation and activity
+Use `kind: "contains"` for a title fragment and `kind: "approximate"` for
+an uncertain title. Approximate titles allow word reordering, distinctive
+token overlap and one minor edit. Lexical hints allow Unicode accents,
+simple inflections and alternate terms. Explicit Boolean filters preserve
+AND, OR and NOT. The Planner translates vague dates into calendar bounds
+using the specified or local zone. For example, early November is November
+1–10 and around November 7 is November 4–10. Explicit dates and intervals
+retain their bounds. Title, creation and activity
 dates, provider, archive state, project and UUID can satisfy a lookup from
 metadata. A title OR text query can be satisfied by either branch. If the
 title proves the whole predicate and no global activity or outcome requires
 semantic judgment, Rust verifies the row without reading its transcript.
-Text predicates work on messages and lead to assessment when the result
-depends on the messages. A future action such as deleting the returned
+Text predicates use observed messages. An exact term or ordinary topic can
+be verified without an Evaluator. A future action such as deleting the returned
 conversations contributes no historical terms or outcomes.
 
 ## AgentMender-owned Luna execution
@@ -133,65 +144,40 @@ effort, and turn completion. It validates the Planner payload against
 SearchIntent v1 and the Rust compiler. Corrections stay in the same
 Planner. Rust starts retrieval after the Planner process exits.
 
-After Rust traverses the cohort, the host starts a fresh Evaluator process
-when the resolver supplies a candidate needing semantic assessment. All batches, bounded context requests
-and any single-best choice use that same Evaluator. The host checks
-reroute and unexpected tools or threads, reaps the process and then
-publishes through the same typed Rust service. The private bridge keeps
-caller identity and signing keys in Rust. See [ADR-0037](adr/0037-autonomous-mcp-session-find.md).
-The standalone script is available for controlled diagnostics.
+After Rust traverses the cohort, the host starts an Evaluator only when a
+candidate needs semantic assessment. The same process handles the batches
+and any bounded context request. The host checks the model events and
+reaps the process before finalization.
 
-## Progressive workflow
+The Evaluator submits `assessments` with the supplied `native_session_id`,
+`relevance` (`relevant`, `possible`, or `not_relevant`), integer `evidence`
+handles and an optional `reason`. A positive judgment needs a citation.
+Rust checks each entry independently and validates its citations against the
+candidate. Missing, malformed and conflicting judgments become possible.
+A whole-response failure ends evaluation. Rust keeps valid judgments,
+classifies unfinished candidates as possible and records the interruption.
+A session-wide claim of absence requires trusted complete logical coverage.
 
-The following steps describe the internal coordinator and diagnostic API.
+For `single_best`, a uniquely stronger lexical match can be selected from
+the deterministic results. Semantic comparison takes at most one turn
+when the confirmed set is small enough. Ties remain ambiguous.
 
-1. Call `start` with the Planner's SearchIntent after the Planner closes.
-   Rust freezes the eligible UUIDs, order and predicate metadata. Planned
-   `hints.expansion_terms` take up to four distinct terms and form an OR
-   with literal hints under the original constraints. Put Boolean aliases
-   in the explicit filter. Use empty terms for a metadata-only lookup.
-2. While `phase` is `retrieving`, call `advance` with no judgments or
-   context. Continue through empty replies. Candidate passages are staged
-   in the worker. `retrieval_complete` reports finished traversal
-   independently of partial transcript coverage. An interrupted traversal
-   ends without starting the Evaluator.
-3. In `evaluating`, call `advance` for the next batch. Give the same
-   Evaluator each candidate's identity, quoted evidence and coverage.
-   Submit one conclusive judgment per candidate. Request up to two windows
-   per advance for a specific evidence gap. Each window allows five
-   messages and 4,096 bytes. A changed source can return with fresh handles
-   for reassessment. A recap about another session does not prove original
-   execution. A plausible unconfirmed result requires a supporting passage
-   and a stated gap. A candidate with insufficient evidence can still be
-   published with its metadata identity and the reason it remains unverified.
-4. When `publication_ready` becomes true, use `prepared_choices` for an
-   explicit `single_best` request. A tie among metadata matches preserves
-   the UUIDs for the user to choose. Semantic comparisons use the same
-   Evaluator. Close it if started, then call `advance` with `publish:true`
-   until terminal. Rust revalidates
-   references before signing `matches` and `alternatives`. Accumulate
-   them by UUID and remove any identity listed in `invalidated`.
-5. Use the returned `step_revision` as `expected_revision` and a new
-   `operation_id` for every operation. A long single-best comparison can
-   renew the active evaluation with `keep_alive:true`. Repeat the exact request if its
-   reply is lost. `cancel:true` interrupts the run and releases its spool.
-   The response distinguishes `completed` from `interrupted` and reports
-   coverage gaps even when UUID traversal finished.
+## Finalization and diagnostics
 
-Rust reports metadata rows examined after caller exclusions in
-`sessions_examined`, eligible cohort size in `snapshot_sessions`, and rows
-traversed in `sources_inspected`. `candidates_staged` counts true retrieval
-predicates, `candidates_evaluated` counts processed semantic assessments,
-and `metadata_verified` counts verified metadata matches. `confirmed`
-includes both kinds of verification. `published` includes unconfirmed rows
-that passed freshness checks. `not_published_reasons` counts semantic
-rejections, stale verification, interruption, and rows omitted by a
-single-best choice. `unresolved_predicates` counts rows
-whose filter remained UNKNOWN, outside the staged candidates. A missing
-title, date or message can produce partial coverage alongside verified
-matches. Exhausting a lexical scan does not establish absolute semantic
-recall. Unread history skipped because metadata proved the predicate does
-not make that match partial.
+The private Rust host owns the run ID, revision and operation sequence.
+The diagnostic `session_resolve` tool retains its explicit revision and
+operation IDs for retries. Its evaluator handoff carries inert citation
+handles. Each verified receipt is staged after evaluation. The host publishes
+the completed snapshot through `session_find_result` and serves all pages
+from that snapshot. Rust validates the source references before staging
+and again during finalization. Excluded rows have no selection references.
+
+The job reports candidate and publication counts, inventory and lexical
+coverage, and any interruption. Match quality is independent of semantic
+judgment. The `lexical_match` field reports `exact`, `normalized`,
+`partial` or `approximate` when a positive title or text branch supports
+the result. Pages order by that quality, then UUID. A source gap can
+limit coverage even when Rust reached the end of the inventory.
 
 The application retains one five-candidate batch and one replayable reply.
 The worker's anonymous SQLite file holds frozen metadata, bounded sanitized
@@ -203,34 +189,17 @@ A new process requires a new run. See [ADR-0036](adr/0036-two-stage-luna-resolut
 
 ### Conversational answer
 
-Render exactly these two tables, localized to the user. Use the title as the
-session label, the grounded explanation for a confirmed row, and the concrete
-gap for an unconfirmed row. Identify the `match_basis` as `verified_metadata`,
-`semantic_evidence`, `plausible_evidence` or `retrieved_unverified`.
-`title_match` distinguishes `original_exact`, `normalized_exact` and `partial`
-when a positive title predicate supports the metadata match. Keep signed references in the origin.
-Use a clearly labeled empty row if a table contains no results. If the run was
-interrupted or lexical coverage is limited, put one short status row in the
-second table with a blank session ID.
-
-**Sessioni confermate**
-
-| Sessione | Motivazione | UUID |
-| --- | --- | --- |
-| Nessuna sessione confermata | | |
-
-**Possibili candidate non confermate**
-
-| Sessione | Evidenza mancante | UUID |
-| --- | --- | --- |
-| Nessuna candidata plausibile | | |
+Present confirmed and possible rows with their original title, UUID and
+reason, localized to the user. When excluded rows are returned, present
+them separately with the evaluator's reason. Include any partial coverage
+or interruption and keep signed references in the originating chat.
 
 ## Errors and independent discovery
 
 Structural validation returns sanitized codes such as `unknown_field`,
 `invalid_enum`, `unsupported_schema_version`, `conflicting_constraints`,
 and `invalid_date_range`. Run errors include `stale_search_run`,
-`invalid_query_expansion`, `invalid_assessment` and `budget_exceeded`.
+`invalid_query_expansion` and `budget_exceeded`.
 When a call failure leaves no usable continuation, report interruption in the
 second table. Model availability failure is explicit and semantic
 confirmation requires successful Luna execution.

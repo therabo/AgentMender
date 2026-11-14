@@ -52,7 +52,8 @@ class Scenario:
         self.steps = []
         self.revision = 0
         self.reject_once = reject_once
-        self.correction = None
+        self.interruption = None
+        self.evaluator_turns = 0
         self.invalid_plan_once = invalid_plan_once
         self.invalid_context_once = invalid_context_once
         self.planner_turns = 0
@@ -69,10 +70,10 @@ class Scenario:
                 if self.invalid_plan_once and self.planner_turns == 1:
                     return {**INTENT, "hints": {"terms": ["test"], "unsupported": True}}
                 return INTENT
+            self.evaluator_turns += 1
             if self.evaluator_error:
                 raise LunaFailure("evaluator", "thread_start", "rpc_rejected")
             assert payload["search_intent"] is INTENT
-            self.correction = payload["correction"]
             if self.invalid_context_once:
                 self.invalid_context_once = False
                 return {"context_requests": [{"anchor": 99}]}
@@ -94,7 +95,8 @@ class Scenario:
             return {
                 "run": "test", "step_revision": self.revision, "phase": phase,
                 "execution_state": phase if phase in ("completed", "interrupted") else "in_progress",
-                "progress": {"retrieval_complete": phase != "retrieving", "publication_ready": ready},
+                "progress": {"retrieval_complete": phase != "retrieving", "publication_ready": ready,
+                             "stop_reason": self.interruption, "confirmed": len(self.submitted)},
                 "progressive_coverage": {"lexical_coverage_limited": False},
                 "candidates": candidates or [], "matches": [], "alternatives": [],
             }
@@ -109,19 +111,22 @@ class Scenario:
             if self.revision == 2:
                 return page("retrieving")
             return page("evaluating" if self.count else "completed")
-        if arguments.get("luna_unavailable"):
+        if arguments.get("interrupt_evaluation"):
             assert self.closed == ["planner", "evaluator"]
             assert "assessments" not in arguments
-            return page("interrupted")
+            self.interruption = arguments["interrupt_evaluation"]
+            return page("evaluating", ready=True)
         if arguments.get("publish"):
             assert self.closed == ["planner", "evaluator"]
+            if self.interruption:
+                return page("interrupted")
             assert self.submitted == [str(i) for i in range(self.count)]
             return page("completed")
         if {"context_requests", "assessments"} & arguments.keys():
             assert self.active == "evaluator"
         if "context_requests" in arguments:
             self.revision -= 1
-            raise ResolverError("invalid_scope")
+            raise ResolverError("invalid_resolution_request")
         if "assessments" in arguments:
             if self.reject_once:
                 self.reject_once = False
@@ -183,20 +188,19 @@ class LunaHostTests(unittest.TestCase):
         self.assertEqual(scenario.submitted, [str(i) for i in range(43)])
         self.assertEqual(sum("assessments" in step for step in scenario.steps), 9)
 
-    def test_rejected_payload_is_corrected_in_the_same_evaluator(self):
+    def test_rejected_assessment_request_finalizes_without_repair_turn(self):
         scenario = Scenario(3, reject_once=True)
-        resolve(scenario.spawn, scenario, "question")
-        self.assertEqual(scenario.spawned, ["planner", "evaluator"])
-        self.assertEqual(scenario.submitted, ["0", "1", "2"])
-        self.assertIn("invalid_enum", scenario.correction)
+        _, _, status, _ = resolve(scenario.spawn, scenario, "question")
+        self.assertIn("invalid_resolution_request", status)
+        self.assertEqual(scenario.evaluator_turns, 1)
+        self.assertTrue(scenario.steps[-1]["publish"])
 
-    def test_invalid_context_scope_can_be_corrected_without_restarting(self):
+    def test_rejected_context_request_finalizes_without_repair_turn(self):
         scenario = Scenario(3, invalid_context_once=True)
-        resolve(scenario.spawn, scenario, "question")
-        self.assertEqual(scenario.spawned, ["planner", "evaluator"])
-        self.assertEqual(scenario.submitted, ["0", "1", "2"])
-        self.assertIn("invalid_scope", scenario.correction)
-        self.assertEqual(sum(step["action"] == "start" for step in scenario.steps), 1)
+        _, _, status, _ = resolve(scenario.spawn, scenario, "question")
+        self.assertIn("invalid_resolution_request", status)
+        self.assertEqual(scenario.evaluator_turns, 1)
+        self.assertTrue(scenario.steps[-1]["publish"])
 
     def test_planner_validates_and_corrects_before_retrieval(self):
         scenario = Scenario(0, invalid_plan_once=True)
@@ -207,16 +211,15 @@ class LunaHostTests(unittest.TestCase):
 
     def test_no_evaluator_for_empty_retrieval(self):
         scenario = Scenario(0)
-        self.assertEqual(resolve(scenario.spawn, scenario, "question"), ([], [], None))
+        self.assertEqual(resolve(scenario.spawn, scenario, "question"), ([], [], None, []))
         self.assertEqual(scenario.spawned, ["planner"])
 
     def test_evaluator_failure_interrupts_without_a_judgment(self):
         scenario = Scenario(evaluator_error=True)
-        with self.assertRaisesRegex(LunaFailure, "evaluator_thread_start_rpc_rejected"):
-            resolve(scenario.spawn, scenario, "question")
-        self.assertTrue(scenario.steps[-1]["luna_unavailable"])
+        _, _, status, _ = resolve(scenario.spawn, scenario, "question")
+        self.assertIn("luna_unavailable", status)
         self.assertEqual(scenario.submitted, [])
-        self.assertFalse(any(step.get("publish") for step in scenario.steps))
+        self.assertTrue(scenario.steps[-1]["publish"])
 
     def test_tables_use_the_correct_rows(self):
         row = {"native_session_id": "confirmed", "title": "A | B",
@@ -229,8 +232,8 @@ class LunaHostTests(unittest.TestCase):
         self.assertNotIn("`unconfirmed`", confirmed)
         self.assertIn("No original test", unconfirmed)
         self.assertIn("Interrotta", unconfirmed)
-        self.assertIn("Nessuna sessione confermata", render([], [], None))
-        self.assertIn("Nessuna candidata plausibile", render([], [], None))
+        self.assertIn("Nessuna sessione confermata", render([], [], None, []))
+        self.assertIn("Nessuna candidata plausibile", render([], [], None, []))
 
     def test_single_best_requires_luna_selection(self):
         class Choose:
@@ -242,10 +245,9 @@ class LunaHostTests(unittest.TestCase):
 
         rows = [{"native_session_id": identity, "explanation": identity}
                 for identity in ("first", "second")]
-        self.assertEqual(select_best(Choose("second"), "question", rows), rows[1])
+        self.assertEqual(select_best(Choose("second"), "question", rows), "second")
         self.assertIsNone(select_best(Choose(None), "question", rows))
-        with self.assertRaisesRegex(ResolverError, "invalid_luna_response"):
-            select_best(Choose("forged"), "question", rows)
+        self.assertIsNone(select_best(Choose("forged"), "question", rows))
 
 
 if __name__ == "__main__":

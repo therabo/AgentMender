@@ -10,7 +10,7 @@
           "type": "null"
         }
       ],
-      "description": "Use the activity requested by the user. Omit for broad work."
+      "description": "Use a specific activity for an observed event, action or decision. Broad topics use any or discussion."
     },
     "constraints": {
       "anyOf": [
@@ -104,6 +104,7 @@
         "any",
         "discussion",
         "investigation",
+        "event",
         "implementation",
         "testing",
         "validation",
@@ -212,6 +213,7 @@
     "ProjectSourceInput": {
       "enum": [
         "observed_label",
+        "normalized_label",
         "verified_label",
         "verified_root"
       ]
@@ -596,6 +598,7 @@
     },
     "TextMatchInput": {
       "enum": [
+        "approximate",
         "contains",
         "phrase",
         "exact"
@@ -623,6 +626,7 @@
     },
     "TitleMatchInput": {
       "enum": [
+        "approximate",
         "contains",
         "exact"
       ]

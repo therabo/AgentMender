@@ -9,47 +9,43 @@ Interpret only the original request. Use no tools and return one SearchIntent.
 Return one SearchIntent JSON object, without Markdown fences. For example:
 {"schema_version":"1","subject":"Atlas scraper test and validation","activity":"testing","required_outcome":"validated","hints":{"terms":["Atlas scraper"]}}
 
-Choose the retrieval strategy from the original request. Use filter for
-typed predicates and exact Boolean logic. It replaces the hints as a
-candidate predicate. An explicit session title uses op title with value and
-kind exact for the full title or contains for a fragment. Copy the requested
-title, including accents. Use activity any, null or omitted outcomes, and
-hints.terms:[] for deterministic metadata lookups. Dates, provider, archive
-state, project and UUID also support metadata-only lookup. No message terms
-are needed to corroborate a title or another metadata condition.
+Choose a typed filter when the user specifies constraints or Boolean logic.
+An explicit full title uses op title and kind exact, a title fragment uses
+contains, and an uncertain/recalled title uses approximate. Copy the requested
+words. For metadata lookups use activity any and no message terms. For recorded
+project labels use the observed membership constraint or source normalized_label
+in a Boolean filter. A filesystem root or identifier must use its exact string.
 
-For semantic requests use one to eight distinctive content terms, with up to
-four justified aliases in hints.expansion_terms. Use terms a message could
-contain and include relevant language variants. An activity such as discussion
-describes what happened in the conversation. A purpose or next action such as
-"per eliminarle", "to delete them", or "so I can review them" explains why the
-user wants the results. Never turn that future action into a historical
-activity, outcome, title, or search term. Omit it from subject,
-hints.terms, hints.expansion_terms and filter as well, including synonyms
-for that action. Before returning JSON, check that each term describes
-the requested historical content and not the user's purpose for finding it.
+A broad topic or requests to find chats about a topic are lexical. Use any or
+discussion, and choose a few distinctive terms or phrases as lexical alternatives
+(OR). Preserve AND and NOT only when requested, and use exact, phrase or literal
+contains for exact text constraints. For events, actions, decisions or outcomes
+that must have taken place, specify the corresponding activity or outcome. Use
+event for an occurrence that does not fit the other activities, such as an
+argument between two named people. A decision to decline a proposal is activity
+decision, with the requested decision in subject and distinctive topic terms.
+
+A future action such as "per eliminarle" or "so I can review them" contributes
+no historical outcome, title, or query term. Omit that action and its
+synonyms from subject, hints and filter.
 
 Request: "Trovami le conversazioni in cui ho parlato di carte Pokémon per essere eliminate."
 SearchIntent:
-{"schema_version":"1","subject":"Discussioni sulle carte Pokémon","activity":"discussion","hints":{"terms":["carte Pokémon","Pokémon","Pokémon TCG"],"expansion_terms":["Pokemon cards","carte collezionabili"]}}
-The phrase "per essere eliminate" modifies the conversations as a future
-selection. It contributes no topic, historical outcome, or keyword.
+{"schema_version":"1","subject":"Carte Pokémon","activity":"discussion","hints":{"terms":["carte Pokémon","Pokémon TCG"],"expansion_terms":["Pokemon cards"]}}
 
-Use and/or with args and not with arg. For "Pokémon in the title or discussed
-in the messages", use an or of title contains and text contains (optionally
-with alternatives). Use activity any and omit global outcomes so the title
-branch can independently satisfy the request. The text branch still needs
-semantic assessment. For "conversations created in November where we talked
-about Pokémon", combine a created range and content terms, and set activity
-discussion. Preserve the requested time field and timezone. Combine any
-predicates in filter, or use constraints for global AND conditions.
-Keep project names in hints.project_names unless the request explicitly
-restricts recorded membership. For explicit membership use
-constraints.project_membership with mode include or exclude, basis observed
-or verified, and names. Use result_policy single_best only for an explicit
-choice and coverage_goal exhaustive for explicit full coverage.
+Use and/or with args and not with arg. For "Pokémon in the title or in
+the messages", use an or of title contains and text approximate. Use the
+requested field for dates and prefer inclusive calendar start_date/end_date
+with the user's IANA timezone, or the provided local timezone. With no zone
+available, use UTC. Infer an omitted year from the current date where needed.
+An exact day has identical start_date and end_date. An explicit interval keeps
+the specified boundaries. For "around November 7" use November 4–10. For
+"early November" use November 1–10. For "November" use November 1–30.
+Use hints.project_names for topical context, and constraints.project_membership
+when the user restricts recorded membership. Use result_policy single_best
+for an explicit choice and coverage_goal exhaustive for explicit full coverage.
 
-Use one of these activity values: any, discussion, investigation,
+Use one of these activity values: any, discussion, investigation, event,
 implementation, testing, validation, decision, troubleshooting. Outcome
 values are investigated, proposed, attempted, implemented, tested,
 validated, resolved, reverted, failed, unresolved. Use required_outcome

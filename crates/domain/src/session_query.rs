@@ -114,6 +114,8 @@ pub enum ProjectSource {
     /// Observed cwd basename only; never verified project ownership.
     #[default]
     ObservedLabel,
+    /// Recorded project label with case and separator normalization.
+    NormalizedLabel,
     VerifiedLabel,
     VerifiedRoot,
 }
@@ -125,6 +127,8 @@ pub enum TextMatch {
     Contains,
     /// Whitespace-normalized contiguous phrase.
     Phrase,
+    /// Whole natural-language words and simple inflection variants.
+    Approximate,
     /// Complete message equality after Unicode normalization.
     Exact,
 }
@@ -135,11 +139,13 @@ pub enum TitleMatch {
     #[default]
     Contains,
     Exact,
+    Approximate,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TitleMatchQuality {
+    Approximate,
     Partial,
     NormalizedExact,
     OriginalExact,
@@ -150,14 +156,53 @@ impl TitleMatch {
         if title == value {
             return Some(TitleMatchQuality::OriginalExact);
         }
-        let title = normalize_search_text(title);
-        let value = normalize_search_text(value);
+        if self == Self::Approximate && value.split_whitespace().any(technical_term) {
+            return contains_identifier(title, value).then_some(TitleMatchQuality::Partial);
+        }
+        let normalized_title = normalize_search_text(title);
+        let normalized_value = normalize_search_text(value);
+        if normalized_title == normalized_value {
+            return Some(TitleMatchQuality::NormalizedExact);
+        }
+        if self == Self::Exact {
+            return None;
+        }
+        let title = normalized_words(title);
+        let value = normalized_words(value);
+        if value.is_empty() {
+            return (self == Self::Contains && normalized_title.contains(&normalized_value))
+                .then_some(TitleMatchQuality::Partial);
+        }
         if title == value {
             Some(TitleMatchQuality::NormalizedExact)
-        } else if self == Self::Contains && title.contains(&value) {
+        } else if contains_words(&title, &value)
+            || self == Self::Contains && normalized_title.contains(&normalized_value)
+        {
             Some(TitleMatchQuality::Partial)
+        } else if self == Self::Approximate && approximate_title(&title, &value) {
+            Some(TitleMatchQuality::Approximate)
         } else {
             None
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MatchQuality {
+    Approximate,
+    Partial,
+    Normalized,
+    Exact,
+}
+
+impl From<TitleMatchQuality> for MatchQuality {
+    fn from(quality: TitleMatchQuality) -> Self {
+        match quality {
+            TitleMatchQuality::Approximate => Self::Approximate,
+            TitleMatchQuality::Partial => Self::Partial,
+            TitleMatchQuality::NormalizedExact => Self::Normalized,
+            TitleMatchQuality::OriginalExact => Self::Exact,
         }
     }
 }
@@ -305,6 +350,8 @@ impl QueryRange {
 #[serde(deny_unknown_fields)]
 pub struct QueryObservation {
     pub matched_atoms: Vec<usize>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub text_quality: Vec<(usize, MatchQuality)>,
     pub missing_timestamps: bool,
 }
 
@@ -334,7 +381,9 @@ impl<'a> QueryFacts<'a> {
     }
     fn project(&self, source: ProjectSource) -> Option<&str> {
         match source {
-            ProjectSource::ObservedLabel => self.metadata.project_label.as_deref(),
+            ProjectSource::ObservedLabel | ProjectSource::NormalizedLabel => {
+                self.metadata.project_label.as_deref()
+            }
             ProjectSource::VerifiedLabel => self.verified_project,
             ProjectSource::VerifiedRoot => self.verified_root,
         }
@@ -418,6 +467,15 @@ impl QueryExpr {
     pub fn observation_valid(&self, observation: &QueryObservation) -> bool {
         if !self.valid()
             || observation.matched_atoms.len() > 128
+            || observation.text_quality.len() > observation.matched_atoms.len()
+            || observation
+                .text_quality
+                .windows(2)
+                .any(|v| v[0].0 >= v[1].0)
+            || observation
+                .text_quality
+                .iter()
+                .any(|(index, _)| observation.matched_atoms.binary_search(index).is_err())
             || observation.matched_atoms.windows(2).any(|v| v[0] >= v[1])
         {
             return false;
@@ -455,17 +513,35 @@ impl QueryExpr {
         observation: &mut QueryObservation,
         prepared: &PreparedText<'_>,
         timestamp: Option<i64>,
-    ) {
+    ) -> bool {
         observation.missing_timestamps |= timestamp.is_none();
+        let mut text_match = false;
         self.visit_content(&mut 0, &mut |index, atom| {
             let matched = match atom {
                 Self::Text {
                     value,
                     kind,
                     alternatives,
-                } => std::iter::once(value)
-                    .chain(alternatives)
-                    .any(|v| prepared.matches(v, *kind)),
+                } => {
+                    let quality = std::iter::once(value)
+                        .chain(alternatives)
+                        .filter_map(|term| prepared.quality(term, *kind))
+                        .max();
+                    if let Some(quality) = quality {
+                        text_match = true;
+                        match observation
+                            .text_quality
+                            .binary_search_by_key(&index, |pair| pair.0)
+                        {
+                            Ok(at) => {
+                                observation.text_quality[at].1 =
+                                    observation.text_quality[at].1.max(quality)
+                            }
+                            Err(at) => observation.text_quality.insert(at, (index, quality)),
+                        }
+                    }
+                    quality.is_some()
+                }
                 Self::MessageTime { range } => range
                     .bounds()
                     .ok()
@@ -477,7 +553,57 @@ impl QueryExpr {
                 observation.matched_atoms.insert(at, index);
             }
         });
+        text_match
     }
+
+    pub fn match_quality(
+        &self,
+        metadata: &SessionMetadata,
+        observation: &QueryObservation,
+        content_complete: bool,
+    ) -> Option<MatchQuality> {
+        self.observed_quality(metadata, observation, content_complete, 0)
+    }
+
+    fn observed_quality(
+        &self,
+        metadata: &SessionMetadata,
+        observation: &QueryObservation,
+        content_complete: bool,
+        at: usize,
+    ) -> Option<MatchQuality> {
+        if self.evaluate_observed_branch(metadata, observation, content_complete, at) != Truth::True
+        {
+            return None;
+        }
+        match self {
+            Self::And { args } | Self::Or { args } => {
+                let mut next = at + 1;
+                let qualities = args.iter().filter_map(|arg| {
+                    let quality =
+                        arg.observed_quality(metadata, observation, content_complete, next);
+                    next += arg.node_count();
+                    quality
+                });
+                if matches!(self, Self::And { .. }) {
+                    qualities.min()
+                } else {
+                    qualities.max()
+                }
+            }
+            Self::Title { value, kind } => kind
+                .quality(metadata.title.as_deref()?, value)
+                .map(Into::into),
+            Self::Text { .. } => observation
+                .text_quality
+                .binary_search_by_key(&at, |pair| pair.0)
+                .ok()
+                .map(|index| observation.text_quality[index].1)
+                .or(Some(MatchQuality::Partial)),
+            _ => None,
+        }
+    }
+
     pub fn evaluate_observed(
         &self,
         metadata: &SessionMetadata,
@@ -573,7 +699,12 @@ impl QueryExpr {
             }
             Self::Project { values, source } => {
                 facts.project(*source).map_or(Truth::Unknown, |s| {
-                    Truth::known(values.iter().any(|v| v == s))
+                    Truth::known(values.iter().any(|v| {
+                        v == s
+                            || *source == ProjectSource::NormalizedLabel
+                                && !label_key(v).is_empty()
+                                && label_key(v) == label_key(s)
+                    }))
                 })
             }
             Self::ProjectUnknown { source } => Truth::known(facts.project(*source).is_none()),
@@ -702,6 +833,7 @@ pub struct PreparedText<'a> {
     lower: OnceCell<String>,
     normalized: OnceCell<String>,
     phrase: OnceCell<String>,
+    words: OnceCell<String>,
 }
 impl<'a> PreparedText<'a> {
     pub fn new(original: &'a str) -> Self {
@@ -710,6 +842,7 @@ impl<'a> PreparedText<'a> {
             lower: OnceCell::new(),
             normalized: OnceCell::new(),
             phrase: OnceCell::new(),
+            words: OnceCell::new(),
         }
     }
     pub fn lowercase(&self) -> &str {
@@ -719,9 +852,7 @@ impl<'a> PreparedText<'a> {
         self.normalized
             .get_or_init(|| normalize_search_text(self.original))
     }
-    fn matches(&self, query: &str, kind: TextMatch) -> bool {
-        // A large message is folded once per observed record, not once per
-        // query leaf/alternative. Both allocations are bounded by record size.
+    fn quality(&self, query: &str, kind: TextMatch) -> Option<MatchQuality> {
         match kind {
             TextMatch::Contains => self.normalized().contains(&normalize_search_text(query)),
             TextMatch::Exact => self.normalized() == normalize_search_text(query),
@@ -729,11 +860,243 @@ impl<'a> PreparedText<'a> {
                 .phrase
                 .get_or_init(|| normalized_phrase(self.original))
                 .contains(&normalized_phrase(query)),
+            TextMatch::Approximate if query.split_whitespace().any(technical_term) => {
+                return contains_identifier(self.original, query).then_some(MatchQuality::Exact);
+            }
+            TextMatch::Approximate => {
+                let needle = normalized_words(query);
+                let words = self.words.get_or_init(|| normalized_words(self.original));
+                if needle.is_empty() {
+                    return None;
+                }
+                if contains_words(words, &needle) {
+                    return Some(if contains_words(self.original, query) {
+                        MatchQuality::Exact
+                    } else {
+                        MatchQuality::Normalized
+                    });
+                }
+                let needle: Vec<_> = needle
+                    .split_whitespace()
+                    .filter(|word| distinctive(word))
+                    .collect();
+                if needle.is_empty() {
+                    return None;
+                }
+                let mut found = vec![false; needle.len()];
+                for word in words.split_whitespace() {
+                    for (expected, seen) in needle.iter().zip(&mut found) {
+                        *seen |= same_inflection(word, expected);
+                    }
+                    if found.iter().all(|seen| *seen) {
+                        return Some(MatchQuality::Approximate);
+                    }
+                }
+                return None;
+            }
         }
+        .then(|| {
+            if self.original == query || kind != TextMatch::Exact && self.original.contains(query) {
+                MatchQuality::Exact
+            } else {
+                MatchQuality::Normalized
+            }
+        })
     }
 }
 fn text_match(text: &str, query: &str, kind: TextMatch) -> bool {
-    PreparedText::new(text).matches(query, kind)
+    PreparedText::new(text).quality(query, kind).is_some()
+}
+
+fn normalized_words(text: &str) -> String {
+    let mut latin = false;
+    text.chars()
+        .flat_map(char::to_lowercase)
+        .nfd()
+        .filter(|&c| {
+            if unicode_normalization::char::is_combining_mark(c) {
+                !latin
+            } else {
+                latin = c.is_ascii_alphabetic();
+                true
+            }
+        })
+        .nfc()
+        .collect::<String>()
+        .split(|c: char| !c.is_alphanumeric() && !unicode_normalization::char::is_combining_mark(c))
+        .filter(|word| !word.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn label_key(label: &str) -> String {
+    normalize_search_text(label)
+        .chars()
+        .filter(|c| !c.is_whitespace() && *c != '-' && *c != '_')
+        .collect()
+}
+
+fn contains_words(text: &str, phrase: &str) -> bool {
+    text.match_indices(phrase).any(|(start, piece)| {
+        let end = start + piece.len();
+        text[..start]
+            .chars()
+            .next_back()
+            .is_none_or(|c| !c.is_alphanumeric())
+            && text[end..]
+                .chars()
+                .next()
+                .is_none_or(|c| !c.is_alphanumeric())
+    })
+}
+
+fn technical_term(term: &str) -> bool {
+    !term.contains(char::is_whitespace)
+        && (term.contains(['/', '\\', '_', '@', '#', '+', '$'])
+            || term
+                .trim_end_matches([':', '.', '-'])
+                .contains([':', '.', '-'])
+            || term.chars().any(|c| c.is_ascii_digit())
+            || term.len() >= 7 && term.bytes().all(|byte| byte.is_ascii_hexdigit())
+            || term.chars().any(char::is_lowercase) && term.chars().skip(1).any(char::is_uppercase))
+}
+
+fn contains_identifier(text: &str, term: &str) -> bool {
+    let path = term.contains(['/', '\\']);
+    let identifier =
+        |c: char| c.is_alphanumeric() || c == '_' || path && matches!(c, '/' | '\\' | '.');
+    // Keep identifier punctuation and case. Delimiters around the identifier
+    // remain valid even when the surrounding prose contains punctuation.
+    text.match_indices(term).any(|(start, piece)| {
+        text[..start]
+            .chars()
+            .next_back()
+            .is_none_or(|c| !identifier(c))
+            && text[start + piece.len()..]
+                .chars()
+                .next()
+                .is_none_or(|c| !identifier(c))
+    })
+}
+
+pub(crate) fn distinctive_term(value: &str) -> bool {
+    value.split_whitespace().any(technical_term)
+        || normalized_words(value).split_whitespace().any(distinctive)
+}
+
+fn distinctive(word: &str) -> bool {
+    word.chars().count() >= 3
+        && !matches!(
+            word,
+            "the"
+                | "and"
+                | "for"
+                | "about"
+                | "find"
+                | "chat"
+                | "chats"
+                | "session"
+                | "sessions"
+                | "conversation"
+                | "conversations"
+                | "project"
+                | "projects"
+                | "progetto"
+                | "progetti"
+                | "discussion"
+                | "discussions"
+                | "discussione"
+                | "discussioni"
+                | "trova"
+                | "trovami"
+                | "conversazione"
+                | "conversazioni"
+                | "sessione"
+                | "sessioni"
+                | "delle"
+                | "della"
+                | "sulle"
+                | "sulla"
+                | "degli"
+                | "dove"
+                | "con"
+                | "per"
+        )
+}
+
+fn same_inflection(left: &str, right: &str) -> bool {
+    if left == right {
+        return true;
+    }
+    inflection_stem(left) == inflection_stem(right)
+}
+
+fn inflection_stem(word: &str) -> &str {
+    ["es", "s", "e", "i", "a", "o"]
+        .into_iter()
+        .filter_map(|suffix| word.strip_suffix(suffix))
+        .find(|prefix| prefix.chars().take(4).count() == 4)
+        .unwrap_or(word)
+}
+
+fn approximate_title(title: &str, query: &str) -> bool {
+    let mut words: Vec<_> = title
+        .split_whitespace()
+        .filter(|word| distinctive(word))
+        .collect();
+    let terms: Vec<_> = query
+        .split_whitespace()
+        .filter(|word| distinctive(word))
+        .collect();
+    if terms.is_empty() {
+        return false;
+    }
+    let mut exact = 0;
+    let missing: Vec<_> = terms
+        .iter()
+        .copied()
+        .filter(|term| {
+            if let Some(index) = words.iter().position(|word| word == term) {
+                words.swap_remove(index);
+                exact += 1;
+                false
+            } else {
+                true
+            }
+        })
+        .collect();
+    if missing.is_empty() || exact >= 2 && exact * 3 >= terms.len() * 2 {
+        return true;
+    }
+    missing.len() == 1 && words.iter().any(|word| one_edit(word, missing[0]))
+}
+
+fn one_edit(left: &str, right: &str) -> bool {
+    let left: Vec<_> = left.chars().collect();
+    let right: Vec<_> = right.chars().collect();
+    let (short, long) = if left.len() <= right.len() {
+        (&left, &right)
+    } else {
+        (&right, &left)
+    };
+    if short.len() < 4
+        || long.len() > short.len() + 1
+        || long.iter().chain(short).any(|c| !c.is_alphabetic())
+    {
+        return false;
+    }
+    let Some(i) = short.iter().zip(long).position(|(a, b)| a != b) else {
+        return true;
+    };
+    if short.len() != long.len() {
+        short[i..] == long[i + 1..]
+    } else {
+        short[i + 1..] == long[i + 1..]
+            || i + 1 < short.len()
+                && short[i] == long[i + 1]
+                && short[i + 1] == long[i]
+                && short[i + 2..] == long[i + 2..]
+    }
 }
 
 /// Only explicit RFC3339 timestamps are admitted. Missing/invalid values remain

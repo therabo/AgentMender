@@ -107,12 +107,14 @@ enum CoverageInput {
 enum ProjectSourceInput {
     #[default]
     ObservedLabel,
+    NormalizedLabel,
     VerifiedLabel,
     VerifiedRoot,
 }
 #[derive(Clone, Copy, Default, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 enum TextMatchInput {
+    Approximate,
     #[default]
     Contains,
     Phrase,
@@ -121,6 +123,7 @@ enum TextMatchInput {
 #[derive(Clone, Copy, Default, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 enum TitleMatchInput {
+    Approximate,
     #[default]
     Contains,
     Exact,
@@ -672,9 +675,10 @@ enum ResolutionInput {
         expected_revision: usize,
         #[schemars(length(min = 1, max = 64))]
         operation_id: String,
+        /// Evaluator judgments. Each entry is decoded and checked independently.
         #[serde(default)]
-        #[schemars(length(max = 5))]
-        assessments: Vec<AssessmentInput>,
+        #[schemars(with = "Option<Vec<AssessmentSchema>>")]
+        assessments: Option<Vec<serde_json::Value>>,
         #[serde(default)]
         #[schemars(length(max = session_resolution::WINDOW_BATCH))]
         context_requests: Vec<ResolutionWindowInput>,
@@ -688,7 +692,17 @@ enum ResolutionInput {
         cancel: bool,
         #[serde(default)]
         luna_unavailable: bool,
+        #[serde(default)]
+        interrupt_evaluation: Option<EvaluationInterruptionInput>,
     },
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+enum EvaluationInterruptionInput {
+    LunaUnavailable,
+    InvalidLunaResponse,
+    InvalidResolutionRequest,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -705,7 +719,7 @@ struct SearchIntentInput {
     /// The information need, including material scope and qualifications.
     #[schemars(length(min = 1, max = SUBJECT_LIMIT))]
     subject: String,
-    /// Use the activity requested by the user. Omit for broad work.
+    /// Use a specific activity for an observed event, action or decision. Broad topics use any or discussion.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     activity: Option<ActivityInput>,
     /// A requested result such as implemented, validated, resolved or failed. Omit or use null when unspecified.
@@ -738,6 +752,7 @@ enum ActivityInput {
     Any,
     Discussion,
     Investigation,
+    Event,
     Implementation,
     Testing,
     Validation,
@@ -865,7 +880,7 @@ enum EvidenceRelationshipInput {
 
 #[derive(Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-struct AssessmentInput {
+struct LegacyAssessmentInput {
     native_session_id: String,
     disposition: DispositionInput,
     /// Cite handles from this candidate's visible evidence. Continuation handles are navigation only.
@@ -876,7 +891,6 @@ struct AssessmentInput {
     outcomes: Vec<OutcomeInput>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     activity: Option<ActivityInput>,
-    /// Progressive verified_relevant judgments require direct evidence of work in this session.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     relationship: Option<EvidenceRelationshipInput>,
     #[schemars(length(min = 1, max = 1024))]
@@ -898,38 +912,101 @@ enum EvidenceGapInput {
 #[serde(transparent)]
 struct EvidenceGapDetail(#[schemars(length(min = 1, max = 120))] String);
 
-impl EvidenceGapInput {
-    fn normalize(self) -> Result<Option<Self>, ErrorData> {
-        let invalid = || {
-            resolution_invalid(
-                "invalid_assessment",
-                "Use one short missing_evidence string or up to four short details.",
-            )
-        };
-        let text = match self {
-            Self::Text(text) => text,
-            Self::Details(details) => {
-                if details.is_empty() {
-                    return Ok(None);
-                }
-                if details.len() > 4
-                    || details
-                        .iter()
-                        .any(|d| d.0.trim().is_empty() || d.0.len() > 120)
-                {
-                    return Err(invalid());
-                }
-                details
-                    .into_iter()
-                    .map(|d| d.0)
-                    .collect::<Vec<_>>()
-                    .join(" / ")
-            }
-        };
-        if text.trim().is_empty() || text.len() > 512 || text.chars().any(char::is_control) {
-            return Err(invalid());
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct JudgmentInput {
+    native_session_id: String,
+    relevance: RelevanceInput,
+    #[schemars(length(max = 4))]
+    evidence: Vec<usize>,
+    #[schemars(length(min = 1, max = 1024))]
+    #[serde(default)]
+    reason: Option<String>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+enum RelevanceInput {
+    Relevant,
+    Possible,
+    NotRelevant,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(untagged)]
+enum AssessmentSchema {
+    Judgment(JudgmentInput),
+    Legacy(LegacyAssessmentInput),
+}
+
+impl AssessmentSchema {
+    fn decode(value: serde_json::Value) -> session_resolution::AssessmentEntry {
+        let native_session_id = value["native_session_id"].as_str().map(str::to_owned);
+        let assessment = serde_json::from_value::<Self>(value)
+            .ok()
+            .and_then(Self::into_assessment);
+        session_resolution::AssessmentEntry {
+            native_session_id,
+            assessment,
         }
-        Ok(Some(Self::Text(text)))
+    }
+
+    fn into_assessment(self) -> Option<session_resolution::Assessment> {
+        use session_resolution::Disposition;
+        match self {
+            Self::Judgment(judgment) => {
+                let (disposition, default) = match judgment.relevance {
+                    RelevanceInput::Relevant => (
+                        Disposition::VerifiedRelevant,
+                        "The cited evidence satisfies the request.",
+                    ),
+                    RelevanceInput::Possible => (
+                        Disposition::Insufficient,
+                        "The available evidence does not settle the request.",
+                    ),
+                    RelevanceInput::NotRelevant => (
+                        Disposition::Related,
+                        "The evaluation found the candidate did not satisfy the request.",
+                    ),
+                };
+                Some(session_resolution::Assessment {
+                    native_session_id: judgment.native_session_id,
+                    disposition,
+                    evidence: judgment.evidence,
+                    outcomes: vec![],
+                    activity: None,
+                    relationship: None,
+                    explanation: judgment.reason.unwrap_or_else(|| default.into()),
+                    missing_evidence: None,
+                    plausible_alternative: false,
+                })
+            }
+            Self::Legacy(mut judgment) => {
+                judgment.missing_evidence = match judgment.missing_evidence {
+                    Some(EvidenceGapInput::Details(details)) if details.is_empty() => None,
+                    Some(EvidenceGapInput::Details(details)) => {
+                        if details.len() > 4
+                            || details
+                                .iter()
+                                .any(|detail| detail.0.trim().is_empty() || detail.0.len() > 120)
+                        {
+                            return None;
+                        }
+                        Some(EvidenceGapInput::Text(
+                            details
+                                .into_iter()
+                                .map(|detail| detail.0)
+                                .collect::<Vec<_>>()
+                                .join(" / "),
+                        ))
+                    }
+                    other => other,
+                };
+                serde_json::to_value(judgment)
+                    .ok()
+                    .and_then(|value| serde_json::from_value(value).ok())
+            }
+        }
     }
 }
 
@@ -961,12 +1038,14 @@ impl ResolutionInput {
                 keep_alive,
                 cancel,
                 luna_unavailable,
+                interrupt_evaluation,
             } => Action::Advance {
                 run,
                 step: Box::new(session_resolution::Advance {
                     expected_revision,
                     operation_id,
-                    assessments: decode(normalize_assessments(assessments)?)?,
+                    assessments: assessments
+                        .map(|entries| entries.into_iter().map(AssessmentSchema::decode).collect()),
                     context_requests: context_requests
                         .into_iter()
                         .map(|request| {
@@ -979,22 +1058,28 @@ impl ResolutionInput {
                     publish,
                     keep_alive,
                     cancel,
-                    luna_unavailable,
+                    interrupt_evaluation: interrupt_evaluation
+                        .map(|reason| {
+                            use session_resolution::EvaluationInterruption as Reason;
+                            match reason {
+                                EvaluationInterruptionInput::LunaUnavailable => {
+                                    Reason::LunaUnavailable
+                                }
+                                EvaluationInterruptionInput::InvalidLunaResponse => {
+                                    Reason::InvalidLunaResponse
+                                }
+                                EvaluationInterruptionInput::InvalidResolutionRequest => {
+                                    Reason::InvalidResolutionRequest
+                                }
+                            }
+                        })
+                        .or(luna_unavailable.then_some(
+                            session_resolution::EvaluationInterruption::LunaUnavailable,
+                        )),
                 }),
             },
         })
     }
-}
-
-fn normalize_assessments(
-    mut assessments: Vec<AssessmentInput>,
-) -> Result<Vec<AssessmentInput>, ErrorData> {
-    for assessment in &mut assessments {
-        if let Some(gap) = assessment.missing_evidence.take() {
-            assessment.missing_evidence = gap.normalize()?;
-        }
-    }
-    Ok(assessments)
 }
 
 fn intent_error(error: SearchIntentError) -> ErrorData {
@@ -1076,8 +1161,20 @@ struct ResolutionMatchView {
     match_basis: serde_json::Value,
     #[serde(skip_serializing_if = "Option::is_none")]
     title_match: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    lexical_match: Option<serde_json::Value>,
     verification_state: VerificationStateView,
     evidence_refs: Vec<String>,
+}
+
+#[derive(Serialize, JsonSchema)]
+struct ExcludedMatchView {
+    native_session_id: String,
+    title: Option<String>,
+    created_at: Option<i64>,
+    explanation: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    lexical_match: Option<serde_json::Value>,
 }
 
 #[derive(Serialize, JsonSchema)]
@@ -1113,6 +1210,7 @@ struct PreparedChoiceView {
     native_session_id: String,
     explanation: String,
     match_basis: serde_json::Value,
+    lexical_match: Option<serde_json::Value>,
 }
 
 #[derive(Serialize, JsonSchema)]
@@ -1150,6 +1248,7 @@ enum ResolutionDataView {
     Advanced {
         matches: Vec<ResolutionMatchView>,
         alternatives: Vec<ResolutionMatchView>,
+        excluded: Vec<ExcludedMatchView>,
         windows: Vec<ResolutionWindowView>,
         #[serde(skip_serializing_if = "Vec::is_empty")]
         context_failures: Vec<ResolutionContextFailureView>,
@@ -1212,10 +1311,7 @@ fn resolution_view(
     };
     let cite = |citation: session_resolution::Citation| ResolutionCitationView {
         handle: citation.handle,
-        evidence: evidence_view(
-            citation.evidence,
-            projector.seal_search(b"evidence", &citation.reference),
-        ),
+        evidence: evidence_view(citation.evidence, String::new()),
     };
     let resolved = |mut r: session_resolution::ResolvedCandidate| {
         r.metadata.project_label = r.metadata.project_label.as_deref().map(display);
@@ -1234,7 +1330,7 @@ fn resolution_view(
                 .collect()
         };
         let assessment = r.assessment.map_or_else(
-            || serde_json::json!({"explanation": "The recorded metadata satisfies the requested filter."}),
+            || serde_json::json!({"explanation": r.basis.explanation()}),
             |assessment| serde_json::to_value(assessment).expect("typed assessment"),
         );
         ResolutionMatchView {
@@ -1248,6 +1344,7 @@ fn resolution_view(
             title_match: r
                 .title_match
                 .map(|quality| serde_json::to_value(quality).expect("typed title quality")),
+            lexical_match: r.lexical_match.map(|quality| serde_json::json!(quality)),
             assessment,
             evidence_refs,
         }
@@ -1280,6 +1377,19 @@ fn resolution_view(
         ResolutionData::Advanced(reply) => ResolutionDataView::Advanced {
             matches: reply.matches.into_iter().map(resolved).collect(),
             alternatives: reply.alternatives.into_iter().map(resolved).collect(),
+            excluded: reply
+                .excluded
+                .into_iter()
+                .map(|row| ExcludedMatchView {
+                    native_session_id: row.metadata.native_session_id,
+                    title: row.metadata.title.as_deref().map(safe),
+                    created_at: row.metadata.created_at,
+                    explanation: row
+                        .assessment
+                        .map_or_else(String::new, |judgment| safe(&judgment.explanation)),
+                    lexical_match: row.lexical_match.map(|quality| serde_json::json!(quality)),
+                })
+                .collect(),
             windows: reply.windows.into_iter().map(window).collect(),
             context_failures: reply
                 .context_failures
@@ -1308,6 +1418,9 @@ fn resolution_view(
                     native_session_id: choice.native_session_id,
                     explanation: safe(&choice.explanation),
                     match_basis: serde_json::to_value(choice.match_basis).expect("typed basis"),
+                    lexical_match: choice
+                        .lexical_match
+                        .map(|quality| serde_json::json!(quality)),
                 })
                 .collect(),
         },

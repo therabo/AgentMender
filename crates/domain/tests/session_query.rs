@@ -282,6 +282,7 @@ fn incremental_accumulation_matches_cross_page_terms_without_retaining_messages(
     assert!(!serialized.contains("Earth") && !serialized.contains("Cesium"));
     let forged = QueryObservation {
         matched_atoms: vec![0],
+        text_quality: vec![],
         missing_timestamps: false,
     };
     assert!(!q.observation_valid(&forged));
@@ -441,4 +442,137 @@ proptest! {
         for message in messages.iter().rev() { query.observe(&mut reverse, message); }
         prop_assert_eq!(observed, reverse);
     }
+}
+
+#[test]
+fn approximate_title_uses_distinctive_words_and_keeps_technical_tokens_exact() {
+    for (query, title, quality) in [
+        ("Carte Pokemon", "Carte Pokemon", Some(MatchQuality::Exact)),
+        (
+            "Carte Pokemon",
+            "Carte -- Pokémon!",
+            Some(MatchQuality::Normalized),
+        ),
+        (
+            "Carte Pokemon",
+            "Guida alle carte Pokémon da collezione",
+            Some(MatchQuality::Partial),
+        ),
+        (
+            "Trova conversazioni carte Pokemon",
+            "Trova conversazioni sulle carte Pokémon",
+            Some(MatchQuality::Approximate),
+        ),
+        (
+            "Carte Pokemon",
+            "Pokémon sulle carte",
+            Some(MatchQuality::Approximate),
+        ),
+        (
+            "Carte Pokmeon",
+            "Carte Pokémon",
+            Some(MatchQuality::Approximate),
+        ),
+        (
+            "Carte Pokémon raccolta",
+            "Raccolta delle carte vintage",
+            Some(MatchQuality::Approximate),
+        ),
+        (
+            "Trova conversazioni carte Pokemon",
+            "Trova conversazioni sulla cena",
+            None,
+        ),
+        ("MISSION1", "MISSION2", None),
+        ("store::Find", "store::Fine", None),
+        ("/app/test.rs", "/app/tests.rs", None),
+        ("deadbeef", "deadbeec", None),
+    ] {
+        let mut row = metadata(None);
+        row.title = Some(title.into());
+        let filter = QueryExpr::Title {
+            value: query.into(),
+            kind: TitleMatch::Approximate,
+        };
+        assert_eq!(
+            filter.metadata_title_match(&row).map(Into::into),
+            quality,
+            "{query} / {title}"
+        );
+    }
+}
+
+#[test]
+fn approximate_text_preserves_boolean_logic_and_source_identity() {
+    let approximate = |value: &str, alternatives: &[&str]| QueryExpr::Text {
+        value: value.into(),
+        alternatives: alternatives.iter().map(|s| (*s).into()).collect(),
+        kind: TextMatch::Approximate,
+    };
+    let filter = QueryExpr::And {
+        args: vec![
+            QueryExpr::Project {
+                values: vec!["MISSION1".into()],
+                source: ProjectSource::NormalizedLabel,
+            },
+            approximate("carte Pokémon", &["trading cards"]),
+            QueryExpr::Or {
+                args: vec![approximate("catalogo", &[]), approximate("raccolta", &[])],
+            },
+            not(text("spoiler")),
+        ],
+    };
+    for label in ["MISSION1", "Mission 1", "mission-1"] {
+        let row = metadata(Some(label));
+        for (message, complete, truth) in [
+            ("Il catalogo della carta Pokemon.", true, Truth::True),
+            ("La raccolta di trading cards.", true, Truth::True),
+            ("Una carta Pokémon.", true, Truth::False),
+            ("Catalogo di carte Pokémon con spoiler.", true, Truth::False),
+            ("Il catalogo della carta Pokemon.", false, Truth::Unknown),
+        ] {
+            let messages = [QueryText {
+                text: message,
+                timestamp: None,
+            }];
+            let mut observed = QueryObservation::default();
+            filter.observe(&mut observed, &messages[0]);
+            assert_eq!(filter.evaluate(&facts(&row, &messages, complete)), truth);
+            assert_eq!(filter.evaluate_observed(&row, &observed, complete), truth);
+        }
+        assert_eq!(row.identity.state_root, std::path::Path::new("/fixture"));
+    }
+    let row = metadata(Some("mission-1"));
+    assert_eq!(project("MISSION1").metadata_truth(&row), Truth::False);
+    let q = approximate("lookup_key", &[]);
+    let only = |text| {
+        [QueryText {
+            text,
+            timestamp: None,
+        }]
+    };
+    assert_eq!(
+        q.evaluate(&facts(&row, &only("Use lookup_key here."), true)),
+        Truth::True
+    );
+    assert_eq!(
+        q.evaluate(&facts(&row, &only("Use lookup_keys here."), true)),
+        Truth::False
+    );
+    assert_eq!(
+        q.evaluate(&facts(&row, &only("Use lookup-key here."), true)),
+        Truth::False
+    );
+}
+
+#[test]
+fn planner_hints_favor_distinctive_alternatives() {
+    let intent: search_intent::SearchIntent = serde_json::from_value(serde_json::json!({
+        "schema_version": "1",
+        "subject": "Pokémon",
+        "hints": {"terms": ["conversations", "Pokémon", "trading cards"]}
+    }))
+    .unwrap();
+    let checked = intent.validate().unwrap();
+    assert_eq!(checked.lexical().text_terms(), ["pokemon", "trading cards"]);
 }

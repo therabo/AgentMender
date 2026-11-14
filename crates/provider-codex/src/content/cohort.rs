@@ -351,13 +351,17 @@ impl Cohort {
                     let binding = discovery_binding(&identity(root, &scope.caller)?);
                     let valid_basis = match receipt.basis {
                         ReceiptBasis::VerifiedMetadata => receipt.assessment.is_none() && receipt.citations.is_empty(),
+                        ReceiptBasis::VerifiedLexical => receipt.assessment.is_none() && !receipt.citations.is_empty(),
+                        ReceiptBasis::Rejected => receipt.assessment.as_ref().is_some_and(|a| {
+                            matches!(a.disposition, Disposition::Related | Disposition::Contradiction)
+                        }),
                         ReceiptBasis::SemanticEvidence => receipt.assessment.as_ref().is_some_and(|a| {
                             a.disposition == Disposition::VerifiedRelevant && !receipt.citations.is_empty()
                         }),
                         ReceiptBasis::PlausibleEvidence => receipt.assessment.as_ref().is_some_and(|a| {
                             a.disposition == Disposition::Insufficient && a.plausible_alternative && !receipt.citations.is_empty()
                         }),
-                        ReceiptBasis::RetrievedUnverified => receipt.assessment.as_ref().is_some_and(|a| {
+                        ReceiptBasis::RetrievedUnverified => receipt.assessment.as_ref().is_none_or(|a| {
                             a.disposition == Disposition::Insufficient && !a.plausible_alternative
                         }),
                     };

@@ -1708,18 +1708,19 @@ fn search_batch(
                     for message in &observation.messages {
                         let prepared = PreparedText::new(&message.text);
                         let count = rank.observe_prepared(message.source, &prepared);
-                        if let Some(q) = &request.parameters.structured {
-                            q.filter.observe_prepared(
-                                &mut query_observation,
-                                &prepared,
-                                message
-                                    .position
-                                    .timestamp
-                                    .as_deref()
-                                    .and_then(parse_message_timestamp),
-                            );
-                        }
-                        if count > 0 {
+                        let observed_match =
+                            request.parameters.structured.as_ref().is_some_and(|q| {
+                                q.filter.observe_prepared(
+                                    &mut query_observation,
+                                    &prepared,
+                                    message
+                                        .position
+                                        .timestamp
+                                        .as_deref()
+                                        .and_then(parse_message_timestamp),
+                                )
+                            });
+                        if count > 0 || cohort && observed_match {
                             let (excerpt, truncated) = bounded_excerpt(&message.text, &terms, 320);
                             evidence.push(ConversationEvidence {
                                 source: message.source.into(),
