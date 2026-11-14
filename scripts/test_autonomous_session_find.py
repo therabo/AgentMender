@@ -2,10 +2,12 @@
 """Exercise the real MCP server and Rust reader with a disposable App Server double."""
 
 import argparse
+from contextlib import closing
 import json
 import os
 from pathlib import Path
 import resource
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -18,6 +20,7 @@ APP_SERVER = r'''#!/usr/bin/python3
 import json
 from pathlib import Path
 import os
+import sqlite3
 import sys
 import time
 import uuid
@@ -29,8 +32,18 @@ if "--version" in sys.argv:
 if sys.argv[1:2] == ["delete"]:
     root = Path(os.environ["CODEX_HOME"])
     assert root == Path.cwd() and (root / "state_5.sqlite").exists(), root
+    observed = "unavailable"
+    path = root / "sqlite/codex.db"
+    if path.is_file():
+        with sqlite3.connect(path.as_uri() + "?mode=ro", uri=True) as db:
+            try:
+                observed, = db.execute(
+                    "SELECT last_full_reconciled_at FROM local_thread_catalog_sync_state WHERE host_id='local'"
+                ).fetchone()
+            except sqlite3.OperationalError:
+                pass
     with (root.parent / "native-delete.calls").open("a") as log:
-        print(json.dumps({"argv": sys.argv[1:], "root": str(root)}), file=log)
+        print(json.dumps({"argv": sys.argv[1:], "root": str(root), "desktop_timestamp": observed}), file=log)
     raise SystemExit(json.loads((root / "auth.json").read_text())["delete_exit"])
 
 def write(value):
@@ -273,17 +286,65 @@ def delete_outcomes(client, root, codex, caller, row, selection):
     assert request("accept", content={"confirm": True})["structuredContent"] == {"error": "confirmation_unavailable"}
     assert count() == 0 and inventory(root) == before
 
-    for status, exit_code, missing, expected_count in (
-        ("succeeded", 0, False, 1), ("failed", 9, False, 2), ("failed", 0, True, 2)
-    ):
-        auth(root, delete_exit=exit_code)
-        before = inventory(root)
-        reply = request("accept", content={}, missing=missing)
-        assert reply["structuredContent"] == {"status": status, "native_session_id": row["native_session_id"]}, reply
-        assert reply.get("isError", False) == (status == "failed"), reply
-        assert count() == expected_count and inventory(root) == before
-    for call in calls.read_text().splitlines():
-        assert json.loads(call) == {"argv": ["delete", row["native_session_id"], "--force"], "root": str(root)}
+    sqlite = root / "sqlite"
+    path = sqlite / "codex.db"
+    sqlite.mkdir()
+    # Readers can change the shared-memory read marks without writing catalog data.
+    def persistent_files():
+        return {name: data for name, data in inventory(root).items() if not name.endswith("-shm")}
+
+    schema = (Path(__file__).resolve().parents[1] /
+              "compatibility/codex/desktop-complete-removal-v1/catalog/complete-schema.sql")
+    with closing(sqlite3.connect(path)) as catalog:
+        catalog.execute("PRAGMA journal_mode=WAL")
+        catalog.executescript(schema.read_text())
+        catalog.execute("INSERT INTO local_thread_catalog_sync_state VALUES ('local', 42.5, 1, 7, 123)")
+        catalog.execute(
+            """INSERT INTO local_thread_catalog
+               (host_id, thread_id, display_title, source_created_at, source_updated_at,
+                source_kind, observation_sequence)
+               VALUES ('local', ?, 'Disposable', 1, 1, 'cli', 7)""",
+            (row["native_session_id"],),
+        )
+        catalog.commit()
+
+        for status, exit_code, missing, expected_count in (
+            ("failed", 9, False, 1), ("failed", 0, True, 1), ("succeeded", 0, False, 2),
+        ):
+            auth(root, delete_exit=exit_code)
+            before = persistent_files()
+            reply = request("accept", content={}, missing=missing)
+            assert reply["structuredContent"] == {"status": status, "native_session_id": row["native_session_id"]}, reply
+            assert reply.get("isError", False) == (status == "failed"), reply
+            assert count() == expected_count
+            if status == "failed":
+                assert persistent_files() == before
+            state = catalog.execute("SELECT * FROM local_thread_catalog_sync_state").fetchall()
+            timestamp = None if status == "succeeded" else 123
+            assert state == [("local", 42.5, 1, 7, timestamp)], state
+            assert catalog.execute("SELECT thread_id FROM local_thread_catalog").fetchall() == [(row["native_session_id"],)]
+        assert {name: data for name, data in inventory(root).items() if not name.startswith("sqlite/")} == {
+            name: data for name, data in before.items() if not name.startswith("sqlite/")
+        }
+
+        catalog.execute("ALTER TABLE local_thread_catalog_sync_state DROP COLUMN last_full_reconciled_at")
+        catalog.commit()
+        before = persistent_files()
+        result = {"status": "succeeded", "native_session_id": row["native_session_id"]}
+        assert request("accept", content={})["structuredContent"] == result
+        assert persistent_files() == before
+    for item in sqlite.iterdir():
+        item.unlink()
+    sqlite.rmdir()
+    before = inventory(root)
+    assert request("accept", content={})["structuredContent"] == result
+    assert inventory(root) == before and not sqlite.exists()
+    native_calls = [json.loads(call) for call in calls.read_text().splitlines()]
+    assert native_calls == [
+        {"argv": ["delete", row["native_session_id"], "--force"],
+         "root": str(root), "desktop_timestamp": stamp}
+        for stamp in (123, 123, "unavailable", "unavailable")
+    ], native_calls
 
 
 def isolation(binary, codex, root):
@@ -344,7 +405,7 @@ def isolation(binary, codex, root):
             assert response["id"] == client.serial and response["error"]["code"] == -32602, response
         assert inventory(root) == before and not active_children(client.child.pid)
         delete_outcomes(client, root, codex, different, row, selection)
-        print("Native selection, protected caller, single consent, exact argv/root and process outcomes passed.")
+        print("Native selection, single consent, exact argv/root, process outcomes and Desktop reconciliation passed.")
     finally:
         client.close()
     for mode, reason in (("wrong_model", "unexpected_model_or_effort"),

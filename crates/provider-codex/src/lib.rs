@@ -1,7 +1,7 @@
 //! Codex metadata observations through the official, version-specific App Server API.
-//! Real SQLite is observed only by the isolated evidence worker; no lifecycle
-//! mutation is exposed through the read-only adapter. Lifecycle methods are
-//! receipt-gated in a separate private module; no transcript readers are exposed.
+//! The read-only adapter observes real SQLite through isolated evidence workers.
+//! Lifecycle effects, including the native-delete Desktop refresh request, have
+//! separate entry points.
 use agentmender_domain::*;
 use agentmender_provider_api::{
     ProviderAdapter, ProviderError, ProviderLocation, filesystem, process, validate_location,
@@ -33,6 +33,8 @@ mod desktop_cleanup;
 mod desktop_json;
 #[cfg(unix)]
 mod desktop_legacy;
+#[cfg(target_os = "macos")]
+mod desktop_reconciliation;
 #[cfg(unix)]
 mod desktop_shared;
 pub mod graph;
@@ -58,6 +60,8 @@ mod scoped_storage;
 pub use capture::run_evidence_capture_worker;
 #[cfg(unix)]
 pub use desktop_catalog_capture::run_catalog_evidence_worker;
+#[cfg(target_os = "macos")]
+pub use desktop_reconciliation::schedule_desktop_catalog_reconciliation;
 pub use lifecycle::CodexLifecycleAdapter;
 pub use scoped_capture::{
     ScopedCaptureRequest, ScopedCaptureResult, ScopedRowCommitment, run_scoped_evidence_worker,

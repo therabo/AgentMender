@@ -46,8 +46,13 @@ Accepting runs `codex delete <UUID> --force` once with the configured executable
 and original provider root as `CODEX_HOME`. After dispatch the result has just
 `status` and `native_session_id`: exit zero is `succeeded`; a launch error,
 a 180-second execution timeout or nonzero exit is `failed`. A failure may follow
-partial effects. No retry or artifact verification follows. See
-[ADR-0038](adr/0038-native-codex-delete-admission.md).
+partial effects. See [ADR-0038](adr/0038-native-codex-delete-admission.md).
+
+On macOS, after exit zero, AgentMender makes a best-effort request for a full
+reconciliation if a compatible Desktop catalog still lists the selected local
+UUID. The result still reports the native command outcome. If a stale sidebar
+entry remains, quit Desktop completely and reopen it to give Desktop a chance
+to reconcile. See [ADR-0040](adr/0040-desktop-catalog-reconciliation.md).
 
 ## P0-SR4 ordinary discovery
 

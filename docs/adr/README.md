@@ -72,3 +72,5 @@ registered filtering fixed, content/binding implementation deferred).
 - [ADR-0038 — Native Codex deletion admission](0038-native-codex-delete-admission.md)
 
 - [ADR-0039 — Luna-planned hybrid retrieval and verified publication](0039-luna-hybrid-query-publication.md)
+
+- [ADR-0040 — Request Desktop catalog reconciliation after native Codex delete](0040-desktop-catalog-reconciliation.md)

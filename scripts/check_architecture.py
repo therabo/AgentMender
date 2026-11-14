@@ -299,6 +299,11 @@ patterns = [
     r'\b(?:unlinkat|renameat|renameat2|mkdirat|ftruncate)\s*\(',
     r'"(?:DELETE|UPDATE|INSERT)\s+',
 ]
+desktop_refresh_path = ROOT / "crates/provider-codex/src/desktop_reconciliation.rs"
+desktop_refresh_sql = (
+    "UPDATE local_thread_catalog_sync_state SET last_full_reconciled_at = NULL "
+    "WHERE host_id COLLATE BINARY = 'local' AND last_full_reconciled_at IS NOT NULL"
+)
 for path in (ROOT / "crates").glob("*/src/**/*.rs"):
     source = production_source(path.read_text(encoding="utf-8"))
     code = mask_literals(source)
@@ -388,6 +393,14 @@ for path in (ROOT / "crates").glob("*/src/**/*.rs"):
             for sql in ['"DELETE FROM results WHERE id=?1"',
                         '"INSERT OR REPLACE INTO results(id,kind,row) VALUES (?1,?2,?3)"']:
                 inspected = inspected.replace(sql, "")
+        if path == desktop_refresh_path and pattern == patterns[-1]:
+            # ADR-0040 admits one exact marker reset after confirmed native delete.
+            for body in method_bodies(source, "request_full_reconciliation"):
+                writes = re.findall(r'"((?:DELETE|UPDATE|INSERT)\s+[^"]*)"', body)
+                if [" ".join(sql.split()) for sql in writes] != [desktop_refresh_sql]:
+                    errors.append("Desktop reconciliation escaped its fixed SQL update")
+                else:
+                    inspected = inspected.replace(body, body.replace(f'"{writes[0]}"', "", 1))
         if reviewed_cohort and pattern == patterns[-1]:
             # ADR-0035 admits only the fixed writes to an anonymous worker spool.
             for sql in ['"INSERT INTO cohort(id,metadata) VALUES (?1,?2)"',

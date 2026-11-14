@@ -335,7 +335,7 @@ fn desktop_closed_state(
 }
 
 #[cfg(unix)]
-fn immutable_uri(path: &std::path::Path) -> std::ffi::OsString {
+pub(super) fn immutable_uri(path: &std::path::Path) -> std::ffi::OsString {
     use std::{fmt::Write, os::unix::ffi::OsStrExt};
     let mut uri = String::from("file:");
     for &byte in path.as_os_str().as_bytes() {

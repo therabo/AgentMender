@@ -82,8 +82,10 @@ applies specifically to `session_delete`. Keep signed exact selection and existi
 caller exclusions. Obtain one human confirmation through the MCP client before
 running the fixed Codex delete command once with the configured executable and
 original root. Return the command outcome; never retry, fall back, or verify
-artifact removal. The historical compatibility, durable approval and isolation
-rules below still govern their existing paths.
+artifact removal. Only exit zero can request the best-effort macOS Desktop
+catalog refresh defined in [ADR-0040](docs/adr/0040-desktop-catalog-reconciliation.md).
+The historical compatibility, durable approval and isolation rules below still
+govern their existing paths.
 
 ## Current product direction
 
