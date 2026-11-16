@@ -76,3 +76,5 @@ registered filtering fixed, content/binding implementation deferred).
 - [ADR-0040 — Request Desktop catalog reconciliation after native Codex delete](0040-desktop-catalog-reconciliation.md)
 
 - [ADR-0041 — Fault-tolerant session finding](0041-fault-tolerant-session-find.md)
+
+- [ADR 0042 — Local session manager](0042-local-session-manager.md) makes the browser the primary product surface.

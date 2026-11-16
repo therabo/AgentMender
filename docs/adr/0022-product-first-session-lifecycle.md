@@ -8,6 +8,9 @@ ADR-0021, and the project-first sequencing of the historical M9 investigation.
 Their operation-specific safety contracts and historical findings remain valid.
 This decision admits no provider operation and changes no serialized authority.
 
+[ADR 0042](0042-local-session-manager.md) supersedes the product surface and
+milestone sequence. This record preserves the original decision.
+
 ## Context
 
 AgentMender's original purpose is conversational, MCP-native session lifecycle

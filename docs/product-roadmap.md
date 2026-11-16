@@ -1,10 +1,47 @@
 # AgentMender product roadmap
 
-Canonical roadmap, accepted 2026-11-07 in [ADR-0022](adr/0022-product-first-session-lifecycle.md).
-Historical milestone receipts preserve their original verdicts; they are not the
-current implementation order. See the [audit and readiness assessment](audits/2026-11-07-product-first-audit.md).
+Canonical since 2026-11-16 under [ADR 0042](adr/0042-local-session-manager.md).
 
-## Product vision
+## P0 — Local single-session manager
+
+Open AgentMender, choose Codex or Claude Code, find a session through metadata,
+inspect the record, then preview and approve removal where the provider supports
+it. Codex has a narrowly admitted native removal profile. Claude Code inventory
+is read-only. An unsupported installation gets explicit compatibility and
+coverage feedback.
+
+The local milestone includes paginated inventory, timestamp/state filters,
+Unicode search and selection, on-demand Codex transcript previews, same-origin
+browser authorization, one-use confirmation and a command outcome. Its
+native acceptance uses a disposable archive, including a retained sentinel
+and a stale preview regression.
+
+## P1 — Provider coverage and single-session lifecycle
+
+Expand Codex read portability and the matrix of admitted native versions.
+Improve Claude metadata coverage with observed formats. Qualify a Claude
+single-session effect, identity and writer contract before enabling removal.
+Keep read-only availability independent of mutation admission.
+
+## P2 — Artifact attribution
+
+Surface session-attributable bytes and available associated, shared or
+unclassified artifacts. Use evidence for attribution and measure transcript
+size independently of space that may be reclaimed. Acquire a separately
+reviewed effect contract before any cleanup beyond the native session command.
+
+## P3 — Multi-session and project lifecycle
+
+Defer project-wide and bulk workflows until the underlying single-session
+operations have proven effect boundaries and recovery behavior.
+
+## Previous MCP-first roadmap
+
+The rest of this document preserves the roadmap accepted 2026-11-07 in
+[ADR 0022](adr/0022-product-first-session-lifecycle.md). Its original milestone
+verdicts and safety requirements describe their respective CLI and MCP workflows.
+
+### Product vision
 
 AgentMender is an MCP-native session lifecycle manager for AI coding agents.
 The user asks a dedicated Codex or Claude Code agent to find, inspect and safely
@@ -26,7 +63,7 @@ Example target experience, **P0-C1 OPEN; external human acceptance incomplete**:
 > the trusted independent channel. AgentMender removes and verifies only the
 > approved scope, then reports the supported result and any residuals.
 
-## P0 — Conversational session management MVP
+### P0 — Conversational session management MVP
 
 Deliver one single-session removal vertical slice first, then the equivalent
 Claude workflow. A Codex-only slice is an intermediate delivery; it does not
@@ -83,7 +120,7 @@ metadata, registered exclusions and MCP preparation/status. Actual caller/client
 validation and independently operated human approval/execution remain open. Exhaustive Desktop projections, caches and bulk work are not dependencies.
 No local LLM or new natural-language interpretation service is required.
 
-## Intelligent retrieval delivery — current checkpoint
+### Intelligent retrieval delivery — current checkpoint
 
 P0-SR5.1 adds [SearchIntent v1](intent-aware-resolution.md) for ordinary
 requests and preserves the advanced Boolean contract. Project mentions are
@@ -122,7 +159,7 @@ provider/format/coverage limits. Guaranteed production management requests refus
 without that host capability; a privileged registration file cannot substitute.
 No speculative embeddings or GraphRAG milestone blocks useful local retrieval.
 
-### Progressive conversational retrieval
+#### Progressive conversational retrieval
 
 `session_find` starts an autonomous read-only job that uses the typed
 resolver with one SearchIntent v1. A Luna Planner closes before Rust traverses the frozen UUID cohort.
@@ -136,7 +173,7 @@ the [benchmark and acceptance report](milestones/uuid-search-snapshot.md).
 Installed app-server model controls and graphical Desktop acceptance remain
 separate.
 
-## P1 — Provider coverage and native lifecycle operations
+### P1 — Provider coverage and native lifecycle operations
 
 Expand the same workflow across selected Codex and Claude versions, session types
 and platforms. Apply native-first policy inside P0 too; P1 expands coverage rather
@@ -163,7 +200,7 @@ Dependencies: a P0 vertical workflow and operation-specific evidence. M8.1/M9
 findings constrain the investigated operations; they are not provider-wide
 impossibility proofs. Provider coordination research from M8.2.1 is reusable here.
 
-## P2 — Deep artifact cleanup and storage reclamation
+### P2 — Deep artifact cleanup and storage reclamation
 
 Extend a working primary lifecycle with additional safely attributable snapshots,
 history records, logs, cache entries, tool artifacts and persistent projections.
@@ -190,7 +227,7 @@ Dependencies: working primary management plus evidence for each extra family.
 M8.2.1 is **unfinished/deferred under P1/P2 and no longer a global blocker for the
 conversational MVP**. Green code tests alone cannot relabel it PASS.
 
-## P3 — Project and multi-session lifecycle
+### P3 — Project and multi-session lifecycle
 
 Add project discovery/selection, multi-session preview, aggregate approval, bulk
 archive/removal, estimates, partial success and batch recovery.
@@ -211,7 +248,7 @@ Dependencies: reliable P0/P1 single-session execution and suitable per-member
 contracts. P2 is needed only for optional batch deep-cleanup claims. Historical
 M8.3 multi-session cleanup is not the next implementation priority.
 
-## Current implementation and next decision
+### Current implementation and next decision
 
 | Area | Current state |
 |---|---|
@@ -249,7 +286,7 @@ Audit baseline readiness: **READY WITH CONSTRAINTS**. Review the
 [proposed bounded vertical slices](audits/2026-11-07-product-first-audit.md#proposed-next-implementation-milestones)
 before selecting work. This audit implements no new feature.
 
-## Risks and release discipline
+### Risks and release discipline
 
 Provider drift, native cascade/startup effects, incomplete discovery and ambiguous
 ownership can invalidate scope. Human approval must remain independent from the
@@ -267,7 +304,7 @@ full locked local gates and exact final three-OS CI. No history rewriting,
 real-user destructive tests or app restarts. Historical ADRs,
 research and PASS/OPEN/BLOCKED receipts remain evidence, read with ADR-0022.
 
-### P0-S1 implementation status
+#### P0-S1 implementation status
 
 Bounded Codex legacy message and paginated completed-display-item search is now
 implemented with grounded excerpts/context and diagnostic/management separation.

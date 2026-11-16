@@ -1,5 +1,28 @@
 # Architecture and capability boundaries
 
+## Local session manager
+
+[ADR 0042](adr/0042-local-session-manager.md) makes the loopback browser
+the primary product surface. The CLI hosts the UI and typed API. The
+application filters and pages a bounded provider snapshot. Codex reads
+metadata and transcript pages via the confined worker. Claude reads
+explicit project transcript metadata via the existing file inventory
+helpers. The browser sees provider-scoped opaque keys.
+
+```text
+Browser -> loopback HTTP in CLI -> application metadata query
+                                -> existing read adapters -> local archives
+        -> one-use review -> fresh Codex observations -> shared native command
+MCP stdio -> existing application queries and optional semantic retrieval
+```
+
+The API authorizes one browser session per launch and admits a reviewed
+archived Codex UUID at a time. Browser confirmation is bound to an
+in-process receipt and fresh evidence. The fixed native command remains
+distinct from the historical durable lifecycle. Claude supplies read-only
+observations. The [architecture audit](audits/2026-11-16-local-session-manager.md)
+describes responsibilities and retained retrieval modules.
+
 ## P0-SR5 resolution boundary
 
 [ADR-0032](adr/0032-caller-scoped-session-resolution.md) keeps Luna in the
@@ -42,7 +65,7 @@ rejected alternatives, provenance and resource/privacy limits.
 
 [ADR-0028](adr/0028-search-reliability-and-scoped-freshness.md) refines query-scoped cursor validation, fixed locator counterparts, forward context progress and incomplete-evidence semantic acceptance in the same read ports/layers. It adds no crate, source writer, native startup admission, persistent index default or lifecycle authority.
 
-Current direction: [ADR-0022](adr/0022-product-first-session-lifecycle.md) and the
+Current direction follows [ADR 0042](adr/0042-local-session-manager.md) and the
 [product roadmap](product-roadmap.md). The [audit](audits/2026-11-07-product-first-audit.md)
 distinguishes executable behavior from design, tests and deferred research.
 
@@ -57,10 +80,10 @@ distinguishes executable behavior from design, tests and deferred research.
 | provider-claude | Read-only inventory, sidecar identity and graph interpretation | domain, provider-api |
 | persistence | Protected AgentMender-owned store, journal, human-approval authentication, recovery metadata and sealed handoff | domain |
 | mcp-server | Bounded stdio transport, strict DTOs, ephemeral references and privacy projections | application, domain |
-| CLI (`agentmender`) | Trusted adapter/root composition, independent terminal approval, command presentation | All seven library crates |
+| CLI (`agentmender`) | Trusted adapter/root composition, local HTTP/UI, independent terminal approval, command presentation | All seven library crates |
 
-This is a local modular application with ports and adapters, not a distributed
-service. No new crates or runtime are needed for the roadmap realignment.
+This local modular application uses ports and adapters. The HTTP runtime is
+composed by the CLI and the internal crate graph retains its eight crates.
 Codex's application dependency is test-only; persistence never calls providers.
 The narrow application/Codex dependency on persistence protects the private
 DurableIntent constructor (ADR-0013), rather than exposing write authority through

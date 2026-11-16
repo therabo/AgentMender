@@ -1,5 +1,23 @@
 # AgentMender engineering constraints
 
+## Local session manager
+
+[ADR 0042](docs/adr/0042-local-session-manager.md) and the
+[roadmap](docs/product-roadmap.md) govern current product sequencing.
+The primary surface is the loopback browser UI for local Codex and Claude Code
+inventory, deterministic filters, details and a reviewed single Codex deletion.
+The browser launch and normal inventory require no semantic job runtime.
+MCP, its read-only provenance and its separate delete consent contract continue
+under their existing rules below.
+
+Keep provider roots fixed at launch. Scope browser keys and transcript cursors
+to observed provider identities. Require exact Host, same-origin mutations,
+a per-launch browser credential and server-held one-use preview. Recheck the
+exact reviewed binary/root/row/source, protected UUIDs, archive state and spawn
+edges before the shared native dispatch. Preserve refusal of Claude mutation,
+automatic destructive retries and bulk effects. Keep command outcomes separate
+from physical or graphical cleanup evidence.
+
 ## Past-conversation resolution
 
 Follow [ADR-0037](docs/adr/0037-autonomous-mcp-session-find.md) and the
@@ -87,17 +105,17 @@ catalog refresh defined in [ADR-0040](docs/adr/0040-desktop-catalog-reconciliati
 The historical compatibility, durable approval and isolation rules below still
 govern their existing paths.
 
-## Current product direction
+## Previous MCP-first product direction
 
 Read [ADR-0022](docs/adr/0022-product-first-session-lifecycle.md), the
 [canonical roadmap](docs/product-roadmap.md), [architecture](docs/architecture.md)
 and [audit](docs/audits/2026-11-07-product-first-audit.md) before changing scope.
-The product is MCP-native conversational session lifecycle management, initially
+ADR 0022 recorded the MCP-native conversational session lifecycle direction, initially
 for Codex and Claude Code. The calling agent interprets language; AgentMender
 provides structured reliable operations. Provider identity is independent of the
 host agent. Codex→Claude and Claude→Codex remain target scenarios.
 
-Priority order: P0 conversational single-session workflow; P1 native operations
+Historical priority order: P0 conversational single-session workflow; P1 native operations
 and provider coverage; P2 additional artifact cleanup; P3 project/bulk lifecycle.
 First prove one complete vertical removal path, then both initial providers.
 M8.3 multi-session cleanup is not the next implementation priority.
@@ -282,6 +300,7 @@ cargo fmt --check
 cargo clippy --locked --workspace --all-targets -- -D warnings
 cargo test --locked --workspace
 cargo build --locked --workspace
+npm test --prefix ui
 python3 scripts/check_architecture.py
 python3 scripts/check_codex_lifecycle_evidence.py
 python3 scripts/check_complete_removal_evidence.py
