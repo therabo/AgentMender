@@ -11,6 +11,8 @@ agentmender-provider-api.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+caseless = "0.2.2"
+unicode-normalization = "0.1.25"
 [dev-dependencies]
 tempfile.workspace = true
 proptest.workspace = true

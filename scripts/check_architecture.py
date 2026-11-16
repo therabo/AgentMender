@@ -421,7 +421,18 @@ for path in (ROOT / "crates").glob("*/src/**/*.rs"):
         errors.append(f"unsafe code outside reviewed OS boundary: {path.relative_to(ROOT)}")
     if reviewed_capture and not all(marker in source for marker in ["SQLITE_OPEN_READ_ONLY", "PRAGMA query_only=ON", "verify_source_write_denial", "create_new(true)"]):
         errors.append("disposable capture safety markers missing; review required")
-    if "Command::new" in source and path != ROOT / "crates/provider-api/src/process.rs" and not reviewed_lifecycle:
+    reviewed_browser = path == ROOT / "crates/cli/src/ui/browser.rs"
+    if reviewed_browser:
+        commands = re.findall(r'Command::new\("([^"]+)"\)', source)
+        if (commands != ["/usr/bin/open", "xdg-open", "rundll32.exe"]
+            or code.count("Command::new") != len(commands)
+            or code.count(".spawn()") != 1
+            or not all(marker in source for marker in [
+                "Ipv4Addr::LOCALHOST", "byte.is_ascii_hexdigit()", 'http://{addr}/#ticket={ticket}',
+            ])):
+            errors.append("local browser launch exceeded its fixed command boundary")
+    if ("Command::new" in source and path != ROOT / "crates/provider-api/src/process.rs"
+        and not reviewed_lifecycle and not reviewed_browser):
         errors.append(f"process dispatch outside sandbox boundary: {path.relative_to(ROOT)}")
     if reviewed_lifecycle:
         launch = list(method_bodies(source, 'launch'))

@@ -2,6 +2,7 @@
 pub mod conversation;
 pub mod indexed_search;
 pub mod lifecycle;
+pub mod local_inventory;
 pub mod session_resolution;
 pub mod session_search;
 pub mod transactions;

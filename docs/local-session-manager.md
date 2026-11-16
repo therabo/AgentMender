@@ -16,7 +16,7 @@ browser tab is closed. Stop the listener with Ctrl+C.
 
 Codex defaults to `CODEX_HOME` or `~/.codex`. Claude Code defaults to
 `CLAUDE_CONFIG_DIR` or `~/.claude`. `--codex-root`, `--claude-root` and
-`--codex-executable` override those choices at launch. For example:
+`--codex-executable` override those choices at launch. To use an alternate Codex archive, run the following command.
 
 ```sh
 ./target/debug/agentmender --codex-root /absolute/path/to/codex-home ui

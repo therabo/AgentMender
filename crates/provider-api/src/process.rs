@@ -43,7 +43,48 @@ pub fn run_codex_delete(executable: &Path, root: &Path, id: uuid::Uuid, timeout:
     if !executable.is_absolute() || !root.is_absolute() {
         return false;
     }
-    let mut command = Command::new(executable);
+    codex_delete_command(Command::new(executable), root, id, timeout)
+}
+
+/// Apply the reviewed Codex home as the SQLite override and kernel write scope.
+pub fn run_confined_codex_delete(
+    executable: &Path,
+    root: &Path,
+    id: uuid::Uuid,
+    timeout: Duration,
+) -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        if !executable.is_absolute() || !root.is_absolute() {
+            return false;
+        }
+        let Ok(scope) = policy_literal(root) else {
+            return false;
+        };
+        let policy = format!(
+            "(version 1)(allow default)(deny file-write* (require-not (subpath {scope})))(deny network*)(deny process-fork)(deny mach-lookup)"
+        );
+        let mut command = Command::new("/usr/bin/sandbox-exec");
+        command
+            .args(["-p", &policy])
+            .arg(executable)
+            .arg("-c")
+            .arg(format!("sqlite_home={scope}"));
+        codex_delete_command(command, root, id, timeout)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (executable, root, id, timeout);
+        false
+    }
+}
+
+fn codex_delete_command(
+    mut command: Command,
+    root: &Path,
+    id: uuid::Uuid,
+    timeout: Duration,
+) -> bool {
     command.env_clear();
     for name in [
         "HOME",

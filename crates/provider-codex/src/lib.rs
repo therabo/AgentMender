@@ -1462,3 +1462,5 @@ mod tests {
 
 #[cfg(test)]
 mod integrity_tests;
+
+pub use content::LocalRemovalEvidence;

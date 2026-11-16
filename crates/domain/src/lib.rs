@@ -20,6 +20,8 @@ pub mod complete_removal;
 pub use complete_removal::*;
 pub mod session_removal;
 pub use session_removal::*;
+pub mod local_session;
+pub use local_session::*;
 pub mod session_metadata;
 pub use session_metadata::*;
 pub mod session_query;

@@ -21,9 +21,11 @@ mod approvals;
 mod conversation;
 mod lifecycle;
 mod management;
+mod native_delete;
 mod search_index;
 mod session_find;
 mod transactions;
+mod ui;
 
 #[derive(Clone, Parser)]
 #[command(
@@ -99,6 +101,12 @@ impl From<PlanIntent> for LifecycleIntent {
 }
 #[derive(Clone, Subcommand)]
 enum Action {
+    /// Open the local session manager in the default browser.
+    Ui {
+        /// Print the launch URL without opening a browser.
+        #[arg(long)]
+        no_open: bool,
+    },
     /// Build, inspect or reset explicitly configured private derived search storage.
     SearchIndex {
         #[arg(long, value_parser = absolute_path)]
@@ -554,94 +562,112 @@ fn adapters(
 ) -> Result<Vec<Box<dyn ProviderAdapter>>, CliError> {
     let mut adapters: Vec<Box<dyn ProviderAdapter>> = Vec::new();
     if !matches!(args.provider, Some(SelectedProvider::Claude)) {
-        let adapter = if let Some(path) = &args.fixture {
-            CodexAdapter::from_fixture(path.clone())?
-        } else {
-            let mut adapter = CodexAdapter::new(ProviderLocation {
-                state_root: root(args.codex_root.clone(), "CODEX_HOME", ".codex")?,
-                executable: args.codex_executable.clone().or_else(|| {
-                    if frozen.is_none() {
-                        find_executable(ProviderKind::Codex)
-                    } else {
-                        None
-                    }
-                }),
-            });
-            if let (Some(executable), Some(home)) = (
-                frozen.map_or_else(|| env::current_exe().ok(), |f| f.helper.clone()),
-                frozen.map_or_else(
-                    || env::var_os("HOME").map(PathBuf::from),
-                    |f| f.home.clone(),
-                ),
-            ) && home.is_absolute()
-            {
-                adapter = adapter.with_evidence_helper(executable, home);
-            }
-            adapter
-        };
-        adapters.push(Box::new(adapter));
+        adapters.push(Box::new(codex_adapter(args, frozen)?));
     }
     if !matches!(args.provider, Some(SelectedProvider::Codex)) {
-        let adapter = if let Some(path) = &args.fixture {
-            if args.desktop_fixture {
-                ClaudeAdapter::from_desktop_fixture(path.clone())?
-            } else {
-                ClaudeAdapter::from_fixture(path.clone())?
-            }
-        } else {
-            let default_desktop = cfg!(target_os = "macos")
-                && args.claude_root.is_none()
-                && env::var_os("CLAUDE_CONFIG_DIR").is_none();
-            let home = frozen.map_or_else(
-                || env::var_os("HOME").map(PathBuf::from),
-                |f| f.home.clone(),
-            );
-            let default_root = home
-                .as_ref()
-                .filter(|p| p.is_absolute())
-                .map(|p| p.join("Library/Application Support/Claude"));
-            let desktop_root = args.claude_desktop_root.clone().or_else(|| {
-                if default_desktop {
-                    default_root.clone()
-                } else {
-                    None
-                }
-            });
-            let mut adapter = ClaudeAdapter::new(ProviderLocation {
-                state_root: root(args.claude_root.clone(), "CLAUDE_CONFIG_DIR", ".claude")?,
-                executable: args.claude_executable.clone().or_else(|| {
-                    if frozen.is_none() {
-                        find_executable(ProviderKind::Claude)
-                    } else {
-                        None
-                    }
-                }),
-            });
-            if let Some(data_root) = desktop_root {
-                let mut app_bundles = args.claude_app_bundle.clone();
-                if default_desktop && default_root.as_ref() == Some(&data_root) {
-                    app_bundles.push(PathBuf::from("/Applications/Claude.app"));
-                    if let Some(home) = home {
-                        app_bundles.push(home.join("Applications/Claude.app"));
-                    }
-                }
-                adapter = adapter.with_desktop_context(DesktopContext {
-                    data_root,
-                    app_bundles,
-                });
-            } else if !args.claude_app_bundle.is_empty() {
-                return Err(CliError::new(
-                    ErrorCode::InvalidArguments,
-                    "--claude-app-bundle requires a desktop root",
-                ));
-            }
-            adapter
-        };
-        adapters.push(Box::new(adapter));
+        adapters.push(Box::new(claude_adapter(args, frozen)?));
     }
     Ok(adapters)
 }
+
+fn codex_adapter(
+    args: &Args,
+    frozen: Option<&FactoryEnvironment>,
+) -> Result<CodexAdapter, CliError> {
+    let adapter = if let Some(path) = &args.fixture {
+        CodexAdapter::from_fixture(path.clone())?
+    } else {
+        let mut adapter = CodexAdapter::new(ProviderLocation {
+            state_root: root(args.codex_root.clone(), "CODEX_HOME", ".codex")?,
+            executable: args.codex_executable.clone().or_else(|| {
+                if frozen.is_none() {
+                    find_executable(ProviderKind::Codex)
+                } else {
+                    None
+                }
+            }),
+        });
+        if let (Some(executable), Some(home)) = (
+            frozen.map_or_else(|| env::current_exe().ok(), |f| f.helper.clone()),
+            frozen.map_or_else(
+                || env::var_os("HOME").map(PathBuf::from),
+                |f| f.home.clone(),
+            ),
+        ) && home.is_absolute()
+        {
+            adapter = adapter.with_evidence_helper(executable, home);
+        }
+        adapter
+    };
+    Ok(adapter)
+}
+
+fn claude_adapter(
+    args: &Args,
+    frozen: Option<&FactoryEnvironment>,
+) -> Result<ClaudeAdapter, CliError> {
+    let adapter = if let Some(path) = &args.fixture {
+        if args.desktop_fixture {
+            ClaudeAdapter::from_desktop_fixture(path.clone())?
+        } else {
+            ClaudeAdapter::from_fixture(path.clone())?
+        }
+    } else {
+        let default_desktop = cfg!(target_os = "macos")
+            && args.claude_root.is_none()
+            && env::var_os("CLAUDE_CONFIG_DIR").is_none();
+        let home = frozen.map_or_else(
+            || env::var_os("HOME").map(PathBuf::from),
+            |f| f.home.clone(),
+        );
+        let default_root = home
+            .as_ref()
+            .filter(|p| p.is_absolute())
+            .map(|p| p.join("Library/Application Support/Claude"));
+        let desktop_root = args.claude_desktop_root.clone().or_else(|| {
+            if default_desktop {
+                default_root.clone()
+            } else {
+                None
+            }
+        });
+        let mut adapter = ClaudeAdapter::new(ProviderLocation {
+            state_root: root(args.claude_root.clone(), "CLAUDE_CONFIG_DIR", ".claude")?,
+            executable: args.claude_executable.clone().or_else(|| {
+                if frozen.is_none() {
+                    find_executable(ProviderKind::Claude)
+                } else {
+                    None
+                }
+            }),
+        });
+        if let Some(data_root) = desktop_root {
+            let mut app_bundles = args.claude_app_bundle.clone();
+            if default_desktop && default_root.as_ref() == Some(&data_root) {
+                app_bundles.push(PathBuf::from("/Applications/Claude.app"));
+                if let Some(home) = home {
+                    app_bundles.push(home.join("Applications/Claude.app"));
+                }
+            }
+            adapter = adapter.with_desktop_context(DesktopContext {
+                data_root,
+                app_bundles,
+            });
+        } else if !args.claude_app_bundle.is_empty() {
+            return Err(CliError::new(
+                ErrorCode::InvalidArguments,
+                "--claude-app-bundle requires a desktop root",
+            ));
+        }
+        adapter
+    };
+    Ok(adapter)
+}
+
 fn run(args: Args) -> Result<bool, CliError> {
+    if let Action::Ui { no_open } = args.command {
+        return ui::run(&args, no_open);
+    }
     if let Action::SearchIndex { root, action } = &args.command {
         return search_index::run(&args, root, action);
     }
@@ -842,7 +868,8 @@ fn run(args: Args) -> Result<bool, CliError> {
         _ => {}
     }
     match args.command {
-        Action::Mcp { .. }
+        Action::Ui { .. }
+        | Action::Mcp { .. }
         | Action::SearchIndex { .. }
         | Action::Transactions { .. }
         | Action::Plans { .. }

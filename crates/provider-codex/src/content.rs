@@ -20,6 +20,8 @@ use std::{
 
 #[cfg(target_os = "macos")]
 mod cohort;
+mod local;
+pub use local::LocalRemovalEvidence;
 
 const FORMAT: &str = "codex-rollout-response-item-message-v1";
 const PAGINATED_INLINE_FORMAT: &str = "codex-paginated-item-completed-message-v1";
@@ -36,6 +38,15 @@ struct Request {
 }
 #[derive(Serialize, Deserialize)]
 enum Operation {
+    LocalInventory {
+        after: String,
+    },
+    LocalSource {
+        id: String,
+    },
+    LocalRemoval {
+        id: String,
+    },
     Search(SearchReadRequest),
     CaptureCohort {
         scope: CohortScope,
@@ -73,6 +84,9 @@ enum Operation {
 }
 #[derive(Serialize, Deserialize)]
 enum Response {
+    LocalInventory(local::LocalPage),
+    LocalSource(ContextReference),
+    LocalRemoval(LocalRemovalEvidence),
     Error(ContentReadError),
     Search(SessionSearchPage),
     CapturedCohort(ProviderWork),
@@ -2796,6 +2810,19 @@ fn capture_request(
     };
     let result = (|| -> Result<Response, ProviderError> {
         let result = match request.operation {
+            Operation::LocalInventory { ref after } => Response::LocalInventory(local::page(
+                &memory,
+                &request.source_root,
+                after,
+                hash(&serde_json::to_vec(&before).map_err(|_| unavailable())?),
+                end,
+            )?),
+            Operation::LocalSource { ref id } => {
+                Response::LocalSource(local::source(&memory, &request.source_root, id)?)
+            }
+            Operation::LocalRemoval { ref id } => {
+                Response::LocalRemoval(local::removal(&memory, &request.source_root, id, end)?)
+            }
             Operation::Search(ref query) => Response::Search(search_cached(
                 &memory,
                 &request.source_root,
@@ -2850,6 +2877,14 @@ fn capture_request(
         let after = fingerprint_metadata(&request.source_root)?;
         if capture::fingerprints_changed(&before, &after) {
             drop(memory);
+            if matches!(
+                request.operation,
+                Operation::LocalInventory { .. }
+                    | Operation::LocalSource { .. }
+                    | Operation::LocalRemoval { .. }
+            ) {
+                return Err(stale());
+            }
             if capture::same_primary_identity(&before, &after) {
                 let fresh = read_snapshot(&request.source_root, end)?;
                 match (&request.operation, &result) {
@@ -3163,6 +3198,53 @@ impl CodexAdapter {
             return Err(unavailable());
         }
         Ok(())
+    }
+}
+
+impl CodexAdapter {
+    pub fn local_inventory(&self, limit: usize) -> Result<Vec<LocalSession>, ProviderError> {
+        let mut sessions = Vec::new();
+        let mut after = String::new();
+        let mut revision = None;
+        let mut omitted = 0;
+        while sessions.len() < limit && omitted < 10_000 {
+            let Response::LocalInventory(page) =
+                self.content_worker(Operation::LocalInventory {
+                    after: after.clone(),
+                })?
+            else {
+                return Err(unavailable());
+            };
+            if revision
+                .as_ref()
+                .is_some_and(|expected| expected != &page.revision)
+            {
+                return Err(stale());
+            }
+            revision = Some(page.revision);
+            omitted += usize::from(page.skipped) * 128;
+            sessions.extend(page.sessions.into_iter().take(limit - sessions.len()));
+            match page.next {
+                Some(next) if next > after => after = next,
+                Some(_) => return Err(unavailable()),
+                None => break,
+            }
+        }
+        Ok(sessions)
+    }
+
+    pub fn local_transcript_reference(&self, id: &str) -> Result<ContextReference, ProviderError> {
+        match self.content_worker(Operation::LocalSource { id: id.into() })? {
+            Response::LocalSource(reference) => Ok(reference),
+            _ => Err(unavailable()),
+        }
+    }
+
+    pub fn local_removal_evidence(&self, id: &str) -> Result<LocalRemovalEvidence, ProviderError> {
+        match self.content_worker(Operation::LocalRemoval { id: id.into() })? {
+            Response::LocalRemoval(evidence) => Ok(evidence),
+            _ => Err(unavailable()),
+        }
     }
 }
 

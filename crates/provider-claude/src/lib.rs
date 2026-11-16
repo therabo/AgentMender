@@ -2,6 +2,7 @@
 //! no SDK bridge and never starts a conversation to obtain inventory. Live state
 //! is metadata-audit-only until an exact release is validated with real captures.
 pub mod graph;
+mod local;
 
 use agentmender_domain::*;
 use agentmender_provider_api::{

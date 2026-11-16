@@ -95,17 +95,7 @@ pub(super) fn native_delete_executor(args: &Args) -> NativeDeleteExecutor {
         ) else {
             return false;
         };
-        let succeeded = agentmender_provider_api::process::run_codex_delete(
-            executable,
-            &root,
-            id,
-            std::time::Duration::from_secs(180),
-        );
-        #[cfg(target_os = "macos")]
-        if succeeded {
-            agentmender_provider_codex::schedule_desktop_catalog_reconciliation(&root, id);
-        }
-        succeeded
+        crate::native_delete::dispatch(executable, &root, id, false)
     })
 }
 
