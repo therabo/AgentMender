@@ -1,8 +1,8 @@
-use std::{fs, path::Path, sync::Mutex};
+use std::{fs, sync::Mutex};
 
 use agentmender_application::local_inventory::{InventoryQuery, InventorySort, LocalInventory};
 use agentmender_domain::*;
-use agentmender_provider_api::{ProviderAdapter, ProviderError};
+use agentmender_provider_api::ProviderError;
 use chrono::NaiveDate;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -24,10 +24,7 @@ pub(super) struct ProviderView {
     pub coverage: Coverage,
     pub coverage_description: &'static str,
     pub total: usize,
-    pub version: Option<String>,
-    pub conversation_preview: bool,
     pub removal_available: bool,
-    pub removal_reason: Option<&'static str>,
 }
 
 pub(super) const NO_CLAUDE_REMOVAL: &str =
@@ -35,23 +32,23 @@ pub(super) const NO_CLAUDE_REMOVAL: &str =
 
 pub(super) struct Snapshot {
     info: ProviderView,
+    version: Option<String>,
+    conversation_preview: bool,
+    removal_reason: Option<&'static str>,
     index: LocalInventory,
     ids: std::collections::HashMap<String, usize>,
 }
 
 impl Snapshot {
     fn load(app: &App, provider: ProviderKind) -> Self {
-        let (root, adapter, transcript_preview): (&Path, &dyn ProviderAdapter, bool) =
-            match provider {
-                ProviderKind::Codex => (&app.codex_root, &app.codex, cfg!(target_os = "macos")),
-                ProviderKind::Claude => (&app.claude_root, &app.claude, false),
-            };
-        let detected = adapter.detect().ok();
-        let version = detected
-            .as_ref()
-            .and_then(|p| p.fingerprint.executable_version.clone());
+        let (root, detected) = match provider {
+            ProviderKind::Codex => (&app.codex_root, app.codex.detect()),
+            ProviderKind::Claude => (&app.claude_root, app.claude.detect()),
+        };
+        let detected = detected.unwrap_or_default();
+        let transcript_preview = provider == ProviderKind::Codex && cfg!(target_os = "macos");
         let root_check = fs::symlink_metadata(root);
-        let presence = if detected.is_some_and(|p| p.presence == Presence::Installed) {
+        let presence = if detected.detected {
             Presence::Installed
         } else if root_check.is_ok() {
             Presence::StateOnly
@@ -95,15 +92,11 @@ impl Snapshot {
                         "Accesso negato all’archivio del provider.",
                         Vec::new(),
                     ),
-                    Err(ProviderError::InvalidScope(reason))
-                        if reason == "stale_search_evidence" =>
-                    {
-                        (
-                            Coverage::Unavailable,
-                            "L’archivio è cambiato durante la lettura. Aggiorna l’inventario.",
-                            Vec::new(),
-                        )
-                    }
+                    Err(ProviderError::InvalidScope(reason)) if reason == "stale_codex_source" => (
+                        Coverage::Unavailable,
+                        "L’archivio è cambiato durante la lettura. Aggiorna l’inventario.",
+                        Vec::new(),
+                    ),
                     Err(_) if provider == ProviderKind::Codex && !transcript_preview => (
                         Coverage::Unavailable,
                         "La lettura confinata dell’archivio Codex è attualmente disponibile su macOS.",
@@ -126,7 +119,14 @@ impl Snapshot {
         let removal_reason = match provider {
             ProviderKind::Claude => Some(NO_CLAUDE_REMOVAL),
             ProviderKind::Codex if !can_read => Some("L'archivio Codex è indisponibile."),
-            ProviderKind::Codex if app.native.is_none() => Some(removal::UNSUPPORTED),
+            ProviderKind::Codex
+                if !app
+                    .native
+                    .as_ref()
+                    .is_some_and(|native| native.is_current()) =>
+            {
+                Some(removal::UNSUPPORTED)
+            }
             _ => None,
         };
         let index = LocalInventory::new(sessions);
@@ -142,17 +142,17 @@ impl Snapshot {
                 coverage,
                 coverage_description,
                 total: index.len(),
-                version,
-                conversation_preview: transcript_preview && can_read,
                 removal_available: removal_reason.is_none(),
-                removal_reason,
             },
+            version: detected.version,
+            conversation_preview: transcript_preview && can_read,
+            removal_reason,
             index,
             ids,
         }
     }
 
-    fn selected(&self, key: &str) -> Result<&LocalSession, ApiError> {
+    fn selected(&self, key: &str) -> Result<&Session, ApiError> {
         self.ids
             .get(key)
             .and_then(|&position| self.index.get(position))
@@ -160,8 +160,8 @@ impl Snapshot {
     }
 }
 
-fn key(session: &LocalSession) -> String {
-    let id = serde_json::to_vec(&session.metadata.identity).expect("observed identity serializes");
+fn key(session: &Session) -> String {
+    let id = serde_json::to_vec(&session.identity).expect("observed identity serializes");
     Sha256::digest(id)
         .iter()
         .map(|byte| format!("{byte:02x}"))
@@ -227,17 +227,15 @@ impl Inventories {
             let children: Vec<_> = snapshot
                 .index
                 .children(session)
-                .take(51)
-                .map(|row| row.metadata.native_session_id.clone())
+                .take(50)
+                .map(|row| row.identity.native_id.clone())
                 .collect();
             Ok(DetailView {
                 session: SessionView::new(app, snapshot, session),
-                version: snapshot.info.version.clone(),
-                coverage: snapshot.info.coverage,
-                conversation_preview: snapshot.info.conversation_preview
+                version: snapshot.version.clone(),
+                conversation_preview: snapshot.conversation_preview
                     && session.transcript_bytes.is_some(),
-                relationships_limited: children.len() > 50,
-                children: children.into_iter().take(50).collect(),
+                children,
             })
         })
     }
@@ -247,7 +245,7 @@ impl Inventories {
         app: &App,
         provider: ProviderKind,
         key: &str,
-    ) -> Result<LocalSession, ApiError> {
+    ) -> Result<Session, ApiError> {
         self.with(app, provider, |snapshot| snapshot.selected(key).cloned())
     }
 }
@@ -263,9 +261,7 @@ pub(super) struct PageView {
 pub(super) struct DetailView {
     session: SessionView,
     version: Option<String>,
-    coverage: Coverage,
     conversation_preview: bool,
-    relationships_limited: bool,
     children: Vec<String>,
 }
 
@@ -281,7 +277,7 @@ struct SessionView {
     last_active_at: Option<i64>,
     state: SessionState,
     transcript_bytes: Option<u64>,
-    kind: LocalSessionKind,
+    kind: SessionKind,
     parent: Option<String>,
     forked_from: Option<String>,
     protected: bool,
@@ -289,12 +285,11 @@ struct SessionView {
 }
 
 impl SessionView {
-    fn new(app: &App, snapshot: &Snapshot, session: &LocalSession) -> Self {
-        let meta = &session.metadata;
+    fn new(app: &App, snapshot: &Snapshot, session: &Session) -> Self {
+        let meta = session;
         let protected = meta.identity.provider == ProviderKind::Codex
-            && app.protected.contains(&meta.native_session_id);
+            && app.protected.contains(&meta.identity.native_id);
         let removal_reason = snapshot
-            .info
             .removal_reason
             .or_else(|| removal::refusal(session, app.native.is_some(), &app.protected))
             .or_else(|| {
@@ -306,17 +301,17 @@ impl SessionView {
             });
         Self {
             key: key(session),
-            native_id: meta.native_session_id.clone(),
+            native_id: meta.identity.native_id.clone(),
             provider: meta.identity.provider,
             title: meta.title.clone(),
-            project: meta.project_label.clone(),
+            project: meta.project.clone(),
             workspace: session.workspace.clone(),
             created_at: meta.created_at,
             last_active_at: meta.last_active_at,
             state: meta.state,
             transcript_bytes: session.transcript_bytes,
             kind: session.kind,
-            parent: meta.parent_native_session_id.clone(),
+            parent: meta.parent.as_ref().map(|parent| parent.native_id.clone()),
             forked_from: session.forked_from.clone(),
             protected,
             removal_reason,

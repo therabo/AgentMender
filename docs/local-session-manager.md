@@ -1,6 +1,6 @@
-# Local session manager
+# Run and test the local session manager
 
-From the repository root, use Rust 1.89 or later and Node 22 LTS.
+Install Rust and Node 22 LTS. From the repository root run the following commands.
 
 ```sh
 npm ci --prefix ui
@@ -9,57 +9,55 @@ cargo build --locked --workspace
 ./target/debug/agentmender ui
 ```
 
-The command opens the default browser and prints a one-time launch URL.
-`ui --no-open` prints it for manual opening. Keep it private. Restart the
-server to create a fresh browser session if that ticket is used and the
-browser tab is closed. Stop the listener with Ctrl+C.
+`ui` opens the default browser. `ui --no-open` prints a private one-use launch
+URL for manual opening. Restart to obtain a new ticket. Stop the foreground
+server with Ctrl+C.
 
 Codex defaults to `CODEX_HOME` or `~/.codex`. Claude Code defaults to
-`CLAUDE_CONFIG_DIR` or `~/.claude`. `--codex-root`, `--claude-root` and
-`--codex-executable` override those choices at launch. To use an alternate Codex archive, run the following command.
-
-```sh
-./target/debug/agentmender --codex-root /absolute/path/to/codex-home ui
-```
-
-Use `--protect-codex-session <UUID>` for an exact UUID that must be kept.
-`--max-entries` controls the bounded inventory acquisition, with a default
-of 10,000. Refresh the inventory to pick up external changes. The date filter
-uses inclusive calendar days in UTC and tests last activity. Unknown dates and
-sizes sort after known values in either direction.
+`CLAUDE_CONFIG_DIR` or `~/.claude`. Supply absolute `--codex-root`,
+`--claude-root`, `--codex-executable` or `--claude-executable` overrides at
+launch. `--protect-codex-session <UUID>` protects a session in the configured
+Codex root. `--max-entries` bounds inventory acquisition and defaults to
+10,000. Use refresh to pick up external changes. Date filters use inclusive UTC
+calendar days over last activity.
 
 ## Local API
 
-The server assigns its port. `POST /api/authorize` accepts the launch
-`ticket` and issues the bearer header for that process. Every later API call
-requires `Authorization: Bearer …`. POST also requires exact `Origin`.
-The root, key-to-identity map and provider commands are held in Rust.
+The server chooses an IPv4 loopback port. `POST /api/authorize` consumes the
+ticket from the URL fragment and returns a per-launch bearer value. API
+requests require that value in the Authorization header. Mutations also
+require exact Origin. All requests require the exact local Host.
 
 | Route | Role |
 |---|---|
-| `GET /api/providers` | Availability, coverage and capabilities for both providers |
-| `GET /api/{provider}/sessions` | Snapshot page with `search`, `state`, `since`, `until`, `sort`, `ascending`, `offset` and `limit` |
-| `GET /api/{provider}/sessions/{key}` | Session metadata, observed relationships and compatibility |
-| `GET /api/{provider}/sessions/{key}/conversation` | Requested Codex transcript page with optional opaque `cursor` |
-| `POST /api/{provider}/refresh` | Rebuild inventory using the configured source |
-| `POST /api/codex/sessions/{key}/removal-preview` | Validate eligibility and issue a two-minute one-use receipt |
-| `POST /api/operations/{receipt}/confirm` | Check the `confirmation` phrase, consume the receipt and run asynchronously after fresh validation |
-| `GET /api/operations/{receipt}` | Running, changed, command succeeded or uncertain outcome |
+| `GET /api/{provider}/sessions` | Page over metadata with search, state, date, sort and paging fields |
+| `GET /api/{provider}/sessions/{key}` | Session details and observed relationships |
+| `GET /api/{provider}/sessions/{key}/conversation` | Bounded selected Codex transcript page with optional opaque cursor |
+| `POST /api/{provider}/refresh` | Reacquire the provider snapshot |
+| `POST /api/codex/sessions/{key}/removal-preview` | Preflight and issue a two-minute one-use receipt |
+| `POST /api/operations/{receipt}/confirm` | Consume the receipt with the explicit confirmation phrase |
+| `GET /api/operations/{receipt}` | Read running, changed, command success or uncertain outcome |
 
-The browser exposes one selected target. The inventory shows the measured
-transcript size separately from deletion outcomes. Claude is read-only. Codex
-conversation reads require macOS. Codex removal additionally requires the
-[exact reviewed executable and archive shape](adr/0042-local-session-manager.md).
-See the [roadmap](product-roadmap.md) for later artifact attribution.
+Session keys bind the provider, root and exact identity. Transcript cursors,
+receipts and outcome tracking are process-local.
 
-## Disposable acceptance
+## Test with disposable archives
 
 ```sh
+cargo fmt --all -- --check
+cargo clippy --locked --workspace --all-targets -- -D warnings
+cargo test --locked --workspace
 npm test --prefix ui
+python3 scripts/check_architecture.py
 python3 scripts/test_local_ui.py --agentmender target/debug/agentmender
+```
+
+On Darwin arm64 with the [reviewed executable](provider-compatibility.md), also
+run the exact native fixture.
+
+```sh
 python3 scripts/test_local_ui.py --agentmender target/debug/agentmender --native-codex /absolute/path/to/reviewed/codex
 ```
 
-The native test accepts only the reviewed binary digest, creates fresh test
-archives and verifies the target rollout and canonical row against retained
-fixture sessions. The optional branch requires Darwin arm64.
+The optional test rejects a different executable digest. It initializes new
+private archives and uses the same confined command boundary as the browser.

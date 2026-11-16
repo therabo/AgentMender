@@ -11,9 +11,8 @@ use std::{
 };
 
 use agentmender_domain::ProviderKind;
-use agentmender_provider_api::process;
 use agentmender_provider_claude::ClaudeAdapter;
-use agentmender_provider_codex::CodexAdapter;
+use agentmender_provider_codex::{CodexAdapter, NativeRemoval};
 use axum::{
     Json, Router,
     extract::{DefaultBodyLimit, Path, Query, Request, State},
@@ -27,10 +26,9 @@ use tokio::sync::Semaphore;
 
 use self::{
     inventory::{DetailView, Filter, Inventories, PageView, ProviderView},
-    removal::{NativeProfile, OperationStatus, OperationView, Operations, PreviewView},
+    removal::{OperationStatus, OperationView, Operations, PreviewView},
     transcript::{TranscriptCursors, TranscriptQuery, TranscriptView},
 };
-use crate::{Args, CliError, ErrorCode};
 
 const INDEX: &str = include_str!(concat!(env!("OUT_DIR"), "/index.html"));
 const SCRIPT: &str = include_str!(concat!(env!("OUT_DIR"), "/app.js"));
@@ -47,7 +45,7 @@ struct App {
     claude: ClaudeAdapter,
     limit: usize,
     protected: Vec<String>,
-    native: Option<NativeProfile>,
+    native: Option<NativeRemoval>,
     inventory: Inventories,
     operations: Mutex<Operations>,
     cursors: Mutex<TranscriptCursors>,
@@ -185,16 +183,6 @@ fn provider(value: &str) -> Result<ProviderKind, ApiError> {
     }
 }
 
-async fn providers(State(app): State<Arc<App>>) -> Result<Json<[ProviderView; 2]>, ApiError> {
-    read(app, |app| {
-        Ok([
-            app.inventory.info(app, ProviderKind::Codex),
-            app.inventory.info(app, ProviderKind::Claude),
-        ])
-    })
-    .await
-}
-
 async fn list(
     State(app): State<Arc<App>>,
     Path(id): Path<String>,
@@ -253,7 +241,9 @@ async fn preview(
             .native
             .as_ref()
             .ok_or_else(|| ApiError::conflict(removal::UNSUPPORTED))?;
-        let evidence = native.prepare(&app.codex, &session)?;
+        let evidence = native
+            .prepare(&app.codex, &session)
+            .map_err(removal::refusal_error)?;
         app.operations
             .lock()
             .expect("operation lock")
@@ -285,16 +275,9 @@ async fn confirm(
         let worker = app.clone();
         let status = tokio::task::spawn_blocking(move || {
             let native = worker.native.as_ref().expect("checked");
-            if worker
-                .protected
-                .contains(&review.session.metadata.native_session_id)
-            {
-                OperationStatus::Changed
-            } else {
-                let status = native.execute(&worker.codex, &review);
-                worker.inventory.invalidate(ProviderKind::Codex);
-                status
-            }
+            let status = native.execute(&worker.codex, review);
+            worker.inventory.invalidate(ProviderKind::Codex);
+            status.into()
         })
         .await
         .unwrap_or(OperationStatus::OutcomeUnknown);
@@ -338,7 +321,6 @@ fn router(app: Arc<App>) -> Router {
         )
         .route("/favicon.ico", get(|| async { StatusCode::NO_CONTENT }))
         .route("/api/authorize", post(authorize))
-        .route("/api/providers", get(providers))
         .route("/api/{provider}/sessions", get(list))
         .route("/api/{provider}/sessions/{key}", get(detail))
         .route(
@@ -357,35 +339,24 @@ fn router(app: Arc<App>) -> Router {
         .with_state(app)
 }
 
-pub(super) fn run(args: &Args, no_open: bool) -> Result<bool, CliError> {
-    let error = |message| CliError::new(ErrorCode::InvalidConfiguration, message);
-    if args.fixture.is_some()
-        || args.provider.is_some()
-        || args.project.is_some()
-        || args.active_only
-        || args.search_index_root.is_some()
-        || args.codex_desktop_user_data.is_some()
-    {
-        return Err(error(
-            "UI uses both provider roots and its own metadata filters. Supply --codex-root and --claude-root for alternate archives.",
-        ));
-    }
+pub(super) struct Configuration {
+    pub codex_root: PathBuf,
+    pub claude_root: PathBuf,
+    pub codex: CodexAdapter,
+    pub claude: ClaudeAdapter,
+    pub native: Option<NativeRemoval>,
+    pub limit: usize,
+    pub protected: Vec<String>,
+    pub no_open: bool,
+}
+
+pub(super) fn run(config: Configuration) -> Result<(), String> {
+    let error = str::to_owned;
     if INDEX.is_empty() || SCRIPT.is_empty() || STYLES.is_empty() {
         return Err(error(
             "UI assets are missing. Run npm ci and npm run build in ui/, then rebuild AgentMender.",
         ));
     }
-    let mut configured = args.clone();
-    let codex_root = crate::root(args.codex_root.clone(), "CODEX_HOME", ".codex")?;
-    configured.codex_root = Some(codex_root.clone());
-    let claude_root = crate::root(args.claude_root.clone(), "CLAUDE_CONFIG_DIR", ".claude")?;
-    configured.codex_executable = configured
-        .codex_executable
-        .or_else(|| process::find_executable(ProviderKind::Codex))
-        .or_else(process::find_codex_desktop_executable);
-    let native = NativeProfile::detect(configured.codex_executable.as_deref(), &codex_root);
-    let codex = crate::codex_adapter(&configured, None)?;
-    let claude = crate::claude_adapter(&configured, None)?;
     let launch = token().map_err(|_| error("Unable to create a local authorization ticket."))?;
     let bearer = token().map_err(|_| error("Unable to create a local browser session."))?;
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -406,25 +377,25 @@ pub(super) fn run(args: &Args, no_open: bool) -> Result<bool, CliError> {
             origin,
             launch: Mutex::new(Some(launch.clone())),
             authorization: format!("Bearer {bearer}"),
-            codex_root,
-            claude_root,
-            codex,
-            claude,
-            native,
-            limit: args.max_entries,
-            protected: args.protect_codex_session.clone(),
+            codex_root: config.codex_root,
+            claude_root: config.claude_root,
+            codex: config.codex,
+            claude: config.claude,
+            native: config.native,
+            limit: config.limit,
+            protected: config.protected,
             inventory: Inventories::default(),
             operations: Mutex::default(),
             cursors: Mutex::default(),
             reads: Arc::new(Semaphore::new(8)),
         });
         println!("{url}");
-        if !no_open && browser::open(addr, &launch).is_err() {
+        if !config.no_open && browser::open(addr, &launch).is_err() {
             eprintln!("Open the local URL printed above in your browser.");
         }
         axum::serve(listener, router(app))
             .await
             .map_err(|_| error("The local HTTP server stopped unexpectedly."))?;
-        Ok(false)
+        Ok(())
     })
 }

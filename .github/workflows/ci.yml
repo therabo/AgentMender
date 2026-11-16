@@ -1,4 +1,4 @@
-name: Read-only foundation
+name: Local session manager
 on: [push, pull_request]
 permissions:
   contents: read
@@ -22,7 +22,7 @@ jobs:
       - run: npm test --prefix ui
       - run: npm run build --prefix ui
       - run: rustup toolchain install stable --profile minimal --component rustfmt --component clippy
-      - run: cargo +stable fmt --check
+      - run: cargo +stable fmt --all -- --check
       - run: cargo +stable clippy --locked --workspace --all-targets -- -D warnings
       - run: cargo +stable test --locked --workspace
       - run: cargo +stable build --locked --workspace
@@ -31,11 +31,3 @@ jobs:
       - if: runner.os != 'Windows'
         run: python3 scripts/test_local_ui.py --agentmender target/debug/agentmender
       - run: python3 scripts/check_architecture.py
-      - run: python3 scripts/check_codex_lifecycle_evidence.py
-      - run: python3 scripts/check_complete_removal_evidence.py
-      - run: python3 scripts/test_semantic_assessment.py
-      - run: python3 scripts/test_luna_host.py
-      - if: runner.os == 'macOS'
-        run: python3 scripts/test_autonomous_session_find.py --agentmender target/debug/agentmender
-      - if: runner.os == 'macOS'
-        run: python3 scripts/test_hybrid_session_find.py --agentmender target/debug/agentmender

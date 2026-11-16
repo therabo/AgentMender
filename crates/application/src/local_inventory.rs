@@ -1,7 +1,7 @@
 //! Metadata filtering and stable pagination for a fixed provider observation.
-use agentmender_domain::{ArtifactId, LocalSession, SessionState};
+use agentmender_domain::{Session, SessionIdentity, SessionState};
 use caseless::Caseless;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use std::{cmp::Ordering, collections::BTreeMap};
 use unicode_normalization::UnicodeNormalization;
 
@@ -30,20 +30,19 @@ pub struct InventoryQuery {
     pub limit: usize,
 }
 
-#[derive(Serialize)]
 pub struct InventoryPage<'a> {
     pub total: usize,
-    pub records: Vec<&'a LocalSession>,
+    pub records: Vec<&'a Session>,
 }
 
 struct Entry {
-    session: LocalSession,
+    session: Session,
     searchable: Vec<String>,
 }
 
 pub struct LocalInventory {
     entries: Vec<Entry>,
-    children: BTreeMap<ArtifactId, Vec<usize>>,
+    children: BTreeMap<SessionIdentity, Vec<usize>>,
 }
 
 fn compare<T: Ord>(left: Option<T>, right: Option<T>, ascending: bool) -> Ordering {
@@ -57,7 +56,7 @@ fn compare<T: Ord>(left: Option<T>, right: Option<T>, ascending: bool) -> Orderi
 }
 
 impl LocalInventory {
-    pub fn new(sessions: Vec<LocalSession>) -> Self {
+    pub fn new(sessions: Vec<Session>) -> Self {
         let mut children: BTreeMap<_, Vec<_>> = BTreeMap::new();
         let entries = sessions
             .into_iter()
@@ -66,11 +65,10 @@ impl LocalInventory {
                 if let Some(parent) = &session.parent {
                     children.entry(parent.clone()).or_default().push(index);
                 }
-                let meta = &session.metadata;
                 let searchable = [
-                    Some(meta.native_session_id.as_str()),
-                    meta.title.as_deref(),
-                    meta.project_label.as_deref(),
+                    Some(session.identity.native_id.as_str()),
+                    session.title.as_deref(),
+                    session.project.as_deref(),
                     session.workspace.as_deref(),
                 ]
                 .into_iter()
@@ -94,17 +92,17 @@ impl LocalInventory {
         self.entries.is_empty()
     }
 
-    pub fn sessions(&self) -> impl Iterator<Item = &LocalSession> {
+    pub fn sessions(&self) -> impl Iterator<Item = &Session> {
         self.entries.iter().map(|entry| &entry.session)
     }
 
-    pub fn get(&self, position: usize) -> Option<&LocalSession> {
+    pub fn get(&self, position: usize) -> Option<&Session> {
         self.entries.get(position).map(|entry| &entry.session)
     }
 
-    pub fn children(&self, session: &LocalSession) -> impl Iterator<Item = &LocalSession> {
+    pub fn children(&self, session: &Session) -> impl Iterator<Item = &Session> {
         self.children
-            .get(&session.metadata.identity)
+            .get(&session.identity)
             .into_iter()
             .flatten()
             .map(|&index| &self.entries[index].session)
@@ -117,7 +115,7 @@ impl LocalInventory {
             .entries
             .iter()
             .filter(|item| {
-                let meta = &item.session.metadata;
+                let meta = &item.session;
                 query.state.is_none_or(|state| state == meta.state)
                     && query
                         .since
@@ -133,23 +131,19 @@ impl LocalInventory {
             .collect();
         records.sort_unstable_by(|left, right| {
             let order = match query.sort {
-                InventorySort::Activity => compare(
-                    left.metadata.last_active_at,
-                    right.metadata.last_active_at,
-                    query.ascending,
-                ),
-                InventorySort::Created => compare(
-                    left.metadata.created_at,
-                    right.metadata.created_at,
-                    query.ascending,
-                ),
+                InventorySort::Activity => {
+                    compare(left.last_active_at, right.last_active_at, query.ascending)
+                }
+                InventorySort::Created => {
+                    compare(left.created_at, right.created_at, query.ascending)
+                }
                 InventorySort::Size => compare(
                     left.transcript_bytes,
                     right.transcript_bytes,
                     query.ascending,
                 ),
             };
-            order.then_with(|| left.metadata.identity.cmp(&right.metadata.identity))
+            order.then_with(|| left.identity.cmp(&right.identity))
         });
         InventoryPage {
             total: records.len(),
@@ -158,6 +152,79 @@ impl LocalInventory {
                 .skip(query.offset)
                 .take(query.limit)
                 .collect(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use agentmender_domain::{ProviderKind, SessionKind};
+
+    fn session(id: &str, value: Option<i64>) -> Session {
+        Session {
+            identity: SessionIdentity {
+                provider: ProviderKind::Codex,
+                state_root: "/fixture".into(),
+                namespace: None,
+                native_id: id.into(),
+            },
+            title: Some("Straße Café".into()),
+            workspace: Some("/fixture/Atlas".into()),
+            project: Some("Atlas".into()),
+            created_at: value,
+            last_active_at: value,
+            state: SessionState::Archived,
+            transcript_bytes: value.map(|size| u64::try_from(size).unwrap()),
+            kind: SessionKind::Main,
+            forked_from: None,
+            parent: None,
+        }
+    }
+
+    #[test]
+    fn normalized_filter_and_all_sorts_keep_unknowns_last_and_ties_stable() {
+        let inventory = LocalInventory::new(vec![
+            session("z", None),
+            session("b", Some(0)),
+            session("c", Some(3)),
+            session("a", Some(0)),
+        ]);
+        for sort in [
+            InventorySort::Activity,
+            InventorySort::Created,
+            InventorySort::Size,
+        ] {
+            for ascending in [false, true] {
+                let query = InventoryQuery {
+                    sort,
+                    ascending,
+                    search: "STRASSE CAFE\u{301} atlas".into(),
+                    limit: 4,
+                    ..Default::default()
+                };
+                let page = inventory.page(&query);
+                assert_eq!(page.total, 4);
+                let ids: Vec<_> = page
+                    .records
+                    .iter()
+                    .map(|row| row.identity.native_id.as_str())
+                    .collect();
+                assert_eq!(
+                    ids,
+                    if ascending {
+                        ["a", "b", "c", "z"]
+                    } else {
+                        ["c", "a", "b", "z"]
+                    }
+                );
+                let next = inventory.page(&InventoryQuery {
+                    offset: 2,
+                    limit: 1,
+                    ..query
+                });
+                assert_eq!(next.records[0].identity.native_id, ids[2]);
+            }
         }
     }
 }

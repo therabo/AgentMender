@@ -2,6 +2,7 @@
 """HTTP acceptance on disposable archives; optionally verify the exact native binary."""
 import argparse
 from contextlib import contextmanager
+from concurrent.futures import ThreadPoolExecutor
 import http.client
 import json
 import os
@@ -16,10 +17,8 @@ import time
 from urllib.parse import urlsplit
 
 sys.dont_write_bytecode = True
-import probe_codex_current_lifecycle as probe
+import native_ui_fixture as probe
 
-VERSION = "0.169.0-alpha.11.1"
-DIGEST = "3ea20787e106af94573d3d6c19480aed93a1334b0dd32b6b04e2f780ce82cf4b"
 CLAUDE_ID = "eb000000-1111-4111-8111-000000000001"
 CLAUDE_DESKTOP_ID = "eb000000-1111-4111-8111-000000000002"
 
@@ -52,36 +51,6 @@ def codex_metadata_fixture(root, count=3000):
         ))
 
 
-def native_fixture(base, binary):
-    probe.BINARY_SHA256 = DIGEST
-    probe.VERSION = VERSION
-    probe.validate_isolation(base, binary, Path.home().resolve())
-    case = probe.new_case(base, "native")
-    rollouts = {
-        probe.R: probe.seed(case, probe.R, archived=True),
-        probe.S: probe.seed(case, probe.S, archived=True),
-        probe.F: probe.seed(case, probe.F),
-        probe.M: probe.seed(case, probe.M, archived=True),
-        probe.G: probe.seed(case, probe.G, archived=True),
-        probe.C: probe.seed(case, probe.C, parent=probe.G, archived=True),
-    }
-    with rollouts[probe.R].open("a") as out:
-        for text in ("Visible disposable message.", "password: secret-marker", "fixture text " * 1536):
-            row = {"type": "response_item", "payload": {"type": "message", "role": "user",
-                   "content": [{"type": "input_text", "text": text}]}}
-            out.write(json.dumps(row) + "\n")
-    server = probe.Server(case, binary, Path.home().resolve())
-    try:
-        for ident in rollouts:
-            result = server.call("thread/read", {"threadId": ident, "includeTurns": False})
-            assert "result" in result, result.get("error")
-    finally:
-        server.close()
-    with sqlite3.connect(case / "provider" / "state_5.sqlite") as db:
-        db.execute("INSERT OR REPLACE INTO thread_spawn_edges VALUES(?,?,'closed')", (probe.G, probe.C))
-    return case / "provider", rollouts
-
-
 class Client:
     def __init__(self, address):
         self.origin = f"http://{address.netloc}"
@@ -107,9 +76,12 @@ class Client:
             conn.request(method, path, body=body, headers=headers)
             response = conn.getresponse()
             raw = response.read()
-            assert response.status == code, (method, path, response.status, raw[:350])
+            allowed = code if isinstance(code, tuple) else (code,)
+            assert response.status in allowed, (method, path, response.status, raw[:350])
             assert response.getheader("Access-Control-Allow-Origin") is None
             assert response.getheader("Cache-Control") == "no-store"
+            if isinstance(code, tuple):
+                return response.status
             if (response.getheader("Content-Type") or "").startswith("application/json"):
                 return json.loads(raw)
             return raw
@@ -161,7 +133,7 @@ def ui(binary, base, codex_root, claude_root, codex=None):
 def authorize(client, ticket):
     assert b'<html lang="it">' in client.call("GET", "/")
     assert b"AgentMender" in client.call("GET", "/app.js")
-    client.call("GET", "/api/providers", code=401)
+    client.call("GET", "/api/codex/sessions", code=401)
     client.call("GET", "/", code=403, Host="attacker.test")
     client.call("POST", "/api/authorize", {"ticket": ticket}, code=403, Origin=None)
     client.call("POST", "/api/authorize", {"ticket": ticket}, code=403, Origin="http://attacker.test")
@@ -172,8 +144,6 @@ def authorize(client, ticket):
 
 
 def inventory_acceptance(client, claude_root):
-    providers = client.call("GET", "/api/providers")
-    assert [item["id"] for item in providers] == ["codex", "claude"]
     first = client.call("GET", "/api/claude/sessions?search=CAFE%CC%81")
     assert first["total"] == 1 and first["provider"]["coverage"] == "partial"
     row = first["rows"][0]
@@ -189,6 +159,7 @@ def inventory_acceptance(client, claude_root):
     assert desktop["total"] == 1 and desktop["rows"][0]["workspace"] is None
     sources = list(claude_root.glob("projects/*/*.jsonl"))
     assert len(sources) == 2 and "Never expose" in next(path for path in sources if path.stem == CLAUDE_ID).read_text()
+    return row["key"]
 
 
 def codex_acceptance(client, root, rollouts):
@@ -200,7 +171,9 @@ def codex_acceptance(client, root, rollouts):
     active = f"/api/codex/sessions/{keys[probe.F]}"
     parent = f"/api/codex/sessions/{keys[probe.G]}"
     assert client.call("GET", parent)["children"] == [probe.C]
-    for refused in (protected, active, parent):
+    orphan_parent = f"/api/codex/sessions/{keys[probe.C]}"
+    assert not client.call("GET", orphan_parent)["children"]
+    for refused in (protected, active, parent, orphan_parent):
         client.call("POST", refused + "/removal-preview", code=409)
     client.call("POST", target + "/removal-preview", code=401, Authorization=None)
     client.call("POST", target + "/removal-preview", code=403, Origin="null")
@@ -230,8 +203,9 @@ def codex_acceptance(client, root, rollouts):
     client.call("POST", "/api/codex/refresh")
     preview = client.call("POST", target + "/removal-preview")
     path = f"/api/operations/{preview['id']}/confirm"
-    client.call("POST", path, phrase, code=202)
-    client.call("POST", path, phrase, code=409)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        replies = [pool.submit(client.call, "POST", path, phrase, code=(202, 409)) for _ in range(2)]
+        assert sorted(reply.result() for reply in replies) == [202, 409]
     assert client.operation(preview["id"])["status"] == "command_succeeded"
     assert not rollouts[probe.R].exists()
     assert all(rollouts[ident].read_bytes() == content for ident, content in frozen.items())
@@ -255,6 +229,20 @@ def codex_acceptance(client, root, rollouts):
     assert rollouts[probe.M].read_bytes() == frozen[probe.M]
 
 
+def rejects_unconfined_reader(binary, source):
+    with tempfile.TemporaryDirectory(prefix="agentmender-evidence-", dir="/private/tmp") as private, \
+         tempfile.TemporaryDirectory(prefix="agentmender-denial-", dir="/private/tmp") as denial:
+        probe = str(Path(denial) / "must-remain-absent")
+        request = {"source_root": str(source), "private_root": private, "probe_path": probe,
+                   "operation": {"Inventory": {"after": "", "limit": 1}}}
+        result = subprocess.run(
+            [str(binary), "--internal-codex-content-capture"],
+            input=json.dumps(request) + "\n", text=True, capture_output=True, timeout=5,
+            env={"HOME": private, "CODEX_HOME": private, "TMPDIR": private},
+        )
+        assert result.returncode != 0 and not result.stdout and not Path(probe).exists()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--agentmender", required=True, type=Path)
@@ -268,23 +256,26 @@ def main():
         if args.native_codex:
             binary = args.native_codex.resolve(strict=True)
             assert platform.system() == "Darwin" and platform.machine() == "arm64"
-            assert probe.digest(binary) == DIGEST, "binary does not match the validated profile"
-            root, rollouts = native_fixture(base, binary)
-            with ui(agentmender, base, root, claude, binary) as (client, ticket):
-                authorize(client, ticket)
-                inventory_acceptance(client, claude)
-                codex_acceptance(client, root, rollouts)
+            assert probe.digest(binary) == probe.DIGEST, "binary does not match the validated profile"
+            with probe.native_fixture(base, binary) as (root, rollouts):
+                with ui(agentmender, base, root, claude, binary) as (client, ticket):
+                    authorize(client, ticket)
+                    inventory_acceptance(client, claude)
+                    codex_acceptance(client, root, rollouts)
             print("Native Codex UI: stale preview refused, one-shot delete, controls preserved, nonzero exit held for review.")
         else:
             root = base / "codex"
             with ui(agentmender, base, root, claude) as (client, ticket):
                 authorize(client, ticket)
-                inventory_acceptance(client, claude)
+                first_claude_key = inventory_acceptance(client, claude)
+                first_codex_key = None
                 missing = client.call("GET", "/api/codex/sessions")
                 assert missing["provider"]["coverage"] == "not_detected"
                 assert missing["provider"]["presence"] == "not_detected"
                 assert client.call("GET", "/api/claude/sessions?limit=101", code=400)
                 codex_metadata_fixture(root)
+                if platform.system() == "Darwin":
+                    rejects_unconfined_reader(agentmender, root)
                 client.call("POST", "/api/codex/refresh")
                 first = client.call("GET", "/api/codex/sessions?limit=10")
                 if platform.system() == "Darwin":
@@ -293,15 +284,31 @@ def main():
                     assert not {item["key"] for item in first["rows"]} & {item["key"] for item in second["rows"]}
                     selected = client.call("GET", "/api/codex/sessions?search=CAFE%CC%81%20Atlas&state=archived&since=1970-01-02&until=1970-01-02&sort=created&ascending=true&limit=2")
                     assert selected["total"] == 1500 and selected["rows"][0]["created_at"] == 1
+                    assert not first["provider"]["removal_available"]
+                    client.call("POST", f"/api/codex/sessions/{selected['rows'][0]['key']}/removal-preview", code=409)
                     missing_title = client.call("GET", "/api/codex/sessions?offset=2999")["rows"][0]
                     assert missing_title["title"] is None and missing_title["transcript_bytes"] is None
+                    first_codex_key = missing_title["key"]
                     with sqlite3.connect(root / "state_5.sqlite") as db:
                         db.execute("ALTER TABLE threads RENAME TO unsupported")
                     refreshed = client.call("POST", "/api/codex/refresh")
                     assert refreshed["coverage"] == "unavailable"
                 else:
                     assert first["provider"]["coverage"] == "unavailable"
-            print("Local UI: provider inventory, Claude read-only, origin and token guards, bounded filters, error states.")
+            other_claude = base / "another-claude"
+            other_codex = base / "another-codex"
+            claude_fixture(other_claude)
+            codex_metadata_fixture(other_codex, 1)
+            with ui(agentmender, base, other_codex, other_claude) as (client, ticket):
+                authorize(client, ticket)
+                assert inventory_acceptance(client, other_claude) != first_claude_key
+                client.call("GET", f"/api/claude/sessions/{first_claude_key}", code=404)
+                if first_codex_key:
+                    other = client.call("GET", "/api/codex/sessions")["rows"][0]
+                    assert other["native_id"] == "ab000000-1111-4111-8111-000000000000"
+                    assert other["key"] != first_codex_key
+                    client.call("GET", f"/api/codex/sessions/{first_codex_key}", code=404)
+            print("Local UI: scoped duplicate IDs, provider inventory, unsupported removal, origin and token guards, pagination and coverage.")
 
 
 if __name__ == "__main__":

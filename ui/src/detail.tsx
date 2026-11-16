@@ -30,7 +30,7 @@ function Conversation({ path }: { path: string }) {
     <h3>Conversazione</h3>
     {error && <Notice tone="error">{error}</Notice>}
     {page?.messages.map((message, index) => <article className="message" key={index}>
-      <strong>{message.role === 'user' ? 'Utente' : message.role === 'assistant' ? 'Assistente' : 'Messaggio'}</strong>
+      <strong>{message.role === 'user' ? 'Utente' : 'Assistente'}</strong>
       <p>{message.text}</p>
     </article>)}
     {page && page.messages.length === 0 && <p>Nessun messaggio visualizzabile in questa pagina.</p>}
@@ -128,7 +128,7 @@ export function SessionDetail({ provider, rowKey, onClose, onConfirm }: {
           {session.forked_from && <p>Fork di <code>{session.forked_from}</code></p>}
           {detail.children.length > 0 && <ul>{detail.children.map(id => <li key={id}><code>{id}</code></li>)}</ul>}
           {!session.parent && !session.forked_from && detail.children.length === 0 && <p>Nessuna relazione rilevata.</p>}
-          {(detail.relationships_limited || detail.coverage === 'partial') && <p>La copertura delle relazioni è parziale.</p>}
+          <p>La copertura delle relazioni è parziale.</p>
         </section>
         {detail.conversation_preview ? <Conversation path={path} /> : <section className="detail-section"><h3>Conversazione</h3><p>Anteprima del transcript non disponibile.</p></section>}
         <section className="detail-section removal-section">

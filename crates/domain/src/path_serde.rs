@@ -100,23 +100,6 @@ pub fn serialize<S: Serializer>(path: &Path, serializer: S) -> Result<S::Ok, S::
 pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<PathBuf, D::Error> {
     restore(Representation::deserialize(deserializer)?)
 }
-pub mod optional {
-    use super::*;
-    pub fn serialize<S: Serializer>(
-        path: &Option<PathBuf>,
-        serializer: S,
-    ) -> Result<S::Ok, S::Error> {
-        path.as_deref().map(represent).serialize(serializer)
-    }
-    pub fn deserialize<'de, D: Deserializer<'de>>(
-        deserializer: D,
-    ) -> Result<Option<PathBuf>, D::Error> {
-        Option::<Representation>::deserialize(deserializer)?
-            .map(restore)
-            .transpose()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -124,14 +107,11 @@ mod tests {
     struct Example {
         #[serde(with = "super")]
         path: PathBuf,
-        #[serde(with = "optional")]
-        optional: Option<PathBuf>,
     }
     #[test]
     fn utf8_paths_remain_json_strings() {
         let value = Example {
             path: "normal/path".into(),
-            optional: None,
         };
         let json = serde_json::to_value(&value).unwrap();
         assert_eq!(json["path"], "normal/path");
@@ -142,10 +122,7 @@ mod tests {
     fn non_utf8_native_paths_round_trip_without_collisions() {
         use std::os::unix::ffi::OsStringExt;
         let path = PathBuf::from(OsString::from_vec(vec![b'a', 255]));
-        let value = Example {
-            path: path.clone(),
-            optional: Some(path),
-        };
+        let value = Example { path };
         let json = serde_json::to_value(&value).unwrap();
         assert_eq!(json["path"]["encoding"], "unix_bytes");
         assert_eq!(json["path"]["hex"], "61ff");
@@ -154,10 +131,8 @@ mod tests {
     #[test]
     fn malformed_native_encoding_is_rejected() {
         assert!(
-            serde_json::from_str::<Example>(
-                r#"{"path":{"encoding":"unix_bytes","hex":"z"},"optional":null}"#
-            )
-            .is_err()
+            serde_json::from_str::<Example>(r#"{"path":{"encoding":"unix_bytes","hex":"z"}}"#)
+                .is_err()
         );
     }
 }

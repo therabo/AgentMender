@@ -1,16 +1,17 @@
-//! Read-only launches require OS write denial. Confirmed Codex delete is separate (ADR-0038).
+//! Fixed process commands for isolated reads and confirmed native removal.
 use crate::ProviderError;
 use crate::evidence::EvidenceSandbox;
 use agentmender_domain::ProviderKind;
-use std::{
-    path::Path,
-    process::{Child, Command, Stdio},
-    thread,
-    time::{Duration, Instant},
-};
+use std::{path::Path, process::Child, time::Duration};
 
 #[cfg(target_os = "macos")]
-use std::{io::Read, sync::mpsc};
+use std::{
+    io::Read,
+    process::{Command, Stdio},
+    sync::mpsc,
+    thread,
+    time::Instant,
+};
 
 #[cfg(target_os = "macos")]
 const PROFILE: &str = "(version 1)(allow default)(deny file-write*)(deny network*)(deny process-fork)(deny mach-lookup)";
@@ -36,14 +37,6 @@ fn command(executable: &Path) -> Result<Command, ProviderError> {
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
     Ok(command)
-}
-
-/// Run one already-confirmed native delete in the original provider home.
-pub fn run_codex_delete(executable: &Path, root: &Path, id: uuid::Uuid, timeout: Duration) -> bool {
-    if !executable.is_absolute() || !root.is_absolute() {
-        return false;
-    }
-    codex_delete_command(Command::new(executable), root, id, timeout)
 }
 
 /// Apply the reviewed Codex home as the SQLite override and kernel write scope.
@@ -79,6 +72,7 @@ pub fn run_confined_codex_delete(
     }
 }
 
+#[cfg(target_os = "macos")]
 fn codex_delete_command(
     mut command: Command,
     root: &Path,
@@ -190,9 +184,12 @@ pub fn probe_version(kind: ProviderKind, executable: &Path) -> Result<String, Pr
         let mut process = command(executable)?;
         process.arg("--version");
         let bytes = small_output(process)?;
-        let text =
-            std::str::from_utf8(&bytes).map_err(|_| ProviderError::ProviderVersionUnknown(kind))?;
-        parse_version(kind, text).ok_or(ProviderError::ProviderVersionUnknown(kind))
+        let text = std::str::from_utf8(&bytes).map_err(|_| {
+            ProviderError::CapabilityUnavailable("unrecognized provider version banner".into())
+        })?;
+        parse_version(kind, text).ok_or(ProviderError::CapabilityUnavailable(
+            "unrecognized provider version banner".into(),
+        ))
     }
     #[cfg(not(target_os = "macos"))]
     {
@@ -257,7 +254,8 @@ pub fn read_bundle_metadata(bundle: &Path) -> Result<BundleMetadata, ProviderErr
 }
 
 /// Strictly recognize official version banners; proximity never proves compatibility.
-pub fn parse_version(kind: ProviderKind, banner: &str) -> Option<String> {
+#[cfg(any(target_os = "macos", test))]
+fn parse_version(kind: ProviderKind, banner: &str) -> Option<String> {
     let line = banner.trim();
     let value = match kind {
         ProviderKind::Codex => line.strip_prefix("codex-cli ")?,
@@ -297,26 +295,11 @@ fn policy_literal(path: &Path) -> Result<String, ProviderError> {
 }
 
 #[cfg(target_os = "macos")]
-fn evidence_command(
-    executable: &Path,
-    sandbox: &EvidenceSandbox,
-    capture: bool,
-) -> Result<Command, ProviderError> {
-    evidence_command_for(executable, sandbox, capture, false, false)
-}
-
-#[cfg(target_os = "macos")]
-fn evidence_command_for(
-    executable: &Path,
-    sandbox: &EvidenceSandbox,
-    capture: bool,
-    catalog: bool,
-    transcripts: bool,
-) -> Result<Command, ProviderError> {
+fn content_command(executable: &Path, sandbox: &EvidenceSandbox) -> Result<Command, ProviderError> {
     sandbox.validate()?;
     if !executable.is_absolute() || !executable.is_file() {
-        return Err(ProviderError::CapabilityUnavailable(
-            "evidence executable must be an absolute existing file".into(),
+        return Err(ProviderError::InvalidScope(
+            "invalid worker executable".into(),
         ));
     }
     let root = policy_literal(sandbox.path())?;
@@ -327,40 +310,17 @@ fn evidence_command_for(
             .canonicalize()
             .map_err(|e| crate::io_error(executable, e))?,
     )?;
-    let read_rule = if transcripts {
-        let database = policy_literal(&sandbox.source_root().join("state_5.sqlite"))?;
-        let wal = policy_literal(&sandbox.source_root().join("state_5.sqlite-wal"))?;
-        let shm = policy_literal(&sandbox.source_root().join("state_5.sqlite-shm"))?;
-        let sessions = policy_literal(&sandbox.source_root().join("sessions"))?;
-        let archived = policy_literal(&sandbox.source_root().join("archived_sessions"))?;
-        format!(
-            "(deny file-read-data (require-all (require-any (subpath {home}) (subpath {source})) (require-not (require-any (literal {program}) (literal {database}) (literal {wal}) (literal {shm}) (literal {source}) (subpath {sessions}) (subpath {archived}) (subpath {root})))) )"
-        )
-    } else if catalog {
-        let database = policy_literal(&sandbox.source_root().join("sqlite/codex.db"))?;
-        let wal = policy_literal(&sandbox.source_root().join("sqlite/codex.db-wal"))?;
-        let shm = policy_literal(&sandbox.source_root().join("sqlite/codex.db-shm"))?;
-        format!(
-            "(deny file-read-data (require-all (require-any (subpath {home}) (subpath {source})) (require-not (require-any (literal {program}) (literal {database}) (literal {wal}) (literal {shm}) (subpath {root})))) )"
-        )
-    } else if capture {
-        let database = policy_literal(&sandbox.source_root().join("state_5.sqlite"))?;
-        let wal = policy_literal(&sandbox.source_root().join("state_5.sqlite-wal"))?;
-        let shm = policy_literal(&sandbox.source_root().join("state_5.sqlite-shm"))?;
-        format!(
-            "(deny file-read-data (require-all (subpath {home}) (require-not (require-any (literal {program}) (literal {database}) (literal {wal}) (literal {shm}) (subpath {root})))) )"
-        )
-    } else {
-        format!(
-            "(deny file-read-data (require-all (require-any (subpath {home}) (subpath {source})) (require-not (require-any (literal {program}) (subpath {root})))) )"
-        )
-    };
-    let profile = format!(
-        "(version 1)(allow default)(deny file-write* (require-not (subpath {root})))(deny network*)(deny process-fork)(deny mach-lookup){read_rule}"
+    let database = policy_literal(&sandbox.source_root().join("state_5.sqlite"))?;
+    let wal = policy_literal(&sandbox.source_root().join("state_5.sqlite-wal"))?;
+    let shm = policy_literal(&sandbox.source_root().join("state_5.sqlite-shm"))?;
+    let sessions = policy_literal(&sandbox.source_root().join("sessions"))?;
+    let archived = policy_literal(&sandbox.source_root().join("archived_sessions"))?;
+    let policy = format!(
+        "(version 1)(allow default)(deny file-write* (require-not (subpath {root})))(deny network*)(deny process-fork)(deny mach-lookup)(deny file-read-data (require-all (require-any (subpath {home}) (subpath {source})) (require-not (require-any (literal {program}) (literal {database}) (literal {wal}) (literal {shm}) (literal {source}) (subpath {sessions}) (subpath {archived}) (subpath {root})))) )"
     );
     let mut command = Command::new("/usr/bin/sandbox-exec");
     command
-        .args(["-p", &profile])
+        .args(["-p", &policy])
         .arg(executable)
         .env_clear()
         .env("HOME", sandbox.path())
@@ -373,86 +333,13 @@ fn evidence_command_for(
     Ok(command)
 }
 
-/// A fixed internal query worker; writable permission comes only from an owned token.
-pub fn spawn_codex_capture(
-    helper: &Path,
-    sandbox: &EvidenceSandbox,
-) -> Result<Child, ProviderError> {
-    #[cfg(target_os = "macos")]
-    {
-        evidence_command(helper, sandbox, true)?
-            .arg("--internal-codex-evidence-capture")
-            .spawn()
-            .map_err(|_| {
-                ProviderError::CapabilityUnavailable(
-                    "isolated evidence capture could not start".into(),
-                )
-            })
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        let _ = (helper, sandbox);
-        Err(ProviderError::CapabilityUnavailable(
-            "isolated evidence capture is not verified on this platform".into(),
-        ))
-    }
-}
-
-/// Fixed scoped worker with the same protected capture policy.
-pub fn spawn_codex_scoped_capture(
-    helper: &Path,
-    sandbox: &EvidenceSandbox,
-) -> Result<Child, ProviderError> {
-    #[cfg(target_os = "macos")]
-    {
-        evidence_command(helper, sandbox, true)?
-            .arg("--internal-codex-scoped-evidence-capture")
-            .spawn()
-            .map_err(|_| {
-                ProviderError::CapabilityUnavailable(
-                    "isolated scoped capture could not start".into(),
-                )
-            })
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        let _ = (helper, sandbox);
-        Err(ProviderError::CapabilityUnavailable(
-            "isolated scoped capture is not verified on this platform".into(),
-        ))
-    }
-}
-
-/// Fixed metadata-only worker; identical kernel source-write denial to capture.
-pub fn spawn_codex_metadata_capture(
-    helper: &Path,
-    sandbox: &EvidenceSandbox,
-) -> Result<Child, ProviderError> {
-    #[cfg(target_os = "macos")]
-    {
-        evidence_command(helper, sandbox, true)?
-            .arg("--internal-codex-metadata-capture")
-            .spawn()
-            .map_err(|_| ProviderError::CapabilityUnavailable("metadata worker unavailable".into()))
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        let _ = (helper, sandbox);
-        Err(ProviderError::CapabilityUnavailable(
-            "metadata isolation unsupported on this platform".into(),
-        ))
-    }
-}
-
-/// Fixed message reader under kernel-attested source write denial. Only the
-/// selected database and known rollout directories gain source read access.
 pub fn spawn_codex_content_capture(
     helper: &Path,
     sandbox: &EvidenceSandbox,
 ) -> Result<Child, ProviderError> {
     #[cfg(target_os = "macos")]
     {
-        evidence_command_for(helper, sandbox, true, false, true)?
+        content_command(helper, sandbox)?
             .arg("--internal-codex-content-capture")
             .spawn()
             .map_err(|_| ProviderError::CapabilityUnavailable("content worker unavailable".into()))
@@ -466,103 +353,10 @@ pub fn spawn_codex_content_capture(
     }
 }
 
-/// Observe the installed implementation's advertised methods, not their effects.
-/// The generator can write only to the fresh evidence home and cannot read source
-/// state, auth/configuration or transcripts. No lifecycle request is dispatched.
-pub fn codex_app_server_schema(
-    executable: &Path,
-    sandbox: &EvidenceSandbox,
-) -> Result<Vec<u8>, ProviderError> {
-    #[cfg(target_os = "macos")]
-    {
-        let mut command = evidence_command(executable, sandbox, false)?;
-        command
-            .args(["app-server", "generate-json-schema", "--out"])
-            .arg(sandbox.path().join("schemas"));
-        small_output(command)?;
-        crate::filesystem::read_bounded(
-            sandbox.path(),
-            &sandbox.path().join("schemas/ClientRequest.json"),
-            1024 * 1024,
-        )
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        let _ = (executable, sandbox);
-        Err(ProviderError::CapabilityUnavailable(
-            "native schema probe isolation unsupported".into(),
-        ))
-    }
-}
-
-/// Fixed Desktop catalog observation worker under the protected evidence sandbox.
-pub fn spawn_codex_catalog_capture(
-    helper: &Path,
-    sandbox: &EvidenceSandbox,
-) -> Result<Child, ProviderError> {
-    #[cfg(target_os = "macos")]
-    {
-        evidence_command_for(helper, sandbox, false, true, false)?
-            .arg("--internal-codex-catalog-evidence-capture")
-            .spawn()
-            .map_err(|_| {
-                ProviderError::CapabilityUnavailable(
-                    "isolated catalog capture could not start".into(),
-                )
-            })
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        let _ = (helper, sandbox);
-        Err(ProviderError::CapabilityUnavailable(
-            "isolated catalog capture is not verified on this platform".into(),
-        ))
-    }
-}
-
-pub fn spawn_codex_evidence(
-    executable: &Path,
-    sandbox: &EvidenceSandbox,
-) -> Result<Child, ProviderError> {
-    #[cfg(target_os = "macos")]
-    {
-        evidence_command(executable, sandbox, false)?
-            .args(["app-server", "--listen", "stdio://"])
-            .spawn()
-            .map_err(|_| {
-                ProviderError::CapabilityUnavailable(
-                    "isolated Codex evidence process could not start".into(),
-                )
-            })
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        let _ = (executable, sandbox);
-        Err(ProviderError::CapabilityUnavailable(
-            "isolated Codex evidence runtime is not verified on this platform".into(),
-        ))
-    }
-}
-
 pub fn verify_source_write_denial(root: &Path) -> Result<(), ProviderError> {
     #[cfg(target_os = "macos")]
     {
         crate::macos_sandbox::verify_source_write_denial(root)
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        let _ = root;
-        Err(ProviderError::CapabilityUnavailable(
-            "kernel sandbox attestation is only verified on macOS".into(),
-        ))
-    }
-}
-
-/// Attest write denial for the fixed Desktop catalog and its coordination files.
-pub fn verify_catalog_write_denial(root: &Path) -> Result<(), ProviderError> {
-    #[cfg(target_os = "macos")]
-    {
-        crate::macos_sandbox::verify_catalog_write_denial(root)
     }
     #[cfg(not(target_os = "macos"))]
     {
@@ -637,7 +431,7 @@ mod tests {
         let link = source.path().join("sessions/linked.jsonl");
         symlink(&auth, &link).unwrap();
         let sandbox = EvidenceSandbox::new(source.path(), home.path()).unwrap();
-        let output = evidence_command_for(Path::new("/bin/cat"), &sandbox, true, false, true)
+        let output = content_command(Path::new("/bin/cat"), &sandbox)
             .unwrap()
             .arg(&transcript)
             .output()
@@ -645,7 +439,7 @@ mod tests {
         assert!(output.status.success());
         assert_eq!(output.stdout, b"VISIBLE FIXTURE");
         for path in [&auth, &link] {
-            let output = evidence_command_for(Path::new("/bin/cat"), &sandbox, true, false, true)
+            let output = content_command(Path::new("/bin/cat"), &sandbox)
                 .unwrap()
                 .arg(path)
                 .output()
@@ -654,7 +448,7 @@ mod tests {
             assert!(output.stdout.is_empty());
         }
         assert!(
-            !evidence_command_for(Path::new("/usr/bin/touch"), &sandbox, true, false, true)
+            !content_command(Path::new("/usr/bin/touch"), &sandbox)
                 .unwrap()
                 .arg(source.path().join("sessions/must-remain-absent"))
                 .status()
@@ -665,79 +459,11 @@ mod tests {
     }
     #[cfg(target_os = "macos")]
     #[test]
-    fn evidence_sandbox_allows_owned_writes_and_only_source_metadata_reads() {
-        let source = tempfile::tempdir().unwrap();
-        let home = tempfile::tempdir().unwrap();
-        let private = source.path().join("private-content");
-        std::fs::write(&private, b"secret-canary").unwrap();
-        let sandbox = EvidenceSandbox::new(source.path(), home.path()).unwrap();
-        let inside = sandbox.path().join("allowed");
-        let status = evidence_command(Path::new("/usr/bin/touch"), &sandbox, false)
-            .unwrap()
-            .arg(&inside)
-            .status()
-            .unwrap();
-        assert!(status.success());
-        assert!(inside.exists());
-        let status = evidence_command(Path::new("/usr/bin/touch"), &sandbox, false)
-            .unwrap()
-            .arg(sandbox.probe_path())
-            .status()
-            .unwrap();
-        assert!(!status.success());
-        assert!(!sandbox.probe_path().exists());
-        let status = evidence_command(Path::new("/usr/bin/stat"), &sandbox, false)
-            .unwrap()
-            .arg(&private)
-            .stdout(Stdio::null())
-            .status()
-            .unwrap();
-        assert!(status.success());
-        let output = evidence_command(Path::new("/bin/cat"), &sandbox, false)
-            .unwrap()
-            .arg(&private)
-            .output()
-            .unwrap();
-        assert!(!output.status.success());
-        assert!(output.stdout.is_empty());
-        assert_eq!(std::fs::read(private).unwrap(), b"secret-canary");
-    }
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn catalog_worker_policy_allows_only_fixed_catalog_files() {
-        let source = tempfile::tempdir().unwrap();
-        let home = tempfile::tempdir().unwrap();
-        let sqlite = source.path().join("sqlite");
-        std::fs::create_dir(&sqlite).unwrap();
-        let db = sqlite.join("codex.db");
-        let other = sqlite.join("other.db");
-        std::fs::write(&db, b"allowed").unwrap();
-        std::fs::write(&other, b"private").unwrap();
-        let sandbox = EvidenceSandbox::new(source.path(), home.path()).unwrap();
-        let read = |path: &Path| {
-            evidence_command_for(Path::new("/bin/cat"), &sandbox, false, true, false)
-                .unwrap()
-                .arg(path)
-                .output()
-                .unwrap()
-        };
-        assert_eq!(read(&db).stdout, b"allowed");
-        assert!(!read(&other).status.success());
-        let status =
-            evidence_command_for(Path::new("/usr/bin/touch"), &sandbox, false, true, false)
-                .unwrap()
-                .arg(&db)
-                .status()
-                .unwrap();
-        assert!(!status.success());
-        assert_eq!(std::fs::read(&db).unwrap(), b"allowed");
-    }
-    #[cfg(unix)]
-    #[test]
     fn native_delete_timeout_stops_the_fixture_process() {
         use std::os::unix::fs::PermissionsExt;
         let root = tempfile::tempdir().unwrap();
-        let executable = root.path().join("fake-codex");
+        let path = root.path().canonicalize().unwrap();
+        let executable = path.join("fake-codex");
         std::fs::write(
             &executable,
             "#!/bin/sh\nprintf '%s\\n' \"$$\" > pid\nexec /bin/sleep 15\n",
@@ -745,13 +471,13 @@ mod tests {
         .unwrap();
         std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
 
-        assert!(!run_codex_delete(
+        assert!(!run_confined_codex_delete(
             &executable,
-            root.path(),
+            &path,
             uuid::Uuid::nil(),
-            Duration::from_millis(500),
+            Duration::from_secs(1),
         ));
-        let pid = std::fs::read_to_string(root.path().join("pid")).unwrap();
+        let pid = std::fs::read_to_string(path.join("pid")).unwrap();
         let status = Command::new("/bin/kill")
             .args(["-0", pid.trim()])
             .stderr(Stdio::null())
@@ -834,140 +560,5 @@ mod tests {
             assert_eq!(std::fs::read(&source).unwrap(), b"original");
             assert!(!renamed.exists());
         }
-    }
-}
-
-/// Fixed launcher for the embedded coordinator. No network, caller workspace or
-/// credential access. The private script name is an installation constant.
-pub fn spawn_luna_coordinator(sandbox: &EvidenceSandbox) -> Result<Child, ProviderError> {
-    #[cfg(target_os = "macos")]
-    {
-        let python = Path::new("/usr/bin/python3");
-        evidence_command(python, sandbox, false)?
-            .args(["-E", "-s", "-B", "-u"])
-            .arg(sandbox.path().join("scripts/resolve_with_luna.py"))
-            .arg("--internal-coordinator")
-            .spawn()
-            .map_err(|_| {
-                ProviderError::CapabilityUnavailable("Luna coordinator launch failed".into())
-            })
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        let _ = sandbox;
-        Err(ProviderError::CapabilityUnavailable(
-            "Luna isolation unavailable".into(),
-        ))
-    }
-}
-
-#[derive(Clone, Copy)]
-pub enum LunaRole {
-    Planner,
-    Evaluator,
-}
-
-impl LunaRole {
-    pub fn private_home(self, sandbox: &EvidenceSandbox) -> std::path::PathBuf {
-        sandbox.path().join(match self {
-            Self::Planner => "luna-planner",
-            Self::Evaluator => "luna-evaluator",
-        })
-    }
-}
-
-/// Fixed model client. Network is needed for inference. All writes are confined
-/// to the private home and access to real Codex state is limited to file auth.
-pub fn spawn_codex_luna(
-    executable: &Path,
-    sandbox: &EvidenceSandbox,
-    role: LunaRole,
-) -> Result<Child, ProviderError> {
-    #[cfg(target_os = "macos")]
-    {
-        use std::os::unix::fs::{MetadataExt, PermissionsExt, symlink};
-        sandbox.validate()?;
-        if !executable.is_absolute() || !executable.is_file() {
-            return Err(ProviderError::CapabilityUnavailable(
-                "Codex executable unavailable".into(),
-            ));
-        }
-        let program = executable
-            .canonicalize()
-            .map_err(|e| crate::io_error(executable, e))?;
-        let auth = sandbox.source_root().join("auth.json");
-        let metadata = std::fs::symlink_metadata(&auth).map_err(|e| crate::io_error(&auth, e))?;
-        if !metadata.is_file()
-            || metadata.len() > 65536
-            || metadata.nlink() != 1
-            || metadata.permissions().mode() & 0o077 != 0
-        {
-            return Err(ProviderError::InvalidScope(
-                "private file credentials unavailable".into(),
-            ));
-        }
-        let home = role.private_home(sandbox);
-        let temp = home.join("tmp");
-        std::fs::create_dir(&home).map_err(|e| crate::io_error(&home, e))?;
-        std::fs::create_dir(&temp).map_err(|e| crate::io_error(&temp, e))?;
-        symlink(&auth, home.join("auth.json")).map_err(|e| crate::io_error(&home, e))?;
-        let writable = policy_literal(&home)?;
-        let source = policy_literal(sandbox.source_root())?;
-        let real_home = policy_literal(sandbox.real_home())?;
-        let auth = policy_literal(&auth)?;
-        let executable_rule = policy_literal(&program)?;
-        let profile = format!(
-            "(version 1)(allow default)(deny process-fork)\
-             (deny file-write* (require-not (subpath {writable})))\
-             (deny file-read-data (require-all (require-any (subpath {real_home}) (subpath {source}) (subpath \"/private/tmp\") (subpath \"/private/var/folders\"))\
-             (require-not (require-any (literal {auth}) (literal {executable_rule}) (subpath {writable})))))"
-        );
-        Command::new("/usr/bin/sandbox-exec")
-            .args(["-p", &profile])
-            .arg(&program)
-            .args([
-                "app-server",
-                "-c",
-                "cli_auth_credentials_store=\"file\"",
-                "-c",
-                "model_reasoning_effort=\"medium\"",
-                "-c",
-                "mcp_servers={}",
-                "-c",
-                "features.shell_tool=false",
-                "-c",
-                "web_search=\"disabled\"",
-                "-c",
-                "features.apps=false",
-                "-c",
-                "features.plugins=false",
-                "-c",
-                "features.memories=false",
-                "-c",
-                "features.multi_agent=false",
-                "-c",
-                "features.multi_agent_v2=false",
-                "-c",
-                "features.request_permissions_tool=false",
-            ])
-            .env_clear()
-            .env("HOME", &home)
-            .env("CODEX_HOME", &home)
-            .env("TMPDIR", &temp)
-            .current_dir(&home)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()
-            .map_err(|_| {
-                ProviderError::CapabilityUnavailable("Codex App Server launch failed".into())
-            })
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        let _ = (executable, sandbox, role);
-        Err(ProviderError::CapabilityUnavailable(
-            "Luna isolation unavailable".into(),
-        ))
     }
 }

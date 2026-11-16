@@ -35,7 +35,7 @@ fn displayable(value: &str) -> bool {
 }
 
 impl ClaudeAdapter {
-    pub fn local_inventory(&self, limit: usize) -> Result<Vec<LocalSession>, ProviderError> {
+    pub fn local_inventory(&self, limit: usize) -> Result<Vec<Session>, ProviderError> {
         validate_location(&self.location)?;
         let projects = self.location.state_root.join("projects");
         let inventory = filesystem::inventory(&projects, limit)?;
@@ -117,60 +117,41 @@ impl ClaudeAdapter {
                 || shape.session_id.clone(),
                 |agent| format!("{}/agent:{agent}", shape.session_id),
             );
-            let Some(local_id) = super::entity(&format!("claude:local:{}:{native}", shape.bucket))
-            else {
+            if shape.bucket.len() + native.len() > 1000
+                || shape.bucket.chars().any(char::is_control)
+            {
                 continue;
+            }
+            let identity = |native_id| SessionIdentity {
+                provider: ProviderKind::Claude,
+                state_root: root.clone(),
+                namespace: Some(shape.bucket.clone()),
+                native_id,
             };
-            let parent = shape.agent_id.as_ref().and_then(|_| {
-                Some(ArtifactId {
-                    provider: ProviderKind::Claude,
-                    state_root: root.clone(),
-                    class: GraphNodeKind::Session,
-                    local_id: super::entity(&format!(
-                        "claude:local:{}:{}",
-                        shape.bucket, shape.session_id
-                    ))?,
-                })
-            });
-            sessions.push(LocalSession {
-                metadata: SessionMetadata {
-                    identity: ArtifactId {
-                        provider: ProviderKind::Claude,
-                        state_root: root.clone(),
-                        class: GraphNodeKind::Session,
-                        local_id,
-                    },
-                    native_session_id: native,
-                    title,
-                    project_label: workspace
-                        .as_ref()
-                        .and_then(|cwd| Path::new(cwd).file_name()?.to_str().map(str::to_owned)),
-                    created_at,
-                    last_active_at: (complete && lines.next().is_none() && examined < 96)
-                        .then_some(last_active_at)
-                        .flatten(),
-                    state: SessionState::Unknown,
-                    producer_version: None,
-                    producer_version_matches: false,
-                    parent_native_session_id: parent.as_ref().map(|_| shape.session_id),
-                },
+            let parent = shape.agent_id.as_ref().map(|_| identity(shape.session_id));
+            sessions.push(Session {
+                project: workspace
+                    .as_ref()
+                    .and_then(|cwd| Path::new(cwd).file_name()?.to_str().map(str::to_owned)),
+                identity: identity(native),
+                title,
+                created_at,
+                last_active_at: (complete && lines.next().is_none() && examined < 96)
+                    .then_some(last_active_at)
+                    .flatten(),
+                state: SessionState::Unknown,
                 workspace,
                 transcript_bytes: Some(file.size_bytes),
                 kind: if parent.is_some() {
-                    LocalSessionKind::Subagent
+                    SessionKind::Subagent
                 } else {
-                    LocalSessionKind::Main
+                    SessionKind::Main
                 },
                 forked_from: None,
                 parent,
             });
         }
-        if sessions.is_empty()
-            && inventory
-                .diagnostics
-                .iter()
-                .any(|item| item.code == DiagnosticCode::PermissionDenied)
-        {
+        if sessions.is_empty() && inventory.permission_denied {
             return Err(io_error(
                 projects,
                 io::Error::from(io::ErrorKind::PermissionDenied),

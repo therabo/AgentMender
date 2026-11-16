@@ -1,79 +1,25 @@
-//! ADR-0030: bounded resident decoding, never provider materialization.
-use agentmender_domain::{DecoderProgress, ReadWork};
+//! Bounded resident decoding for Codex .jsonl.zst rollouts.
+use crate::worker::DecoderProgress;
 use std::{
     cell::RefCell,
     collections::VecDeque,
     fs::File,
     io::{self, Read, Seek, SeekFrom},
-    time::{Duration, Instant},
+    time::Instant,
 };
 use zstd::stream::raw::{DParameter, Decoder, Operation};
 
 const DECODED_WORK: u64 = 128 * 1024 * 1024;
 const SEEK_WORK: u64 = 96 * 1024 * 1024;
 const PHYSICAL_WORK: u64 = 128 * 1024 * 1024;
-// Covers a 32 MiB context scan plus an 8 MiB backward probe and read-ahead.
+// Keep the recent decoded window for exact-source paging and replay.
 const RECENT_BYTES: usize = 40 * 1024 * 1024 + 16384;
 const RESIDENT_READERS: usize = 2;
 
 thread_local! {
     static READERS: RefCell<VecDeque<(String, RolloutReader)>> = const { RefCell::new(VecDeque::new()) };
-    static WORK: RefCell<ReadWork> = RefCell::new(ReadWork::default());
-}
-#[cfg(test)]
-pub(super) fn clear_resident_for_test() {
-    READERS.with(|r| r.borrow_mut().clear());
-}
-#[cfg(any(target_os = "macos", test))]
-pub(super) fn work_reset() {
-    WORK.with(|w| *w.borrow_mut() = ReadWork::default());
-}
-pub(super) fn work() -> ReadWork {
-    WORK.with(|w| w.borrow().clone())
-}
-pub(super) fn record_inspected() {
-    WORK.with(|w| w.borrow_mut().records_inspected += 1);
-}
-pub(super) fn record_fts(build: Duration, query: Duration) {
-    WORK.with(|work| {
-        let mut work = work.borrow_mut();
-        work.provider.fts_builds += 1;
-        work.provider.fts_build_us += build.as_micros() as u64;
-        work.provider.fts_query_us += query.as_micros() as u64;
-    });
 }
 
-#[cfg(target_os = "macos")]
-pub(super) fn record_cohort(rows: usize, examined: u64, elapsed: std::time::Duration) {
-    WORK.with(|work| {
-        let mut work = work.borrow_mut();
-        work.provider.cohort_rows += rows as u64;
-        work.provider.cohort_metadata_examined += examined;
-        work.provider.cohort_capture_us += elapsed.as_micros() as u64;
-    });
-}
-
-pub(super) fn record_metadata_row() {
-    WORK.with(|w| w.borrow_mut().provider.metadata_rows += 1);
-}
-
-#[cfg(target_os = "macos")]
-pub(super) fn record_hash_bytes(bytes: u64) {
-    WORK.with(|w| w.borrow_mut().provider.metadata_hash_bytes += bytes);
-}
-
-#[cfg(target_os = "macos")]
-pub(super) fn record_snapshot(elapsed: Option<Duration>) {
-    WORK.with(|w| {
-        let mut work = w.borrow_mut();
-        if let Some(elapsed) = elapsed {
-            work.provider.sqlite_snapshots += 1;
-            work.provider.sqlite_backup_us += elapsed.as_micros() as u64;
-        } else {
-            work.provider.sqlite_snapshot_reuses += 1;
-        }
-    });
-}
 fn failure(code: &'static str) -> io::Error {
     io::Error::other(code)
 }
@@ -239,7 +185,6 @@ impl Read for RolloutReader {
         }
         let Some(state) = &mut self.compressed else {
             let count = self.file.read(buffer)?;
-            WORK.with(|w| w.borrow_mut().decoded_bytes += count as u64);
             return Ok(count);
         };
         if self.position < state.frontier {
@@ -278,7 +223,6 @@ impl Read for RolloutReader {
                 state.input_end = self.file.read(&mut state.input[..limit])?;
                 state.input_at = 0;
                 self.physical_work += state.input_end as u64;
-                WORK.with(|w| w.borrow_mut().compressed_bytes += state.input_end as u64);
             }
             if state.input_end == 0 && state.frame_finished {
                 state.eof = true;
@@ -303,7 +247,6 @@ impl Read for RolloutReader {
             state.consumed += status.bytes_read as u64;
             state.frame_finished = status.remaining == 0;
             self.decoded_work += status.bytes_written as u64;
-            WORK.with(|w| w.borrow_mut().decoded_bytes += status.bytes_written as u64);
             if status.bytes_written > 0 {
                 let count = status.bytes_written;
                 let excess = (state.recent.len() + count).saturating_sub(RECENT_BYTES);
@@ -359,11 +302,9 @@ impl Seek for RolloutReader {
                 return Err(failure("compressed_work_limit"));
             }
             let count = buffer.len().min((target - self.position) as usize);
-            let before = self.decoded_work;
             if self.read(&mut buffer[..count])? == 0 {
                 return Err(failure("compressed_seek_past_end"));
             }
-            WORK.with(|w| w.borrow_mut().replay_bytes += self.decoded_work - before);
         }
         Ok(self.position)
     }
@@ -388,22 +329,24 @@ mod tests {
         .unwrap();
         encoder.finish().unwrap();
         let mut offset = 0;
-        work_reset();
         for _ in 0..5 {
             let mut reader =
                 RolloutReader::resident(&source, true, "linear".into(), until(), None).unwrap();
             reader.seek(SeekFrom::Start(offset)).unwrap();
+            assert_eq!(
+                reader.decoded_work, 0,
+                "sequential pages must not replay decoded bytes"
+            );
             let count =
                 io::copy(&mut reader.by_ref().take(64 * 1024 * 1024), &mut io::sink()).unwrap();
             offset += count;
+            assert_eq!(reader.progress().unwrap().decoded, offset);
             assert!(reader.compressed.as_ref().unwrap().recent.len() <= RECENT_BYTES);
             if count == 0 {
                 break;
             }
         }
         assert_eq!(offset, DECODED_WORK * 2 + 1);
-        assert_eq!(work().decoded_bytes, offset);
-        assert_eq!(work().replay_bytes, 0);
     }
     #[test]
     fn decoded_work_exhaustion_preserves_safe_continuation_without_total_history_ceiling() {

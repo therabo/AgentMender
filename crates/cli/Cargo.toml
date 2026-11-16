@@ -9,23 +9,16 @@ license.workspace = true
 agentmender-domain.workspace = true
 agentmender-provider-api.workspace = true
 agentmender-application.workspace = true
-agentmender-mcp-server.workspace = true
-agentmender-persistence.workspace = true
 agentmender-provider-codex.workspace = true
 agentmender-provider-claude.workspace = true
 clap.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 getrandom.workspace = true
-rusqlite.workspace = true
-uuid.workspace = true
 axum = { version = "0.8.9", default-features = false, features = ["http1", "json", "query", "tokio"] }
-tokio = { version = "1.54.1", default-features = false, features = ["rt-multi-thread", "net", "time"] }
+tokio = { version = "1.54.1", default-features = false, features = ["rt-multi-thread", "net", "sync", "time"] }
 chrono = { version = "0.4.45", default-features = false, features = ["std", "serde"] }
 sha2 = { version = "0.11.1", default-features = false }
-
-[dev-dependencies]
-tempfile.workspace = true
 
 [lints]
 workspace = true

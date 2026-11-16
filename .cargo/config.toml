@@ -1,0 +1,3 @@
+[env]
+# The fixed SQLite snapshot queries and catalog marker use ordinary tables.
+LIBSQLITE3_FLAGS = "-USQLITE_ENABLE_FTS5"

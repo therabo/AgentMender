@@ -60,13 +60,27 @@ fn sidecar_exists(path: &Path) -> io::Result<bool> {
     }
 }
 
+fn immutable_uri(path: &std::path::Path) -> std::ffi::OsString {
+    use std::{fmt::Write, os::unix::ffi::OsStrExt};
+    let mut uri = String::from("file:");
+    for &byte in path.as_os_str().as_bytes() {
+        if byte.is_ascii_alphanumeric() || b"/-._~".contains(&byte) {
+            uri.push(byte as char);
+        } else {
+            write!(uri, "%{byte:02X}").expect("writing a string cannot fail");
+        }
+    }
+    uri.push_str("?mode=ro&immutable=1");
+    uri.into()
+}
+
 fn request_full_reconciliation(path: &Path, id: &str, no_sidecars: bool) -> rusqlite::Result<()> {
     let flags = OpenFlags::SQLITE_OPEN_NOFOLLOW | OpenFlags::SQLITE_OPEN_NO_MUTEX;
     if no_sidecars {
         // An ordinary read of a closed WAL database can create sidecars.
         // Use this snapshot only to skip unnecessary writes.
         let probe = Connection::open_with_flags(
-            crate::scoped_capture::immutable_uri(path),
+            immutable_uri(path),
             flags | OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_URI,
         )?;
         probe.set_db_config(DbConfig::SQLITE_DBCONFIG_TRUSTED_SCHEMA, false)?;
@@ -171,9 +185,7 @@ mod tests {
 
     const ID: &str = "01234567-89ab-4cde-8f01-23456789abcd";
     const OTHER_ID: &str = "00000000-0000-4000-8000-000000000001";
-    const SCHEMA: &str = include_str!(
-        "../../../compatibility/codex/desktop-complete-removal-v1/catalog/complete-schema.sql"
-    );
+    const SCHEMA: &str = include_str!("../test_data/desktop-reconciliation.sql");
 
     fn root() -> TempDir {
         tempfile::tempdir_in("/private/tmp").unwrap()

@@ -9,10 +9,7 @@ export type ProviderInfo = {
   coverage: Coverage
   coverage_description: string
   total: number
-  version: string | null
-  conversation_preview: boolean
   removal_available: boolean
-  removal_reason: string | null
 }
 
 export type Session = {
@@ -37,10 +34,8 @@ export type Page = { provider: ProviderInfo; total: number; rows: Session[] }
 export type Detail = {
   session: Session
   version: string | null
-  coverage: Coverage
   conversation_preview: boolean
   children: string[]
-  relationships_limited: boolean
 }
 export type Preview = { id: string; confirmation: string; valid_seconds: number }
 export type Operation = {
@@ -49,7 +44,7 @@ export type Operation = {
   message: string
 }
 export type Transcript = {
-  messages: { role: 'user' | 'assistant' | 'unknown'; text: string }[]
+  messages: { role: 'user' | 'assistant'; text: string }[]
   next: string | null
   complete: boolean
 }
