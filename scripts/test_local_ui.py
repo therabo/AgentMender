@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """HTTP acceptance on disposable archives, with optional native Codex cascade tests."""
 import argparse
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import http.client
@@ -58,7 +58,7 @@ def claude_fixture(root):
 
 def codex_metadata_fixture(root, count=3000):
     root.mkdir()
-    with sqlite3.connect(root / "state_5.sqlite") as db:
+    with closing(sqlite3.connect(root / "state_5.sqlite")) as db, db:
         db.execute("""CREATE TABLE threads(id TEXT PRIMARY KEY,title TEXT,cwd TEXT,
             created_at INTEGER,updated_at INTEGER,archived INTEGER,rollout_path TEXT,
             source TEXT,forked_from_id TEXT,attached_thread_parent_id TEXT)""")
@@ -159,9 +159,16 @@ def ui(binary, base, codex_root, claude_root, codex=None, max_entries=None):
         client = Client(address)
         yield client, address.fragment.removeprefix("ticket=")
     finally:
-        proc.terminate()
-        proc.wait(timeout=15)
-        proc.stdout.close()
+        try:
+            proc.terminate()
+            try:
+                proc.wait(timeout=15)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait()
+                raise
+        finally:
+            proc.stdout.close()
 
 
 def authorize(client, ticket):
@@ -247,7 +254,7 @@ def codex_acceptance(client, root, rollouts, binary):
         return outcome
 
     def database(sql, params=()):
-        with sqlite3.connect(root / "state_5.sqlite") as db:
+        with closing(sqlite3.connect(root / "state_5.sqlite")) as db, db:
             return db.execute(sql, params).fetchall()
 
     def refresh():
@@ -460,7 +467,7 @@ def main():
                     missing_title = client.call("GET", "/api/codex/sessions?offset=2999")["rows"][0]
                     assert missing_title["title"] is None and missing_title["transcript_bytes"] is None
                     first_codex_key = missing_title["key"]
-                    with sqlite3.connect(root / "state_5.sqlite") as db:
+                    with closing(sqlite3.connect(root / "state_5.sqlite")) as db, db:
                         db.execute("ALTER TABLE threads RENAME TO unsupported")
                     refreshed = client.call("POST", "/api/codex/refresh")
                     assert refreshed["coverage"] == "unavailable"
