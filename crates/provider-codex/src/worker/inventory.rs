@@ -1,19 +1,53 @@
 //! Fixed-column views of the snapshot. No request supplies SQL or a filesystem path.
 use super::*;
-use crate::reader;
+use crate::reader::{self, ObservedSource};
 use agentmender_domain::{
     SessionKind, SessionState, canonical_uuid, observed_path_is_absolute, safe_conversation_text,
 };
-use agentmender_provider_api::filesystem;
 use rusqlite::{Connection as Sqlite, Row};
 use std::{collections::BTreeMap, path::Path, time::Instant};
 
 pub(super) struct Candidate {
     pub session: Session,
     pub locator: Option<PathBuf>,
+    pub relations: Relationships,
 }
 
-fn columns(db: &Sqlite, table: &'static str) -> Result<BTreeMap<String, String>, ProviderError> {
+#[derive(Debug)]
+pub(super) struct Relationships {
+    pub source: ObservedSource,
+    pub fork: Option<String>,
+    pub attached: Option<String>,
+    pub thread_source: Option<String>,
+}
+
+impl Relationships {
+    pub fn from_row(row: &Row<'_>, offset: usize) -> Result<Self, ProviderError> {
+        let text = |index: usize| -> Result<Option<String>, ProviderError> {
+            let value: Option<String> = row.get(offset + index).map_err(|_| unavailable())?;
+            if value.as_ref().is_some_and(|value| value.len() > 4096) {
+                return Err(unavailable());
+            }
+            Ok(value)
+        };
+        let fork = text(1)?;
+        let attached = text(2)?;
+        if fork.iter().chain(&attached).any(|id| !canonical_uuid(id)) {
+            return Err(unavailable());
+        }
+        Ok(Self {
+            source: ObservedSource::from_database(text(0)?.as_deref())?,
+            fork,
+            attached,
+            thread_source: text(3)?,
+        })
+    }
+}
+
+pub(super) fn columns(
+    db: &Sqlite,
+    table: &'static str,
+) -> Result<BTreeMap<String, String>, ProviderError> {
     let sql = match table {
         "threads" => "PRAGMA table_info(threads)",
         "thread_spawn_edges" => "PRAGMA table_info(thread_spawn_edges)",
@@ -33,7 +67,7 @@ fn columns(db: &Sqlite, table: &'static str) -> Result<BTreeMap<String, String>,
     Ok(columns)
 }
 
-fn is_table(db: &Sqlite, table: &str) -> bool {
+pub(super) fn is_table(db: &Sqlite, table: &str) -> bool {
     db.query_row(
         "SELECT type FROM sqlite_master WHERE name=?1",
         [table],
@@ -42,7 +76,7 @@ fn is_table(db: &Sqlite, table: &str) -> bool {
     .is_ok_and(|kind| kind == "table")
 }
 
-fn has_edges(db: &Sqlite) -> bool {
+pub(super) fn has_edges(db: &Sqlite) -> bool {
     is_table(db, "thread_spawn_edges")
         && columns(db, "thread_spawn_edges").is_ok_and(|cols| {
             ["parent_thread_id", "child_thread_id"]
@@ -51,7 +85,14 @@ fn has_edges(db: &Sqlite) -> bool {
         })
 }
 
-fn projection(db: &Sqlite) -> Result<String, ProviderError> {
+pub(super) struct Layout {
+    pub projection: String,
+    pub relations: String,
+    pub metadata_only: bool,
+    pub edges: bool,
+}
+
+pub(super) fn layout(db: &Sqlite) -> Result<Layout, ProviderError> {
     if !is_table(db, "threads") {
         return Err(unavailable());
     }
@@ -76,11 +117,27 @@ fn projection(db: &Sqlite) -> Result<String, ProviderError> {
         "title"
     };
     let locator = optional("rollout_path");
-    let source = optional("source");
-    let fork = optional("forked_from_id");
-    Ok(format!(
-        "SELECT id,{title},cwd,created_at,updated_at,archived,{locator},{source},{fork} FROM threads"
-    ))
+    let fields = [
+        "source",
+        "forked_from_id",
+        "attached_thread_parent_id",
+        "thread_source",
+    ];
+    if fields
+        .iter()
+        .any(|name| cols.contains_key(*name) && !has_text(name))
+    {
+        return Err(unavailable());
+    }
+    let relations = fields.map(optional).join(",");
+    Ok(Layout {
+        projection: format!(
+            "SELECT id,{title},cwd,created_at,updated_at,archived,{locator},{relations} FROM threads"
+        ),
+        relations,
+        metadata_only: has_text("forked_from_id") && has_text("attached_thread_parent_id"),
+        edges: has_edges(db),
+    })
 }
 
 fn identity(root: &Path, native_id: String) -> SessionIdentity {
@@ -92,26 +149,35 @@ fn identity(root: &Path, native_id: String) -> SessionIdentity {
     }
 }
 
-fn parent(db: &Sqlite, root: &Path, id: &str) -> Result<Option<SessionIdentity>, ProviderError> {
+fn incoming(db: &Sqlite, id: &str) -> Result<Option<String>, ProviderError> {
+    // Treat a duplicate, noncanonical or ill-typed inbound edge as ambiguity,
+    // even if its parent does not have a row in this snapshot.
     let mut query = db
-        .prepare("SELECT parent_thread_id FROM thread_spawn_edges WHERE child_thread_id=?1 LIMIT 2")
+        .prepare("SELECT parent_thread_id,child_thread_id FROM thread_spawn_edges WHERE child_thread_id=?1 COLLATE NOCASE LIMIT 2")
         .map_err(|_| unavailable())?;
     let mut rows = query.query([id]).map_err(|_| unavailable())?;
-    let value = rows
-        .next()
-        .map_err(|_| unavailable())?
-        .map(|row| row.get::<_, String>(0))
-        .transpose()
-        .map_err(|_| unavailable())?;
-    if rows.next().map_err(|_| unavailable())?.is_some() {
+    let Some(row) = rows.next().map_err(|_| unavailable())? else {
         return Ok(None);
+    };
+    let parent: String = row.get(0).map_err(|_| unavailable())?;
+    let child: String = row.get(1).map_err(|_| unavailable())?;
+    if rows.next().map_err(|_| unavailable())?.is_some()
+        || child != id
+        || parent == id
+        || !canonical_uuid(&parent)
+    {
+        return Err(unavailable());
     }
-    Ok(value
-        .filter(|id| canonical_uuid(id))
-        .map(|id| identity(root, id)))
+    Ok(Some(parent))
 }
 
-fn row(db: &Sqlite, root: &Path, row: &Row<'_>, edges: bool) -> Result<Candidate, ProviderError> {
+fn row(
+    db: &Sqlite,
+    root: &Path,
+    row: &Row<'_>,
+    layout: &Layout,
+    end: Instant,
+) -> Result<Candidate, ProviderError> {
     let id: String = row.get(0).map_err(|_| unavailable())?;
     if !canonical_uuid(&id) {
         return Err(unavailable());
@@ -143,21 +209,51 @@ fn row(db: &Sqlite, root: &Path, row: &Row<'_>, edges: bool) -> Result<Candidate
         1 => SessionState::Archived,
         _ => SessionState::Unknown,
     };
-    let locator = text(6)?.map(PathBuf::from);
-    let parent = if edges { parent(db, root, &id)? } else { None };
-    let forked_from = text(8)?.filter(|id| canonical_uuid(id));
+    let locator: Option<String> = row.get(6).map_err(|_| unavailable())?;
+    if locator.as_ref().is_some_and(|path| path.len() > 4096) {
+        return Err(unavailable());
+    }
+    let locator = locator.map(PathBuf::from);
+    let relations = Relationships::from_row(row, 7)?;
+    let incoming = if layout.edges {
+        incoming(db, &id)?
+    } else {
+        None
+    };
+    let parent = match (&relations.source, incoming) {
+        (ObservedSource::Spawned(source), Some(edge)) if *source != edge => {
+            return Err(unavailable());
+        }
+        (ObservedSource::Spawned(source), None) => Some(source.clone()),
+        (_, edge) => edge.or_else(|| relations.attached.clone()),
+    };
+    let transcript = reader::open_transcript(root, locator.as_deref()).ok();
+    let forked_from = relations.fork.clone();
     let kind = if parent.is_some() {
         SessionKind::Subagent
     } else if forked_from.is_some() {
         SessionKind::Fork
-    } else {
-        match text(7)?.as_deref() {
-            Some("cli" | "vscode" | "exec" | "appServer") => SessionKind::Main,
+    } else if layout.edges
+        && relations.source == ObservedSource::Main
+        && relations
+            .thread_source
+            .as_deref()
+            .is_none_or(|source| source == "user")
+    {
+        match transcript.as_ref() {
+            Some((file, path))
+                if reader::relationship_header(file, path, &id, end)
+                    .is_ok_and(|meta| meta.is_main(&id)) =>
+            {
+                SessionKind::Main
+            }
+            None if locator.is_none() && layout.metadata_only => SessionKind::Main,
             _ => SessionKind::Unknown,
         }
+    } else {
+        SessionKind::Unknown
     };
-    let transcript_bytes = reader::open_transcript(root, locator.as_deref())
-        .ok()
+    let transcript_bytes = transcript
         .and_then(|(file, _)| file.metadata().ok())
         .map(|meta| meta.len());
     Ok(Candidate {
@@ -172,25 +268,36 @@ fn row(db: &Sqlite, root: &Path, row: &Row<'_>, edges: bool) -> Result<Candidate
             transcript_bytes,
             kind,
             forked_from,
-            parent,
+            parent: parent.map(|parent| identity(root, parent)),
         },
         locator,
+        relations,
     })
 }
 
-pub(super) fn exact(db: &Sqlite, root: &Path, id: &str) -> Result<Candidate, ProviderError> {
+pub(super) fn exact(
+    db: &Sqlite,
+    root: &Path,
+    id: &str,
+    end: Instant,
+) -> Result<Candidate, ProviderError> {
     if !canonical_uuid(id) {
         return Err(stale());
     }
+    let layout = layout(db)?;
     let mut query = db
-        .prepare(&format!("{} WHERE id=?1 LIMIT 2", projection(db)?))
+        .prepare(&format!(
+            "{} WHERE id=?1 COLLATE NOCASE LIMIT 2",
+            layout.projection
+        ))
         .map_err(|_| unavailable())?;
     let mut rows = query.query([id]).map_err(|_| unavailable())?;
     let candidate = row(
         db,
         root,
         rows.next().map_err(|_| unavailable())?.ok_or_else(stale)?,
-        has_edges(db),
+        &layout,
+        end,
     )?;
     if rows.next().map_err(|_| unavailable())?.is_some()
         || candidate.session.identity.native_id != id
@@ -211,14 +318,15 @@ pub(super) fn page(
     if !after.is_ascii() || after.len() > 128 || !(1..=PAGE_ROWS).contains(&limit) {
         return Err(unavailable());
     }
+    let layout = layout(db)?;
     let mut query = db
         .prepare(&format!(
             "{} WHERE id>?1 ORDER BY id LIMIT 129",
-            projection(db)?
+            layout.projection
         ))
         .map_err(|_| unavailable())?;
     let mut rows = query.query([after]).map_err(|_| unavailable())?;
-    let edges = has_edges(db);
+
     let mut sessions = Vec::new();
     let mut bytes = 0;
     let mut count = 0;
@@ -242,7 +350,11 @@ pub(super) fn page(
         {
             return Err(unavailable());
         }
-        if let Ok(candidate) = row(db, root, record, edges) {
+        let duplicate = db
+            .prepare("SELECT id FROM threads WHERE id=?1 COLLATE NOCASE LIMIT 1 OFFSET 1")
+            .and_then(|mut statement| statement.exists([&id]))
+            .map_err(|_| unavailable())?;
+        if !duplicate && let Ok(candidate) = row(db, root, record, &layout, end) {
             let size = serde_json::to_vec(&candidate.session)
                 .map_err(|_| unavailable())?
                 .len();
@@ -266,58 +378,4 @@ pub(super) fn page(
         revision,
         examined: count,
     })
-}
-
-pub(super) fn removal(
-    db: &Sqlite,
-    root: &Path,
-    identity: &SessionIdentity,
-    end: Instant,
-) -> Result<RemovalEvidence, ProviderError> {
-    use std::os::unix::fs::MetadataExt;
-    let id = &identity.native_id;
-    let Candidate { session, locator } = exact(db, root, id)?;
-    if &session.identity != identity || session.state != SessionState::Archived || !has_edges(db) {
-        return Err(unavailable());
-    }
-    // The spawn table covers children that do not have a canonical thread row.
-    let has_children = db
-        .query_row(
-            "SELECT EXISTS (SELECT 1 FROM thread_spawn_edges WHERE parent_thread_id=?1)",
-            [id],
-            |row| row.get::<_, bool>(0),
-        )
-        .map_err(|_| unavailable())?;
-    if has_children {
-        return Err(unavailable());
-    }
-    let (file, path) = reader::open_transcript(root, locator.as_deref())?;
-    let suffix = format!("-{id}.jsonl");
-    if locator.as_ref() != Some(&path)
-        || !path.starts_with(root.join("archived_sessions"))
-        || !path
-            .file_name()
-            .and_then(|part| part.to_str())
-            .is_some_and(|name| name.starts_with("rollout-") && name.ends_with(&suffix))
-    {
-        return Err(unavailable());
-    }
-    match filesystem::open_source_read(root, &reader::other_representation(&path)) {
-        Err(ProviderError::CapabilityUnavailable(code)) if code == "source file missing" => {}
-        _ => return Err(unavailable()),
-    }
-    let db_meta = filesystem::open_source_read(root, &root.join("state_5.sqlite"))?
-        .metadata()
-        .map_err(|_| unavailable())?;
-    let stamp = reader::stamp(&file.metadata().map_err(|_| unavailable())?);
-    reader::header(&file, false, id, end)?;
-    let current = filesystem::open_source_read(root, &path)?;
-    if reader::stamp(&current.metadata().map_err(|_| unavailable())?) != stamp {
-        return Err(stale());
-    }
-    let revision = reader::hash(
-        &serde_json::to_vec(&(&path, stamp, db_meta.dev(), db_meta.ino()))
-            .map_err(|_| unavailable())?,
-    );
-    Ok(RemovalEvidence { session, revision })
 }

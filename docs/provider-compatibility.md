@@ -12,37 +12,67 @@ are supported. Paginated display previews remain partial regardless of physical
 EOF. The reader exports user and assistant display text from the requested
 rollout, with conservative credential suppression.
 
-## Codex removal profile
+Visible conversations require a recognized main source, no inbound spawn
+edge, and no fork, attachment or worker evidence. A scoped rollout must have
+matching root identity metadata. A metadata-only observation requires explicit
+fork and attachment columns with empty values and a readable spawn table.
+Unknown sources, malformed references and ambiguous evidence are excluded
+from the visible inventory. The presence of a parent in the visible page
+plays no part in classification.
 
-Native removal is admitted on macOS arm64 for the reviewed
-`0.169.0-alpha.11.1` executable with SHA-256
-`3ea20787e106af94573d3d6c19480aed93a1334b0dd32b6b04e2f780ce82cf4b`.
+## Codex native removal
 
-The reviewed path requires the canonical archived row and an exact matching
-plain archived rollout. Changed identities, configured protections, unsupported
-rollouts, a second compressed representation and observed outgoing spawn edges
-cause refusal. The edge check includes children absent from the thread table.
-Archive state describes retention. The exact native binary supplies writer and
-reference checks. Independent provider writers can still act between the final
-observation and the command's own checks.
+Darwin arm64 builds reporting `0.169.0-alpha.11.1` or `0.169.0` are covered
+by disposable native cascade tests. At launch AgentMender resolves a regular
+executable to its canonical absolute path, probes its version under write
+and network denial, and checks that `delete --help` exposes noninteractive
+UUID deletion. The version, command surface and exercised release semantics
+are all required. AgentMender pins the executable file and configured root
+identities through confirmation. Builds reporting other versions are disabled
+until their cascade, writer and reference behavior is verified.
 
-The confirmed command is the fixed `codex delete UUID --force` in the original
-root with a fixed `sqlite_home` override, kernel write scope and network denial.
-It runs once with a 180-second deadline. A nonzero result or timeout leaves the
-outcome uncertain. Exit zero can request the existing best-effort reset of
-`last_full_reconciled_at` for the matching local Desktop catalog. That reset
-requires compatible ordinary tables, no relevant trigger or foreign-key
-relationship, and a validated local row. It leaves catalog entries in place.
+Removal requires the observed `state_5.sqlite` contract through migration
+62, recognized thread and spawn-edge tables, and the known timestamp and
+recency triggers. The read-only worker traverses all outgoing spawn edges
+from the selected main UUID, including IDs with an edge but no canonical
+row. It reconciles canonical locators and active/archived rollout headers
+against the complete bounded graph. Reviewed files must be unshared, plain,
+canonical archived rollouts. A closed edge can establish a descendant with
+no canonical row and no observed file. Other archive representations,
+ambiguous locators, unsupported storage or exhausted evidence budgets can
+block removal even while inventory remains available.
 
-A command result does not establish Desktop disappearance, complete artifact
-removal or reclaimed physical bytes. Scope is limited to the selected native
-operation and the prior guarded marker. The [fixture test](local-session-manager.md#test-with-disposable-archives)
-proves target removal and retained-session preservation in the reviewed case.
+An active or in-use member, an unclosed edge, a protected UUID anywhere in
+the tree, or an external fork, attachment or shared history reference blocks
+review. The receipt binds the selected session, full membership, SQLite and
+rollout revisions and provider config file revision. A change observed before
+dispatch invalidates the review.
+
+Confirmation runs exactly one `codex delete UUID --force` in the original
+root with the fixed `sqlite_home` override, a 180-second deadline, kernel
+write confinement and network denial. Writes in the rollout trees are limited
+to the exact reviewed paths. Codex applies its cross-process writer and
+reference checks. The CLI has no expected-graph-revision parameter, so an
+independent writer may still change SQLite after the final observation and
+before native discovery. Use a fresh review after any pre-dispatch refusal.
+See the [Codex deletion implementation](https://github.com/openai/codex/blob/rust-v0.169.0/codex-rs/app-server/src/request_processors/thread_delete.rs)
+and the [native writer and reference checks](https://github.com/openai/codex/blob/rust-v0.169.0/codex-rs/thread-store/src/local/delete_thread.rs).
+
+After dispatch a read-only check looks for remaining canonical rows,
+expected rollout files and spawn edges, and compares evidence of unrelated
+sessions. A failed command, timeout, residual evidence or incomplete read
+produces an uncertain or partial result. AgentMender issues no automatic
+retries. Verified removal can request the existing guarded
+`last_full_reconciled_at` reset for the matching local Desktop catalog.
+Desktop visibility, other artifacts and physical bytes reclaimed are outside
+the verification. The [disposable fixture](local-session-manager.md#test-with-disposable-archives)
+checks byte-for-byte preservation of unrelated fixture rollouts and rows.
 
 ## Claude Code
 
 Project JSONL with recognized location and embedded session identity supplies
-bounded metadata on all supported Rust build platforms. Archive status,
+bounded metadata on all supported Rust build platforms. Only verified main
+conversations appear in the browser. Archive status,
 workspace, title and dates may be unknown. The manager exposes Claude Code as
 read-only. Desktop installation detection supplies presence and version
 observations without promoting sidecar formats into a mutation capability.

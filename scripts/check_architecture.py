@@ -42,6 +42,7 @@ def boundaries(path, contents):
             "crates/provider-codex/src/snapshot.rs",
             "crates/provider-codex/src/worker.rs",
             "crates/provider-codex/src/worker/inventory.rs",
+            "crates/provider-codex/src/worker/cascade.rs",
             "crates/provider-codex/src/desktop_reconciliation.rs",
         }, path
     assert not re.search(r"\b(session_find|SessionSearchReadPort|run_codex_delete|CREATE\s+VIRTUAL\s+TABLE)\b", contents), path
@@ -58,18 +59,21 @@ require("crates/cli/src/ui/mod.rs", "Ipv4Addr::LOCALHOST", "header::HOST",
 require("crates/provider-api/src/filesystem.rs", "OFlags::NOFOLLOW", "metadata.nlink() != 1")
 require("crates/provider-codex/src/snapshot.rs", "SQLITE_OPEN_READ_ONLY", "SQLITE_OPEN_NOFOLLOW",
         "PRAGMA query_only=ON", "verify_source_write_denial", "create_new(true)")
-require("crates/provider-codex/src/worker/inventory.rs", "SessionState::Archived", "thread_spawn_edges",
-        "archived_sessions", "reader::header")
-require("crates/provider-codex/src/removal.rs", "self.prepare(adapter, &review.0.session)",
-        "self.is_current()", "run_confined_codex_delete", "Duration::from_secs(180)")
+require("crates/application/src/local_inventory.rs", ".filter(Session::is_main)")
+require("crates/provider-codex/src/worker/inventory.rs", "thread_spawn_edges",
+        "reader::relationship_header", "attached_thread_parent_id")
+require("crates/provider-codex/src/worker/cascade.rs", "SessionState::Archived", "thread_spawn_edges",
+        "archived_sessions", "reader::relationship_header", "strict_source_files", "unrelated_revision")
+require("crates/provider-codex/src/removal.rs", "self.prepare(adapter, review.session())",
+        "self.is_current()", "probe_version", "probe_codex_delete", "check_writer_locks",
+        "run_confined_codex_delete", "adapter.verify_removal(scope)", "Duration::from_secs(180)")
 require("crates/provider-api/src/process.rs", "sqlite_home={scope}", "(deny network*)",
-        "(deny file-write* (require-not (subpath {scope})))", '.arg("--force")')
+        "(deny file-write* (require-not (subpath {scope})))", '.arg("--force")',
+        'process.args(["delete", "--help"])', "if !is_current()")
 require("crates/cli/src/ui/browser.rs", "Ipv4Addr::LOCALHOST", "byte.is_ascii_hexdigit()")
 
 native = source("crates/provider-codex/src/removal.rs")
-fixture = source("scripts/native_ui_fixture.py")
-digest = re.search(r"\b[a-f0-9]{64}\b", native).group()
-assert digest in fixture
+assert not re.search(r"\b[a-f0-9]{64}\b", native)
 assert native.count("run_confined_codex_delete(") == 1
 require(".cargo/config.toml", "-USQLITE_ENABLE_FTS5")
 print("Workspace dependencies, confined provider reads, browser authorization and native boundary passed.")

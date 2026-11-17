@@ -39,84 +39,110 @@ fn command(executable: &Path) -> Result<Command, ProviderError> {
     Ok(command)
 }
 
-/// Apply the reviewed Codex home as the SQLite override and kernel write scope.
+#[derive(Debug, PartialEq, Eq)]
+pub enum NativeExit {
+    Refused,
+    Success,
+    Uncertain,
+}
+
+/// Apply the reviewed Codex home and grant rollout writes only at reviewed paths.
 pub fn run_confined_codex_delete(
     executable: &Path,
     root: &Path,
     id: uuid::Uuid,
+    rollouts: &[&Path],
     timeout: Duration,
-) -> bool {
+    is_current: impl FnOnce() -> bool,
+) -> NativeExit {
     #[cfg(target_os = "macos")]
     {
         if !executable.is_absolute() || !root.is_absolute() {
-            return false;
+            return NativeExit::Refused;
         }
+        let sessions = root.join("sessions");
+        let archived = root.join("archived_sessions");
         let Ok(scope) = policy_literal(root) else {
-            return false;
+            return NativeExit::Refused;
         };
-        let policy = format!(
+        let (Ok(sessions_scope), Ok(archived_scope)) =
+            (policy_literal(&sessions), policy_literal(&archived))
+        else {
+            return NativeExit::Refused;
+        };
+        let mut approved = String::new();
+        for path in rollouts {
+            if !path.starts_with(&archived)
+                || path
+                    .components()
+                    .any(|part| part == std::path::Component::ParentDir)
+            {
+                return NativeExit::Refused;
+            }
+            let Ok(path) = policy_literal(path) else {
+                return NativeExit::Refused;
+            };
+            approved.push_str(&format!(" (literal {path})"));
+        }
+        let mut policy = format!(
             "(version 1)(allow default)(deny file-write* (require-not (subpath {scope})))(deny network*)(deny process-fork)(deny mach-lookup)"
         );
+        // An archive mutation after the final snapshot may introduce a new file.
+        // The provider can remove only the reviewed rollout files in these trees.
+        if approved.is_empty() {
+            policy.push_str(&format!(
+                "(deny file-write* (subpath {sessions_scope}) (subpath {archived_scope}))"
+            ));
+        } else {
+            policy.push_str(&format!(
+                "(deny file-write* (require-all (require-any (subpath {sessions_scope}) (subpath {archived_scope})) (require-not (require-any{approved}))))"
+            ));
+        }
         let mut command = Command::new("/usr/bin/sandbox-exec");
         command
             .args(["-p", &policy])
             .arg(executable)
             .arg("-c")
-            .arg(format!("sqlite_home={scope}"));
-        codex_delete_command(command, root, id, timeout)
+            .arg(format!("sqlite_home={scope}"))
+            .arg("delete")
+            .arg(id.hyphenated().to_string())
+            .arg("--force")
+            .env_clear()
+            .env("PATH", "/usr/bin:/bin")
+            .env("CODEX_HOME", root)
+            .current_dir(root)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        for name in ["HOME", "TMPDIR"] {
+            if let Some(value) = std::env::var_os(name) {
+                command.env(name, value);
+            }
+        }
+        if !is_current() {
+            return NativeExit::Refused;
+        }
+        let Ok(mut child) = command.spawn() else {
+            return NativeExit::Uncertain;
+        };
+        let started = Instant::now();
+        while started.elapsed() < timeout {
+            match child.try_wait() {
+                Ok(Some(status)) if status.success() => return NativeExit::Success,
+                Ok(Some(_)) => return NativeExit::Uncertain,
+                Ok(None) => thread::sleep(Duration::from_millis(10)),
+                Err(_) => break,
+            }
+        }
+        let _ = child.kill();
+        let _ = child.wait();
+        NativeExit::Uncertain
     }
     #[cfg(not(target_os = "macos"))]
     {
-        let _ = (executable, root, id, timeout);
-        false
+        let _ = (executable, root, id, rollouts, timeout, is_current);
+        NativeExit::Refused
     }
-}
-
-#[cfg(target_os = "macos")]
-fn codex_delete_command(
-    mut command: Command,
-    root: &Path,
-    id: uuid::Uuid,
-    timeout: Duration,
-) -> bool {
-    command.env_clear();
-    for name in [
-        "HOME",
-        "PATH",
-        "TMPDIR",
-        "SystemRoot",
-        "USERPROFILE",
-        "TEMP",
-        "TMP",
-    ] {
-        if let Some(value) = std::env::var_os(name) {
-            command.env(name, value);
-        }
-    }
-    let Ok(mut child) = command
-        .arg("delete")
-        .arg(id.hyphenated().to_string())
-        .arg("--force")
-        .env("CODEX_HOME", root)
-        .current_dir(root)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-    else {
-        return false;
-    };
-    let started = Instant::now();
-    while started.elapsed() < timeout {
-        match child.try_wait() {
-            Ok(Some(status)) => return status.success(),
-            Ok(None) => thread::sleep(Duration::from_millis(10)),
-            Err(_) => break,
-        }
-    }
-    let _ = child.kill();
-    let _ = child.wait();
-    false
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -177,7 +203,7 @@ fn small_output(mut command: Command) -> Result<Vec<u8>, ProviderError> {
     Ok(bytes)
 }
 
-/// The only executable probe. No shell, arbitrary arguments or unsandboxed retry.
+/// Probe an executable version without a shell or unsandboxed retry.
 pub fn probe_version(kind: ProviderKind, executable: &Path) -> Result<String, ProviderError> {
     #[cfg(target_os = "macos")]
     {
@@ -198,6 +224,33 @@ pub fn probe_version(kind: ProviderKind, executable: &Path) -> Result<String, Pr
             "provider process isolation is not yet verified on this platform; metadata audit only"
                 .into(),
         ))
+    }
+}
+
+/// Verify the fixed CLI command surface in a write-denied process. The provider
+/// adapter separately admits only releases with an exercised behavioral contract.
+pub fn probe_codex_delete(executable: &Path) -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        let Ok(mut process) = command(executable) else {
+            return false;
+        };
+        process.args(["delete", "--help"]);
+        small_output(process).is_ok_and(|bytes| {
+            std::str::from_utf8(&bytes).is_ok_and(|help| {
+                help.lines()
+                    .any(|line| line == "Usage: codex delete [OPTIONS] <SESSION>")
+                    && help.lines().any(|line| line.trim() == "--force")
+                    && help.lines().any(|line| {
+                        line.trim() == "Delete without prompting. SESSION must be a UUID"
+                    })
+            })
+        })
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = executable;
+        false
     }
 }
 
@@ -471,12 +524,17 @@ mod tests {
         .unwrap();
         std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
 
-        assert!(!run_confined_codex_delete(
-            &executable,
-            &path,
-            uuid::Uuid::nil(),
-            Duration::from_secs(1),
-        ));
+        assert_eq!(
+            run_confined_codex_delete(
+                &executable,
+                &path,
+                uuid::Uuid::nil(),
+                &[],
+                Duration::from_secs(1),
+                || true,
+            ),
+            NativeExit::Uncertain
+        );
         let pid = std::fs::read_to_string(path.join("pid")).unwrap();
         let status = Command::new("/bin/kill")
             .args(["-0", pid.trim()])

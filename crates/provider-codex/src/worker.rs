@@ -1,8 +1,10 @@
 //! Fixed operations in the confined Codex reader process.
 #[cfg(target_os = "macos")]
+mod cascade;
+#[cfg(target_os = "macos")]
 mod inventory;
 
-use crate::{CodexAdapter, Guard};
+use crate::{CodexAdapter, Guard, removal::RemovalRefusal};
 use agentmender_domain::{ProviderKind, Session, SessionIdentity};
 use agentmender_provider_api::{
     ProviderError, evidence::EvidenceSandbox, process, validate_location,
@@ -18,6 +20,8 @@ use std::{
 const MAX_REQUEST: usize = 64 * 1024;
 const MAX_OUTPUT: usize = 128 * 1024;
 const PAGE_ROWS: usize = 128;
+#[cfg(target_os = "macos")]
+const MAX_SCOPE_MEMBERS: usize = 128;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -80,6 +84,37 @@ pub struct TranscriptPage {
 pub(super) struct RemovalEvidence {
     pub session: Session,
     pub revision: String,
+    pub scope: RemovalScope,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct RemovalScope {
+    pub members: Vec<ReviewedMember>,
+    database_identity: (u64, u64),
+    unrelated_revision: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct ReviewedMember {
+    pub id: String,
+    pub rollout: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ResidualEvidence {
+    pub canonical_rows: usize,
+    pub rollouts: usize,
+    pub spawn_edges: usize,
+    pub unrelated_changed: bool,
+}
+
+#[derive(Serialize, Deserialize)]
+enum Verification {
+    Verified,
+    Residual(ResidualEvidence),
 }
 
 #[derive(Serialize, Deserialize)]
@@ -112,6 +147,7 @@ enum Operation {
         cursor: Option<Box<TranscriptCursor>>,
     },
     Removal(SessionIdentity),
+    VerifyRemoval(RemovalScope),
 }
 
 #[derive(Serialize, Deserialize)]
@@ -120,7 +156,8 @@ enum Response {
     Stale,
     Inventory(InventoryPage),
     Transcript(TranscriptPage),
-    Removal(RemovalEvidence),
+    Removal(Box<Result<RemovalEvidence, RemovalRefusal>>),
+    Verification(Verification),
 }
 
 pub(super) fn unavailable() -> ProviderError {
@@ -156,11 +193,15 @@ fn observe(request: &Request, resident: &mut Option<Snapshot>) -> Result<Respons
             Response::Inventory(inventory::page(&db, root, after, *limit, revision, end)?)
         }
         Operation::Removal(identity) => {
-            Response::Removal(inventory::removal(&db, root, identity, end)?)
+            let revision = reader::hash(&serde_json::to_vec(&before).map_err(|_| unavailable())?);
+            Response::Removal(Box::new(cascade::plan(&db, root, identity, revision, end)))
+        }
+        Operation::VerifyRemoval(scope) => {
+            Response::Verification(cascade::verify(&db, root, scope, end)?)
         }
         Operation::Transcript { identity, cursor } => {
-            let candidate = inventory::exact(&db, root, &identity.native_id)?;
-            if &candidate.session.identity != identity {
+            let candidate = inventory::exact(&db, root, &identity.native_id, end)?;
+            if &candidate.session.identity != identity || !candidate.session.is_main() {
                 return Err(stale());
             }
             let (page, anchor) = reader::page(
@@ -187,8 +228,9 @@ fn observe(request: &Request, resident: &mut Option<Snapshot>) -> Result<Respons
     }
     drop(db);
     let db = snapshot::read_snapshot(root, end)?;
-    let current = inventory::exact(&db, root, &identity.native_id)?;
+    let current = inventory::exact(&db, root, &identity.native_id, end)?;
     if &current.session.identity != identity
+        || !current.session.is_main()
         || reader::current_anchor(identity, current.locator.as_deref())? != anchor
         || !snapshot::same_primary_identity(&after, &snapshot::fingerprints(root)?)
     {
@@ -442,9 +484,26 @@ impl CodexAdapter {
     pub(super) fn removal_evidence(
         &self,
         identity: &SessionIdentity,
-    ) -> Result<RemovalEvidence, ProviderError> {
+    ) -> Result<RemovalEvidence, RemovalRefusal> {
         match self.observe(Operation::Removal(identity.clone()))? {
-            Response::Removal(evidence) if &evidence.session.identity == identity => Ok(evidence),
+            Response::Removal(result) => {
+                let evidence = (*result)?;
+                if &evidence.session.identity == identity && evidence.session.is_main() {
+                    return Ok(evidence);
+                }
+                Err(RemovalRefusal::IncompleteRelationships)
+            }
+            _ => Err(RemovalRefusal::IncompleteRelationships),
+        }
+    }
+
+    pub(super) fn verify_removal(
+        &self,
+        scope: RemovalScope,
+    ) -> Result<Option<ResidualEvidence>, ProviderError> {
+        match self.observe(Operation::VerifyRemoval(scope))? {
+            Response::Verification(Verification::Verified) => Ok(None),
+            Response::Verification(Verification::Residual(details)) => Ok(Some(details)),
             _ => Err(unavailable()),
         }
     }

@@ -10,6 +10,7 @@ export type ProviderInfo = {
   coverage_description: string
   total: number
   removal_available: boolean
+  removal_reason: string | null
 }
 
 export type Session = {
@@ -24,8 +25,6 @@ export type Session = {
   created_at: number | null
   last_active_at: number | null
   transcript_bytes: number | null
-  parent: string | null
-  forked_from: string | null
   protected: boolean
   removal_reason: string | null
 }
@@ -35,12 +34,19 @@ export type Detail = {
   session: Session
   version: string | null
   conversation_preview: boolean
-  children: string[]
 }
-export type Preview = { id: string; confirmation: string; valid_seconds: number }
+export type Preview = {
+  id: string
+  confirmation: string
+  valid_seconds: number
+  main_id: string
+  main_title: string | null
+  spawned_descendants: number
+  total_sessions: number
+}
 export type Operation = {
   native_id: string
-  status: 'running' | 'changed' | 'command_succeeded' | 'outcome_unknown'
+  status: 'running' | 'changed' | 'verified' | 'native_uncertain' | 'verification_incomplete' | 'residual'
   message: string
 }
 export type Transcript = {

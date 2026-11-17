@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
-"""HTTP acceptance on disposable archives; optionally verify the exact native binary."""
+"""HTTP acceptance on disposable archives, with optional native Codex cascade tests."""
 import argparse
 from contextlib import contextmanager
 from concurrent.futures import ThreadPoolExecutor
+import hashlib
 import http.client
 import json
 import os
 from pathlib import Path
 import platform
 import selectors
+import shutil
 import sqlite3
 import subprocess
 import sys
@@ -21,6 +23,13 @@ import native_ui_fixture as probe
 
 CLAUDE_ID = "eb000000-1111-4111-8111-000000000001"
 CLAUDE_DESKTOP_ID = "eb000000-1111-4111-8111-000000000002"
+CLAUDE_SIDECHAIN_ID = "eb000000-1111-4111-8111-000000000003"
+CLAUDE_AGENT_ID = "a123badc"
+
+
+def scoped_key(provider, root, ident, namespace=None):
+    identity = dict(provider=provider, state_root=str(root), namespace=namespace, native_id=ident)
+    return hashlib.sha256(json.dumps(identity, separators=(",", ":")).encode()).hexdigest()
 
 
 def claude_fixture(root):
@@ -39,16 +48,39 @@ def claude_fixture(root):
     ]
     (bucket / f"{CLAUDE_DESKTOP_ID}.jsonl").write_text("".join(json.dumps(row) + "\n" for row in desktop))
 
+    child = bucket / CLAUDE_ID / "subagents" / f"agent-{CLAUDE_AGENT_ID}.jsonl"
+    child.parent.mkdir(parents=True)
+    child.write_text(json.dumps({"type": "user", "sessionId": CLAUDE_ID,
+        "agentId": CLAUDE_AGENT_ID, "isSidechain": True, "customTitle": "Hidden worker"}) + "\n")
+    (bucket / f"{CLAUDE_SIDECHAIN_ID}.jsonl").write_text(json.dumps({
+        "type": "user", "sessionId": CLAUDE_SIDECHAIN_ID, "isSidechain": True}) + "\n")
+
 
 def codex_metadata_fixture(root, count=3000):
     root.mkdir()
     with sqlite3.connect(root / "state_5.sqlite") as db:
-        db.execute("CREATE TABLE threads(id TEXT PRIMARY KEY,title TEXT,cwd TEXT,created_at INTEGER,updated_at INTEGER,archived INTEGER,rollout_path TEXT)")
-        db.executemany("INSERT INTO threads VALUES(?,?,?,?,?,?,?)", (
-            (f"ab000000-1111-4111-8111-{index:012d}", f"Café session {index}" if index else None,
-             "/fixture/Atlas", index, index + 86400, index % 2, None)
+        db.execute("""CREATE TABLE threads(id TEXT PRIMARY KEY,title TEXT,cwd TEXT,
+            created_at INTEGER,updated_at INTEGER,archived INTEGER,rollout_path TEXT,
+            source TEXT,forked_from_id TEXT,attached_thread_parent_id TEXT)""")
+        db.execute("CREATE TABLE thread_spawn_edges(parent_thread_id TEXT,child_thread_id TEXT)")
+        db.executemany("INSERT INTO threads VALUES(?,?,?,?,?,?,?,?,?,?)", (
+            (probe.session_id(index), f"Café session {index}" if index else None,
+             "/fixture/Atlas", index, index + 86400, index % 2, None, "cli", None, None)
             for index in range(count)
         ))
+        hidden = [f"00000000-1111-4111-8111-{index:012d}" for index in range(6)]
+        parent = probe.session_id(1)
+        db.executemany("INSERT INTO threads VALUES(?,?,?,?,?,?,?,?,?,?)", (
+            (ident, "Hidden Codex worker", "/fixture/Atlas", 90000, 90000, 1, None,
+             "cli", fork, attached)
+            for ident, fork, attached in zip(hidden,
+                (None, None, None, parent, None, "malformed fork"),
+                (None, None, None, None, parent, None), strict=True)
+        ))
+        db.executemany("INSERT INTO thread_spawn_edges VALUES(?,?)", [
+            (parent, hidden[0]), ("malformed", hidden[1]),
+            (parent, hidden[2]), (probe.session_id(4000), hidden[2]),
+        ])
 
 
 class Client:
@@ -99,7 +131,7 @@ class Client:
 
 
 @contextmanager
-def ui(binary, base, codex_root, claude_root, codex=None):
+def ui(binary, base, codex_root, claude_root, codex=None, max_entries=None):
     other = base / "empty-path"
     other.mkdir(exist_ok=True)
     home = base / "home"
@@ -108,6 +140,8 @@ def ui(binary, base, codex_root, claude_root, codex=None):
     if os.name == "nt":
         environment["SystemRoot"] = os.environ["SystemRoot"]
     command = [str(binary), "--codex-root", str(codex_root), "--claude-root", str(claude_root), "ui", "--no-open"]
+    if max_entries is not None:
+        command += ["--max-entries", str(max_entries)]
     if codex:
         # The fixture setup and the HTTP-dispatched native command both use
         # write-denying macOS profiles, each scoped to its disposable archive.
@@ -158,23 +192,70 @@ def inventory_acceptance(client, claude_root):
     desktop = client.call("GET", f"/api/claude/sessions?search={CLAUDE_DESKTOP_ID}")
     assert desktop["total"] == 1 and desktop["rows"][0]["workspace"] is None
     sources = list(claude_root.glob("projects/*/*.jsonl"))
-    assert len(sources) == 2 and "Never expose" in next(path for path in sources if path.stem == CLAUDE_ID).read_text()
+    assert len(sources) == 3 and "Never expose" in next(path for path in sources if path.stem == CLAUDE_ID).read_text()
+    info = client.call("GET", "/api/claude/sessions?limit=1")
+    assert info["provider"]["total"] == 2 and info["total"] == 2
+    assert client.call("GET", "/api/claude/sessions?search=Hidden")["total"] == 0
+    agent_key = scoped_key("claude", claude_root, f"{CLAUDE_ID}/agent:{CLAUDE_AGENT_ID}", "project")
+    client.call("GET", f"/api/claude/sessions/{agent_key}", code=404)
     return row["key"]
 
 
-def codex_acceptance(client, root, rollouts):
-    page = client.call("GET", "/api/codex/sessions")
+def codex_acceptance(client, root, rollouts, binary):
+    import fcntl
+
+    query = "/api/codex/sessions"
+    page = client.call("GET", query)
     assert page["provider"]["removal_available"], page["provider"]
+    visible = {probe.R, probe.G, probe.F, probe.M, probe.ONE, probe.PROTECTED_PARENT, probe.REPLACEMENT}
     keys = {item["native_id"]: item["key"] for item in page["rows"]}
-    target = f"/api/codex/sessions/{keys[probe.R]}"
-    protected = f"/api/codex/sessions/{keys[probe.S]}"
-    active = f"/api/codex/sessions/{keys[probe.F]}"
-    parent = f"/api/codex/sessions/{keys[probe.G]}"
-    assert client.call("GET", parent)["children"] == [probe.C]
-    orphan_parent = f"/api/codex/sessions/{keys[probe.C]}"
-    assert not client.call("GET", orphan_parent)["children"]
-    for refused in (protected, active, parent, orphan_parent):
-        client.call("POST", refused + "/removal-preview", code=409)
+    assert set(keys) == visible and page["provider"]["total"] == len(visible)
+    assert client.call("GET", f"{query}?limit=1&offset=1")["total"] == len(visible)
+    for hidden in (probe.C, probe.ORPHAN, probe.SURVIVING_CHILD, probe.S):
+        assert client.call("GET", f"{query}?search={hidden}")["total"] == 0
+        child = f"{query}/{scoped_key('codex', root, hidden)}"
+        client.call("GET", child, code=404)
+        client.call("POST", child + "/removal-preview", code=404)
+
+    def session(ident):
+        return f"{query}/{keys[ident]}"
+
+    def preview(ident, descendants=0):
+        result = client.call("POST", session(ident) + "/removal-preview")
+        assert result["main_id"] == ident
+        assert result["spawned_descendants"] == descendants, result
+        assert result["total_sessions"] == descendants + 1
+        return result
+
+    def refuse(ident, phrase):
+        reply = client.call("POST", session(ident) + "/removal-preview", code=409)
+        assert phrase in reply["error"], reply
+
+    def confirm(review, expected, concurrent=False):
+        path = f"/api/operations/{review['id']}/confirm"
+        phrase = {"confirmation": review["confirmation"]}
+        if concurrent:
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                replies = [pool.submit(client.call, "POST", path, phrase, code=(202, 409))
+                           for _ in range(2)]
+                assert sorted(reply.result() for reply in replies) == [202, 409]
+        else:
+            client.call("POST", path, phrase, code=202)
+        outcome = client.operation(review["id"])
+        assert outcome["status"] == expected, outcome
+        client.call("POST", path, phrase, code=409)
+        return outcome
+
+    def database(sql, params=()):
+        with sqlite3.connect(root / "state_5.sqlite") as db:
+            return db.execute(sql, params).fetchall()
+
+    def refresh():
+        client.call("POST", "/api/codex/refresh")
+
+    refuse(probe.PROTECTED_PARENT, "protetta")
+    refuse(probe.F, "archiviate")
+    target = session(probe.R)
     client.call("POST", target + "/removal-preview", code=401, Authorization=None)
     client.call("POST", target + "/removal-preview", code=403, Origin="null")
     client.call("POST", target + "/removal-preview", code=403, Origin=None)
@@ -183,50 +264,118 @@ def codex_acceptance(client, root, rollouts):
     assert "secret-marker" not in json.dumps(transcript)
     cursor = transcript["next"]
     assert cursor and all(len(message["text"].encode()) <= 16384 for message in transcript["messages"])
-    client.call("GET", protected + f"/conversation?cursor={cursor}", code=400)
+    client.call("GET", session(probe.G) + f"/conversation?cursor={cursor}", code=400)
     continuation = client.call("GET", target + f"/conversation?cursor={cursor}")
     assert continuation["messages"] and "secret-marker" not in json.dumps(continuation)
-    frozen = {ident: path.read_bytes() for ident, path in rollouts.items() if ident != probe.R}
-    preview = client.call("POST", target + "/removal-preview")
-    path = f"/api/operations/{preview['id']}/confirm"
-    phrase = {"confirmation": preview["confirmation"]}
-    client.call("POST", "/api/operations/forged/confirm", phrase, code=409)
+    review = preview(probe.R)
+    path = f"/api/operations/{review['id']}/confirm"
+    client.call("POST", "/api/operations/forged/confirm", {"confirmation": review["confirmation"]}, code=409)
     client.call("POST", path, {"confirmed": True}, code=422)
     client.call("POST", path, {"confirmation": "wrong"}, code=409)
-    # A same-identity append after preview must prevent the native command.
     with rollouts[probe.R].open("a") as out:
         out.write("\n")
-    client.call("POST", path, phrase, code=202)
-    assert client.operation(preview["id"])["status"] == "changed"
+    confirm(review, "changed")
     assert rollouts[probe.R].is_file()
-    client.call("POST", path, phrase, code=409)
-    client.call("POST", "/api/codex/refresh")
-    preview = client.call("POST", target + "/removal-preview")
-    path = f"/api/operations/{preview['id']}/confirm"
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        replies = [pool.submit(client.call, "POST", path, phrase, code=(202, 409)) for _ in range(2)]
-        assert sorted(reply.result() for reply in replies) == [202, 409]
-    assert client.operation(preview["id"])["status"] == "command_succeeded"
-    assert not rollouts[probe.R].exists()
-    assert all(rollouts[ident].read_bytes() == content for ident, content in frozen.items())
-    with sqlite3.connect(root / "state_5.sqlite") as db:
-        assert db.execute("SELECT 1 FROM threads WHERE id=?", (probe.R,)).fetchone() is None
-        assert db.execute("SELECT 1 FROM threads WHERE id=?", (probe.S,)).fetchone() == (1,)
-    remaining = client.call("GET", "/api/codex/sessions")["rows"]
-    assert {item["native_id"] for item in remaining} == set(frozen)
+    refresh()
 
-    uncertain = f"/api/codex/sessions/{keys[probe.M]}"
-    preview = client.call("POST", uncertain + "/removal-preview")
-    # An invalid provider config causes the native command to exit nonzero.
+    # These references exist only in the rollout archive, beyond the canonical rows.
+    ref = probe.session_id(100)
+    fork = probe.seed(root.parent, ref, archived=True, forked_from_id=probe.C)
+    refuse(probe.G, "fork esterno")
+    fork.unlink()
+    attached = probe.seed(root.parent, ref, archived=True, forked_from_id=probe.C, attached_thread=True)
+    refuse(probe.G, "sessione agganciata")
+    attached.unlink()
+    ghost = probe.seed(root.parent, ref, parent=probe.C, archived=True)
+    refuse(probe.G, "relazioni")
+    ghost.unlink()
+
+    database("UPDATE thread_spawn_edges SET parent_thread_id=? WHERE child_thread_id=?", ("bad-parent", probe.C))
+    refuse(probe.G, "relazioni")
+    database("UPDATE thread_spawn_edges SET parent_thread_id=? WHERE child_thread_id=?", (probe.G, probe.C))
+    database("INSERT INTO thread_spawn_edges VALUES(?,?,'closed')", (probe.GRANDCHILD, probe.G))
+    refuse(probe.G, "relazioni")
+    refresh()
+    assert client.call("GET", f"{query}?search={probe.G}")["total"] == 0
+    database("DELETE FROM thread_spawn_edges WHERE child_thread_id=?", (probe.G,))
+    refresh()
+
+    database("UPDATE thread_spawn_edges SET status='open' WHERE child_thread_id=?", (probe.C,))
+    refuse(probe.G, "attiva")
+    database("UPDATE thread_spawn_edges SET status='closed' WHERE child_thread_id=?", (probe.C,))
+
+    database("UPDATE threads SET archived=0 WHERE id=?", (probe.C,))
+    refuse(probe.G, "attiva")
+    database("UPDATE threads SET archived=1 WHERE id=?", (probe.C,))
+
+    locks = root / "thread-writer-locks"
+    locks.mkdir(exist_ok=True)
+    with (locks / f"{probe.C}.lock").open("w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        refuse(probe.G, "in uso")
+
+    review = preview(probe.G, 5)
+    database("INSERT INTO thread_spawn_edges VALUES(?,?,'closed')", (probe.C, ref))
+    confirm(review, "changed")
+    assert all(path.is_file() for path in rollouts.values())
+    database("DELETE FROM thread_spawn_edges WHERE child_thread_id=?", (ref,))
+    refresh()
+
+    database("INSERT INTO _sqlx_migrations(version,description,success,checksum,execution_time) VALUES(63,'fixture',1,x'',0)")
+    refuse(probe.G, "formato")
+    database("DELETE FROM _sqlx_migrations WHERE version=63")
+
+    # Each successful operation preserves the full canonical rows and exact bytes
+    # of unrelated fixtures. This includes hidden workers and the active main.
+    for ident, descendants in [(probe.R, set()), (probe.ONE, {probe.ONLY_CHILD}),
+            (probe.G, {probe.C, probe.GRANDCHILD, probe.SIBLING, probe.ORPHAN, probe.session_id(99)})]:
+        affected = {ident} | descendants
+        untouched = {key: path.read_bytes() for key, path in rollouts.items()
+                     if key not in affected and path.exists()}
+        before = [row for row in database("SELECT * FROM threads ORDER BY id") if row[0] not in affected]
+        review = preview(ident, len(descendants))
+        confirm(review, "verified", concurrent=(ident == probe.G))
+        assert all(not path.exists() for key, path in rollouts.items() if key in affected)
+        assert all(rollouts[key].read_bytes() == original for key, original in untouched.items())
+        assert database("SELECT * FROM threads ORDER BY id") == before
+        assert all(parent not in affected and child not in affected
+                   for parent, child in database("SELECT parent_thread_id,child_thread_id FROM thread_spawn_edges"))
+        visible.remove(ident)
+        remaining = client.call("GET", query)
+        assert {row["native_id"] for row in remaining["rows"]} == visible
+
+    # Invalid config is already present at review. The native process then exits
+    # nonzero and the read-only check independently reports the remaining evidence.
     config = root / "config.toml"
     config.write_text("invalid = [")
     try:
-        client.call("POST", f"/api/operations/{preview['id']}/confirm", phrase, code=202)
-        assert client.operation(preview["id"])["status"] == "outcome_unknown"
+        outcome = confirm(preview(probe.M), "native_uncertain")
+        assert "Righe di sessione ancora presenti: 1" in outcome["message"], outcome
     finally:
         config.unlink()
-    client.call("POST", uncertain + "/removal-preview", code=409)
-    assert rollouts[probe.M].read_bytes() == frozen[probe.M]
+    refuse(probe.M, "già un esito")
+
+    review = preview(probe.REPLACEMENT)
+    displaced = root.with_name("provider-before-replacement")
+    root.rename(displaced)
+    root.mkdir()
+    try:
+        confirm(review, "changed")
+        assert not any(root.iterdir())
+    finally:
+        root.rmdir()
+        displaced.rename(root)
+    refresh()
+
+    # Replace the executable at the same name with byte-identical contents. The
+    # operation binds file identity through confirmation, regardless of its digest.
+    review = preview(probe.REPLACEMENT)
+    prior = binary.with_suffix(".prior")
+    binary.rename(prior)
+    shutil.copy2(prior, binary)
+    assert probe.digest(prior) == probe.digest(binary)
+    confirm(review, "changed")
+    assert rollouts[probe.REPLACEMENT].exists()
 
 
 def rejects_unconfined_reader(binary, source):
@@ -246,7 +395,7 @@ def rejects_unconfined_reader(binary, source):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--agentmender", required=True, type=Path)
-    parser.add_argument("--native-codex", type=Path, help="exact reviewed Darwin arm64 binary; only disposable writes")
+    parser.add_argument("--native-codex", type=Path, help="supported Darwin arm64 binary; only disposable writes")
     args = parser.parse_args()
     agentmender = args.agentmender.resolve(strict=True)
     with tempfile.TemporaryDirectory(prefix="am-ui-") as directory:
@@ -256,13 +405,35 @@ def main():
         if args.native_codex:
             binary = args.native_codex.resolve(strict=True)
             assert platform.system() == "Darwin" and platform.machine() == "arm64"
-            assert probe.digest(binary) == probe.DIGEST, "binary does not match the validated profile"
-            with probe.native_fixture(base, binary) as (root, rollouts):
-                with ui(agentmender, base, root, claude, binary) as (client, ticket):
+            if binary.parent.name == "MacOS" and binary.parents[2].suffix == ".app":
+                # A signed app binary needs its original bundle metadata.
+                bundle = base / binary.parents[2].name
+                shutil.copytree(binary.parents[2], bundle, symlinks=True)
+                executable_copy = bundle / binary.relative_to(binary.parents[2])
+            else:
+                executable_copy = base / "executable" / "codex"
+                executable_copy.parent.mkdir()
+                shutil.copy2(binary, executable_copy)
+            with probe.native_fixture(base, executable_copy) as (root, rollouts):
+                with ui(agentmender, base, root, claude, executable_copy) as (client, ticket):
                     authorize(client, ticket)
                     inventory_acceptance(client, claude)
-                    codex_acceptance(client, root, rollouts)
-            print("Native Codex UI: stale preview refused, one-shot delete, controls preserved, nonzero exit held for review.")
+                    codex_acceptance(client, root, rollouts, executable_copy)
+                unknown = base / "unsupported-executable"
+                unknown.write_text("#!/bin/sh\nprintf 'codex-cli 99.0.0\\n'\n")
+                unknown.chmod(0o700)
+                with ui(agentmender, base, root, claude, unknown) as (client, ticket):
+                    authorize(client, ticket)
+                    provider = client.call("GET", "/api/codex/sessions")["provider"]
+                    assert not provider["removal_available"] and "versione" in provider["removal_reason"]
+                banner_only = base / "missing-delete-executable"
+                banner_only.write_text("#!/bin/sh\nprintf 'codex-cli 0.169.0\\n'\n")
+                banner_only.chmod(0o700)
+                with ui(agentmender, base, root, claude, banner_only) as (client, ticket):
+                    authorize(client, ticket)
+                    provider = client.call("GET", "/api/codex/sessions")["provider"]
+                    assert not provider["removal_available"] and "comando" in provider["removal_reason"]
+            print(f"Native Codex UI ({probe.digest(binary)[:12]}): verified singleton and subtree removal, hidden descendants, refusal and one-shot guards, unchanged unrelated rows and rollouts.")
         else:
             root = base / "codex"
             with ui(agentmender, base, root, claude) as (client, ticket):
@@ -308,6 +479,12 @@ def main():
                     assert other["native_id"] == "ab000000-1111-4111-8111-000000000000"
                     assert other["key"] != first_codex_key
                     client.call("GET", f"/api/codex/sessions/{first_codex_key}", code=404)
+            if platform.system() == "Darwin":
+                with ui(agentmender, base, other_codex, other_claude, max_entries=6) as (client, ticket):
+                    authorize(client, ticket)
+                    truncated = client.call("GET", "/api/codex/sessions")
+                    assert truncated["total"] == 0 and truncated["provider"]["total"] == 0
+                assert not (other_codex / "thread-writer-locks").exists()
             print("Local UI: scoped duplicate IDs, provider inventory, unsupported removal, origin and token guards, pagination and coverage.")
 
 

@@ -14,15 +14,21 @@ contracts.
   snapshots and decoder budgets, and exact locator, UUID and revision checks.
   Preserve secret suppression and honest partial coverage. Unsafe code is
   confined to the existing macOS kernel attestation boundary.
-- Admit Codex removal only under the reviewed executable and root profile.
-  Check archive state, configured protections, exact rollout and spawn edges,
-  including edges without canonical child rows. Recheck immediately before
-  native dispatch. Only one confirmed operation can be in flight per launch.
-  Ambiguous native outcomes remain uncertain and are never retried automatically.
+- Allow only provider-verified main conversations into search, sorting,
+  pagination, counts and opaque key lookup. Keep descendant evidence inside
+  provider observations and inspect the full Codex graph for removal.
+- Admit native removal through a confined version probe, a write-denied
+  command probe and an exercised release and storage contract. Pin the actual
+  executable and root identities. Review the complete archived subtree,
+  including edge-only descendants, and check configured protections, writer
+  ownership, rollout identity and external references.
+- Rebuild the bound scope immediately before the single native request and
+  constrain rollout writes to reviewed paths. Keep one-use receipts and the
+  single in-flight guard. Verify rows, edges and rollouts through the read-only
+  worker. Ambiguous outcomes stay uncertain and are never retried automatically.
 - Keep Claude Code read-only. Decline bulk, project-wide and unrelated artifact
-  cleanup. The existing success-only Desktop marker has a narrow guarded
-  contract. Native command success leaves residuals and physical reclaim
-  unverified.
+  cleanup. Keep the guarded Desktop marker and distinguish verified session
+  evidence from other provider artifacts or physical storage reclaim.
 - Use temporary, isolated provider fixtures. Leave real provider session data,
   credentials and installed provider configuration untouched during development.
 
@@ -41,5 +47,5 @@ python3 scripts/test_local_ui.py --agentmender target/debug/agentmender
 git diff --check
 ```
 
-Run the optional exact native fixture when its supported binary is available.
+Run the disposable native fixture with any available supported release.
 Use coherent commits and preserve Git history and archival refs.

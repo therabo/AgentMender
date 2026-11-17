@@ -11,7 +11,7 @@ it('opens only the selected session and labels missing metadata and protected ro
   const base: Session = {
     key: 'second', native_id: 'native-id', title: null, provider: 'codex', project: null,
     workspace: null, created_at: null, last_active_at: null, transcript_bytes: null,
-    state: 'archived', kind: 'unknown', parent: null, forked_from: null, protected: true,
+    state: 'archived', kind: 'unknown', protected: true,
     removal_reason: 'Protetta',
   }
   const select = vi.fn()

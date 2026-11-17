@@ -74,7 +74,7 @@ h3 { font-size: 15px; font-weight: 650; }
 .button:disabled { color: #a4acc0; background: #141825; border-color: var(--line-soft); }
 .button.square { width: 38px; padding: 0; }
 .button.quiet { background: transparent; border-color: transparent; color: var(--accent); }
-.button.danger { background: #a23740; border-color: #c35258; color: white; }
+.button.danger:not(:disabled) { background: #a23740; border-color: #c35258; color: white; }
 .button.danger:hover:not(:disabled) { background: #b23f49; }
 .button.danger-outline:not(:disabled) { border-color: #603a46; background: #2d202c; color: var(--danger); }
 
@@ -170,7 +170,7 @@ h3 { font-size: 15px; font-weight: 650; }
 .facts div { min-width: 0; }
 .facts dt { color: var(--muted); font-size: 12px; margin-bottom: 2px; }
 .facts dd { margin: 0; font-size: 14px; overflow-wrap: anywhere; }
-.facts div:last-child, .review-facts { grid-column: 1 / -1; }
+.detail-facts > div:last-child, .review-facts > div:nth-child(-n + 2) { grid-column: 1 / -1; }
 .detail-section { padding-top: 17px; margin-top: 17px; border-top: 1px solid var(--line-soft); }
 .detail-section p, .detail-section ul { color: var(--muted); font-size: 13px; margin: 6px 0 9px; }
 .detail-section .button { margin-top: 5px; }

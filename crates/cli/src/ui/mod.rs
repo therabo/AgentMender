@@ -12,7 +12,7 @@ use std::{
 
 use agentmender_domain::ProviderKind;
 use agentmender_provider_claude::ClaudeAdapter;
-use agentmender_provider_codex::{CodexAdapter, NativeRemoval};
+use agentmender_provider_codex::{CodexAdapter, NativeRemoval, NativeUnavailable, RemovalOutcome};
 use axum::{
     Json, Router,
     extract::{DefaultBodyLimit, Path, Query, Request, State},
@@ -26,7 +26,7 @@ use tokio::sync::Semaphore;
 
 use self::{
     inventory::{DetailView, Filter, Inventories, PageView, ProviderView},
-    removal::{OperationStatus, OperationView, Operations, PreviewView},
+    removal::{OperationView, Operations, PreviewView},
     transcript::{TranscriptCursors, TranscriptQuery, TranscriptView},
 };
 
@@ -45,7 +45,7 @@ struct App {
     claude: ClaudeAdapter,
     limit: usize,
     protected: Vec<String>,
-    native: Option<NativeRemoval>,
+    native: Result<NativeRemoval, NativeUnavailable>,
     inventory: Inventories,
     operations: Mutex<Operations>,
     cursors: Mutex<TranscriptCursors>,
@@ -234,13 +234,13 @@ async fn preview(
     }
     read(app, move |app| {
         let session = app.inventory.selected(app, ProviderKind::Codex, &key)?;
-        if let Some(reason) = removal::refusal(&session, app.native.is_some(), &app.protected) {
+        if let Some(reason) = removal::refusal(&session, &app.protected) {
             return Err(ApiError::conflict(reason));
         }
-        let native = app
-            .native
-            .as_ref()
-            .ok_or_else(|| ApiError::conflict(removal::UNSUPPORTED))?;
+        if let Some(reason) = removal::native_reason(&app.native) {
+            return Err(ApiError::conflict(reason));
+        }
+        let native = app.native.as_ref().expect("checked");
         let evidence = native
             .prepare(&app.codex, &session)
             .map_err(removal::refusal_error)?;
@@ -263,8 +263,10 @@ async fn confirm(
     Path(key): Path<String>,
     Json(request): Json<Confirmation>,
 ) -> Result<StatusCode, ApiError> {
-    if app.native.is_none() {
-        return Err(ApiError::conflict(removal::UNSUPPORTED));
+    if app.native.is_err() {
+        return Err(ApiError::conflict(
+            removal::native_reason(&app.native).expect("unavailable"),
+        ));
     }
     let review = app
         .operations
@@ -277,10 +279,10 @@ async fn confirm(
             let native = worker.native.as_ref().expect("checked");
             let status = native.execute(&worker.codex, review);
             worker.inventory.invalidate(ProviderKind::Codex);
-            status.into()
+            status
         })
         .await
-        .unwrap_or(OperationStatus::OutcomeUnknown);
+        .unwrap_or(RemovalOutcome::NativeUncertain(None));
         app.operations
             .lock()
             .expect("operation lock")
@@ -344,7 +346,7 @@ pub(super) struct Configuration {
     pub claude_root: PathBuf,
     pub codex: CodexAdapter,
     pub claude: ClaudeAdapter,
-    pub native: Option<NativeRemoval>,
+    pub native: Result<NativeRemoval, NativeUnavailable>,
     pub limit: usize,
     pub protected: Vec<String>,
     pub no_open: bool,

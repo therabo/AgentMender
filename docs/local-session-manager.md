@@ -16,8 +16,8 @@ server with Ctrl+C.
 Codex defaults to `CODEX_HOME` or `~/.codex`. Claude Code defaults to
 `CLAUDE_CONFIG_DIR` or `~/.claude`. Supply absolute `--codex-root`,
 `--claude-root`, `--codex-executable` or `--claude-executable` overrides at
-launch. `--protect-codex-session <UUID>` protects a session in the configured
-Codex root. `--max-entries` bounds inventory acquisition and defaults to
+launch. `--protect-codex-session <UUID>` protects a UUID in the configured Codex root, including when it
+is a descendant of the selected conversation. `--max-entries` bounds inventory acquisition and defaults to
 10,000. Use refresh to pick up external changes. Date filters use inclusive UTC
 calendar days over last activity.
 
@@ -30,16 +30,19 @@ require exact Origin. All requests require the exact local Host.
 
 | Route | Role |
 |---|---|
-| `GET /api/{provider}/sessions` | Page over metadata with search, state, date, sort and paging fields |
-| `GET /api/{provider}/sessions/{key}` | Session details and observed relationships |
+| `GET /api/{provider}/sessions` | Search, filter, sort and page over verified main conversations |
+| `GET /api/{provider}/sessions/{key}` | Details of a verified main conversation |
 | `GET /api/{provider}/sessions/{key}/conversation` | Bounded selected Codex transcript page with optional opaque cursor |
 | `POST /api/{provider}/refresh` | Reacquire the provider snapshot |
-| `POST /api/codex/sessions/{key}/removal-preview` | Preflight and issue a two-minute one-use receipt |
+| `POST /api/codex/sessions/{key}/removal-preview` | Review one main conversation and its spawned subtree, then issue a two-minute one-use receipt |
 | `POST /api/operations/{receipt}/confirm` | Consume the receipt with the explicit confirmation phrase |
-| `GET /api/operations/{receipt}` | Read running, changed, command success or uncertain outcome |
+| `GET /api/operations/{receipt}` | Read running, changed, verified, residual or uncertain outcome |
 
 Session keys bind the provider, root and exact identity. Transcript cursors,
-receipts and outcome tracking are process-local.
+receipts and outcome tracking are process-local. Hidden descendants have no
+browser entry or selectable key. The irreversible deletion review reports the
+main title and UUID, the verified descendant count and the total number of
+sessions affected. Ineligible targets show the reason and receive no receipt.
 
 ## Test with disposable archives
 
@@ -52,12 +55,12 @@ python3 scripts/check_architecture.py
 python3 scripts/test_local_ui.py --agentmender target/debug/agentmender
 ```
 
-On Darwin arm64 with the [reviewed executable](provider-compatibility.md), also
-run the exact native fixture.
+On Darwin arm64, run the native fixture with a [supported Codex release](provider-compatibility.md).
 
 ```sh
-python3 scripts/test_local_ui.py --agentmender target/debug/agentmender --native-codex /absolute/path/to/reviewed/codex
+python3 scripts/test_local_ui.py --agentmender target/debug/agentmender --native-codex /absolute/path/to/codex
 ```
 
-The optional test rejects a different executable digest. It initializes new
-private archives and uses the same confined command boundary as the browser.
+The suite initializes disposable archives, checks the release and command
+contract, and exercises the same confined command boundary as the browser.
+Run it once per binary when validating a release.

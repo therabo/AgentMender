@@ -12,6 +12,7 @@ const PREFIX: usize = 64 * 1024;
 struct Record {
     session_id: Option<String>,
     agent_id: Option<String>,
+    is_sidechain: Option<bool>,
     #[serde(rename = "type")]
     kind: Option<String>,
     cwd: Option<String>,
@@ -71,7 +72,8 @@ impl ClaudeAdapter {
                     continue;
                 };
                 let id = record.session_id.as_deref();
-                if id.is_some_and(|id| id != shape.session_id)
+                if (shape.agent_id.is_none() && record.is_sidechain == Some(true))
+                    || id.is_some_and(|id| id != shape.session_id)
                     || record
                         .agent_id
                         .as_ref()

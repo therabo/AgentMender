@@ -1,7 +1,9 @@
 //! Browser confirmation receipts and operation status, scoped to one launch.
 use super::{ApiError, token};
 use agentmender_domain::{Session, SessionState};
-use agentmender_provider_codex::{RemovalOutcome, RemovalRefusal, RemovalReview};
+use agentmender_provider_codex::{
+    NativeRemoval, NativeUnavailable, RemovalOutcome, RemovalRefusal, RemovalReview,
+};
 use serde::Serialize;
 use std::{
     collections::HashMap,
@@ -10,33 +12,66 @@ use std::{
 
 pub(super) fn refusal_error(error: RemovalRefusal) -> ApiError {
     ApiError::conflict(match error {
-        RemovalRefusal::Unsupported => UNSUPPORTED,
+        RemovalRefusal::NotMain => "Seleziona una conversazione principale verificata.",
         RemovalRefusal::Protected => PROTECTED,
-        RemovalRefusal::SourceUnavailable => AFFECTED_UNKNOWN,
-        RemovalRefusal::Changed => {
-            "La sessione è cambiata. Aggiorna l’inventario e richiedi una nuova anteprima."
+        RemovalRefusal::UnsupportedStorage => {
+            "Il formato dell’archivio non rientra nel contratto di rimozione Codex verificato."
         }
+        RemovalRefusal::IncompleteRelationships => {
+            "Copertura delle relazioni o dei transcript incompleta. Impossibile verificare l’intero albero."
+        }
+        RemovalRefusal::ExternalFork => {
+            "Un fork esterno o la sua cronologia fa riferimento all’albero. La rimozione è bloccata."
+        }
+        RemovalRefusal::AttachedThread => {
+            "Una sessione agganciata fa riferimento all’albero. La rimozione è bloccata."
+        }
+        RemovalRefusal::UnsafeMember => {
+            "L’albero include una sessione attiva, una sessione in uso o un transcript in un formato o percorso di rimozione non supportato."
+        }
+        RemovalRefusal::Changed => CHANGED,
     })
 }
 
 const PREVIEW_TTL: Duration = Duration::from_secs(120);
 const CONFIRMATION: &str = "RIMUOVI";
 
-pub(super) const UNSUPPORTED: &str =
-    "Il binario Codex selezionato non corrisponde al profilo di rimozione verificato.";
-pub(super) const AFFECTED_UNKNOWN: &str = "Verifica di archivio, transcript o subagent non riuscita. Codex potrebbe rimuovere anche i subagent collegati.";
-pub(super) const PROTECTED: &str = "La sessione è protetta dalla configurazione di avvio.";
-pub(super) const NOT_ARCHIVED: &str = "La rimozione è disponibile solo per le sessioni archiviate.";
+const CHANGED: &str =
+    "L’archivio o l’eseguibile è cambiato. Aggiorna l’inventario e richiedi una nuova anteprima.";
+pub(super) const PROTECTED: &str =
+    "Una sessione nell’albero è protetta dalla configurazione di avvio.";
+const NOT_ARCHIVED: &str = "La rimozione è disponibile solo per le sessioni archiviate.";
 
-pub(super) fn refusal(
-    session: &Session,
-    supported: bool,
-    protected: &[String],
+pub(super) fn native_reason(
+    native: &Result<NativeRemoval, NativeUnavailable>,
 ) -> Option<&'static str> {
+    match native {
+        Ok(native) if native.is_current() => None,
+        Ok(_) => Some(CHANGED),
+        Err(reason) => Some(match reason {
+            NativeUnavailable::Platform => {
+                "La rimozione Codex è verificata solo su macOS con Apple Silicon."
+            }
+            NativeUnavailable::Executable => {
+                "Eseguibile Codex regolare e avviabile non disponibile."
+            }
+            NativeUnavailable::Root => "Directory dell’archivio Codex non verificabile all’avvio.",
+            NativeUnavailable::VersionProbe => {
+                "Impossibile verificare la versione di Codex nel processo confinato."
+            }
+            NativeUnavailable::VersionContract => {
+                "La versione di Codex non ha un contratto di rimozione a cascata verificato."
+            }
+            NativeUnavailable::CommandProbe => {
+                "Il comando nativo Codex per la rimozione tramite UUID non è disponibile."
+            }
+        }),
+    }
+}
+
+pub(super) fn refusal(session: &Session, protected: &[String]) -> Option<&'static str> {
     if protected.contains(&session.identity.native_id) {
         Some(PROTECTED)
-    } else if !supported {
-        Some(UNSUPPORTED)
     } else if session.state != SessionState::Archived {
         Some(NOT_ARCHIVED)
     } else {
@@ -49,31 +84,29 @@ pub(super) fn refusal(
 pub(super) enum OperationStatus {
     Running,
     Changed,
-    CommandSucceeded,
-    OutcomeUnknown,
+    Verified,
+    NativeUncertain,
+    VerificationIncomplete,
+    Residual,
 }
 
 #[derive(Clone, Serialize)]
 pub(super) struct OperationView {
     pub status: OperationStatus,
     pub native_id: String,
-    pub message: &'static str,
+    pub message: String,
 }
 
 impl OperationView {
     fn new(status: OperationStatus, native_id: String) -> Self {
         let message = match status {
             OperationStatus::Running => "Codex sta eseguendo il comando nativo.",
-            OperationStatus::Changed => {
-                "La verifica è cambiata dopo l’anteprima. Il comando non è stato avviato."
-            }
-            OperationStatus::CommandSucceeded => {
-                "Il comando nativo ha restituito esito positivo. Residui, catalogo Desktop e spazio recuperato non sono verificati."
-            }
-            OperationStatus::OutcomeUnknown => {
-                "L’esito del comando è incerto e possono esserci effetti parziali. AgentMender non riproverà."
-            }
-        };
+            OperationStatus::Changed => "L’archivio o l’eseguibile è cambiato dopo l’anteprima. Il comando non è stato avviato.",
+            OperationStatus::Verified => "Verificata la rimozione delle sessioni, dei transcript attesi e dei relativi legami di origine.",
+            OperationStatus::NativeUncertain => "Il comando nativo non ha confermato l’esito. Sono possibili effetti parziali.",
+            OperationStatus::VerificationIncomplete => "Il comando nativo è riuscito, ma non è stato possibile verificare l’archivio dopo l’esecuzione.",
+            OperationStatus::Residual => "La verifica ha rilevato modifiche inattese o elementi ancora presenti.",
+        }.into();
         Self {
             status,
             native_id,
@@ -92,6 +125,10 @@ pub(super) struct PreviewView {
     pub id: String,
     pub confirmation: &'static str,
     pub valid_seconds: u64,
+    pub main_id: String,
+    pub main_title: Option<String>,
+    pub spawned_descendants: usize,
+    pub total_sessions: usize,
 }
 
 #[derive(Default)]
@@ -132,6 +169,15 @@ impl Operations {
             ));
         }
         let key = token()?;
+        let view = PreviewView {
+            id: key.clone(),
+            confirmation: CONFIRMATION,
+            valid_seconds: PREVIEW_TTL.as_secs(),
+            main_id: id.into(),
+            main_title: evidence.session().title.clone(),
+            spawned_descendants: evidence.total_sessions() - 1,
+            total_sessions: evidence.total_sessions(),
+        };
         self.previews.insert(
             key.clone(),
             Preview {
@@ -139,11 +185,7 @@ impl Operations {
                 expires: Instant::now() + PREVIEW_TTL,
             },
         );
-        Ok(PreviewView {
-            id: key,
-            confirmation: CONFIRMATION,
-            valid_seconds: PREVIEW_TTL.as_secs(),
-        })
+        Ok(view)
     }
 
     pub(super) fn start(
@@ -175,24 +217,34 @@ impl Operations {
         Ok(review)
     }
 
-    pub(super) fn finish(&mut self, key: &str, status: OperationStatus) {
+    pub(super) fn finish(&mut self, key: &str, outcome: RemovalOutcome) {
         if let Some(operation) = self.completed.get_mut(key) {
+            let status = match &outcome {
+                RemovalOutcome::Changed => OperationStatus::Changed,
+                RemovalOutcome::Verified => OperationStatus::Verified,
+                RemovalOutcome::NativeUncertain(_) => OperationStatus::NativeUncertain,
+                RemovalOutcome::VerificationIncomplete => OperationStatus::VerificationIncomplete,
+                RemovalOutcome::Residual(_) => OperationStatus::Residual,
+            };
             *operation = OperationView::new(status, std::mem::take(&mut operation.native_id));
+            if let RemovalOutcome::Residual(residual)
+            | RemovalOutcome::NativeUncertain(Some(residual)) = outcome
+            {
+                operation.message.push_str(&format!(
+                    " Righe di sessione ancora presenti: {}. Transcript: {}. Legami di origine: {}.",
+                    residual.canonical_rows, residual.rollouts, residual.spawn_edges,
+                ));
+                if residual.unrelated_changed {
+                    operation.message.push_str(
+                        " Sono cambiate anche le evidenze di sessioni esterne all’albero.",
+                    );
+                }
+            }
         }
         self.running = false;
     }
 
     pub(super) fn get(&self, key: &str) -> Option<OperationView> {
         self.completed.get(key).cloned()
-    }
-}
-
-impl From<RemovalOutcome> for OperationStatus {
-    fn from(value: RemovalOutcome) -> Self {
-        match value {
-            RemovalOutcome::Changed => Self::Changed,
-            RemovalOutcome::CommandSucceeded => Self::CommandSucceeded,
-            RemovalOutcome::OutcomeUnknown => Self::OutcomeUnknown,
-        }
     }
 }

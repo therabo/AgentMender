@@ -1,9 +1,9 @@
 # AgentMender
 
 AgentMender is a local browser session manager for **Codex** and **Claude Code**.
-Browse sessions by provider, search titles, IDs and workspaces, then inspect a
-selected session. On the supported Codex profile, preview and explicitly confirm
-removal of one archived session.
+Browse verified main conversations by provider and search titles, IDs and
+workspaces. On supported Codex releases, preview and confirm irreversible
+removal of one archived main conversation and its verified spawned descendants.
 
 ## Run locally
 
@@ -22,12 +22,13 @@ without model services, MCP or external credentials.
 
 | Provider | Available workflow |
 |---|---|
-| Codex | Partial inventory and bounded transcript pages on macOS. Native single-session removal for the [exact reviewed binary and archive profile](docs/provider-compatibility.md). |
-| Claude Code | Partial read-only inventory of recognized project JSONL, including Desktop-origin Code records in the configured project archive. |
+| Codex | Partial main-conversation inventory and bounded transcript pages on macOS. Native cascade removal under the [verified release, command and storage contract](docs/provider-compatibility.md). |
+| Claude Code | Partial read-only inventory of verified main conversations in project JSONL, including Desktop-origin Code records. |
 
-The UI distinguishes observed metadata from missing values and reports provider
-availability, coverage and eligibility. Native command success leaves residual
-artifacts and physical storage reclaim unverified.
+The review lists the main UUID, verified descendants and expected session count.
+After dispatch, AgentMender checks canonical rows, rollout files and spawn edges.
+Desktop visibility, other provider artifacts and reclaimed disk space remain
+outside those checks.
 
 [Launch options and API](docs/local-session-manager.md) ·
 [Architecture](docs/architecture.md) · [Roadmap](docs/product-roadmap.md) ·

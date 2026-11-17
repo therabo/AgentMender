@@ -1,4 +1,4 @@
-"""Isolated archive seed for the exact native Codex UI acceptance profile."""
+"""Isolated archive seed for the native Codex UI acceptance contract."""
 from contextlib import closing, contextmanager
 import hashlib
 import json
@@ -10,11 +10,14 @@ import subprocess
 import sys
 import time
 
-VERSION = "0.169.0-alpha.11.1"
-DIGEST = "3ea20787e106af94573d3d6c19480aed93a1334b0dd32b6b04e2f780ce82cf4b"
+VERSIONS = {"0.169.0-alpha.11.1", "0.169.0"}
 MAX_OUTPUT = 8 * 1024 * 1024
 METHODS = {"initialize", "thread/read"}
-R, C, G, S, F, M = [f"ab000000-1111-4111-8111-{n:012d}" for n in (1, 2, 3, 4, 6, 7)]
+def session_id(n):
+    return f"ab000000-1111-4111-8111-{n:012d}"
+
+
+R, C, G, S, F, M, GRANDCHILD, SIBLING, ORPHAN, ONE, ONLY_CHILD, PROTECTED_PARENT, MISSING_PARENT, SURVIVING_CHILD, REPLACEMENT = map(session_id, range(1, 16))
 
 
 def digest(path):
@@ -85,7 +88,7 @@ print(json.dumps(results))
     return results
 
 
-def seed(case, ident, parent=None, archived=False):
+def seed(case, ident, parent=None, archived=False, **relationships):
     folder = case / "provider" / ("archived_sessions" if archived else "sessions/2026/10/31")
     folder.mkdir(parents=True, exist_ok=True)
     path = folder / f"rollout-2026-10-31T10-00-00-{ident}.jsonl"
@@ -95,7 +98,7 @@ def seed(case, ident, parent=None, archived=False):
             "cwd": str(case / "cwd" / "target-project"), "originator": "codex_cli_rs",
             "cli_version": "synthetic-ui-fixture", "source": source,
             "model_provider": "openai",
-            "base_instructions": {"text": "Synthetic AgentMender fixture only."}}
+            "base_instructions": {"text": "Synthetic AgentMender fixture only."}, **relationships}
     rows = [
         {"timestamp": "2026-10-31T10:00:00.000Z", "type": "session_meta", "payload": meta},
         {"timestamp": "2026-10-31T10:00:01.000Z", "type": "event_msg",
@@ -108,8 +111,6 @@ def seed(case, ident, parent=None, archived=False):
 
 class FixtureServer:
     def __init__(self, case, binary, private_home):
-        if digest(binary) != DIGEST:
-            raise ValueError("exact binary digest changed")
         self.case, self.n, self.buf, self.total = case, 0, b"", 0
         self.err = (case / "native-stderr-private.log").open("wb")
         self.sel = selectors.DefaultSelector()
@@ -128,7 +129,7 @@ class FixtureServer:
             result = response.get("result", {})
             if Path(result.get("codexHome", "/missing")).resolve() != (case / "provider").resolve():
                 raise ValueError("unexpected native state root")
-            if f"/{VERSION} " not in result.get("userAgent", ""):
+            if not any(f"/{version} " in result.get("userAgent", "") for version in VERSIONS):
                 raise ValueError("unexpected App Server version")
             self.send({"method": "initialized", "params": {}})
         except BaseException:
@@ -207,11 +208,19 @@ def native_fixture(base, binary):
     case = new_case(base, "native")
     rollouts = {
         R: seed(case, R, archived=True),
-        S: seed(case, S, archived=True),
+        PROTECTED_PARENT: seed(case, PROTECTED_PARENT, archived=True),
+        S: seed(case, S, parent=PROTECTED_PARENT, archived=True),
         F: seed(case, F),
         M: seed(case, M, archived=True),
+        REPLACEMENT: seed(case, REPLACEMENT, archived=True),
         G: seed(case, G, archived=True),
         C: seed(case, C, parent=G, archived=True),
+        GRANDCHILD: seed(case, GRANDCHILD, parent=C, archived=True),
+        SIBLING: seed(case, SIBLING, parent=G, archived=True),
+        ONE: seed(case, ONE, archived=True),
+        ONLY_CHILD: seed(case, ONLY_CHILD, parent=ONE, archived=True),
+        ORPHAN: seed(case, ORPHAN, parent=C, archived=True),
+        SURVIVING_CHILD: seed(case, SURVIVING_CHILD, parent=MISSING_PARENT, archived=True),
     }
     with rollouts[R].open("a") as out:
         for text in ("Visible disposable message.", "password: secret-marker", "fixture text " * 1536):
@@ -227,9 +236,11 @@ def native_fixture(base, binary):
     # authority to create coordination files for a closed database.
     with closing(sqlite3.connect(root / "state_5.sqlite")) as db:
         with db:
+            db.execute("DELETE FROM threads WHERE id=?", (ORPHAN,))
             db.executemany("INSERT OR REPLACE INTO thread_spawn_edges VALUES(?,?,'closed')", [
-                (G, C),
-                (C, "ab000000-1111-4111-8111-000000000099"),
+                (G, C), (C, GRANDCHILD), (G, SIBLING), (ONE, ONLY_CHILD),
+                (C, ORPHAN), (C, session_id(99)), (PROTECTED_PARENT, S),
+                (MISSING_PARENT, SURVIVING_CHILD),
             ])
         assert (root / "state_5.sqlite-wal").is_file() and (root / "state_5.sqlite-shm").is_file()
         yield root, rollouts

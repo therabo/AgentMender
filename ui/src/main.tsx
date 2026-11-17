@@ -82,11 +82,11 @@ function Inventory({ provider, revision, onConfirm }: {
     </div>
 
     <div className="summary">
-      <div className="summary-item"><span className="summary-icon"><Layers3 size={19} aria-hidden /></span><div><span>Sessioni rilevate</span><strong>{info?.coverage === 'partial' ? numberLabel(info.total) : '—'}</strong></div></div>
+      <div className="summary-item"><span className="summary-icon"><Layers3 size={19} aria-hidden /></span><div><span>Conversazioni principali</span><strong>{info?.coverage === 'partial' ? numberLabel(info.total) : '—'}</strong></div></div>
       <div className="summary-item"><span className="summary-icon"><HardDrive size={19} aria-hidden /></span><div><span>Provider</span><strong>{info ? labels[info.presence] : '—'}</strong></div></div>
       <div className="summary-item"><span className="summary-icon"><ShieldCheck size={19} aria-hidden /></span><div><span>Accesso</span><strong>{info ? info.removal_available ? 'Rimozione Codex' : 'Sola lettura' : '—'}</strong></div></div>
     </div>
-    {info && <Notice tone="warning"><strong>{info.coverage === 'partial' ? 'Copertura parziale.' : info.coverage === 'not_detected' ? 'Provider non rilevato.' : 'Archivio indisponibile.'}</strong> {info.coverage_description}</Notice>}
+    {info && <Notice tone="warning"><strong>{info.coverage === 'partial' ? 'Copertura parziale.' : info.coverage === 'not_detected' ? 'Provider non rilevato.' : 'Archivio indisponibile.'}</strong> {info.coverage_description}{info.id === 'codex' && info.coverage === 'partial' && info.removal_reason && <p>{info.removal_reason}</p>}</Notice>}
 
     <section className="inventory" aria-label="Inventario delle sessioni">
       <div className="inventory-heading"><h2>Inventario</h2><span>{page ? `${numberLabel(page.total)} ${page.total === 1 ? 'risultato' : 'risultati'}` : '—'}</span></div>
@@ -204,7 +204,7 @@ function App() {
         : auth === 'failed' ? <><h1>Accesso locale</h1><Notice tone="error">{authError}</Notice></>
         : <>
           {operationId && <div className="operation">
-            <Notice tone={operation?.status === 'command_succeeded' ? 'success' : operationError || operation?.status === 'outcome_unknown' || operation?.status === 'changed' ? 'warning' : 'info'}>
+            <Notice tone={operation?.status === 'verified' ? 'success' : operationError || (operation && operation.status !== 'running') ? 'warning' : 'info'}>
               <div>{posting ? 'Invio conferma…' : operation?.message ?? (operationError || 'Verifica esito…')}</div>
               {operation?.native_id && <code>{operation.native_id}</code>}
               {operationError && <button className="button quiet" onClick={() => retryStatus(value => value + 1)}>Verifica esito</button>}

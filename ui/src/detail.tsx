@@ -43,11 +43,10 @@ function Conversation({ path }: { path: string }) {
   </section>
 }
 
-function RemovalReview({ detail, preview, onBack, onConfirm }: { detail: Detail; preview: Preview; onBack: () => void; onConfirm: (id: string, phrase: string) => void }) {
+function RemovalReview({ preview, onBack, onConfirm }: { preview: Preview; onBack: () => void; onConfirm: (id: string, phrase: string) => void }) {
   const [entered, setEntered] = useState('')
   const [expires] = useState(() => Date.now() + preview.valid_seconds * 1000)
   const [expired, setExpired] = useState(false)
-  const session = detail.session
   useEffect(() => {
     const timer = window.setTimeout(() => setExpired(true), Math.max(0, expires - Date.now()))
     return () => window.clearTimeout(timer)
@@ -56,11 +55,12 @@ function RemovalReview({ detail, preview, onBack, onConfirm }: { detail: Detail;
     <button className="button quiet back" type="button" onClick={onBack}><ArrowLeft size={16} aria-hidden /> Dettagli sessione</button>
     <h2 id="session-title">Conferma rimozione</h2>
     <dl className="facts review-facts">
-      <Fact label="Provider" value={providerLabel[session.provider]} />
-      <Fact label="Titolo" value={session.title ?? 'Senza titolo'} />
-      <Fact label="Identificativo" value={session.native_id} mono />
+      <Fact label="Conversazione principale" value={preview.main_title ?? 'Senza titolo'} />
+      <Fact label="UUID" value={preview.main_id} mono />
+      <Fact label="Subagent verificati" value={preview.spawned_descendants.toLocaleString('it')} />
+      <Fact label="Sessioni coinvolte" value={preview.total_sessions.toLocaleString('it')} />
     </dl>
-    <Notice tone="warning">La rimozione è permanente. Il comando Codex può includere subagent collegati. AgentMender ha verificato quelli rilevabili e ripeterà il controllo prima di avviare il comando.</Notice>
+    <Notice tone="warning">La rimozione è irreversibile. Codex rimuoverà la conversazione e l’albero di subagent verificato.</Notice>
     <form className="confirm-form" onSubmit={event => {
       event.preventDefault()
       if (!expired && entered === preview.confirmation) onConfirm(preview.id, entered)
@@ -70,7 +70,7 @@ function RemovalReview({ detail, preview, onBack, onConfirm }: { detail: Detail;
       {expired && <Notice tone="warning">Anteprima scaduta. Torna ai dettagli e richiedine una nuova.</Notice>}
       <div className="detail-actions">
         <button className="button" type="button" onClick={onBack}>Annulla</button>
-        <button className="button danger" disabled={expired || entered !== preview.confirmation} type="submit"><Trash2 size={16} aria-hidden />Rimuovi la sessione</button>
+        <button className="button danger" disabled={expired || entered !== preview.confirmation} type="submit"><Trash2 size={16} aria-hidden />Rimuovi definitivamente</button>
       </div>
     </form>
   </div>
@@ -107,7 +107,7 @@ export function SessionDetail({ provider, rowKey, onClose, onConfirm }: {
   const close = () => preview ? setPreview(undefined) : onClose()
   return <Dialog onClose={close} label="session-title">
     <header className="drawer-header"><span>Dettagli sessione</span><CloseButton onClose={close} /></header>
-    {detail && preview ? <RemovalReview detail={detail} preview={preview} onBack={close} onConfirm={onConfirm} />
+    {detail && preview ? <RemovalReview preview={preview} onBack={close} onConfirm={onConfirm} />
       : detail && session ? <div className="detail-body">
         <div className="detail-labels"><SessionStatus session={session} />{session.protected && <span className="chip"><ShieldCheck size={14} aria-hidden />Protetta</span>}</div>
         <h2 id="session-title">{session.title ?? 'Senza titolo'}</h2>
@@ -122,14 +122,6 @@ export function SessionDetail({ provider, rowKey, onClose, onConfirm }: {
           <Fact label="Compatibilità" value={session.removal_reason ? 'Sola lettura' : 'Rimozione soggetta a verifica'} />
           <Fact label="Workspace" value={session.workspace ?? 'Non disponibile'} mono />
         </dl>
-        <section className="detail-section">
-          <h3>Sessioni collegate</h3>
-          {session.parent && <p>Sessione padre <code>{session.parent}</code></p>}
-          {session.forked_from && <p>Fork di <code>{session.forked_from}</code></p>}
-          {detail.children.length > 0 && <ul>{detail.children.map(id => <li key={id}><code>{id}</code></li>)}</ul>}
-          {!session.parent && !session.forked_from && detail.children.length === 0 && <p>Nessuna relazione rilevata.</p>}
-          <p>La copertura delle relazioni è parziale.</p>
-        </section>
         {detail.conversation_preview ? <Conversation path={path} /> : <section className="detail-section"><h3>Conversazione</h3><p>Anteprima del transcript non disponibile.</p></section>}
         <section className="detail-section removal-section">
           <h3>Rimozione</h3>

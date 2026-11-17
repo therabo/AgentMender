@@ -25,6 +25,7 @@ pub(super) struct ProviderView {
     pub coverage_description: &'static str,
     pub total: usize,
     pub removal_available: bool,
+    pub removal_reason: Option<&'static str>,
 }
 
 pub(super) const NO_CLAUDE_REMOVAL: &str =
@@ -34,7 +35,6 @@ pub(super) struct Snapshot {
     info: ProviderView,
     version: Option<String>,
     conversation_preview: bool,
-    removal_reason: Option<&'static str>,
     index: LocalInventory,
     ids: std::collections::HashMap<String, usize>,
 }
@@ -81,9 +81,9 @@ impl Snapshot {
                         let description = if sessions.len() >= app.limit {
                             "Raggiunto il limite di inventario. Altre sessioni potrebbero essere presenti."
                         } else if provider == ProviderKind::Codex {
-                            "Dati del database Codex locale riconosciuto. Alcune sessioni o relazioni potrebbero mancare."
+                            "Dati del database Codex locale riconosciuto. Sono visibili solo le conversazioni principali verificate."
                         } else {
-                            "Metadati riconosciuti nei transcript di progetto. Formati, titoli e date possono essere incompleti."
+                            "Conversazioni principali riconosciute nei transcript di progetto. Titoli e date possono essere incompleti."
                         };
                         (Coverage::Partial, description, sessions)
                     }
@@ -119,15 +119,7 @@ impl Snapshot {
         let removal_reason = match provider {
             ProviderKind::Claude => Some(NO_CLAUDE_REMOVAL),
             ProviderKind::Codex if !can_read => Some("L'archivio Codex è indisponibile."),
-            ProviderKind::Codex
-                if !app
-                    .native
-                    .as_ref()
-                    .is_some_and(|native| native.is_current()) =>
-            {
-                Some(removal::UNSUPPORTED)
-            }
-            _ => None,
+            ProviderKind::Codex => removal::native_reason(&app.native),
         };
         let index = LocalInventory::new(sessions);
         let ids = index
@@ -143,10 +135,10 @@ impl Snapshot {
                 coverage_description,
                 total: index.len(),
                 removal_available: removal_reason.is_none(),
+                removal_reason,
             },
             version: detected.version,
             conversation_preview: transcript_preview && can_read,
-            removal_reason,
             index,
             ids,
         }
@@ -224,18 +216,11 @@ impl Inventories {
     ) -> Result<DetailView, ApiError> {
         self.with(app, provider, |snapshot| {
             let session = snapshot.selected(key)?;
-            let children: Vec<_> = snapshot
-                .index
-                .children(session)
-                .take(50)
-                .map(|row| row.identity.native_id.clone())
-                .collect();
             Ok(DetailView {
                 session: SessionView::new(app, snapshot, session),
                 version: snapshot.version.clone(),
                 conversation_preview: snapshot.conversation_preview
                     && session.transcript_bytes.is_some(),
-                children,
             })
         })
     }
@@ -262,7 +247,6 @@ pub(super) struct DetailView {
     session: SessionView,
     version: Option<String>,
     conversation_preview: bool,
-    children: Vec<String>,
 }
 
 #[derive(Serialize)]
@@ -278,8 +262,6 @@ struct SessionView {
     state: SessionState,
     transcript_bytes: Option<u64>,
     kind: SessionKind,
-    parent: Option<String>,
-    forked_from: Option<String>,
     protected: bool,
     removal_reason: Option<&'static str>,
 }
@@ -290,15 +272,9 @@ impl SessionView {
         let protected = meta.identity.provider == ProviderKind::Codex
             && app.protected.contains(&meta.identity.native_id);
         let removal_reason = snapshot
+            .info
             .removal_reason
-            .or_else(|| removal::refusal(session, app.native.is_some(), &app.protected))
-            .or_else(|| {
-                snapshot
-                    .index
-                    .children(session)
-                    .next()
-                    .map(|_| removal::AFFECTED_UNKNOWN)
-            });
+            .or_else(|| removal::refusal(session, &app.protected));
         Self {
             key: key(session),
             native_id: meta.identity.native_id.clone(),
@@ -311,8 +287,6 @@ impl SessionView {
             state: meta.state,
             transcript_bytes: session.transcript_bytes,
             kind: session.kind,
-            parent: meta.parent.as_ref().map(|parent| parent.native_id.clone()),
-            forked_from: session.forked_from.clone(),
             protected,
             removal_reason,
         }

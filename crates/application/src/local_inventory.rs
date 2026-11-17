@@ -1,8 +1,8 @@
 //! Metadata filtering and stable pagination for a fixed provider observation.
-use agentmender_domain::{Session, SessionIdentity, SessionState};
+use agentmender_domain::{Session, SessionState};
 use caseless::Caseless;
 use serde::Deserialize;
-use std::{cmp::Ordering, collections::BTreeMap};
+use std::cmp::Ordering;
 use unicode_normalization::UnicodeNormalization;
 
 fn folded(value: &str) -> String {
@@ -42,7 +42,6 @@ struct Entry {
 
 pub struct LocalInventory {
     entries: Vec<Entry>,
-    children: BTreeMap<SessionIdentity, Vec<usize>>,
 }
 
 fn compare<T: Ord>(left: Option<T>, right: Option<T>, ascending: bool) -> Ordering {
@@ -57,14 +56,10 @@ fn compare<T: Ord>(left: Option<T>, right: Option<T>, ascending: bool) -> Orderi
 
 impl LocalInventory {
     pub fn new(sessions: Vec<Session>) -> Self {
-        let mut children: BTreeMap<_, Vec<_>> = BTreeMap::new();
         let entries = sessions
             .into_iter()
-            .enumerate()
-            .map(|(index, session)| {
-                if let Some(parent) = &session.parent {
-                    children.entry(parent.clone()).or_default().push(index);
-                }
+            .filter(Session::is_main)
+            .map(|session| {
                 let searchable = [
                     Some(session.identity.native_id.as_str()),
                     session.title.as_deref(),
@@ -81,7 +76,7 @@ impl LocalInventory {
                 }
             })
             .collect();
-        Self { entries, children }
+        Self { entries }
     }
 
     pub fn len(&self) -> usize {
@@ -98,14 +93,6 @@ impl LocalInventory {
 
     pub fn get(&self, position: usize) -> Option<&Session> {
         self.entries.get(position).map(|entry| &entry.session)
-    }
-
-    pub fn children(&self, session: &Session) -> impl Iterator<Item = &Session> {
-        self.children
-            .get(&session.identity)
-            .into_iter()
-            .flatten()
-            .map(|&index| &self.entries[index].session)
     }
 
     pub fn page(&self, query: &InventoryQuery) -> InventoryPage<'_> {
@@ -159,7 +146,7 @@ impl LocalInventory {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agentmender_domain::{ProviderKind, SessionKind};
+    use agentmender_domain::{ProviderKind, SessionIdentity, SessionKind};
 
     fn session(id: &str, value: Option<i64>) -> Session {
         Session {

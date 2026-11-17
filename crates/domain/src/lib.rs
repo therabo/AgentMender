@@ -80,6 +80,12 @@ pub struct Session {
     pub parent: Option<SessionIdentity>,
 }
 
+impl Session {
+    pub fn is_main(&self) -> bool {
+        self.kind == SessionKind::Main && self.parent.is_none() && self.forked_from.is_none()
+    }
+}
+
 /// Codex stores UUIDs in lowercase canonical form. Claude locators may use
 /// uppercase hex and must still match their own embedded IDs exactly.
 pub fn canonical_uuid(id: &str) -> bool {

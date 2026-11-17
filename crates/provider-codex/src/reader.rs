@@ -86,7 +86,7 @@ fn rollout_io(error: std::io::Error) -> ProviderError {
         _ => unavailable(),
     }
 }
-fn compressed_path(path: &Path) -> bool {
+pub(super) fn compressed_path(path: &Path) -> bool {
     path.file_name()
         .and_then(|n| n.to_str())
         .is_some_and(|n| n.ends_with(".jsonl.zst"))
@@ -210,12 +210,7 @@ pub(super) fn open_transcript(
     }
     found.ok_or_else(|| content_limit("source file missing"))
 }
-pub(super) fn header(
-    file: &fs::File,
-    compressed: bool,
-    native_id: &str,
-    end: Instant,
-) -> Result<(usize, HistoryMode), ProviderError> {
+fn header_bytes(file: &fs::File, compressed: bool, end: Instant) -> Result<Vec<u8>, ProviderError> {
     let mut header_reader = BufReader::with_capacity(
         8192,
         RolloutReader::new(file, compressed, end).map_err(rollout_io)?,
@@ -230,6 +225,16 @@ pub(super) fn header(
     if count == 0 || count > RECORD_BYTES {
         return Err(content_limit("bounded_session_header_unavailable"));
     }
+    Ok(header_bytes)
+}
+
+pub(super) fn header(
+    file: &fs::File,
+    compressed: bool,
+    native_id: &str,
+    end: Instant,
+) -> Result<(usize, HistoryMode), ProviderError> {
+    let header_bytes = header_bytes(file, compressed, end)?;
     let record: serde_json::Value = serde_json::from_slice(&header_bytes)
         .map_err(|_| content_limit("header_not_session_meta"))?;
     if record["type"] != "session_meta" {
@@ -250,7 +255,162 @@ pub(super) fn header(
         Some("paginated") => HistoryMode::Paginated,
         _ => return Err(content_limit("unknown_history_mode")),
     };
-    Ok((count, format))
+    Ok((header_bytes.len(), format))
+}
+
+#[cfg(target_os = "macos")]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum ObservedSource {
+    Main,
+    Spawned(String),
+    Other,
+}
+
+#[cfg(target_os = "macos")]
+#[derive(serde::Deserialize)]
+#[serde(untagged)]
+enum SourceValue {
+    Name(String),
+    Structured { subagent: Option<SubagentSource> },
+}
+
+#[cfg(target_os = "macos")]
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum SubagentSource {
+    Review,
+    Compact,
+    MemoryConsolidation,
+    ThreadSpawn { parent_thread_id: String },
+    Other(String),
+}
+
+#[cfg(target_os = "macos")]
+impl ObservedSource {
+    fn from_marker(source: Option<&SourceValue>) -> Result<Self, ProviderError> {
+        match source {
+            Some(SourceValue::Name(source))
+                if matches!(
+                    source.as_str(),
+                    "cli" | "vscode" | "exec" | "mcp" | "appServer"
+                ) =>
+            {
+                Ok(Self::Main)
+            }
+            Some(SourceValue::Structured {
+                subagent: Some(SubagentSource::ThreadSpawn { parent_thread_id }),
+            }) if agentmender_domain::canonical_uuid(parent_thread_id) => {
+                Ok(Self::Spawned(parent_thread_id.clone()))
+            }
+            Some(SourceValue::Structured {
+                subagent: Some(SubagentSource::ThreadSpawn { .. }),
+            }) => Err(unavailable()),
+            Some(SourceValue::Structured {
+                subagent: Some(SubagentSource::Other(source)),
+            }) if source.is_empty() => Err(unavailable()),
+            _ => Ok(Self::Other),
+        }
+    }
+
+    pub fn from_database(source: Option<&str>) -> Result<Self, ProviderError> {
+        let marker = match source {
+            Some(source) if source.starts_with(['{', '"', '[']) => {
+                Some(serde_json::from_str(source).map_err(|_| unavailable())?)
+            }
+            Some(source) => Some(SourceValue::Name(source.into())),
+            None => None,
+        };
+        Self::from_marker(marker.as_ref())
+    }
+}
+
+#[cfg(target_os = "macos")]
+#[derive(serde::Deserialize)]
+struct RelationshipHeader {
+    #[serde(rename = "type")]
+    kind: String,
+    payload: RelationshipMeta,
+}
+
+#[cfg(target_os = "macos")]
+#[derive(serde::Deserialize)]
+pub(super) struct RelationshipMeta {
+    id: String,
+    cli_version: String,
+    source: Option<SourceValue>,
+    pub session_id: Option<String>,
+    pub parent_thread_id: Option<String>,
+    pub forked_from_id: Option<String>,
+    pub forked_from_ordinal_exclusive: Option<u64>,
+    #[serde(default)]
+    pub attached_thread: bool,
+    pub thread_source: Option<String>,
+    pub history_base: Option<HistoryBase>,
+}
+
+#[cfg(target_os = "macos")]
+#[derive(serde::Deserialize)]
+pub(super) struct HistoryBase {
+    pub thread_id: String,
+}
+
+#[cfg(target_os = "macos")]
+impl RelationshipMeta {
+    pub fn source(&self) -> Result<ObservedSource, ProviderError> {
+        ObservedSource::from_marker(self.source.as_ref())
+    }
+
+    pub fn is_main(&self, id: &str) -> bool {
+        self.source()
+            .is_ok_and(|source| source == ObservedSource::Main)
+            && self
+                .session_id
+                .as_deref()
+                .is_none_or(|session| session == id)
+            && self.parent_thread_id.is_none()
+            && self.forked_from_id.is_none()
+            && self.forked_from_ordinal_exclusive.is_none()
+            && !self.attached_thread
+            && self.history_base.is_none()
+            && self
+                .thread_source
+                .as_deref()
+                .is_none_or(|source| source == "user")
+    }
+}
+
+#[cfg(target_os = "macos")]
+pub(super) fn relationship_header(
+    file: &fs::File,
+    path: &Path,
+    id: &str,
+    end: Instant,
+) -> Result<RelationshipMeta, ProviderError> {
+    let header: RelationshipHeader =
+        serde_json::from_slice(&header_bytes(file, compressed_path(path), end)?)
+            .map_err(|_| unavailable())?;
+    let meta = header.payload;
+    if header.kind != "session_meta"
+        || meta.id != id
+        || meta.cli_version.is_empty()
+        || meta.cli_version.len() > 128
+        || [
+            meta.session_id.as_deref(),
+            meta.parent_thread_id.as_deref(),
+            meta.forked_from_id.as_deref(),
+            meta.history_base
+                .as_ref()
+                .map(|base| base.thread_id.as_str()),
+        ]
+        .into_iter()
+        .flatten()
+        .any(|id| !agentmender_domain::canonical_uuid(id))
+        || (meta.attached_thread || meta.forked_from_ordinal_exclusive.is_some())
+            && meta.forked_from_id.is_none()
+    {
+        return Err(unavailable());
+    }
+    Ok(meta)
 }
 
 fn scan(

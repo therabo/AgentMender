@@ -14,8 +14,12 @@ use agentmender_domain::{Installation, ProviderKind};
 use agentmender_provider_api::{ProviderError, ProviderLocation, process, validate_location};
 use std::{path::PathBuf, process::Child, sync::Mutex};
 
-pub use removal::{NativeRemoval, RemovalOutcome, RemovalRefusal, RemovalReview};
-pub use worker::{TranscriptCursor, TranscriptMessage, TranscriptPage, run_worker};
+pub use removal::{
+    NativeRemoval, NativeUnavailable, RemovalOutcome, RemovalRefusal, RemovalReview,
+};
+pub use worker::{
+    ResidualEvidence, TranscriptCursor, TranscriptMessage, TranscriptPage, run_worker,
+};
 
 pub struct CodexAdapter {
     location: ProviderLocation,

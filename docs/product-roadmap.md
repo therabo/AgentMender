@@ -1,13 +1,14 @@
 # Product roadmap
 
 The local manager is the primary surface. Current work focuses on predictable
-inventory, selection and truthful outcomes for a single confirmed operation.
+main-conversation inventory and verified outcomes for one confirmed Codex
+spawned subtree at a time.
 
 ## Coverage and compatibility
 
 - Establish an isolated Codex read contract for additional platforms.
-- Qualify additional native Codex binaries against the same exact-identity,
-  writer and collateral-preservation tests before admitting removal.
+- Qualify additional Codex releases and storage revisions against the native
+  cascade, writer-lock, reference and unrelated-session preservation fixtures.
 - Improve Claude format coverage with fixtures for observed missing metadata.
   Enable removal only when a separately validated single-session operation exists.
 
