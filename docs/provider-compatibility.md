@@ -68,6 +68,29 @@ Desktop visibility, other artifacts and physical bytes reclaimed are outside
 the verification. The [disposable fixture](local-session-manager.md#test-with-disposable-archives)
 checks byte-for-byte preservation of unrelated fixture rollouts and rows.
 
+### Codex workspace groups
+
+The exact absolute workspace spelling comes from the scoped thread archive.
+Grouping works for a missing on-disk workspace. Ambiguous path spellings or
+missing metadata go to **Senza progetto**. Workspace paths are never opened
+for removal. A complete preflight checks canonical locators, workspace
+agreement with the rollout header for selected main conversations, orphan
+rollouts that could contain more main conversations and all spawned trees.
+The scan is bounded to 16,384 records per collection, eight seconds per
+worker observation, 32 main conversations and 256 total members (128 per
+tree). The worker also enforces a 112 KiB project evidence payload limit.
+Large or ambiguous archives can still support individual removal where a
+single-tree review succeeds.
+
+The published CLI contract and state schema store threads with a workspace
+field. They expose UUID deletion and no separately removable workspace
+object. The Desktop reconciliation contract is for a derived thread catalog.
+Desktop workspace registrations and UI preferences have no verified deletion
+contract here and are excluded. The Codex group disappears from AgentMender
+when its observed main conversations are gone.
+See the [Codex CLI](https://github.com/openai/codex/blob/rust-v0.169.0/codex-rs/cli/src/main.rs)
+and [state migrations](https://github.com/openai/codex/tree/rust-v0.169.0/codex-rs/state/migrations).
+
 ## Claude Code
 
 Project JSONL with recognized location and embedded session identity supplies
@@ -76,3 +99,19 @@ conversations appear in the browser. Archive status,
 workspace, title and dates may be unknown. The manager exposes Claude Code as
 read-only. Desktop installation detection supplies presence and version
 observations without promoting sidecar formats into a mutation capability.
+
+
+Each observed directory directly under the configured `projects` root is a
+persistent archive namespace. Namespaces with the same recorded workspace
+retain separate identities. Empty observed directories can appear in the
+project list. Main transcript identity comes from its filename and embedded
+session ID. Nested subagent transcripts, tool-result sidecars, task state and
+auto memory have distinct lifecycles and are not exposed as conversations.
+
+Anthropic's documented `claude purge` resolves a workspace path and can
+touch history, project-specific trust settings in global configuration,
+and state outside the namespace. Its documented interface has a human-readable
+dry run. AgentMender has no verified contract to bind that plan to an exact
+observed namespace, prove ownership of every sidecar and coordinate concurrent
+Claude Code or Desktop writers. All Claude projects stay read-only, including
+unknown files and metadata. [Claude Code archive layout and purge](https://code.claude.com/docs/en/claude-directory#clear-local-data).

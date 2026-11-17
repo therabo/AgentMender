@@ -36,10 +36,25 @@ fn displayable(value: &str) -> bool {
 }
 
 impl ClaudeAdapter {
-    pub fn local_inventory(&self, limit: usize) -> Result<Vec<Session>, ProviderError> {
+    pub fn local_inventory(&self, limit: usize) -> Result<InventoryObservation, ProviderError> {
         validate_location(&self.location)?;
         let projects = self.location.state_root.join("projects");
         let inventory = filesystem::inventory(&projects, limit)?;
+        let mut incomplete =
+            inventory.incomplete || inventory.truncated || inventory.permission_denied;
+        let instances = inventory
+            .directories
+            .iter()
+            .filter_map(|name| {
+                name.to_str()
+                    .filter(|name| displayable(name) && name.len() <= 900)
+            })
+            .map(|name| ProjectIdentity {
+                provider: ProviderKind::Claude,
+                state_root: self.location.state_root.clone(),
+                locator: ProjectLocator::Namespace(name.into()),
+            })
+            .collect();
         let mut sessions = Vec::new();
         for file in inventory.files {
             let locator = Path::new("projects").join(&file.relative_path);
@@ -48,10 +63,12 @@ impl ClaudeAdapter {
             };
             let Ok(bytes) = filesystem::read_prefix(&self.location.state_root, &file.path, PREFIX)
             else {
+                incomplete = true;
                 continue;
             };
             let mut found = false;
             let mut conflict = false;
+            let mut sidechain = false;
             let mut workspace = None;
             let mut workspace_ambiguous = false;
             let mut title = None;
@@ -72,8 +89,11 @@ impl ClaudeAdapter {
                     continue;
                 };
                 let id = record.session_id.as_deref();
-                if (shape.agent_id.is_none() && record.is_sidechain == Some(true))
-                    || id.is_some_and(|id| id != shape.session_id)
+                if shape.agent_id.is_none() && record.is_sidechain == Some(true) {
+                    sidechain = true;
+                    break;
+                }
+                if id.is_some_and(|id| id != shape.session_id)
                     || record
                         .agent_id
                         .as_ref()
@@ -108,7 +128,8 @@ impl ClaudeAdapter {
                     last_active_at = last_active_at.max(timestamp(record.timestamp.as_deref()));
                 }
             }
-            if !found || conflict {
+            if !found || conflict || sidechain {
+                incomplete |= !sidechain;
                 continue;
             }
             if workspace_ambiguous {
@@ -120,8 +141,10 @@ impl ClaudeAdapter {
                 |agent| format!("{}/agent:{agent}", shape.session_id),
             );
             if shape.bucket.len() + native.len() > 1000
-                || shape.bucket.chars().any(char::is_control)
+                || shape.bucket.len() > 900
+                || !displayable(&shape.bucket)
             {
+                incomplete = true;
                 continue;
             }
             let identity = |native_id| SessionIdentity {
@@ -159,6 +182,10 @@ impl ClaudeAdapter {
                 io::Error::from(io::ErrorKind::PermissionDenied),
             ));
         }
-        Ok(sessions)
+        Ok(InventoryObservation {
+            sessions,
+            projects: instances,
+            incomplete,
+        })
     }
 }

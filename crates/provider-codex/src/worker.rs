@@ -5,7 +5,9 @@ mod cascade;
 mod inventory;
 
 use crate::{CodexAdapter, Guard, removal::RemovalRefusal};
-use agentmender_domain::{ProviderKind, Session, SessionIdentity};
+use agentmender_domain::{
+    InventoryObservation, ProjectIdentity, ProviderKind, Session, SessionIdentity,
+};
 use agentmender_provider_api::{
     ProviderError, evidence::EvidenceSandbox, process, validate_location,
 };
@@ -20,6 +22,8 @@ use std::{
 const MAX_REQUEST: usize = 64 * 1024;
 const MAX_OUTPUT: usize = 128 * 1024;
 const PAGE_ROWS: usize = 128;
+const MAX_PROJECT_ROOTS: usize = 32;
+const MAX_PROJECT_MEMBERS: usize = 256;
 #[cfg(target_os = "macos")]
 const MAX_SCOPE_MEMBERS: usize = 128;
 
@@ -91,8 +95,15 @@ pub(super) struct RemovalEvidence {
 #[serde(deny_unknown_fields)]
 pub(super) struct RemovalScope {
     pub members: Vec<ReviewedMember>,
-    database_identity: (u64, u64),
-    unrelated_revision: String,
+    pub database_identity: (u64, u64),
+    pub unrelated_revision: String,
+}
+
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct ProjectEvidence {
+    pub archive_revision: String,
+    pub trees: Vec<RemovalEvidence>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -124,6 +135,7 @@ struct InventoryPage {
     next: Option<String>,
     revision: String,
     examined: usize,
+    incomplete: bool,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -147,6 +159,7 @@ enum Operation {
         cursor: Option<Box<TranscriptCursor>>,
     },
     Removal(SessionIdentity),
+    ProjectRemoval(ProjectIdentity),
     VerifyRemoval(RemovalScope),
 }
 
@@ -157,6 +170,7 @@ enum Response {
     Inventory(InventoryPage),
     Transcript(TranscriptPage),
     Removal(Box<Result<RemovalEvidence, RemovalRefusal>>),
+    ProjectRemoval(Result<ProjectEvidence, RemovalRefusal>),
     Verification(Verification),
 }
 
@@ -195,6 +209,10 @@ fn observe(request: &Request, resident: &mut Option<Snapshot>) -> Result<Respons
         Operation::Removal(identity) => {
             let revision = reader::hash(&serde_json::to_vec(&before).map_err(|_| unavailable())?);
             Response::Removal(Box::new(cascade::plan(&db, root, identity, revision, end)))
+        }
+        Operation::ProjectRemoval(project) => {
+            let revision = reader::hash(&serde_json::to_vec(&before).map_err(|_| unavailable())?);
+            Response::ProjectRemoval(cascade::project_plan(&db, root, project, revision, end))
         }
         Operation::VerifyRemoval(scope) => {
             Response::Verification(cascade::verify(&db, root, scope, end)?)
@@ -404,7 +422,7 @@ impl CodexAdapter {
         }
     }
 
-    pub fn local_inventory(&self, limit: usize) -> Result<Vec<Session>, ProviderError> {
+    pub fn local_inventory(&self, limit: usize) -> Result<InventoryObservation, ProviderError> {
         let mut sessions = Vec::new();
         let mut after = String::new();
         let mut revision = None;
@@ -414,6 +432,7 @@ impl CodexAdapter {
             .canonicalize()
             .map_err(|_| unavailable())?;
         let mut remaining = limit;
+        let mut incomplete = false;
         while remaining > 0 {
             let limit = remaining.min(PAGE_ROWS);
             let Response::Inventory(page) = self.observe(Operation::Inventory {
@@ -443,14 +462,22 @@ impl CodexAdapter {
             }
             revision = Some(page.revision);
             remaining -= page.examined;
+            incomplete |= page.incomplete;
             sessions.extend(page.sessions);
             match page.next {
-                Some(next) if next > after && page.examined > 0 => after = next,
+                Some(next) if next > after && page.examined > 0 => {
+                    after = next;
+                    incomplete |= remaining == 0;
+                }
                 Some(_) => return Err(unavailable()),
                 None => break,
             }
         }
-        Ok(sessions)
+        Ok(InventoryObservation {
+            sessions,
+            incomplete,
+            ..Default::default()
+        })
     }
 
     pub fn transcript_page(
@@ -495,6 +522,38 @@ impl CodexAdapter {
             }
             _ => Err(RemovalRefusal::IncompleteRelationships),
         }
+    }
+
+    pub(super) fn project_evidence(
+        &self,
+        project: &ProjectIdentity,
+    ) -> Result<ProjectEvidence, RemovalRefusal> {
+        let Response::ProjectRemoval(result) =
+            self.observe(Operation::ProjectRemoval(project.clone()))?
+        else {
+            return Err(RemovalRefusal::IncompleteRelationships);
+        };
+        let evidence = result?;
+        let mut members = std::collections::BTreeSet::new();
+        if evidence.trees.len() > MAX_PROJECT_ROOTS
+            || evidence.trees.iter().any(|tree| {
+                !tree.session.is_main()
+                    || ProjectIdentity::for_session(&tree.session) != *project
+                    || !tree
+                        .scope
+                        .members
+                        .iter()
+                        .any(|member| member.id == tree.session.identity.native_id)
+                    || tree.scope.members.iter().any(|member| {
+                        !agentmender_domain::canonical_uuid(&member.id)
+                            || !members.insert(&member.id)
+                    })
+            })
+            || members.len() > MAX_PROJECT_MEMBERS
+        {
+            return Err(RemovalRefusal::IncompleteRelationships);
+        }
+        Ok(evidence)
     }
 
     pub(super) fn verify_removal(

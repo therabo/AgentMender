@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import platform
 import selectors
+import shlex
 import shutil
 import sqlite3
 import subprocess
@@ -124,7 +125,7 @@ class Client:
         deadline = time.monotonic() + 30
         while time.monotonic() < deadline:
             value = self.call("GET", f"/api/operations/{token}")
-            if value["status"] != "running":
+            if value["status"] not in ("preparing", "running"):
                 return value
             time.sleep(0.1)
         raise AssertionError("native operation did not finish")
@@ -385,6 +386,198 @@ def codex_acceptance(client, root, rollouts, binary):
     assert rollouts[probe.REPLACEMENT].exists()
 
 
+PROJECTS = "/api/codex/projects"
+
+
+def claude_projects(client, root):
+    same = root / "projects" / "namespace-b"
+    same.mkdir()
+    original = root / "projects" / "project" / f"{CLAUDE_ID}.jsonl"
+    duplicate = same / original.name
+    duplicate.write_bytes(original.read_bytes())
+    unknown = same / "unknown-sidecar"
+    unknown.write_bytes(b"outside transcript contract")
+    empty = root / "projects" / "observed-empty"
+    empty.mkdir()
+    client.call("POST", "/api/claude/refresh")
+    query = "/api/claude/projects"
+    first = client.call("GET", f"{query}?search=Atlas&limit=1")
+    second = client.call("GET", f"{query}?search=Atlas&limit=1&offset=1")
+    assert first["total"] == second["total"] == 2
+    projects = first["rows"] + second["rows"]
+    assert {project["namespace"] for project in projects} == {"project", "namespace-b"}
+    assert len({project["key"] for project in projects}) == 2
+    for project in projects:
+        assert project["workspace"] == "/fixture/Atlas"
+        assert project["persistent_instance"] and not project["removal_available"]
+        scoped = f"{query}/{project['key']}"
+        assert client.call("GET", scoped) == project
+        filtered = client.call("GET", scoped + "/sessions?search=CAFE%CC%81")
+        assert filtered["total"] == 1 and filtered["rows"][0]["native_id"] == CLAUDE_ID
+        client.call("GET", f"{PROJECTS}/{project['key']}", code=404)
+        message = client.call("POST", scoped + "/removal-preview", code=409)["error"]
+        assert "sidecar" in message
+    assert unknown.read_bytes() == b"outside transcript contract" and same.is_dir()
+    observed = client.call("GET", query + "?search=observed-empty")["rows"]
+    assert len(observed) == 1 and observed[0]["main_conversations"] == 0
+    assert duplicate.read_bytes() == original.read_bytes()
+    return projects
+
+
+def project_path(client, workspace):
+    page = client.call("GET", PROJECTS)
+    return next(f"{PROJECTS}/{row['key']}" for row in page["rows"]
+                if row["workspace"] == str(workspace))
+
+
+def confirm_project(client, review, expected, concurrent=False):
+    path = f"/api/operations/{review['id']}/confirm"
+    assert review["confirmation"] == "ELIMINA PROGETTO"
+    phrase = {"confirmation": review["confirmation"]}
+    client.call("POST", path, {"confirmation": "RIMUOVI"}, code=409)
+    client.call("POST", path, {**phrase, "ids": [probe.F]}, code=422)
+    if concurrent:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            calls = [pool.submit(client.call, "POST", path, phrase, code=(202, 409)) for _ in range(2)]
+            assert sorted(call.result() for call in calls) == [202, 409]
+    else:
+        client.call("POST", path, phrase, code=202)
+    result = client.operation(review["id"])
+    assert result["status"] == expected, result
+    client.call("POST", path, phrase, code=409)
+    return result["project"]
+
+
+def codex_projects(agentmender, base, claude, executable):
+    import fcntl
+
+    extra = probe.session_id(102)
+    workspaces = {
+        probe.R: "other/Target", probe.G: "workspace/Target", probe.ONE: "workspace/Target",
+        probe.C: "different-subagent-cwd", probe.F: "active", probe.PROTECTED_PARENT: "protected",
+        probe.M: "partial", probe.REPLACEMENT: "partial", extra: "partial",
+    }
+    with probe.native_fixture(base, executable, workspaces) as (root, rollouts):
+        cwd = root.parent / "cwd"
+        target = cwd / workspaces[probe.G]
+        target.mkdir(parents=True)
+        (target / ".git").mkdir()
+        source = target / "main.rs"
+        source.write_bytes(b"fn main() {}\n")
+        git_config = target / ".git" / "config"
+        git_config.write_bytes(b"[core]\n")
+        live = base / "private-canary"
+        new_id = probe.session_id(101)
+
+        def database(sql, params=()):
+            with closing(sqlite3.connect(root / "state_5.sqlite")) as db, db:
+                return db.execute(sql, params).fetchall()
+
+        with ui(agentmender, base, root, claude, executable, max_entries=3) as (client, ticket):
+            authorize(client, ticket)
+            path = project_path(client, target)
+            observed = client.call("GET", path)
+            assert observed["main_conversations"] == 1 and observed["incomplete"]
+            review = client.call("POST", path + "/removal-preview")
+            assert review["main_conversations"] == 2 and review["complete"]
+
+        with ui(agentmender, base, root, claude, executable) as (client, ticket):
+            authorize(client, ticket)
+            path = project_path(client, target)
+            singleton = project_path(client, cwd / workspaces[probe.R])
+            assert path != singleton and not (cwd / workspaces[probe.R]).exists()
+            assert client.call("GET", singleton)["name"] == client.call("GET", path)["name"] == "Target"
+            assert client.call("GET", path + "/sessions?limit=1")["total"] == 2
+            assert client.call("GET", path + f"/sessions?search={probe.C}")["total"] == 0
+            client.call("POST", f"{PROJECTS}/{probe.G}/removal-preview", code=404)
+            for key, reason in [(probe.F, "archiviate"), (probe.PROTECTED_PARENT, "protetta")]:
+                blocked = project_path(client, cwd / workspaces[key])
+                result = client.call("POST", blocked + "/removal-preview", code=409)
+                assert reason in result["error"], result
+
+            database("UPDATE threads SET archived=0 WHERE id=?", (probe.C,))
+            assert "attiva" in client.call("POST", path + "/removal-preview", code=409)["error"]
+            database("UPDATE threads SET archived=1 WHERE id=?", (probe.C,))
+            locks = root / "thread-writer-locks"
+            locks.mkdir(exist_ok=True)
+            with (locks / f"{probe.ONLY_CHILD}.lock").open("w") as lock:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                assert "in uso" in client.call("POST", path + "/removal-preview", code=409)["error"]
+            fork = probe.seed(root.parent, new_id, archived=True,
+                              cwd=str(cwd / "other"), forked_from_id=probe.C)
+            assert "fork esterno" in client.call("POST", path + "/removal-preview", code=409)["error"]
+            fork.unlink()
+            orphan = probe.seed(root.parent, new_id, archived=True, cwd=str(target))
+            assert "incompleta" in client.call("POST", path + "/removal-preview", code=409)["error"]
+            orphan.unlink()
+
+            review = client.call("POST", path + "/removal-preview")
+            assert review["complete"] and review["status"] == "ready" and not review["persistent_items"]
+            assert (review["main_conversations"], review["descendants"], review["total_sessions"]) == (2, 6, 8), review
+
+            # A newly imported main in the same group invalidates the entire receipt.
+            new_rollout = probe.seed(root.parent, new_id, archived=True, cwd=str(target))
+            with probe.FixtureServer(root.parent, executable, live) as server:
+                assert "result" in server.call("thread/read", {"threadId": new_id, "includeTurns": False})
+            assert confirm_project(client, review, "changed")["removed"] == []
+            database("DELETE FROM threads WHERE id=?", (new_id,))
+            new_rollout.unlink()
+
+            review = client.call("POST", path + "/removal-preview")
+            database("UPDATE threads SET cwd=? WHERE id=?", (str(cwd / "different"), probe.ONE))
+            assert not confirm_project(client, review, "refused")["removed"]
+            database("UPDATE threads SET cwd=? WHERE id=?", (str(target), probe.ONE))
+
+            before = {ident: path.read_bytes() for ident, path in rollouts.items()}
+            deleted = {probe.G, probe.ONE, probe.C, probe.GRANDCHILD, probe.SIBLING, probe.ORPHAN, probe.ONLY_CHILD}
+            unrelated = [row for row in database("SELECT * FROM threads ORDER BY id") if row[0] not in deleted]
+            review = client.call("POST", path + "/removal-preview")
+            progress = confirm_project(client, review, "verified", concurrent=True)
+            assert progress["removed"] == review["subtrees"] and not progress["remaining"] and progress["uncertain"] is None
+            assert database("SELECT * FROM threads ORDER BY id") == unrelated
+            for ident, rollout in rollouts.items():
+                if ident in deleted:
+                    assert not rollout.exists()
+                else:
+                    assert rollout.read_bytes() == before[ident]
+            assert source.read_bytes() == b"fn main() {}\n" and git_config.read_bytes() == b"[core]\n"
+            client.call("GET", path, code=404)
+            review = client.call("POST", singleton + "/removal-preview")
+            assert review["main_conversations"] == review["total_sessions"] == 1
+            confirm_project(client, review, "verified")
+            client.call("GET", singleton, code=404)
+
+        # Exercise a second dispatch failure with a fixture-only executable wrapper.
+        # The first command is the real verified release. No production hook is used.
+        wrapper = base / "fixture-fail-second"
+        wrapper.write_text(f'''#!/bin/sh
+for arg do
+  [ "$arg" = "{probe.REPLACEMENT}" ] && exit 29
+done
+exec {shlex.quote(str(executable))} "$@"
+''')
+        wrapper.chmod(0o700)
+        with ui(agentmender, base, root, claude, wrapper) as (client, ticket):
+            authorize(client, ticket)
+            path = project_path(client, cwd / "partial")
+            review = client.call("POST", path + "/removal-preview")
+            progress = confirm_project(client, review, "partial")
+            assert [tree["main_id"] for tree in progress["removed"]] == [probe.M], progress
+            assert progress["uncertain"]["main_id"] == probe.REPLACEMENT
+            assert [tree["main_id"] for tree in progress["remaining"]] == [extra]
+            assert rollouts[extra].is_file()
+            assert rollouts[probe.REPLACEMENT].is_file() and not rollouts[probe.M].exists()
+            client.call("POST", path + "/removal-preview", code=409)
+
+        with ui(agentmender, base, root, claude, executable) as (client, ticket):
+            authorize(client, ticket)
+            client.call("GET", f"/api/operations/{review['id']}", code=404)
+            assert client.call("GET", path)["main_conversations"] == 2
+            fresh = client.call("POST", path + "/removal-preview")
+            assert fresh["id"] != review["id"] and fresh["main_conversations"] == 2
+            assert rollouts[probe.REPLACEMENT].is_file()
+
+
 def rejects_unconfined_reader(binary, source):
     with tempfile.TemporaryDirectory(prefix="agentmender-evidence-", dir="/private/tmp") as private, \
          tempfile.TemporaryDirectory(prefix="agentmender-denial-", dir="/private/tmp") as denial:
@@ -439,7 +632,11 @@ def main():
                 with ui(agentmender, base, root, claude, banner_only) as (client, ticket):
                     authorize(client, ticket)
                     provider = client.call("GET", "/api/codex/sessions")["provider"]
-                    assert not provider["removal_available"] and "comando" in provider["removal_reason"]
+                    assert not provider["removal_available"] and "comando" in provider["removal_reason"], provider
+            project_base = base / "project-suite"
+            project_base.mkdir()
+            codex_projects(agentmender, project_base, claude, executable_copy)
+            print("Native Codex projects: full preflight, serial verification, partial completion and fresh review after restart.")
             print(f"Native Codex UI ({probe.digest(binary)[:12]}): verified singleton and subtree removal, hidden descendants, refusal and one-shot guards, unchanged unrelated rows and rollouts.")
         else:
             root = base / "codex"
@@ -458,6 +655,12 @@ def main():
                 first = client.call("GET", "/api/codex/sessions?limit=10")
                 if platform.system() == "Darwin":
                     assert first["provider"]["total"] == 3000
+                    atlas = project_path(client, "/fixture/Atlas")
+                    options = "search=CAFE%CC%81%20Atlas&state=archived&sort=created&ascending=true&limit=2"
+                    p1 = client.call("GET", f"{atlas}/sessions?{options}")
+                    p2 = client.call("GET", f"{atlas}/sessions?{options}&offset=2")
+                    assert p1["total"] == p2["total"] == 1500
+                    assert [row["created_at"] for row in p1["rows"] + p2["rows"]] == [1, 3, 5, 7]
                     second = client.call("GET", "/api/codex/sessions?limit=10&offset=10")
                     assert not {item["key"] for item in first["rows"]} & {item["key"] for item in second["rows"]}
                     selected = client.call("GET", "/api/codex/sessions?search=CAFE%CC%81%20Atlas&state=archived&since=1970-01-02&until=1970-01-02&sort=created&ascending=true&limit=2")
@@ -480,17 +683,35 @@ def main():
             with ui(agentmender, base, other_codex, other_claude) as (client, ticket):
                 authorize(client, ticket)
                 assert inventory_acceptance(client, other_claude) != first_claude_key
+                projects = claude_projects(client, other_claude)
                 client.call("GET", f"/api/claude/sessions/{first_claude_key}", code=404)
                 if first_codex_key:
                     other = client.call("GET", "/api/codex/sessions")["rows"][0]
                     assert other["native_id"] == "ab000000-1111-4111-8111-000000000000"
                     assert other["key"] != first_codex_key
+                    codex = client.call("GET", PROJECTS)["rows"][0]
+                    assert codex["key"] not in {project["key"] for project in projects}
+                    assert codex["workspace"] == "/fixture/Atlas"
                     client.call("GET", f"/api/codex/sessions/{first_codex_key}", code=404)
             if platform.system() == "Darwin":
                 with ui(agentmender, base, other_codex, other_claude, max_entries=6) as (client, ticket):
                     authorize(client, ticket)
                     truncated = client.call("GET", "/api/codex/sessions")
                     assert truncated["total"] == 0 and truncated["provider"]["total"] == 0
+                project_budget = base / "project-budget"
+                codex_metadata_fixture(project_budget, 12)
+                with closing(sqlite3.connect(project_budget / "state_5.sqlite")) as db, db:
+                    db.execute("DELETE FROM threads WHERE title='Hidden Codex worker'")
+                    db.execute("UPDATE threads SET cwd=NULL WHERE id=?", (probe.session_id(0),))
+                with ui(agentmender, base, project_budget, other_claude, max_entries=4) as (client, ticket):
+                    authorize(client, ticket)
+                    page = client.call("GET", PROJECTS)
+                    rows = {row["name"]: row for row in page["rows"]}
+                    assert rows["Atlas"]["main_conversations"] == 3 and rows["Atlas"]["incomplete"]
+                    assert rows["Senza progetto"]["main_conversations"] == 1 and rows["Senza progetto"]["unassigned"]
+                    path = f"{PROJECTS}/{rows['Senza progetto']['key']}"
+                    assert client.call("GET", path + "/sessions")["total"] == 1
+                    client.call("POST", path + "/removal-preview", code=409)
                 assert not (other_codex / "thread-writer-locks").exists()
             print("Local UI: scoped duplicate IDs, provider inventory, unsupported removal, origin and token guards, pagination and coverage.")
 

@@ -171,7 +171,7 @@ fn incoming(db: &Sqlite, id: &str) -> Result<Option<String>, ProviderError> {
     Ok(Some(parent))
 }
 
-fn row(
+pub(super) fn row(
     db: &Sqlite,
     root: &Path,
     row: &Row<'_>,
@@ -331,6 +331,7 @@ pub(super) fn page(
     let mut bytes = 0;
     let mut count = 0;
     let mut cursor = None;
+    let mut incomplete = false;
     while let Some(record) = rows.next().map_err(|_| unavailable())? {
         if Instant::now() >= end {
             return Err(unavailable());
@@ -341,6 +342,7 @@ pub(super) fn page(
                 next: cursor,
                 revision,
                 examined: count,
+                incomplete,
             });
         }
         let id: String = record.get(0).map_err(|_| unavailable())?;
@@ -364,10 +366,14 @@ pub(super) fn page(
                     next: cursor,
                     revision,
                     examined: count,
+                    incomplete,
                 });
             }
+            incomplete |= candidate.session.kind == SessionKind::Unknown;
             bytes += size;
             sessions.push(candidate.session);
+        } else {
+            incomplete = true;
         }
         cursor = Some(id);
         count += 1;
@@ -377,5 +383,6 @@ pub(super) fn page(
         next: None,
         revision,
         examined: count,
+        incomplete,
     })
 }

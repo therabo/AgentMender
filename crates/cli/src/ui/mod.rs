@@ -12,7 +12,7 @@ use std::{
 
 use agentmender_domain::ProviderKind;
 use agentmender_provider_claude::ClaudeAdapter;
-use agentmender_provider_codex::{CodexAdapter, NativeRemoval, NativeUnavailable, RemovalOutcome};
+use agentmender_provider_codex::{CodexAdapter, NativeRemoval, NativeUnavailable};
 use axum::{
     Json, Router,
     extract::{DefaultBodyLimit, Path, Query, Request, State},
@@ -25,8 +25,10 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::Semaphore;
 
 use self::{
-    inventory::{DetailView, Filter, Inventories, PageView, ProviderView},
-    removal::{OperationView, Operations, PreviewView},
+    inventory::{
+        DetailView, Filter, Inventories, PageView, ProjectView, ProjectsPage, ProviderView,
+    },
+    removal::{OperationView, Operations, PreviewView, ProjectPreviewView, ReviewedRemoval},
     transcript::{TranscriptCursors, TranscriptQuery, TranscriptView},
 };
 
@@ -196,6 +198,49 @@ async fn list(
     .await
 }
 
+async fn projects(
+    State(app): State<Arc<App>>,
+    Path(id): Path<String>,
+    Query(filter): Query<Filter>,
+) -> Result<Json<ProjectsPage>, ApiError> {
+    let provider = provider(&id)?;
+    let query = filter.try_into()?;
+    read(app, move |app| {
+        Ok(app.inventory.projects(app, provider, &query))
+    })
+    .await
+}
+
+async fn project_detail(
+    State(app): State<Arc<App>>,
+    Path((id, key)): Path<(String, String)>,
+) -> Result<Json<ProjectView>, ApiError> {
+    let provider = provider(&id)?;
+    read(app, move |app| {
+        app.inventory
+            .project(app, provider, &key, |app, _, project| {
+                ProjectView::new(app, project)
+            })
+    })
+    .await
+}
+
+async fn project_sessions(
+    State(app): State<Arc<App>>,
+    Path((id, key)): Path<(String, String)>,
+    Query(filter): Query<Filter>,
+) -> Result<Json<PageView>, ApiError> {
+    let provider = provider(&id)?;
+    let query = filter.try_into()?;
+    read(app, move |app| {
+        app.inventory
+            .project(app, provider, &key, |app, snapshot, project| {
+                PageView::project(app, snapshot, project, &query)
+            })
+    })
+    .await
+}
+
 async fn detail(
     State(app): State<Arc<App>>,
     Path((id, key)): Path<(String, String)>,
@@ -252,6 +297,34 @@ async fn preview(
     .await
 }
 
+async fn project_preview(
+    State(app): State<Arc<App>>,
+    Path((id, key)): Path<(String, String)>,
+) -> Result<Json<ProjectPreviewView>, ApiError> {
+    let provider = provider(&id)?;
+    read(app, move |app| {
+        let (identity, view) = app
+            .inventory
+            .project(app, provider, &key, |app, _, project| {
+                (project.identity.clone(), ProjectView::new(app, project))
+            })?;
+        if let Some(reason) = view.removal_reason {
+            return Err(ApiError::conflict(reason));
+        }
+        let review = app
+            .native
+            .as_ref()
+            .map_err(|_| ApiError::internal())?
+            .prepare_project(&app.codex, &identity)
+            .map_err(removal::refusal_error)?;
+        app.operations
+            .lock()
+            .expect("operation lock")
+            .issue_project(view, review)
+    })
+    .await
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Confirmation {
@@ -275,18 +348,33 @@ async fn confirm(
         .start(&key, &request.confirmation)?;
     tokio::spawn(async move {
         let worker = app.clone();
-        let status = tokio::task::spawn_blocking(move || {
+        let operation_key = key.clone();
+        let result = tokio::task::spawn_blocking(move || {
+            let operations = || worker.operations.lock().expect("operation lock");
             let native = worker.native.as_ref().expect("checked");
-            let status = native.execute(&worker.codex, review);
-            worker.inventory.invalidate(ProviderKind::Codex);
-            status
+            match review {
+                ReviewedRemoval::Session(review) => {
+                    let status = native.execute(&worker.codex, *review);
+                    worker.inventory.invalidate(ProviderKind::Codex);
+                    operations().finish(&operation_key, status);
+                }
+                ReviewedRemoval::Project(review) => {
+                    let outcome = native.execute_project(&worker.codex, *review, |step| {
+                        operations().project_step(&operation_key, step);
+                    });
+                    worker.inventory.invalidate(ProviderKind::Codex);
+                    operations().finish_project(&operation_key, outcome);
+                }
+            }
         })
-        .await
-        .unwrap_or(RemovalOutcome::NativeUncertain(None));
-        app.operations
-            .lock()
-            .expect("operation lock")
-            .finish(&key, status);
+        .await;
+        if result.is_err() {
+            app.inventory.invalidate(ProviderKind::Codex);
+            app.operations
+                .lock()
+                .expect("operation lock")
+                .interrupted(&key);
+        }
     });
     Ok(StatusCode::ACCEPTED)
 }
@@ -323,6 +411,16 @@ fn router(app: Arc<App>) -> Router {
         )
         .route("/favicon.ico", get(|| async { StatusCode::NO_CONTENT }))
         .route("/api/authorize", post(authorize))
+        .route("/api/{provider}/projects", get(projects))
+        .route("/api/{provider}/projects/{key}", get(project_detail))
+        .route(
+            "/api/{provider}/projects/{key}/sessions",
+            get(project_sessions),
+        )
+        .route(
+            "/api/{provider}/projects/{key}/removal-preview",
+            post(project_preview),
+        )
         .route("/api/{provider}/sessions", get(list))
         .route("/api/{provider}/sessions/{key}", get(detail))
         .route(

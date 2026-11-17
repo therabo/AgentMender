@@ -4,7 +4,9 @@ use crate::{
     reader::{self, ObservedSource, RelationshipMeta},
     removal::RemovalRefusal,
 };
-use agentmender_domain::{SessionState, canonical_uuid};
+use agentmender_domain::{
+    ProjectIdentity, ProjectLocator, SessionKind, SessionState, canonical_uuid, workspace_identity,
+};
 use agentmender_provider_api::filesystem;
 use rusqlite::{Connection as Sqlite, types::ValueRef};
 use sha2::{Digest, Sha256};
@@ -402,85 +404,216 @@ pub(super) fn plan(
     revision: String,
     end: Instant,
 ) -> Result<RemovalEvidence, RemovalRefusal> {
-    let layout = supported_layout(db)?;
-    let graph = Graph::read(db, end)?;
-    let main = &identity.native_id;
-    let ids = graph.subtree(main, end)?;
-    let candidate = inventory::exact(db, root, main, end)?;
-    if &candidate.session.identity != identity || !candidate.session.is_main() {
-        return Err(RemovalRefusal::NotMain);
-    }
-    let rollouts = rollout_index(root, end)?;
-    let canonical_rows = check_references(db, &layout, &graph, &rollouts, &ids, end)?;
+    let archive = RemovalArchive::read(db, root, end)?;
+    archive.tree(identity, &revision)
+}
 
-    let mut members = Vec::with_capacity(ids.len());
-    for id in &ids {
-        let rollout = rollouts.get(id);
-        if canonical_rows.contains(id) {
-            let canonical = inventory::exact(db, root, id, end)?;
-            if canonical.session.state != SessionState::Archived {
-                return Err(RemovalRefusal::UnsafeMember);
-            }
-            if rollout.is_none_or(|rollout| canonical.locator.as_ref() != Some(&rollout.path))
-                || canonical.relations.attached.is_some()
-            {
-                return Err(RemovalRefusal::IncompleteRelationships);
-            }
-            if id != main
-                && !matches!(&canonical.relations.source,
-                ObservedSource::Spawned(parent) if parent == &graph.inbound[id].parent)
-            {
-                return Err(RemovalRefusal::IncompleteRelationships);
-            }
-        }
-        if let Some(rollout) = rollout {
-            if !rollout.path.starts_with(root.join("archived_sessions"))
-                || reader::compressed_path(&rollout.path)
-                || rollout.rollout_id != *id
-                || rollout
-                    .path
-                    .to_str()
-                    .is_none_or(|path| path.len() > 512 || path.chars().any(char::is_control))
-            {
-                return Err(RemovalRefusal::UnsafeMember);
-            }
-            if id != main
-                && (!matches!(&rollout.source,
-                ObservedSource::Spawned(parent) if parent == &graph.inbound[id].parent)
-                    || rollout.meta.attached_thread
-                    || rollout
-                        .meta
-                        .session_id
-                        .as_ref()
-                        .is_some_and(|root| root != id && root != main))
-            {
-                return Err(RemovalRefusal::IncompleteRelationships);
-            }
-        }
-        members.push(ReviewedMember {
-            id: id.clone(),
-            rollout: rollout.map(|rollout| rollout.path.clone()),
-        });
+struct RemovalArchive<'a> {
+    db: &'a Sqlite,
+    root: &'a Path,
+    layout: inventory::Layout,
+    graph: Graph,
+    rollouts: BTreeMap<String, Rollout>,
+    end: Instant,
+}
+
+impl<'a> RemovalArchive<'a> {
+    fn read(db: &'a Sqlite, root: &'a Path, end: Instant) -> Result<Self, RemovalRefusal> {
+        Ok(Self {
+            db,
+            root,
+            layout: supported_layout(db)?,
+            graph: Graph::read(db, end)?,
+            rollouts: rollout_index(root, end)?,
+            end,
+        })
     }
-    let affected: Vec<_> = ids
-        .iter()
-        .map(|id| (id, rollouts.get(id).map(|r| &r.stamp)))
-        .collect();
-    let revision =
-        reader::hash(&serde_json::to_vec(&(revision, affected)).map_err(|_| unavailable())?);
-    let scope = RemovalScope {
-        members,
-        database_identity: db_identity(root)?,
-        unrelated_revision: unrelated_revision(db, &graph, &rollouts, &ids, end)?,
+
+    fn tree(
+        &self,
+        identity: &SessionIdentity,
+        revision: &str,
+    ) -> Result<RemovalEvidence, RemovalRefusal> {
+        let Self {
+            db,
+            root,
+            layout,
+            graph,
+            rollouts,
+            end,
+        } = self;
+        let end = *end;
+        let main = &identity.native_id;
+        let ids = graph.subtree(main, end)?;
+        let candidate = inventory::exact(db, root, main, end)?;
+        if &candidate.session.identity != identity || !candidate.session.is_main() {
+            return Err(RemovalRefusal::NotMain);
+        }
+        let canonical_rows = check_references(db, layout, graph, rollouts, &ids, end)?;
+
+        let mut members = Vec::with_capacity(ids.len());
+        for id in &ids {
+            let rollout = rollouts.get(id);
+            if canonical_rows.contains(id) {
+                let canonical = inventory::exact(db, root, id, end)?;
+                if canonical.session.state != SessionState::Archived {
+                    return Err(RemovalRefusal::UnsafeMember);
+                }
+                if rollout.is_none_or(|rollout| canonical.locator.as_ref() != Some(&rollout.path))
+                    || canonical.relations.attached.is_some()
+                {
+                    return Err(RemovalRefusal::IncompleteRelationships);
+                }
+                if id != main
+                    && !matches!(&canonical.relations.source,
+                ObservedSource::Spawned(parent) if parent == &graph.inbound[id].parent)
+                {
+                    return Err(RemovalRefusal::IncompleteRelationships);
+                }
+            }
+            if let Some(rollout) = rollout {
+                if !rollout.path.starts_with(root.join("archived_sessions"))
+                    || reader::compressed_path(&rollout.path)
+                    || rollout.rollout_id != *id
+                    || rollout
+                        .path
+                        .to_str()
+                        .is_none_or(|path| path.len() > 512 || path.chars().any(char::is_control))
+                {
+                    return Err(RemovalRefusal::UnsafeMember);
+                }
+                if id != main
+                    && (!matches!(&rollout.source,
+                ObservedSource::Spawned(parent) if parent == &graph.inbound[id].parent)
+                        || rollout.meta.attached_thread
+                        || rollout
+                            .meta
+                            .session_id
+                            .as_ref()
+                            .is_some_and(|root| root != id && root != main))
+                {
+                    return Err(RemovalRefusal::IncompleteRelationships);
+                }
+            }
+            members.push(ReviewedMember {
+                id: id.clone(),
+                rollout: rollout.map(|rollout| rollout.path.clone()),
+            });
+        }
+        let affected: Vec<_> = ids
+            .iter()
+            .map(|id| (id, rollouts.get(id).map(|r| &r.stamp)))
+            .collect();
+        let revision =
+            reader::hash(&serde_json::to_vec(&(revision, affected)).map_err(|_| unavailable())?);
+        let scope = RemovalScope {
+            members,
+            database_identity: db_identity(root)?,
+            unrelated_revision: unrelated_revision(db, graph, rollouts, &ids, end)?,
+        };
+        if serde_json::to_vec(&scope).map_err(|_| unavailable())?.len() > 48 * 1024 {
+            return Err(RemovalRefusal::IncompleteRelationships);
+        }
+        Ok(RemovalEvidence {
+            session: candidate.session,
+            revision,
+            scope,
+        })
+    }
+}
+
+pub(super) fn project_plan(
+    db: &Sqlite,
+    root: &Path,
+    project: &ProjectIdentity,
+    revision: String,
+    end: Instant,
+) -> Result<ProjectEvidence, RemovalRefusal> {
+    let ProjectLocator::Workspace(workspace) = &project.locator else {
+        return Err(RemovalRefusal::NotMain);
     };
-    if serde_json::to_vec(&scope).map_err(|_| unavailable())?.len() > 48 * 1024 {
+    if project.provider != ProviderKind::Codex
+        || project.state_root != root
+        || workspace_identity(workspace) != Some(workspace)
+    {
+        return Err(RemovalRefusal::Changed);
+    }
+    let archive = RemovalArchive::read(db, root, end)?;
+    let empty = BTreeSet::new();
+    let canonical = check_references(
+        db,
+        &archive.layout,
+        &archive.graph,
+        &archive.rollouts,
+        &empty,
+        end,
+    )?;
+    let mut query = db
+        .prepare(&format!("{} ORDER BY id", archive.layout.projection))
+        .map_err(|_| unavailable())?;
+    let mut rows = query.query([]).map_err(|_| unavailable())?;
+    let mut mains = Vec::new();
+    while let Some(row) = rows.next().map_err(|_| unavailable())? {
+        check_size(0, 1, end)?;
+        let id: String = row.get(0).map_err(|_| unavailable())?;
+        let rollout = archive.rollouts.get(&id).ok_or_else(unavailable)?;
+        let recorded: Option<String> = row.get(2).map_err(|_| unavailable())?;
+        let recorded = recorded.as_deref().and_then(workspace_identity);
+        let header = rollout.meta.cwd.as_deref().and_then(workspace_identity);
+        let selected = Some(workspace.as_str());
+        if recorded != selected && header != selected {
+            continue;
+        }
+        let candidate = inventory::row(db, root, row, &archive.layout, end)?;
+        if candidate.session.kind == SessionKind::Unknown
+            || (candidate.session.is_main() && recorded != header)
+            || (!candidate.session.is_main() && rollout.meta.is_main(&id))
+        {
+            return Err(RemovalRefusal::IncompleteRelationships);
+        }
+        if candidate.session.is_main() {
+            check_size(mains.len(), MAX_PROJECT_ROOTS, end)?;
+            mains.push(candidate.session.identity);
+        }
+    }
+    for (id, rollout) in &archive.rollouts {
+        if !canonical.contains(id)
+            && !matches!(&rollout.source, ObservedSource::Spawned(_))
+            && rollout
+                .meta
+                .cwd
+                .as_deref()
+                .and_then(workspace_identity)
+                .is_none_or(|path| path == workspace)
+        {
+            return Err(RemovalRefusal::IncompleteRelationships);
+        }
+    }
+
+    let mut trees = Vec::with_capacity(mains.len());
+    let mut members = BTreeSet::new();
+    for id in mains {
+        let tree = archive.tree(&id, &revision)?;
+        for member in &tree.scope.members {
+            check_size(members.len(), MAX_PROJECT_MEMBERS, end)?;
+            if !members.insert(member.id.clone()) {
+                return Err(RemovalRefusal::IncompleteRelationships);
+            }
+        }
+        trees.push(tree);
+    }
+    let evidence = ProjectEvidence {
+        archive_revision: unrelated_revision(db, &archive.graph, &archive.rollouts, &empty, end)?,
+        trees,
+    };
+    if serde_json::to_vec(&evidence)
+        .map_err(|_| unavailable())?
+        .len()
+        > 112 * 1024
+    {
         return Err(RemovalRefusal::IncompleteRelationships);
     }
-    Ok(RemovalEvidence {
-        session: candidate.session,
-        revision,
-        scope,
-    })
+    Ok(evidence)
 }
 
 pub(super) fn verify(

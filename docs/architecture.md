@@ -15,8 +15,8 @@ agentmender CLI -> application -> domain
 
 | Crate | Responsibility |
 |---|---|
-| `domain` | Provider/root/session identity, coverage-neutral metadata and display safety. |
-| `application` | Verified main-conversation filtering, normalized metadata queries and stable paging. |
+| `domain` | Provider/root/session and project identity, coverage-neutral metadata and display safety. |
+| `application` | Verified main-conversation filtering, project grouping, normalized metadata queries and stable paging. |
 | `provider-api` | Bounded filesystem reads, fixed version probes, isolated worker and native command launch, kernel write-denial attestation. |
 | `provider-codex` | Fixed SQLite and rollout observations, bounded compressed transcript parsing, native release and storage admission and the existing guarded success marker. |
 | `provider-claude` | Bounded read-only project transcript inventory and installation detection. |
@@ -29,7 +29,16 @@ verified main conversations before constructing its bounded metadata index,
 which supplies provider totals and opaque key lookups. Search uses Unicode normalization and full case
 folding. State and UTC date filters run before sorting and paging. Unknown sort
 values follow known ones. An opaque browser key incorporates provider, root,
-namespace and native identity.
+namespace and native identity. Project keys bind provider, root and the
+recorded Codex workspace or observed Claude namespace. An unassigned group
+collects main conversations whose project identity is unavailable. Session
+keys stay rooted in the original provider observation.
+
+The project index groups the full bounded observation before paging. Project
+and session filters use the same normalized metadata query. Group totals
+count visible main conversations. Known transcript bytes can include
+attributable hidden descendants, and coverage flags qualify observed totals.
+The browser pages sessions independently inside each expanded project.
 
 Codex opens SQLite only inside a protected macOS worker. It copies a bounded
 snapshot into memory and runs fixed projections. Inbound edge checks query
@@ -50,7 +59,8 @@ values remain unknown. There is no Claude mutation operation.
 
 ## Removal path
 
-The browser reviews one verified main UUID. The Codex worker owns the full
+The browser can review one verified main UUID or an entire Codex group.
+The Codex worker owns the full
 relationship observation. It indexes incoming and outgoing spawn edges and
 walks the outgoing edges iteratively into a unique bounded set, retaining
 descendant IDs with missing canonical rows. Duplicate or conflicting edges,
@@ -71,3 +81,16 @@ endpoint records verified deletion, pre-dispatch changes, residual evidence
 or uncertainty. Verified deletion can request the existing guarded Desktop
 marker reset. The [compatibility contract](provider-compatibility.md) lists the
 admitted releases and observation limits.
+
+
+Project review reopens the complete bounded archive independently of the UI
+entry budget, builds the existing graph and rollout index once per scan, then
+validates every tree, workspace and reference before issuing a receipt. Each
+native step starts from a freshly rebuilt plan. The verified previous tree's
+unrelated evidence is the fingerprint expected for the next remaining plan.
+The same native dispatch and postcondition serve single and project removal.
+
+The operation status exposes each verified, undispatched or uncertain tree.
+An observed failure stops dispatch. Outcomes and capabilities expire with the
+server process. The project inventory is reobserved on restart and the user
+can authorize a newly verified scope explicitly. See [ADR 0044](adr/0044-provider-projects.md).

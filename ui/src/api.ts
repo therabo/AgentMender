@@ -7,6 +7,7 @@ export type ProviderInfo = {
   id: Provider
   presence: 'installed' | 'state_only' | 'not_detected'
   coverage: Coverage
+  inventory_incomplete: boolean
   coverage_description: string
   total: number
   removal_available: boolean
@@ -46,8 +47,9 @@ export type Preview = {
 }
 export type Operation = {
   native_id: string
-  status: 'running' | 'changed' | 'verified' | 'native_uncertain' | 'verification_incomplete' | 'residual'
+  status: 'preparing' | 'running' | 'partial' | 'refused' | 'uncertain' | 'changed' | 'verified' | 'native_uncertain' | 'verification_incomplete' | 'residual'
   message: string
+  project?: { key: string; name: string; removed: Subtree[]; remaining: Subtree[]; uncertain: Subtree | null }
 }
 export type Transcript = {
   messages: { role: 'user' | 'assistant'; text: string }[]
@@ -89,3 +91,43 @@ export async function authorize(): Promise<void> {
 
 export const sessionPath = (provider: Provider, key: string) =>
   `/api/${provider}/sessions/${encodeURIComponent(key)}`
+
+export type Project = {
+  key: string
+  name: string
+  provider: Provider
+  workspace: string | null
+  namespace: string | null
+  main_conversations: number
+  last_active_at: number | null
+  transcript_bytes: number | null
+  transcript_bytes_incomplete: boolean
+  incomplete: boolean
+  persistent_instance: boolean
+  unassigned: boolean
+  removal_available: boolean
+  removal_reason: string | null
+}
+
+export type ProjectPage = { provider: ProviderInfo; total: number; rows: Project[] }
+export type Subtree = { main_id: string; total_sessions: number }
+export type ProjectPreview = {
+  id: string
+  confirmation: string
+  valid_seconds: number
+  status: 'ready'
+  provider: Provider
+  project_key: string
+  project_name: string
+  workspace: string | null
+  main_conversations: number
+  descendants: number
+  total_sessions: number
+  subtrees: Subtree[]
+  persistent_items: string[]
+  excluded: string[]
+  complete: boolean
+}
+
+export const projectPath = (provider: Provider, key: string) =>
+  `/api/${provider}/projects/${encodeURIComponent(key)}`

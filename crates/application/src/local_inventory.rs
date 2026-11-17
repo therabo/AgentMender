@@ -5,7 +5,7 @@ use serde::Deserialize;
 use std::cmp::Ordering;
 use unicode_normalization::UnicodeNormalization;
 
-fn folded(value: &str) -> String {
+pub(crate) fn folded(value: &str) -> String {
     value.nfkc().default_case_fold().nfkc().collect()
 }
 
@@ -44,7 +44,7 @@ pub struct LocalInventory {
     entries: Vec<Entry>,
 }
 
-fn compare<T: Ord>(left: Option<T>, right: Option<T>, ascending: bool) -> Ordering {
+pub(crate) fn compare<T: Ord>(left: Option<T>, right: Option<T>, ascending: bool) -> Ordering {
     match (left, right) {
         (Some(left), Some(right)) if ascending => left.cmp(&right),
         (Some(left), Some(right)) => right.cmp(&left),
@@ -96,12 +96,18 @@ impl LocalInventory {
     }
 
     pub fn page(&self, query: &InventoryQuery) -> InventoryPage<'_> {
+        self.page_with_labels(query, &[])
+    }
+
+    pub(crate) fn matching<'a, 'b: 'a>(
+        &'b self,
+        query: &'a InventoryQuery,
+        labels: &'a [String],
+    ) -> impl Iterator<Item = &'b Session> + 'a {
         let search = folded(query.search.trim());
-        let words: Vec<_> = search.split_whitespace().collect();
-        let mut records: Vec<_> = self
-            .entries
+        self.entries
             .iter()
-            .filter(|item| {
+            .filter(move |item| {
                 let meta = &item.session;
                 query.state.is_none_or(|state| state == meta.state)
                     && query
@@ -110,12 +116,22 @@ impl LocalInventory {
                     && query
                         .before
                         .is_none_or(|before| meta.last_active_at.is_some_and(|date| date < before))
-                    && words
-                        .iter()
-                        .all(|word| item.searchable.iter().any(|field| field.contains(word)))
+                    && search.split_whitespace().all(|word| {
+                        item.searchable
+                            .iter()
+                            .chain(labels)
+                            .any(|field| field.contains(word))
+                    })
             })
-            .map(|item| &item.session)
-            .collect();
+            .map(|entry| &entry.session)
+    }
+
+    pub(crate) fn page_with_labels(
+        &self,
+        query: &InventoryQuery,
+        labels: &[String],
+    ) -> InventoryPage<'_> {
+        let mut records: Vec<_> = self.matching(query, labels).collect();
         records.sort_unstable_by(|left, right| {
             let order = match query.sort {
                 InventorySort::Activity => {

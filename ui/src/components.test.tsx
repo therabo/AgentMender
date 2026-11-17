@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, expect, it, vi } from 'vitest'
-import type { Session } from './api'
-import { Pagination, SessionTable } from './components'
+import { useState } from 'react'
+import type { Project, Session } from './api'
+import { Pagination, ProjectAccordion, SessionTable } from './components'
 import { dateLabel, sizeLabel } from './format'
 
 afterEach(cleanup)
@@ -41,4 +42,41 @@ it('distinguishes unknown metadata from zero bytes and the Unix epoch', () => {
   expect(sizeLabel(null)).toBe('Non disponibile')
   expect(sizeLabel(0)).toBe('0 B')
   expect(sizeLabel(1024)).toBe('1 KiB')
+})
+
+it('expands projects independently and keeps removal separate from the accordion toggle', () => {
+  const remove = vi.fn()
+  const base: Project = {
+    key: 'atlas', name: 'Atlas', provider: 'codex', workspace: '/one/Atlas', namespace: null,
+    main_conversations: 2, last_active_at: null, transcript_bytes: 1024,
+    transcript_bytes_incomplete: true, incomplete: true, persistent_instance: false,
+    unassigned: false, removal_available: true, removal_reason: null,
+  }
+  function Projects() {
+    const [open, setOpen] = useState<Record<string, boolean>>({})
+    return [base, { ...base, key: 'other', name: 'Altro', removal_available: false }].map(project =>
+      <ProjectAccordion key={project.key} project={project} expanded={!!open[project.key]}
+        onToggle={() => setOpen(current => ({ ...current, [project.key]: !current[project.key] }))}
+        onRemove={remove}>
+        <p>Sessioni di {project.name}</p>
+      </ProjectAccordion>)
+  }
+
+  render(<Projects />)
+  const atlas = screen.getByRole('button', { name: 'Atlas' })
+  const other = screen.getByRole('button', { name: 'Altro' })
+  expect(atlas.getAttribute('aria-expanded')).toBe('false')
+  expect(screen.queryByText('Sessioni di Atlas')).toBeNull()
+  fireEvent.click(atlas)
+  fireEvent.click(other)
+  expect(atlas.getAttribute('aria-expanded')).toBe('true')
+  expect(document.getElementById(atlas.getAttribute('aria-controls')!)?.textContent).toContain('Sessioni di Atlas')
+  expect(screen.getByText('Sessioni di Altro')).toBeTruthy()
+  fireEvent.click(screen.getByRole('button', { name: 'Elimina progetto Atlas' }))
+  expect(remove).toHaveBeenCalledOnce()
+  expect(atlas.getAttribute('aria-expanded')).toBe('true')
+  expect(screen.queryByRole('button', { name: 'Elimina progetto Altro' })).toBeNull()
+  fireEvent.click(atlas)
+  expect(screen.queryByText('Sessioni di Atlas')).toBeNull()
+  expect(screen.getByText('Sessioni di Altro')).toBeTruthy()
 })

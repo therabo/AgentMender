@@ -200,28 +200,36 @@ class FixtureServer:
 
 
 @contextmanager
-def native_fixture(base, binary):
+def native_fixture(base, binary, workspaces=None):
     private_home = base / "private-canary"
     private_home.mkdir(mode=0o700)
     (private_home / "canary").write_text("fixture")
     validate_isolation(base, binary, private_home)
     case = new_case(base, "native")
+    def rollout(ident, *args, **kwargs):
+        if workspaces and ident in workspaces:
+            kwargs["cwd"] = str(case / "cwd" / workspaces[ident])
+        return seed(case, ident, *args, **kwargs)
+
     rollouts = {
-        R: seed(case, R, archived=True),
-        PROTECTED_PARENT: seed(case, PROTECTED_PARENT, archived=True),
-        S: seed(case, S, parent=PROTECTED_PARENT, archived=True),
-        F: seed(case, F),
-        M: seed(case, M, archived=True),
-        REPLACEMENT: seed(case, REPLACEMENT, archived=True),
-        G: seed(case, G, archived=True),
-        C: seed(case, C, parent=G, archived=True),
-        GRANDCHILD: seed(case, GRANDCHILD, parent=C, archived=True),
-        SIBLING: seed(case, SIBLING, parent=G, archived=True),
-        ONE: seed(case, ONE, archived=True),
-        ONLY_CHILD: seed(case, ONLY_CHILD, parent=ONE, archived=True),
-        ORPHAN: seed(case, ORPHAN, parent=C, archived=True),
-        SURVIVING_CHILD: seed(case, SURVIVING_CHILD, parent=MISSING_PARENT, archived=True),
+        R: rollout(R, archived=True),
+        PROTECTED_PARENT: rollout(PROTECTED_PARENT, archived=True),
+        S: rollout(S, parent=PROTECTED_PARENT, archived=True),
+        F: rollout(F),
+        M: rollout(M, archived=True),
+        REPLACEMENT: rollout(REPLACEMENT, archived=True),
+        G: rollout(G, archived=True),
+        C: rollout(C, parent=G, archived=True),
+        GRANDCHILD: rollout(GRANDCHILD, parent=C, archived=True),
+        SIBLING: rollout(SIBLING, parent=G, archived=True),
+        ONE: rollout(ONE, archived=True),
+        ONLY_CHILD: rollout(ONLY_CHILD, parent=ONE, archived=True),
+        ORPHAN: rollout(ORPHAN, parent=C, archived=True),
+        SURVIVING_CHILD: rollout(SURVIVING_CHILD, parent=MISSING_PARENT, archived=True),
     }
+    for ident in workspaces or ():
+        if ident not in rollouts:
+            rollouts[ident] = rollout(ident, archived=True)
     with rollouts[R].open("a") as out:
         for text in ("Visible disposable message.", "password: secret-marker", "fixture text " * 1536):
             row = {"type": "response_item", "payload": {"type": "message", "role": "user",

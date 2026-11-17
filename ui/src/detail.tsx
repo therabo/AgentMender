@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { AlertTriangle, ArrowLeft, FileText, ShieldCheck, Trash2 } from 'lucide-react'
-import { request, sessionPath, type Detail, type Preview, type Provider, type Transcript } from './api'
+import { projectPath, request, sessionPath, type Detail, type Preview, type Project, type ProjectPreview, type Provider, type Transcript } from './api'
 import { CloseButton, Dialog, Empty, Notice, SessionStatus } from './components'
 import { dateLabel, kindLabel, providerLabel, sizeLabel } from './format'
 
@@ -44,13 +44,6 @@ function Conversation({ path }: { path: string }) {
 }
 
 function RemovalReview({ preview, onBack, onConfirm }: { preview: Preview; onBack: () => void; onConfirm: (id: string, phrase: string) => void }) {
-  const [entered, setEntered] = useState('')
-  const [expires] = useState(() => Date.now() + preview.valid_seconds * 1000)
-  const [expired, setExpired] = useState(false)
-  useEffect(() => {
-    const timer = window.setTimeout(() => setExpired(true), Math.max(0, expires - Date.now()))
-    return () => window.clearTimeout(timer)
-  }, [expires])
   return <div className="detail-body">
     <button className="button quiet back" type="button" onClick={onBack}><ArrowLeft size={16} aria-hidden /> Dettagli sessione</button>
     <h2 id="session-title">Conferma rimozione</h2>
@@ -61,19 +54,77 @@ function RemovalReview({ preview, onBack, onConfirm }: { preview: Preview; onBac
       <Fact label="Sessioni coinvolte" value={preview.total_sessions.toLocaleString('it')} />
     </dl>
     <Notice tone="warning">La rimozione è irreversibile. Codex rimuoverà la conversazione e l’albero di subagent verificato.</Notice>
-    <form className="confirm-form" onSubmit={event => {
+    <ConfirmForm preview={preview} onCancel={onBack} onConfirm={onConfirm} />
+
+  </div>
+}
+
+function ConfirmForm({ preview, onCancel, onConfirm }: {
+  preview: Pick<Preview, 'id' | 'confirmation' | 'valid_seconds'>
+  onCancel: () => void
+  onConfirm: (id: string, phrase: string) => void
+}) {
+  const [entered, setEntered] = useState('')
+  const [expires] = useState(() => Date.now() + preview.valid_seconds * 1000)
+  const [expired, setExpired] = useState(false)
+  useEffect(() => {
+    const timer = window.setTimeout(() => setExpired(true), Math.max(0, expires - Date.now()))
+    return () => window.clearTimeout(timer)
+  }, [expires])
+  return <form className="confirm-form" onSubmit={event => {
       event.preventDefault()
       if (!expired && entered === preview.confirmation) onConfirm(preview.id, entered)
     }}>
       <label htmlFor="confirmation">Digita <strong>{preview.confirmation}</strong> per confermare</label>
       <input id="confirmation" autoComplete="off" spellCheck={false} value={entered} onChange={event => setEntered(event.target.value)} />
-      {expired && <Notice tone="warning">Anteprima scaduta. Torna ai dettagli e richiedine una nuova.</Notice>}
+      {expired && <Notice tone="warning">Anteprima scaduta. Richiedi una nuova anteprima.</Notice>}
       <div className="detail-actions">
-        <button className="button" type="button" onClick={onBack}>Annulla</button>
+        <button className="button" type="button" onClick={onCancel}>Annulla</button>
         <button className="button danger" disabled={expired || entered !== preview.confirmation} type="submit"><Trash2 size={16} aria-hidden />Rimuovi definitivamente</button>
       </div>
     </form>
-  </div>
+}
+
+export function ProjectRemoval({ project, onClose, onConfirm }: {
+  project: Project; onClose: () => void; onConfirm: (id: string, phrase: string) => void
+}) {
+  const [preview, setPreview] = useState<ProjectPreview>()
+  const [error, setError] = useState('')
+  const path = projectPath(project.provider, project.key)
+  useEffect(() => {
+    const controller = new AbortController()
+    request<ProjectPreview>(`${path}/removal-preview`, { method: 'POST', signal: controller.signal })
+      .then(result => { if (!controller.signal.aborted) setPreview(result) })
+      .catch(failure => { if (!controller.signal.aborted) setError(errorText(failure)) })
+    return () => controller.abort()
+  }, [path])
+
+  return <Dialog onClose={onClose} label="project-removal-title">
+    <header className="drawer-header"><span>Rimozione progetto</span><CloseButton onClose={onClose} /></header>
+    <div className="detail-body">
+      <h2 id="project-removal-title">{preview?.project_name ?? project.name}</h2>
+      {error ? <Notice tone="error">{error}</Notice>
+        : !preview ? <Empty title="Verifica dell’archivio in corso" busy />
+        : <>
+          <dl className="facts review-facts project-review-facts">
+            <Fact label="Provider" value={providerLabel[preview.provider]} />
+            <Fact label="Workspace" value={preview.workspace ?? 'Non disponibile'} mono />
+            <Fact label="Identificativo del progetto" value={preview.project_key} mono />
+            <Fact label="Conversazioni principali" value={preview.main_conversations.toLocaleString('it')} />
+            <Fact label="Subagent e discendenti" value={preview.descendants.toLocaleString('it')} />
+            <Fact label="Sessioni coinvolte" value={preview.total_sessions.toLocaleString('it')} />
+            <Fact label="Verifica" value={preview.complete ? 'Perimetro verificato' : 'Copertura incompleta'} />
+            <Fact label="Istanza del provider" value={preview.persistent_items.join(', ') || 'Raggruppamento per workspace'} />
+          </dl>
+          <section className="detail-section">
+            <h3>Fuori dal perimetro</h3>
+            <ul>{preview.excluded.map(item => <li key={item}>{item}</li>)}</ul>
+          </section>
+          <Notice tone="warning">La rimozione è irreversibile. Codex procede un sottoalbero alla volta e si ferma se rileva un cambiamento o un esito incerto.</Notice>
+          <ConfirmForm preview={preview} onCancel={onClose} onConfirm={onConfirm} />
+        </>}
+    </div>
+  </Dialog>
 }
 
 export function SessionDetail({ provider, rowKey, onClose, onConfirm }: {

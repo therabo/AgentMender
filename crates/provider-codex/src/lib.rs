@@ -15,7 +15,8 @@ use agentmender_provider_api::{ProviderError, ProviderLocation, process, validat
 use std::{path::PathBuf, process::Child, sync::Mutex};
 
 pub use removal::{
-    NativeRemoval, NativeUnavailable, RemovalOutcome, RemovalRefusal, RemovalReview,
+    NativeRemoval, NativeUnavailable, ProjectOutcome, ProjectRemovalReview, ProjectStep,
+    RemovalOutcome, RemovalRefusal, RemovalReview, Subtree,
 };
 pub use worker::{
     ResidualEvidence, TranscriptCursor, TranscriptMessage, TranscriptPage, run_worker,

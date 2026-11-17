@@ -1,6 +1,6 @@
-import { useEffect, useRef, type ReactNode } from 'react'
-import { AlertCircle, Archive, ChevronLeft, ChevronRight, Database, Folder, RefreshCw, X } from 'lucide-react'
-import type { Session } from './api'
+import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
+import { AlertCircle, Archive, ChevronDown, ChevronLeft, ChevronRight, Database, Folder, RefreshCw, Trash2, X } from 'lucide-react'
+import { projectPath, request, type Page, type Project, type Session } from './api'
 import { dateLabel, kindLabel, numberLabel, sizeLabel, stateLabel } from './format'
 
 export function Notice({ children, tone = 'info' }: { children: ReactNode; tone?: 'info' | 'warning' | 'error' | 'success' }) {
@@ -38,12 +38,92 @@ export function SessionTable({ records, onSelect }: { records: Session[]; onSele
   </table>
 }
 
-export function Pagination({ total, page, pageSize, onPage }: { total: number; page: number; pageSize: number; onPage: (page: number) => void }) {
+export function ProjectAccordion({ project, expanded, onToggle, onRemove, children }: {
+  project: Project; expanded: boolean; onToggle: () => void; onRemove: () => void; children: ReactNode
+}) {
+  const panelId = useId()
+  const titleId = useId()
+  const contextId = useId()
+  const context = [project.workspace, project.namespace].filter(Boolean).join(' · ')
+  return <article className="project">
+    <div className="project-header">
+      <h3>
+        <button type="button" className="project-toggle" aria-labelledby={titleId}
+          aria-expanded={expanded} aria-controls={panelId} aria-describedby={context ? contextId : undefined} onClick={onToggle}>
+          <span className="project-icon"><Folder size={19} aria-hidden /></span>
+          <span className="project-title">
+            <span id={titleId}>{project.name}</span>
+            {context && <span className="project-context" id={contextId} title={context}>{context}</span>}
+          </span>
+          <span className="project-stats">
+            <span>{project.incomplete ? 'Almeno ' : ''}{numberLabel(project.main_conversations)} {project.main_conversations === 1 ? 'conversazione' : 'conversazioni'}</span>
+            {project.last_active_at !== null && <span title="Ultima attività (UTC)">{dateLabel(project.last_active_at)}</span>}
+            {project.transcript_bytes !== null && <span title="Dimensione nota dei transcript">{project.transcript_bytes_incomplete ? '≥ ' : ''}{sizeLabel(project.transcript_bytes)}</span>}
+          </span>
+          <ChevronDown size={18} aria-hidden className="project-chevron" />
+        </button>
+      </h3>
+      {project.removal_available && <button type="button" className="button square danger-outline project-remove"
+        aria-label={`Elimina progetto ${project.name}`} title="Anteprima rimozione progetto" onClick={onRemove}>
+        <Trash2 size={17} aria-hidden />
+      </button>}
+    </div>
+    <div className="project-panel" role="group" id={panelId} aria-labelledby={titleId} hidden={!expanded}>
+      {expanded && <>
+        {project.removal_reason && !project.unassigned && <p className="project-reason">{project.removal_reason}</p>}
+        {children}
+      </>}
+    </div>
+  </article>
+}
+
+const SESSION_PAGE_SIZE = 12
+
+export function ProjectSessions({ project, filters, revision, onSelect }: {
+  project: Project; filters: string; revision: string; onSelect: (key: string) => void
+}) {
+  const [pageIndex, setPageIndex] = useState(0)
+  const [page, setPage] = useState<Page>()
+  const [error, setError] = useState('')
+  const [loading, setLoading] = useState(true)
+  const path = projectPath(project.provider, project.key)
+
+  useEffect(() => {
+    const controller = new AbortController()
+    setLoading(true)
+    setError('')
+    const query = new URLSearchParams(filters)
+    query.set('limit', String(SESSION_PAGE_SIZE))
+    query.set('offset', String(pageIndex * SESSION_PAGE_SIZE))
+    request<Page>(`${path}/sessions?${query}`, { signal: controller.signal }).then(result => {
+      if (controller.signal.aborted) return
+      if (pageIndex > 0 && pageIndex * SESSION_PAGE_SIZE >= result.total) setPageIndex(0)
+      else setPage(result)
+    }).catch(failure => {
+      if (!controller.signal.aborted) setError(failure instanceof Error ? failure.message : 'Sessioni non disponibili.')
+    }).finally(() => {
+      if (!controller.signal.aborted) setLoading(false)
+    })
+    return () => controller.abort()
+  }, [path, filters, revision, pageIndex])
+
+  return <div aria-busy={loading}>
+    {error ? <Notice tone="error">{error}</Notice>
+      : page?.rows.length ? <SessionTable records={page.rows} onSelect={onSelect} />
+      : loading ? <p className="project-reason" role="status">Caricamento sessioni…</p>
+      : <p className="project-reason">{project.main_conversations === 0 ? 'Nessuna conversazione osservata.' : 'Nessuna conversazione corrisponde ai filtri.'}</p>}
+    {page && page.total > SESSION_PAGE_SIZE && <Pagination
+      total={page.total} page={pageIndex} pageSize={SESSION_PAGE_SIZE} onPage={setPageIndex}
+      label={`Pagine delle sessioni di ${project.name}`} />}
+  </div>
+}
+
+export function Pagination({ total, page, pageSize, onPage, label = "Pagine" }: { total: number; page: number; pageSize: number; onPage: (page: number) => void; label?: string }) {
   const start = page * pageSize
   const end = Math.min(start + pageSize, total)
   return <footer className="pagination">
     <span>{total > 0 ? `${numberLabel(start + 1)}–${numberLabel(end)} di ${numberLabel(total)}` : '0 risultati'}</span>
-    <div aria-label="Pagine">
+    <div role="group" aria-label={label}>
       <button className="button square" aria-label="Pagina precedente" disabled={page === 0} onClick={() => onPage(page - 1)}><ChevronLeft size={18} aria-hidden /></button>
       <button className="button square" aria-label="Pagina successiva" disabled={end >= total} onClick={() => onPage(page + 1)}><ChevronRight size={18} aria-hidden /></button>
     </div>

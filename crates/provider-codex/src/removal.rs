@@ -1,6 +1,9 @@
 //! Compatibility admission, reviewed scope and dispatch for Codex native deletion.
-use crate::{CodexAdapter, worker::RemovalEvidence};
-use agentmender_domain::{ProviderKind, Session, SessionState};
+use crate::{
+    CodexAdapter,
+    worker::{ProjectEvidence, RemovalEvidence},
+};
+use agentmender_domain::{ProjectIdentity, ProviderKind, Session, SessionState};
 use agentmender_provider_api::{
     ProviderError, filesystem,
     process::{self, NativeExit},
@@ -101,7 +104,43 @@ impl RemovalReview {
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(PartialEq, Eq)]
+pub struct ProjectRemovalReview {
+    project: ProjectIdentity,
+    identity: NativeIdentity,
+    evidence: ProjectEvidence,
+    config_revision: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct Subtree {
+    pub main_id: String,
+    pub total_sessions: usize,
+}
+
+impl ProjectRemovalReview {
+    pub fn subtrees(&self) -> impl Iterator<Item = Subtree> + '_ {
+        self.evidence.trees.iter().map(|tree| Subtree {
+            main_id: tree.session.identity.native_id.clone(),
+            total_sessions: tree.scope.members.len(),
+        })
+    }
+}
+
+pub enum ProjectStep {
+    Dispatching(Subtree),
+    Verified,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum ProjectOutcome {
+    Verified,
+    Changed,
+    Refused(RemovalRefusal),
+    Uncertain,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RemovalRefusal {
     NotMain,
     Protected,
@@ -274,16 +313,122 @@ impl NativeRemoval {
         })
     }
 
+    pub fn prepare_project(
+        &self,
+        adapter: &CodexAdapter,
+        project: &ProjectIdentity,
+    ) -> Result<ProjectRemovalReview, RemovalRefusal> {
+        let review = self.observe_project(adapter, project)?;
+        if review.evidence.trees.is_empty() {
+            return Err(RemovalRefusal::Changed);
+        }
+        Ok(review)
+    }
+
+    fn observe_project(
+        &self,
+        adapter: &CodexAdapter,
+        project: &ProjectIdentity,
+    ) -> Result<ProjectRemovalReview, RemovalRefusal> {
+        if !self.is_current()
+            || project.state_root != self.root
+            || project.provider != ProviderKind::Codex
+        {
+            return Err(RemovalRefusal::Changed);
+        }
+        let config_before = config_revision(&self.root)?;
+        let evidence = adapter.project_evidence(project)?;
+        for tree in &evidence.trees {
+            if tree
+                .scope
+                .members
+                .iter()
+                .any(|member| self.protected.contains(&member.id))
+            {
+                return Err(RemovalRefusal::Protected);
+            }
+            check_writer_locks(&self.root, tree)?;
+        }
+        if !self.is_current() || config_revision(&self.root)? != config_before {
+            return Err(RemovalRefusal::Changed);
+        }
+        Ok(ProjectRemovalReview {
+            project: project.clone(),
+            identity: self.identity.clone(),
+            evidence,
+            config_revision: config_before,
+        })
+    }
+
+    pub fn execute_project(
+        &self,
+        adapter: &CodexAdapter,
+        review: ProjectRemovalReview,
+        mut progress: impl FnMut(ProjectStep),
+    ) -> ProjectOutcome {
+        // Each verified tree leaves an exact fingerprint of the rest of
+        // the archive. Check it while rebuilding every remaining scope.
+        let mut expected_archive = None;
+        let subtrees: Vec<_> = review.subtrees().collect();
+
+        for (index, original) in review.evidence.trees.iter().enumerate() {
+            let fresh = match self.observe_project(adapter, &review.project) {
+                Ok(fresh) => fresh,
+                Err(RemovalRefusal::Changed) => return ProjectOutcome::Changed,
+                Err(error) => return ProjectOutcome::Refused(error),
+            };
+            if let Some(expected) = &expected_archive {
+                if &fresh.evidence.archive_revision != expected
+                    || fresh.identity != review.identity
+                    || fresh.config_revision != review.config_revision
+                    || fresh.evidence.trees.first().is_none_or(|tree| {
+                        tree.scope.database_identity != original.scope.database_identity
+                    })
+                    || !fresh.subtrees().eq(subtrees[index..].iter().cloned())
+                {
+                    return ProjectOutcome::Changed;
+                }
+            } else if fresh != review {
+                return ProjectOutcome::Changed;
+            }
+            let tree = fresh
+                .evidence
+                .trees
+                .into_iter()
+                .next()
+                .expect("verified root");
+            expected_archive = Some(tree.scope.unrelated_revision.clone());
+            progress(ProjectStep::Dispatching(subtrees[index].clone()));
+            match self.dispatch(
+                adapter,
+                RemovalReview {
+                    identity: fresh.identity,
+                    evidence: tree,
+                    config_revision: fresh.config_revision,
+                },
+            ) {
+                RemovalOutcome::Verified => progress(ProjectStep::Verified),
+                RemovalOutcome::Changed => return ProjectOutcome::Changed,
+                _ => return ProjectOutcome::Uncertain,
+            }
+        }
+        ProjectOutcome::Verified
+    }
+
     pub fn execute(&self, adapter: &CodexAdapter, review: RemovalReview) -> RemovalOutcome {
-        let Ok(id) = uuid::Uuid::parse_str(review.native_id()) else {
-            return RemovalOutcome::Changed;
-        };
         let Ok(fresh) = self.prepare(adapter, review.session()) else {
             return RemovalOutcome::Changed;
         };
         if fresh != review {
             return RemovalOutcome::Changed;
         }
+        self.dispatch(adapter, review)
+    }
+
+    fn dispatch(&self, adapter: &CodexAdapter, review: RemovalReview) -> RemovalOutcome {
+        let Ok(id) = uuid::Uuid::parse_str(review.native_id()) else {
+            return RemovalOutcome::Changed;
+        };
         let scope = review.evidence.scope;
         let rollouts: Vec<_> = scope
             .members

@@ -1,6 +1,9 @@
-use std::{fs, sync::Mutex};
+use std::{collections::HashMap, fs, sync::Mutex};
 
-use agentmender_application::local_inventory::{InventoryQuery, InventorySort, LocalInventory};
+use agentmender_application::{
+    local_inventory::{InventoryQuery, InventorySort, LocalInventory},
+    projects::{self, Project},
+};
 use agentmender_domain::*;
 use agentmender_provider_api::ProviderError;
 use chrono::NaiveDate;
@@ -22,6 +25,7 @@ pub(super) struct ProviderView {
     pub id: ProviderKind,
     pub presence: Presence,
     pub coverage: Coverage,
+    pub inventory_incomplete: bool,
     pub coverage_description: &'static str,
     pub total: usize,
     pub removal_available: bool,
@@ -36,7 +40,8 @@ pub(super) struct Snapshot {
     version: Option<String>,
     conversation_preview: bool,
     index: LocalInventory,
-    ids: std::collections::HashMap<String, usize>,
+    ids: HashMap<String, usize>,
+    projects: HashMap<String, Project>,
 }
 
 impl Snapshot {
@@ -55,19 +60,19 @@ impl Snapshot {
         } else {
             Presence::NotDetected
         };
-        let (coverage, coverage_description, sessions) = match root_check {
+        let (coverage, coverage_description, observation) = match root_check {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                 if presence == Presence::NotDetected {
                     (
                         Coverage::NotDetected,
                         "Installazione e archivio locale non rilevati.",
-                        Vec::new(),
+                        InventoryObservation::default(),
                     )
                 } else {
                     (
                         Coverage::Unavailable,
                         "Il provider è installato, ma l'archivio configurato non è stato trovato.",
-                        Vec::new(),
+                        InventoryObservation::default(),
                     )
                 }
             }
@@ -77,42 +82,42 @@ impl Snapshot {
                     ProviderKind::Claude => app.claude.local_inventory(app.limit),
                 };
                 match result {
-                    Ok(sessions) => {
-                        let description = if sessions.len() >= app.limit {
-                            "Raggiunto il limite di inventario. Altre sessioni potrebbero essere presenti."
+                    Ok(observation) => {
+                        let description = if observation.incomplete {
+                            "La lettura è incompleta. Altre sessioni o progetti potrebbero essere presenti."
                         } else if provider == ProviderKind::Codex {
                             "Dati del database Codex locale riconosciuto. Sono visibili solo le conversazioni principali verificate."
                         } else {
                             "Conversazioni principali riconosciute nei transcript di progetto. Titoli e date possono essere incompleti."
                         };
-                        (Coverage::Partial, description, sessions)
+                        (Coverage::Partial, description, observation)
                     }
                     Err(ProviderError::PermissionDenied(_)) => (
                         Coverage::Unavailable,
                         "Accesso negato all’archivio del provider.",
-                        Vec::new(),
+                        InventoryObservation::default(),
                     ),
                     Err(ProviderError::InvalidScope(reason)) if reason == "stale_codex_source" => (
                         Coverage::Unavailable,
                         "L’archivio è cambiato durante la lettura. Aggiorna l’inventario.",
-                        Vec::new(),
+                        InventoryObservation::default(),
                     ),
                     Err(_) if provider == ProviderKind::Codex && !transcript_preview => (
                         Coverage::Unavailable,
                         "La lettura confinata dell’archivio Codex è attualmente disponibile su macOS.",
-                        Vec::new(),
+                        InventoryObservation::default(),
                     ),
                     Err(_) => (
                         Coverage::Unavailable,
                         "L’archivio non è leggibile o usa un formato non riconosciuto.",
-                        Vec::new(),
+                        InventoryObservation::default(),
                     ),
                 }
             }
             _ => (
                 Coverage::Unavailable,
                 "La directory dell’archivio non è accessibile o è un collegamento.",
-                Vec::new(),
+                InventoryObservation::default(),
             ),
         };
         let can_read = matches!(coverage, Coverage::Partial);
@@ -121,7 +126,11 @@ impl Snapshot {
             ProviderKind::Codex if !can_read => Some("L'archivio Codex è indisponibile."),
             ProviderKind::Codex => removal::native_reason(&app.native),
         };
-        let index = LocalInventory::new(sessions);
+        let projects = projects::build(&observation)
+            .into_iter()
+            .map(|project| (opaque_key(&project.identity), project))
+            .collect();
+        let index = LocalInventory::new(observation.sessions);
         let ids = index
             .sessions()
             .enumerate()
@@ -133,6 +142,7 @@ impl Snapshot {
                 presence,
                 coverage,
                 coverage_description,
+                inventory_incomplete: observation.incomplete,
                 total: index.len(),
                 removal_available: removal_reason.is_none(),
                 removal_reason,
@@ -141,6 +151,7 @@ impl Snapshot {
             conversation_preview: transcript_preview && can_read,
             index,
             ids,
+            projects,
         }
     }
 
@@ -153,7 +164,11 @@ impl Snapshot {
 }
 
 fn key(session: &Session) -> String {
-    let id = serde_json::to_vec(&session.identity).expect("observed identity serializes");
+    opaque_key(&session.identity)
+}
+
+fn opaque_key(identity: &impl Serialize) -> String {
+    let id = serde_json::to_vec(identity).expect("observed identity serializes");
     Sha256::digest(id)
         .iter()
         .map(|byte| format!("{byte:02x}"))
@@ -208,6 +223,41 @@ impl Inventories {
         })
     }
 
+    pub(super) fn projects(
+        &self,
+        app: &App,
+        provider: ProviderKind,
+        query: &InventoryQuery,
+    ) -> ProjectsPage {
+        self.with(app, provider, |snapshot| {
+            let (total, rows) = projects::page(snapshot.projects.values(), query);
+            ProjectsPage {
+                provider: snapshot.info.clone(),
+                total,
+                rows: rows
+                    .into_iter()
+                    .map(|project| ProjectView::new(app, project))
+                    .collect(),
+            }
+        })
+    }
+
+    pub(super) fn project<T>(
+        &self,
+        app: &App,
+        provider: ProviderKind,
+        key: &str,
+        read: impl FnOnce(&App, &Snapshot, &Project) -> T,
+    ) -> Result<T, ApiError> {
+        self.with(app, provider, |snapshot| {
+            snapshot
+                .projects
+                .get(key)
+                .map(|project| read(app, snapshot, project))
+                .ok_or_else(|| ApiError::missing("Progetto non presente nell’inventario corrente."))
+        })
+    }
+
     pub(super) fn detail(
         &self,
         app: &App,
@@ -235,11 +285,96 @@ impl Inventories {
     }
 }
 
+pub(super) const NO_CLAUDE_PROJECT_REMOVAL: &str = "Sola lettura. Proprietà di sidecar e riferimenti condivisi e coordinamento dei writer Claude Code non verificati.";
+
+#[derive(Serialize)]
+pub(super) struct ProjectsPage {
+    provider: ProviderView,
+    total: usize,
+    rows: Vec<ProjectView>,
+}
+
+#[derive(Serialize)]
+pub(super) struct ProjectView {
+    pub key: String,
+    provider: ProviderKind,
+    pub name: String,
+    pub workspace: Option<String>,
+    namespace: Option<String>,
+    main_conversations: usize,
+    last_active_at: Option<i64>,
+    transcript_bytes: Option<u64>,
+    transcript_bytes_incomplete: bool,
+    incomplete: bool,
+    persistent_instance: bool,
+    unassigned: bool,
+    removal_available: bool,
+    pub removal_reason: Option<&'static str>,
+}
+
+impl ProjectView {
+    pub(super) fn new(app: &App, project: &Project) -> Self {
+        let unassigned = project.identity.locator == ProjectLocator::Unassigned;
+        let namespace = match &project.identity.locator {
+            ProjectLocator::Namespace(namespace) => Some(namespace.clone()),
+            _ => None,
+        };
+        let removal_reason = if unassigned {
+            Some("Le conversazioni senza progetto possono essere gestite singolarmente.")
+        } else if project.identity.provider == ProviderKind::Claude {
+            Some(NO_CLAUDE_PROJECT_REMOVAL)
+        } else {
+            removal::native_reason(&app.native).or_else(|| {
+                project
+                    .sessions
+                    .sessions()
+                    .find_map(|session| removal::refusal(session, &app.protected))
+            })
+        };
+        Self {
+            key: opaque_key(&project.identity),
+            provider: project.identity.provider,
+            name: project.name.clone(),
+            workspace: project.workspace.clone(),
+            persistent_instance: namespace.is_some(),
+            namespace,
+            main_conversations: project.sessions.len(),
+            last_active_at: project.last_active_at,
+            transcript_bytes: project.transcript_bytes,
+            transcript_bytes_incomplete: project.transcript_bytes_incomplete,
+            incomplete: project.incomplete,
+            unassigned,
+            removal_available: removal_reason.is_none(),
+            removal_reason,
+        }
+    }
+}
+
 #[derive(Serialize)]
 pub(super) struct PageView {
     provider: ProviderView,
     total: usize,
     rows: Vec<SessionView>,
+}
+
+impl PageView {
+    pub(super) fn project(
+        app: &App,
+        snapshot: &Snapshot,
+        project: &Project,
+        query: &InventoryQuery,
+    ) -> Self {
+        let page = project.page(query);
+        Self {
+            provider: snapshot.info.clone(),
+            total: page.total,
+            rows: page
+                .records
+                .into_iter()
+                .map(|row| SessionView::new(app, snapshot, row))
+                .collect(),
+        }
+    }
 }
 
 #[derive(Serialize)]

@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { Archive, Braces, ChevronRight, Circle, HardDrive, Layers3, RefreshCw, Search, ShieldCheck, SlidersHorizontal, Sparkles } from 'lucide-react'
-import { authorize, request, type Operation, type Page, type Provider, type State } from './api'
-import { Empty, Notice, Pagination, SessionTable } from './components'
-import { SessionDetail } from './detail'
+import { authorize, request, type Operation, type Project, type ProjectPage, type Provider, type State } from './api'
+import { Empty, Notice, Pagination, ProjectAccordion, ProjectSessions } from './components'
+import { ProjectRemoval, SessionDetail } from './detail'
 import { numberLabel, providerLabel } from './format'
 import './style.css'
 
@@ -23,27 +23,34 @@ function Inventory({ provider, revision, onConfirm }: {
   const [pageIndex, setPageIndex] = useState(0)
   const [showDates, setShowDates] = useState(false)
   const [selected, setSelected] = useState<string>()
-  const [page, setPage] = useState<Page>()
+  const [projectToRemove, setProjectToRemove] = useState<Project>()
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set())
+  const [page, setPage] = useState<ProjectPage>()
   const [version, invalidate] = useState(0)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const hasFilters = !!(filters.search || filters.state || filters.since || filters.until)
 
+  const query = new URLSearchParams({
+    sort: filters.sort.replace('-asc', ''), ascending: String(filters.sort.endsWith('-asc')),
+  })
+  if (filters.search.trim()) query.set('search', filters.search.trim())
+  if (filters.state) query.set('state', filters.state)
+  if (filters.since) query.set('since', filters.since)
+  if (filters.until) query.set('until', filters.until)
+  const filterQuery = query.toString()
+
   useEffect(() => {
     const controller = new AbortController()
     setLoading(true)
     setError('')
     const timeout = window.setTimeout(() => {
-      const query = new URLSearchParams({
-        limit: String(PAGE_SIZE), offset: String(pageIndex * PAGE_SIZE),
-        sort: filters.sort.replace('-asc', ''), ascending: String(filters.sort.endsWith('-asc')),
-      })
-      if (filters.search.trim()) query.set('search', filters.search.trim())
-      if (filters.state) query.set('state', filters.state)
-      if (filters.since) query.set('since', filters.since)
-      if (filters.until) query.set('until', filters.until)
-      request<Page>(`/api/${provider}/sessions?${query}`, { signal: controller.signal }).then(result => {
+      const query = new URLSearchParams(filterQuery)
+      query.set('limit', String(PAGE_SIZE))
+      query.set('offset', String(pageIndex * PAGE_SIZE))
+      request<ProjectPage>(`/api/${provider}/projects?${query}`, { signal: controller.signal }).then(result => {
+        if (controller.signal.aborted) return
         if (pageIndex > 0 && pageIndex * PAGE_SIZE >= result.total) {
           setPageIndex(0)
         } else {
@@ -53,7 +60,7 @@ function Inventory({ provider, revision, onConfirm }: {
         .finally(() => { if (!controller.signal.aborted) setLoading(false) })
     }, 150)
     return () => { window.clearTimeout(timeout); controller.abort() }
-  }, [provider, filters, pageIndex, revision, version])
+  }, [provider, filterQuery, pageIndex, revision, version])
 
   async function refresh() {
     setRefreshing(true)
@@ -77,22 +84,22 @@ function Inventory({ provider, revision, onConfirm }: {
   return <>
     <div className="headline">
       <div><div className="breadcrumb"><Archive size={15} aria-hidden /> Archivio locale <ChevronRight size={13} aria-hidden /> {providerLabel[provider]}</div>
-        <h1>Sessioni {providerLabel[provider]}</h1></div>
+        <h1>Progetti {providerLabel[provider]}</h1></div>
       <button className="button" onClick={() => void refresh()} disabled={refreshing}><RefreshCw size={16} className={refreshing ? 'spin' : undefined} aria-hidden />Aggiorna</button>
     </div>
 
     <div className="summary">
-      <div className="summary-item"><span className="summary-icon"><Layers3 size={19} aria-hidden /></span><div><span>Conversazioni principali</span><strong>{info?.coverage === 'partial' ? numberLabel(info.total) : '—'}</strong></div></div>
+      <div className="summary-item"><span className="summary-icon"><Layers3 size={19} aria-hidden /></span><div><span>Conversazioni principali osservate</span><strong>{info?.coverage === 'partial' ? numberLabel(info.total) : '—'}</strong></div></div>
       <div className="summary-item"><span className="summary-icon"><HardDrive size={19} aria-hidden /></span><div><span>Provider</span><strong>{info ? labels[info.presence] : '—'}</strong></div></div>
       <div className="summary-item"><span className="summary-icon"><ShieldCheck size={19} aria-hidden /></span><div><span>Accesso</span><strong>{info ? info.removal_available ? 'Rimozione Codex' : 'Sola lettura' : '—'}</strong></div></div>
     </div>
     {info && <Notice tone="warning"><strong>{info.coverage === 'partial' ? 'Copertura parziale.' : info.coverage === 'not_detected' ? 'Provider non rilevato.' : 'Archivio indisponibile.'}</strong> {info.coverage_description}{info.id === 'codex' && info.coverage === 'partial' && info.removal_reason && <p>{info.removal_reason}</p>}</Notice>}
 
-    <section className="inventory" aria-label="Inventario delle sessioni">
-      <div className="inventory-heading"><h2>Inventario</h2><span>{page ? `${numberLabel(page.total)} ${page.total === 1 ? 'risultato' : 'risultati'}` : '—'}</span></div>
+    <section className="inventory" aria-label="Inventario dei progetti">
+      <div className="inventory-heading"><h2>Progetti</h2><span>{page ? `${info?.inventory_incomplete ? "Almeno " : ""}${numberLabel(page.total)} ${page.total === 1 ? 'gruppo' : 'gruppi'}` : '—'}</span></div>
       <div className="controls">
-        <label className="search"><Search size={18} aria-hidden /><span className="sr-only">Cerca titolo, UUID o workspace</span>
-          <input type="search" placeholder="Cerca titolo, UUID o workspace" value={filters.search} maxLength={128} onChange={event => filter('search', event.target.value)} /></label>
+        <label className="search"><Search size={18} aria-hidden /><span className="sr-only">Cerca progetto, titolo, UUID o workspace</span>
+          <input type="search" placeholder="Cerca progetto, titolo, UUID o workspace" value={filters.search} maxLength={128} onChange={event => filter('search', event.target.value)} /></label>
         <label className="control"><span className="sr-only">Stato</span><select value={filters.state} onChange={event => filter('state', event.target.value as State | '')}>
           <option value="">Tutti gli stati</option><option value="active">Attive</option><option value="archived">Archiviate</option><option value="unknown">Stato sconosciuto</option>
         </select></label>
@@ -111,21 +118,36 @@ function Inventory({ provider, revision, onConfirm }: {
       {hasFilters && <button className="button quiet clear-filters" onClick={() => { setFilters(filtersInitial); setPageIndex(0) }}>Azzera filtri</button>}
       {error && <div className="inventory-error"><Notice tone="error">{error}</Notice></div>}
       <div className="table-area" aria-busy={loading}>
-        {loading ? <Empty title="Caricamento inventario" busy />
+        {loading && !page ? <Empty title="Caricamento inventario" busy />
           : error ? <Empty title="Inventario non disponibile" />
-          : page && page.rows.length > 0 ? <SessionTable records={page.rows} onSelect={setSelected} />
+          : page && page.rows.length > 0 ? page.rows.map(project =>
+            <ProjectAccordion key={project.key} project={project} expanded={expanded.has(project.key)}
+              onToggle={() => setExpanded(current => {
+                const next = new Set(current)
+                if (next.has(project.key)) next.delete(project.key)
+                else next.add(project.key)
+                return next
+              })}
+              onRemove={() => setProjectToRemove(project)}>
+              <ProjectSessions key={filterQuery} project={project} filters={filterQuery}
+                revision={`${revision}:${version}`} onSelect={setSelected} />
+            </ProjectAccordion>)
           : <Empty title={hasFilters ? 'Nessun risultato' : info?.coverage === 'partial' ? 'Nessuna sessione riconosciuta' : 'Nessun inventario disponibile'}>
             {hasFilters ? 'Modifica la ricerca o i filtri.' : info?.coverage === 'partial' ? 'L’archivio potrebbe contenere altre sessioni.' : info?.coverage_description}
           </Empty>}
       </div>
-      <Pagination total={page?.total ?? 0} page={pageIndex} pageSize={PAGE_SIZE} onPage={setPageIndex} />
+      {page && page.total > PAGE_SIZE && <Pagination total={page.total} page={pageIndex} pageSize={PAGE_SIZE} onPage={setPageIndex} />}
     </section>
+    {projectToRemove && <ProjectRemoval project={projectToRemove} onClose={() => setProjectToRemove(undefined)}
+      onConfirm={(id, phrase) => { setProjectToRemove(undefined); onConfirm(id, phrase) }} />}
     {selected && <SessionDetail key={selected} rowKey={selected} provider={provider} onClose={() => setSelected(undefined)} onConfirm={(id, phrase) => {
       setSelected(undefined)
       onConfirm(id, phrase)
     }} />}
   </>
 }
+
+const pending = (operation: Operation) => operation.status === 'preparing' || operation.status === 'running'
 
 function App() {
   const [auth, setAuth] = useState<'waiting' | 'ready' | 'failed'>('waiting')
@@ -150,7 +172,7 @@ function App() {
         const result = await request<Operation>(`/api/operations/${operationId}`, { signal: controller.signal })
         if (controller.signal.aborted) return
         setOperation(result)
-        if (result.status === 'running') {
+        if (pending(result)) {
           timer = window.setTimeout(() => void status(), 850)
         } else {
           bump(value => value + 1)
@@ -204,11 +226,18 @@ function App() {
         : auth === 'failed' ? <><h1>Accesso locale</h1><Notice tone="error">{authError}</Notice></>
         : <>
           {operationId && <div className="operation">
-            <Notice tone={operation?.status === 'verified' ? 'success' : operationError || (operation && operation.status !== 'running') ? 'warning' : 'info'}>
+            <Notice tone={operation?.status === 'verified' ? 'success' : operationError || (operation && !pending(operation)) ? 'warning' : 'info'}>
               <div>{posting ? 'Invio conferma…' : operation?.message ?? (operationError || 'Verifica esito…')}</div>
               {operation?.native_id && <code>{operation.native_id}</code>}
+              {operation?.project && <details className="operation-project">
+                <summary>{operation.project.name} · {operation.project.removed.length} sottoalberi verificati</summary>
+                <ul>{operation.project.removed.map(tree => <li key={tree.main_id}>Rimosso · <code>{tree.main_id}</code> · {tree.total_sessions} sessioni</li>)}
+                  {operation.project.remaining.map(tree => <li key={tree.main_id}>Rimozione non avviata · <code>{tree.main_id}</code> · {tree.total_sessions} sessioni</li>)}
+                  {operation.project.uncertain && <li>{pending(operation) ? 'In esecuzione' : 'Esito incerto'} · <code>{operation.project.uncertain.main_id}</code> · {operation.project.uncertain.total_sessions} sessioni</li>}
+                </ul>
+              </details>}
               {operationError && <button className="button quiet" onClick={() => retryStatus(value => value + 1)}>Verifica esito</button>}
-              {!posting && (operationError || (operation && operation.status !== 'running')) && <button className="button quiet" onClick={dismiss}>Chiudi esito</button>}
+              {!posting && (operationError || (operation && !pending(operation))) && <button className="button quiet" onClick={dismiss}>Chiudi esito</button>}
             </Notice>
           </div>}
           <Inventory key={provider} provider={provider} revision={revision} onConfirm={(id, phrase) => void confirm(id, phrase)} />

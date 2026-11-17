@@ -15,6 +15,8 @@ pub struct ObservedFile {
 #[derive(Debug, Default)]
 pub struct Inventory {
     pub files: Vec<ObservedFile>,
+    pub directories: Vec<PathBuf>,
+    pub incomplete: bool,
     pub permission_denied: bool,
     pub truncated: bool,
 }
@@ -29,6 +31,7 @@ pub fn inventory(root: &Path, max_entries: usize) -> Result<Inventory, ProviderE
         Err(e) => return Err(io_error(root, e)),
     };
     if metadata.file_type().is_symlink() {
+        result.incomplete = true;
         return Ok(result);
     }
     if !metadata.is_dir() {
@@ -44,18 +47,26 @@ pub fn inventory(root: &Path, max_entries: usize) -> Result<Inventory, ProviderE
         // Revalidate before descending. Concurrent path replacement is not snapshot isolation.
         let directory_meta = match fs::symlink_metadata(&directory) {
             Ok(meta) => meta,
-            Err(_) => continue,
+            Err(_) => {
+                result.incomplete = true;
+                continue;
+            }
         };
         if directory_meta.file_type().is_symlink() || !directory_meta.is_dir() {
+            result.incomplete = true;
             continue;
         }
         match directory.canonicalize() {
             Ok(path) if path.starts_with(&canonical_root) => {}
-            _ => continue,
+            _ => {
+                result.incomplete = true;
+                continue;
+            }
         }
         let entries = match fs::read_dir(&directory) {
             Ok(entries) => entries,
             Err(error) => {
+                result.incomplete = true;
                 result.permission_denied |= error.kind() == std::io::ErrorKind::PermissionDenied;
                 continue;
             }
@@ -70,18 +81,29 @@ pub fn inventory(root: &Path, max_entries: usize) -> Result<Inventory, ProviderE
             remaining -= 1;
             if let Ok(entry) = entry {
                 paths.push(entry.path());
+            } else {
+                result.incomplete = true;
             }
         }
         paths.sort();
         for path in paths {
             let metadata = match fs::symlink_metadata(&path) {
                 Ok(metadata) => metadata,
-                Err(_) => continue,
+                Err(_) => {
+                    result.incomplete = true;
+                    continue;
+                }
             };
             if metadata.file_type().is_symlink() {
+                result.incomplete = true;
                 continue;
             }
             if metadata.is_dir() {
+                if let Ok(relative) = path.strip_prefix(root)
+                    && relative.components().count() == 1
+                {
+                    result.directories.push(relative.into());
+                }
                 pending.push(path);
             } else if metadata.is_file() {
                 result.files.push(ObservedFile {
