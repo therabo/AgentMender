@@ -198,6 +198,14 @@ async fn list(
     .await
 }
 
+async fn recents(
+    State(app): State<Arc<App>>,
+    Query(filter): Query<Filter>,
+) -> Result<Json<PageView>, ApiError> {
+    let query = filter.try_into()?;
+    read(app, move |app| Ok(app.inventory.recents(app, &query))).await
+}
+
 async fn projects(
     State(app): State<Arc<App>>,
     Path(id): Path<String>,
@@ -421,6 +429,7 @@ fn router(app: Arc<App>) -> Router {
             "/api/{provider}/projects/{key}/removal-preview",
             post(project_preview),
         )
+        .route("/api/codex/recents", get(recents))
         .route("/api/{provider}/sessions", get(list))
         .route("/api/{provider}/sessions/{key}", get(detail))
         .route(

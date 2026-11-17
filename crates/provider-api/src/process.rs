@@ -366,10 +366,11 @@ fn content_command(executable: &Path, sandbox: &EvidenceSandbox) -> Result<Comma
     let database = policy_literal(&sandbox.source_root().join("state_5.sqlite"))?;
     let wal = policy_literal(&sandbox.source_root().join("state_5.sqlite-wal"))?;
     let shm = policy_literal(&sandbox.source_root().join("state_5.sqlite-shm"))?;
+    let desktop_projects = policy_literal(&sandbox.source_root().join(".codex-global-state.json"))?;
     let sessions = policy_literal(&sandbox.source_root().join("sessions"))?;
     let archived = policy_literal(&sandbox.source_root().join("archived_sessions"))?;
     let policy = format!(
-        "(version 1)(allow default)(deny file-write* (require-not (subpath {root})))(deny network*)(deny process-fork)(deny mach-lookup)(deny file-read-data (require-all (require-any (subpath {home}) (subpath {source})) (require-not (require-any (literal {program}) (literal {database}) (literal {wal}) (literal {shm}) (literal {source}) (subpath {sessions}) (subpath {archived}) (subpath {root})))) )"
+        "(version 1)(allow default)(deny file-write* (require-not (subpath {root})))(deny network*)(deny process-fork)(deny mach-lookup)(deny file-read-data (require-all (require-any (subpath {home}) (subpath {source})) (require-not (require-any (literal {program}) (literal {database}) (literal {wal}) (literal {shm}) (literal {desktop_projects}) (literal {source}) (subpath {sessions}) (subpath {archived}) (subpath {root})))) )"
     );
     let mut command = Command::new("/usr/bin/sandbox-exec");
     command

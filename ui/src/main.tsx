@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { Archive, Braces, ChevronRight, Circle, HardDrive, Layers3, RefreshCw, Search, ShieldCheck, SlidersHorizontal, Sparkles } from 'lucide-react'
-import { authorize, request, type Operation, type Project, type ProjectPage, type Provider, type State } from './api'
-import { Empty, Notice, Pagination, ProjectAccordion, ProjectSessions } from './components'
+import { authorize, projectPath, request, type Operation, type Project, type ProjectPage, type Provider, type State } from './api'
+import { Empty, Notice, Pagination, ProjectAccordion, SessionList } from './components'
 import { ProjectRemoval, SessionDetail } from './detail'
 import { numberLabel, providerLabel } from './format'
 import './style.css'
@@ -80,23 +80,31 @@ function Inventory({ provider, revision, onConfirm }: {
     setPageIndex(0)
   }
   const info = page?.provider
+  const observed = (count: number | undefined) => info?.coverage === 'partial' && count !== undefined ? numberLabel(count) : '—'
+  const emptySessions = hasFilters ? 'Nessuna conversazione corrisponde ai filtri.' : 'Nessuna conversazione osservata.'
 
   return <>
     <div className="headline">
       <div><div className="breadcrumb"><Archive size={15} aria-hidden /> Archivio locale <ChevronRight size={13} aria-hidden /> {providerLabel[provider]}</div>
-        <h1>Progetti {providerLabel[provider]}</h1></div>
+        <h1>{provider === 'codex' ? 'Archivio Codex' : `Progetti ${providerLabel[provider]}`}</h1></div>
       <button className="button" onClick={() => void refresh()} disabled={refreshing}><RefreshCw size={16} className={refreshing ? 'spin' : undefined} aria-hidden />Aggiorna</button>
     </div>
 
     <div className="summary">
-      <div className="summary-item"><span className="summary-icon"><Layers3 size={19} aria-hidden /></span><div><span>Conversazioni principali osservate</span><strong>{info?.coverage === 'partial' ? numberLabel(info.total) : '—'}</strong></div></div>
-      <div className="summary-item"><span className="summary-icon"><HardDrive size={19} aria-hidden /></span><div><span>Provider</span><strong>{info ? labels[info.presence] : '—'}</strong></div></div>
-      <div className="summary-item"><span className="summary-icon"><ShieldCheck size={19} aria-hidden /></span><div><span>Accesso</span><strong>{info ? info.removal_available ? 'Rimozione Codex' : 'Sola lettura' : '—'}</strong></div></div>
+      {provider === 'codex' ? <>
+        <div className="summary-item"><span className="summary-icon"><Layers3 size={19} aria-hidden /></span><div><span>Progetti registrati osservati</span><strong>{observed(info?.registered_projects)}</strong></div></div>
+        <div className="summary-item"><span className="summary-icon"><Archive size={19} aria-hidden /></span><div><span>Conversazioni nei progetti</span><strong>{observed(info?.project_conversations)}</strong></div></div>
+        <div className="summary-item"><span className="summary-icon"><HardDrive size={19} aria-hidden /></span><div><span>Conversazioni recenti</span><strong>{observed(info?.recent_conversations)}</strong></div></div>
+      </> : <>
+        <div className="summary-item"><span className="summary-icon"><Layers3 size={19} aria-hidden /></span><div><span>Conversazioni principali osservate</span><strong>{observed(info?.total)}</strong></div></div>
+        <div className="summary-item"><span className="summary-icon"><HardDrive size={19} aria-hidden /></span><div><span>Provider</span><strong>{info ? labels[info.presence] : '—'}</strong></div></div>
+        <div className="summary-item"><span className="summary-icon"><ShieldCheck size={19} aria-hidden /></span><div><span>Accesso</span><strong>{info ? 'Sola lettura' : '—'}</strong></div></div>
+      </>}
     </div>
     {info && <Notice tone="warning"><strong>{info.coverage === 'partial' ? 'Copertura parziale.' : info.coverage === 'not_detected' ? 'Provider non rilevato.' : 'Archivio indisponibile.'}</strong> {info.coverage_description}{info.id === 'codex' && info.coverage === 'partial' && info.removal_reason && <p>{info.removal_reason}</p>}</Notice>}
 
     <section className="inventory" aria-label="Inventario dei progetti">
-      <div className="inventory-heading"><h2>Progetti</h2><span>{page ? `${info?.inventory_incomplete ? "Almeno " : ""}${numberLabel(page.total)} ${page.total === 1 ? 'gruppo' : 'gruppi'}` : '—'}</span></div>
+      <div className="inventory-heading"><h2>Progetti</h2><span>{page ? `${numberLabel(page.total)} ${page.total === 1 ? 'progetto' : 'progetti'}${info?.projects_incomplete || info?.inventory_incomplete ? ' osservati' : ''}` : '—'}</span></div>
       <div className="controls">
         <label className="search"><Search size={18} aria-hidden /><span className="sr-only">Cerca progetto, titolo, UUID o workspace</span>
           <input type="search" placeholder="Cerca progetto, titolo, UUID o workspace" value={filters.search} maxLength={128} onChange={event => filter('search', event.target.value)} /></label>
@@ -129,15 +137,24 @@ function Inventory({ provider, revision, onConfirm }: {
                 return next
               })}
               onRemove={() => setProjectToRemove(project)}>
-              <ProjectSessions key={filterQuery} project={project} filters={filterQuery}
-                revision={`${revision}:${version}`} onSelect={setSelected} />
+              <SessionList key={filterQuery} path={`${projectPath(provider, project.key)}/sessions`}
+                filters={filterQuery} revision={`${revision}:${version}`} onSelect={setSelected}
+                emptyLabel={emptySessions} paginationLabel={`Pagine delle sessioni di ${project.name}`} />
             </ProjectAccordion>)
-          : <Empty title={hasFilters ? 'Nessun risultato' : info?.coverage === 'partial' ? 'Nessuna sessione riconosciuta' : 'Nessun inventario disponibile'}>
+          : <Empty title={hasFilters ? 'Nessun risultato' : info?.coverage === 'partial' ? 'Nessun progetto registrato osservato' : 'Nessun inventario disponibile'}>
             {hasFilters ? 'Modifica la ricerca o i filtri.' : info?.coverage === 'partial' ? 'L’archivio potrebbe contenere altre sessioni.' : info?.coverage_description}
           </Empty>}
       </div>
       {page && page.total > PAGE_SIZE && <Pagination total={page.total} page={pageIndex} pageSize={PAGE_SIZE} onPage={setPageIndex} />}
     </section>
+    {provider === 'codex' && <section className="inventory" aria-label="Conversazioni recenti">
+      <div className="inventory-heading"><h2>Recenti</h2></div>
+      <div className="table-area">
+        <SessionList key={filterQuery} path="/api/codex/recents" filters={filterQuery}
+          revision={`${revision}:${version}`} onSelect={setSelected}
+          emptyLabel={emptySessions} paginationLabel="Pagine delle conversazioni recenti" />
+      </div>
+    </section>}
     {projectToRemove && <ProjectRemoval project={projectToRemove} onClose={() => setProjectToRemove(undefined)}
       onConfirm={(id, phrase) => { setProjectToRemove(undefined); onConfirm(id, phrase) }} />}
     {selected && <SessionDetail key={selected} rowKey={selected} provider={provider} onClose={() => setSelected(undefined)} onConfirm={(id, phrase) => {

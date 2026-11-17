@@ -49,10 +49,15 @@ impl ClaudeAdapter {
                 name.to_str()
                     .filter(|name| displayable(name) && name.len() <= 900)
             })
-            .map(|name| ProjectIdentity {
-                provider: ProviderKind::Claude,
-                state_root: self.location.state_root.clone(),
-                locator: ProjectLocator::Namespace(name.into()),
+            .map(|name| RegisteredProject {
+                identity: ProjectIdentity {
+                    provider: ProviderKind::Claude,
+                    state_root: self.location.state_root.clone(),
+                    locator: ProjectLocator::Namespace(name.into()),
+                },
+                name: None,
+                roots: Vec::new(),
+                desktop_backed: false,
             })
             .collect();
         let mut sessions = Vec::new();
@@ -159,6 +164,7 @@ impl ClaudeAdapter {
                     .as_ref()
                     .and_then(|cwd| Path::new(cwd).file_name()?.to_str().map(str::to_owned)),
                 identity: identity(native),
+                codex_membership: CodexMembership::Unassigned,
                 title,
                 created_at,
                 last_active_at: (complete && lines.next().is_none() && examined < 96)
@@ -186,6 +192,8 @@ impl ClaudeAdapter {
             sessions,
             projects: instances,
             incomplete,
+            projects_incomplete: incomplete,
+            ..Default::default()
         })
     }
 }

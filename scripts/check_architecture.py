@@ -42,6 +42,7 @@ def boundaries(path, contents):
             "crates/provider-codex/src/snapshot.rs",
             "crates/provider-codex/src/worker.rs",
             "crates/provider-codex/src/worker/inventory.rs",
+            "crates/provider-codex/src/worker/projects.rs",
             "crates/provider-codex/src/worker/cascade.rs",
             "crates/provider-codex/src/desktop_reconciliation.rs",
         }, path
@@ -67,10 +68,16 @@ require("crates/provider-codex/src/worker/cascade.rs", "SessionState::Archived",
 require("crates/provider-codex/src/removal.rs", "self.prepare(adapter, review.session())",
         "self.is_current()", "probe_version", "probe_codex_delete", "check_writer_locks",
         "run_confined_codex_delete", "adapter.verify_removal(scope)", "Duration::from_secs(180)")
-require("crates/provider-codex/src/worker.rs", "Operation::ProjectRemoval(project)", "cascade::project_plan")
+require("crates/provider-codex/src/worker.rs", "Operation::ProjectRemoval(project)", "cascade::project_plan",
+        "Operation::ProjectCatalog", "projects::read")
+require("crates/provider-codex/src/worker/projects.rs", "FROM projects", "FROM project_roots",
+        ".codex-global-state.json", "filesystem::open_source_read", "MAX_DESKTOP_BYTES")
+require("crates/provider-codex/src/worker/cascade.rs", "ProjectLocator::Codex(project_id)",
+        "inventory::membership", "assigned.is_subset(&members)")
+assert "ProjectLocator::Workspace" not in source("crates/provider-codex/src/worker/cascade.rs")
 require("crates/provider-codex/src/removal.rs", "self.observe_project(adapter, &review.project)",
         "fresh.evidence.archive_revision", "tree.scope.unrelated_revision")
-require("crates/cli/src/ui/removal.rs", "ELIMINA PROGETTO", "self.running", "self.previews.remove")
+require("crates/cli/src/ui/removal.rs", "RIMUOVI SESSIONI DEL PROGETTO", 'scope: "sessions"', "self.running", "self.previews.remove")
 require("crates/provider-api/src/process.rs", "sqlite_home={scope}", "(deny network*)",
         "(deny file-write* (require-not (subpath {scope})))", '.arg("--force")',
         'process.args(["delete", "--help"])', "if !is_current()")

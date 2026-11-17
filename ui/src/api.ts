@@ -8,6 +8,10 @@ export type ProviderInfo = {
   presence: 'installed' | 'state_only' | 'not_detected'
   coverage: Coverage
   inventory_incomplete: boolean
+  projects_incomplete: boolean
+  registered_projects: number
+  project_conversations: number
+  recent_conversations: number
   coverage_description: string
   total: number
   removal_available: boolean
@@ -98,13 +102,14 @@ export type Project = {
   provider: Provider
   workspace: string | null
   namespace: string | null
+  roots: string[]
+  registration: "native" | "desktop" | "native_and_desktop" | "namespace"
   main_conversations: number
   last_active_at: number | null
   transcript_bytes: number | null
   transcript_bytes_incomplete: boolean
   incomplete: boolean
   persistent_instance: boolean
-  unassigned: boolean
   removal_available: boolean
   removal_reason: string | null
 }
@@ -119,12 +124,12 @@ export type ProjectPreview = {
   provider: Provider
   project_key: string
   project_name: string
-  workspace: string | null
+  roots: string[]
   main_conversations: number
   descendants: number
   total_sessions: number
   subtrees: Subtree[]
-  persistent_items: string[]
+  scope: "sessions"
   excluded: string[]
   complete: boolean
 }

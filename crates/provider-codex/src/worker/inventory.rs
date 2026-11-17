@@ -2,7 +2,8 @@
 use super::*;
 use crate::reader::{self, ObservedSource};
 use agentmender_domain::{
-    SessionKind, SessionState, canonical_uuid, observed_path_is_absolute, safe_conversation_text,
+    CodexMembership, SessionKind, SessionState, canonical_uuid, observed_path_is_absolute,
+    safe_conversation_text,
 };
 use rusqlite::{Connection as Sqlite, Row};
 use std::{collections::BTreeMap, path::Path, time::Instant};
@@ -50,6 +51,8 @@ pub(super) fn columns(
 ) -> Result<BTreeMap<String, String>, ProviderError> {
     let sql = match table {
         "threads" => "PRAGMA table_info(threads)",
+        "projects" => "PRAGMA table_info(projects)",
+        "project_roots" => "PRAGMA table_info(project_roots)",
         "thread_spawn_edges" => "PRAGMA table_info(thread_spawn_edges)",
         _ => unreachable!("fixed table names"),
     };
@@ -90,6 +93,7 @@ pub(super) struct Layout {
     pub relations: String,
     pub metadata_only: bool,
     pub edges: bool,
+    pub project_id: bool,
 }
 
 pub(super) fn layout(db: &Sqlite) -> Result<Layout, ProviderError> {
@@ -130,13 +134,15 @@ pub(super) fn layout(db: &Sqlite) -> Result<Layout, ProviderError> {
         return Err(unavailable());
     }
     let relations = fields.map(optional).join(",");
+    let project_id = optional("project_id");
     Ok(Layout {
         projection: format!(
-            "SELECT id,{title},cwd,created_at,updated_at,archived,{locator},{relations} FROM threads"
+            "SELECT id,{title},cwd,created_at,updated_at,archived,{locator},{relations},{project_id} FROM threads"
         ),
         relations,
         metadata_only: has_text("forked_from_id") && has_text("attached_thread_parent_id"),
         edges: has_edges(db),
+        project_id: has_text("project_id"),
     })
 }
 
@@ -194,11 +200,6 @@ pub(super) fn row(
     };
     let title = text(1)?.filter(|title| !title.trim().is_empty() && safe_conversation_text(title));
     let cwd = text(2)?;
-    let project = cwd
-        .as_deref()
-        .and_then(|path| Path::new(path).file_name()?.to_str())
-        .filter(|value| safe_conversation_text(value))
-        .map(str::to_owned);
     let workspace = cwd.filter(|path| {
         observed_path_is_absolute(Path::new(path))
             && !path.chars().any(char::is_control)
@@ -259,9 +260,10 @@ pub(super) fn row(
     Ok(Candidate {
         session: Session {
             identity: identity(root, id),
+            codex_membership: membership(row, 11),
             title,
             workspace,
-            project,
+            project: None,
             created_at: datetime(3)?,
             last_active_at: datetime(4)?,
             state,
@@ -273,6 +275,18 @@ pub(super) fn row(
         locator,
         relations,
     })
+}
+
+pub(super) fn membership(row: &Row<'_>, column: usize) -> CodexMembership {
+    use rusqlite::types::ValueRef;
+    match row.get_ref(column) {
+        Ok(ValueRef::Null) => CodexMembership::Unassigned,
+        Ok(ValueRef::Text(bytes)) if bytes.len() == 36 => match std::str::from_utf8(bytes) {
+            Ok(id) if canonical_uuid(id) => CodexMembership::Native(id.into()),
+            _ => CodexMembership::Unknown,
+        },
+        _ => CodexMembership::Unknown,
+    }
 }
 
 pub(super) fn exact(

@@ -379,6 +379,7 @@ impl NativeRemoval {
             };
             if let Some(expected) = &expected_archive {
                 if &fresh.evidence.archive_revision != expected
+                    || fresh.evidence.registration != review.evidence.registration
                     || fresh.identity != review.identity
                     || fresh.config_revision != review.config_revision
                     || fresh.evidence.trees.first().is_none_or(|tree| {
@@ -412,7 +413,18 @@ impl NativeRemoval {
                 _ => return ProjectOutcome::Uncertain,
             }
         }
-        ProjectOutcome::Verified
+        match self.observe_project(adapter, &review.project) {
+            Ok(final_review)
+                if final_review.evidence.registration == review.evidence.registration
+                    && final_review.evidence.trees.is_empty()
+                    && expected_archive.as_ref()
+                        == Some(&final_review.evidence.archive_revision) =>
+            {
+                ProjectOutcome::Verified
+            }
+            Ok(_) | Err(RemovalRefusal::Changed) => ProjectOutcome::Changed,
+            Err(error) => ProjectOutcome::Refused(error),
+        }
     }
 
     pub fn execute(&self, adapter: &CodexAdapter, review: RemovalReview) -> RemovalOutcome {

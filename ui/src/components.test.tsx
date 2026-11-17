@@ -3,7 +3,7 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, expect, it, vi } from 'vitest'
 import { useState } from 'react'
 import type { Project, Session } from './api'
-import { Pagination, ProjectAccordion, SessionTable } from './components'
+import { Pagination, ProjectAccordion, SessionList, SessionTable } from './components'
 import { dateLabel, sizeLabel } from './format'
 
 afterEach(cleanup)
@@ -49,8 +49,8 @@ it('expands projects independently and keeps removal separate from the accordion
   const base: Project = {
     key: 'atlas', name: 'Atlas', provider: 'codex', workspace: '/one/Atlas', namespace: null,
     main_conversations: 2, last_active_at: null, transcript_bytes: 1024,
-    transcript_bytes_incomplete: true, incomplete: true, persistent_instance: false,
-    unassigned: false, removal_available: true, removal_reason: null,
+    transcript_bytes_incomplete: true, incomplete: true, persistent_instance: true,
+    roots: ['/one/Atlas', '/two/Atlas'], registration: 'native', removal_available: true, removal_reason: null,
   }
   function Projects() {
     const [open, setOpen] = useState<Record<string, boolean>>({})
@@ -63,6 +63,7 @@ it('expands projects independently and keeps removal separate from the accordion
   }
 
   render(<Projects />)
+  expect(screen.getAllByText('/one/Atlas · /two/Atlas')).toHaveLength(2)
   const atlas = screen.getByRole('button', { name: 'Atlas' })
   const other = screen.getByRole('button', { name: 'Altro' })
   expect(atlas.getAttribute('aria-expanded')).toBe('false')
@@ -72,11 +73,40 @@ it('expands projects independently and keeps removal separate from the accordion
   expect(atlas.getAttribute('aria-expanded')).toBe('true')
   expect(document.getElementById(atlas.getAttribute('aria-controls')!)?.textContent).toContain('Sessioni di Atlas')
   expect(screen.getByText('Sessioni di Altro')).toBeTruthy()
-  fireEvent.click(screen.getByRole('button', { name: 'Elimina progetto Atlas' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Rimuovi sessioni del progetto Atlas' }))
   expect(remove).toHaveBeenCalledOnce()
   expect(atlas.getAttribute('aria-expanded')).toBe('true')
-  expect(screen.queryByRole('button', { name: 'Elimina progetto Altro' })).toBeNull()
+  expect(screen.queryByRole('button', { name: 'Rimuovi sessioni del progetto Altro' })).toBeNull()
   fireEvent.click(atlas)
   expect(screen.queryByText('Sessioni di Atlas')).toBeNull()
   expect(screen.getByText('Sessioni di Altro')).toBeTruthy()
+})
+
+it('pages and opens Recenti with the current archive filters', async () => {
+  const recent: Session = {
+    key: 'recent', native_id: 'recent-id', title: 'Conversazione indipendente',
+    provider: 'codex', project: null, workspace: '/one/Atlas',
+    created_at: null, last_active_at: null, transcript_bytes: null,
+    state: 'archived', kind: 'main', protected: false, removal_reason: null,
+  }
+  const fetch = vi.spyOn(globalThis, 'fetch')
+    .mockResolvedValueOnce(Response.json({ rows: [{ ...recent, key: 'first', title: 'Prima pagina' }], total: 13 }))
+    .mockResolvedValueOnce(Response.json({ rows: [recent], total: 13 }))
+  const select = vi.fn()
+  try {
+    render(<SessionList path="/api/codex/recents" filters="state=archived&search=Atlas"
+      revision="0" paginationLabel="Pagine delle conversazioni recenti" emptyLabel="Nessuna conversazione"
+      onSelect={select} />)
+    await screen.findByRole('button', { name: 'Prima pagina' })
+    fireEvent.click(screen.getByRole('button', { name: 'Pagina successiva' }))
+    const session = await screen.findByRole('button', { name: 'Conversazione indipendente' })
+    expect(fetch.mock.calls.map(([url]) => url)).toEqual([
+      '/api/codex/recents?state=archived&search=Atlas&limit=12&offset=0',
+      '/api/codex/recents?state=archived&search=Atlas&limit=12&offset=12',
+    ])
+    fireEvent.click(session)
+    expect(select).toHaveBeenCalledWith('recent')
+  } finally {
+    fetch.mockRestore()
+  }
 })

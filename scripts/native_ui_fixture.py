@@ -12,7 +12,9 @@ import time
 
 VERSIONS = {"0.169.0-alpha.11.1", "0.169.0"}
 MAX_OUTPUT = 8 * 1024 * 1024
-METHODS = {"initialize", "thread/read"}
+METHODS = {
+    "initialize", "thread/read", "project/list", "project/read", "project/import", "project/delete",
+}
 def session_id(n):
     return f"ab000000-1111-4111-8111-{n:012d}"
 
@@ -110,7 +112,7 @@ def seed(case, ident, parent=None, archived=False, **relationships):
 
 
 class FixtureServer:
-    def __init__(self, case, binary, private_home):
+    def __init__(self, case, binary, private_home, *, experimental=True):
         self.case, self.n, self.buf, self.total = case, 0, b"", 0
         self.err = (case / "native-stderr-private.log").open("wb")
         self.sel = selectors.DefaultSelector()
@@ -125,7 +127,7 @@ class FixtureServer:
                 stderr=self.err, bufsize=0)
             self.sel.register(self.proc.stdout, selectors.EVENT_READ)
             response = self.call("initialize", {"clientInfo": {"name": "agentmender-ui-fixture", "version": "0.1.0"},
-                                                 "capabilities": {"experimentalApi": True}})
+                                                 "capabilities": {"experimentalApi": experimental}})
             result = response.get("result", {})
             if Path(result.get("codexHome", "/missing")).resolve() != (case / "provider").resolve():
                 raise ValueError("unexpected native state root")

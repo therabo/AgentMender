@@ -339,7 +339,6 @@ pub(super) struct RelationshipMeta {
     cli_version: String,
     source: Option<SourceValue>,
     pub session_id: Option<String>,
-    pub cwd: Option<String>,
     pub parent_thread_id: Option<String>,
     pub forked_from_id: Option<String>,
     pub forked_from_ordinal_exclusive: Option<u64>,

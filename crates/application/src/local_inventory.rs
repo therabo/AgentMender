@@ -173,6 +173,7 @@ mod tests {
                 native_id: id.into(),
             },
             title: Some("Straße Café".into()),
+            codex_membership: Default::default(),
             workspace: Some("/fixture/Atlas".into()),
             project: Some("Atlas".into()),
             created_at: value,

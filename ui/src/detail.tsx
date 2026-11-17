@@ -100,7 +100,7 @@ export function ProjectRemoval({ project, onClose, onConfirm }: {
   }, [path])
 
   return <Dialog onClose={onClose} label="project-removal-title">
-    <header className="drawer-header"><span>Rimozione progetto</span><CloseButton onClose={onClose} /></header>
+    <header className="drawer-header"><span>Rimozione delle sessioni del progetto</span><CloseButton onClose={onClose} /></header>
     <div className="detail-body">
       <h2 id="project-removal-title">{preview?.project_name ?? project.name}</h2>
       {error ? <Notice tone="error">{error}</Notice>
@@ -108,13 +108,13 @@ export function ProjectRemoval({ project, onClose, onConfirm }: {
         : <>
           <dl className="facts review-facts project-review-facts">
             <Fact label="Provider" value={providerLabel[preview.provider]} />
-            <Fact label="Workspace" value={preview.workspace ?? 'Non disponibile'} mono />
+            <Fact label="Root registrate" value={preview.roots.join(" · ") || 'Nessuna'} mono />
             <Fact label="Identificativo del progetto" value={preview.project_key} mono />
             <Fact label="Conversazioni principali" value={preview.main_conversations.toLocaleString('it')} />
             <Fact label="Subagent e discendenti" value={preview.descendants.toLocaleString('it')} />
             <Fact label="Sessioni coinvolte" value={preview.total_sessions.toLocaleString('it')} />
             <Fact label="Verifica" value={preview.complete ? 'Perimetro verificato' : 'Copertura incompleta'} />
-            <Fact label="Istanza del provider" value={preview.persistent_items.join(', ') || 'Raggruppamento per workspace'} />
+            <Fact label="Perimetro" value={preview.scope === 'sessions' ? 'Sessioni associate e discendenti' : 'Non disponibile'} />
           </dl>
           <section className="detail-section">
             <h3>Fuori dal perimetro</h3>

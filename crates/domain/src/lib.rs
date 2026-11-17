@@ -57,9 +57,9 @@ pub struct SessionIdentity {
     deny_unknown_fields
 )]
 pub enum ProjectLocator {
-    Workspace(String),
+    Codex(String),
+    CodexDesktop(String),
     Namespace(String),
-    Unassigned,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -71,47 +71,31 @@ pub struct ProjectIdentity {
     pub locator: ProjectLocator,
 }
 
-impl ProjectIdentity {
-    pub fn for_session(session: &Session) -> Self {
-        let identity = &session.identity;
-        let locator = match identity.provider {
-            ProviderKind::Codex => session
-                .workspace
-                .as_deref()
-                .and_then(workspace_identity)
-                .map(|path| ProjectLocator::Workspace(path.into())),
-            ProviderKind::Claude => identity.namespace.clone().map(ProjectLocator::Namespace),
-        };
-        Self {
-            provider: identity.provider,
-            state_root: identity.state_root.clone(),
-            locator: locator.unwrap_or(ProjectLocator::Unassigned),
-        }
-    }
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RegisteredProject {
+    pub identity: ProjectIdentity,
+    pub name: Option<String>,
+    pub roots: Vec<String>,
+    pub desktop_backed: bool,
 }
 
-/// Keep exact workspace spelling. Ambiguous aliases involving dot segments
-/// or repeated separators are unassigned. No filesystem resolution is needed.
-pub fn workspace_identity(value: &str) -> Option<&str> {
-    if !value.starts_with('/')
-        || value.len() <= 1
-        || value.len() > 4096
-        || value.chars().any(char::is_control)
-        || !safe_conversation_text(value)
-        || value[1..]
-            .split('/')
-            .any(|part| matches!(part, "" | "." | ".."))
-    {
-        return None;
-    }
-    Some(value)
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CodexMembership {
+    #[default]
+    Unassigned,
+    Native(String),
+    Unknown,
 }
 
 #[derive(Default)]
 pub struct InventoryObservation {
     pub sessions: Vec<Session>,
-    pub projects: Vec<ProjectIdentity>,
+    pub projects: Vec<RegisteredProject>,
+    pub codex_members: std::collections::BTreeMap<String, ProjectLocator>,
     pub incomplete: bool,
+    pub projects_incomplete: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -135,6 +119,7 @@ pub enum SessionKind {
 #[serde(deny_unknown_fields)]
 pub struct Session {
     pub identity: SessionIdentity,
+    pub codex_membership: CodexMembership,
     pub title: Option<String>,
     pub workspace: Option<String>,
     pub project: Option<String>,

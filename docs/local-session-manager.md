@@ -25,14 +25,16 @@ calendar days over last activity.
 
 Expand any number of projects in the Codex or Claude Code inventory.
 Search by project name, workspace, namespace or associated main session
-metadata. Each expanded project pages its own sessions. A section for
-unassigned conversations supports normal session actions. Counts and sizes
-describe observed records and known transcript bytes.
+metadata. Each expanded project pages its own sessions.
+Codex Recenti lists conversations without a verified project association
+and supports normal session actions. Counts and sizes describe observed
+records and known transcript bytes.
 
-On a supported Codex installation, open the removal preview from a project
-header. The running operation processes the reviewed trees in sequence.
-Confirm by typing `ELIMINA PROGETTO`. The workspace and software repository
-stay on disk. Claude Code project namespaces are read-only.
+On a supported Codex installation, open **Rimuovi sessioni del progetto**
+from an eligible project header. Confirm with `RIMUOVI SESSIONI DEL PROGETTO`.
+The operation processes the reviewed trees in sequence. The native registration,
+workspace and software repository are outside the scope. Desktop-backed projects
+support individual session reviews. Claude Code project namespaces are read-only.
 
 On partial completion, inspect the verified, undispatched and uncertain
 subtree IDs. A restart discards receipts and live operation results. Refresh
@@ -52,7 +54,8 @@ require exact Origin. All requests require the exact local Host.
 | `GET /api/{provider}/projects` | Search, filter, sort and page provider project groups |
 | `GET /api/{provider}/projects/{key}` | Read an observed group and its coverage and capability |
 | `GET /api/{provider}/projects/{key}/sessions` | Page verified main conversations within a group |
-| `POST /api/{provider}/projects/{key}/removal-preview` | Review a complete Codex workspace group and issue a project receipt |
+| `POST /api/{provider}/projects/{key}/removal-preview` | Review native Codex project membership and issue a session-removal receipt |
+| `GET /api/codex/recents` | Page verified main conversations without a verified project association |
 | `GET /api/{provider}/sessions` | Search, filter, sort and page over verified main conversations |
 | `GET /api/{provider}/sessions/{key}` | Details of a verified main conversation |
 | `GET /api/{provider}/sessions/{key}/conversation` | Bounded selected Codex transcript page with optional opaque cursor |
@@ -68,7 +71,8 @@ main title and UUID, the verified descendant count and the total number of
 sessions affected. The project review supplies verified counts, the project
 key, the list of reviewed trees and explicit exclusions. A browser cannot
 supply root IDs or a replacement project scope. Session removal uses
-`RIMUOVI`. Project removal uses `ELIMINA PROGETTO`. Ineligible targets show the reason and receive no receipt.
+`RIMUOVI`. The project session review uses `RIMUOVI SESSIONI DEL PROGETTO`.
+Ineligible targets show the reason and receive no receipt.
 
 ## Test with disposable archives
 

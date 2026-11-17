@@ -30,15 +30,17 @@ which supplies provider totals and opaque key lookups. Search uses Unicode norma
 folding. State and UTC date filters run before sorting and paging. Unknown sort
 values follow known ones. An opaque browser key incorporates provider, root,
 namespace and native identity. Project keys bind provider, root and the
-recorded Codex workspace or observed Claude namespace. An unassigned group
-collects main conversations whose project identity is unavailable. Session
-keys stay rooted in the original provider observation.
+registered Codex ID or observed Claude namespace. Native SQLite and recognized
+Desktop assignments resolve Codex membership inside the provider observation.
+Recenti collects main conversations without a verified project association.
+Session keys stay rooted in the original provider observation.
 
 The project index groups the full bounded observation before paging. Project
 and session filters use the same normalized metadata query. Group totals
 count visible main conversations. Known transcript bytes can include
 attributable hidden descendants, and coverage flags qualify observed totals.
-The browser pages sessions independently inside each expanded project.
+The browser pages sessions independently inside each expanded project and
+in Recenti. Coverage flags qualify the three observed counts.
 
 Codex opens SQLite only inside a protected macOS worker. It copies a bounded
 snapshot into memory and runs fixed projections. Inbound edge checks query
@@ -59,7 +61,8 @@ values remain unknown. There is no Claude mutation operation.
 
 ## Removal path
 
-The browser can review one verified main UUID or an entire Codex group.
+The browser can review one verified main UUID or the session trees explicitly
+assigned to a verified native Codex project.
 The Codex worker owns the full
 relationship observation. It indexes incoming and outgoing spawn edges and
 walks the outgoing edges iteratively into a unique bounded set, retaining
@@ -85,10 +88,11 @@ admitted releases and observation limits.
 
 Project review reopens the complete bounded archive independently of the UI
 entry budget, builds the existing graph and rollout index once per scan, then
-validates every tree, workspace and reference before issuing a receipt. Each
-native step starts from a freshly rebuilt plan. The verified previous tree's
-unrelated evidence is the fingerprint expected for the next remaining plan.
-The same native dispatch and postcondition serve single and project removal.
+validates native assignments, trees and references before issuing a receipt.
+Each native step starts from a freshly rebuilt plan. The verified previous
+tree's unrelated evidence is the fingerprint expected for the next remaining
+plan. A final scan verifies the remaining state and project registration.
+The same native dispatch serves individual and bulk session removal.
 
 The operation status exposes each verified, undispatched or uncertain tree.
 An observed failure stops dispatch. Outcomes and capabilities expire with the

@@ -28,9 +28,11 @@ contracts.
   change or uncertainty. Keep one-use receipts and the
   single in-flight guard. Verify rows, edges and rollouts through the read-only
   worker. Ambiguous outcomes stay uncertain and are never retried automatically.
-- Keep Claude Code read-only. The Codex project contract covers verified
-  workspace groups. Keep workspace paths, Desktop project preferences and
-  unrelated artifacts outside the removal scope. Keep the guarded Desktop marker and distinguish verified session
+- Keep Claude Code read-only. Resolve Codex membership from explicit native or
+  recognized Desktop assignments. Authorize bulk session removal only through
+  a verified native project ID and complete membership. Keep registrations,
+  workspace paths, Desktop preferences and unrelated artifacts outside that
+  scope. Keep the guarded Desktop marker and distinguish verified session
   evidence from other provider artifacts or physical storage reclaim.
 - Use temporary, isolated provider fixtures. Leave real provider session data,
   credentials and installed provider configuration untouched during development.

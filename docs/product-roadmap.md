@@ -2,7 +2,7 @@
 
 The local manager is the primary surface. Current work focuses on predictable
 main-conversation inventory by project and verified outcomes for individual
-Codex trees and workspace groups.
+Codex trees and verified native project assignments.
 
 ## Coverage and compatibility
 

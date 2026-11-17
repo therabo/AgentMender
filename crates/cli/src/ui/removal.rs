@@ -36,7 +36,7 @@ pub(super) fn refusal_error(error: RemovalRefusal) -> ApiError {
 
 const PREVIEW_TTL: Duration = Duration::from_secs(120);
 const CONFIRMATION: &str = "RIMUOVI";
-const PROJECT_CONFIRMATION: &str = "ELIMINA PROGETTO";
+const PROJECT_CONFIRMATION: &str = "RIMUOVI SESSIONI DEL PROGETTO";
 
 const CHANGED: &str =
     "L’archivio o l’eseguibile è cambiato. Aggiorna l’inventario e richiedi una nuova anteprima.";
@@ -109,7 +109,7 @@ pub(super) struct OperationView {
 impl OperationView {
     fn new(status: OperationStatus, native_id: String) -> Self {
         let message = match status {
-            OperationStatus::Preparing => "Verifica in corso per l’intero progetto.",
+            OperationStatus::Preparing => "Verifica delle sessioni associate al progetto.",
             OperationStatus::Ready => "Il piano è pronto per la conferma.",
             OperationStatus::Partial => "Rimozione interrotta. Solo i sottoalberi indicati come verificati risultano rimossi.",
             OperationStatus::Refused => "Le verifiche del progetto hanno impedito la rimozione.",
@@ -179,12 +179,12 @@ pub(super) struct ProjectPreviewView {
     pub provider: ProviderKind,
     pub project_key: String,
     pub project_name: String,
-    pub workspace: Option<String>,
+    pub roots: Vec<String>,
     pub main_conversations: usize,
     pub descendants: usize,
     pub total_sessions: usize,
     pub subtrees: Vec<Subtree>,
-    pub persistent_items: [&'static str; 0],
+    pub scope: &'static str,
     pub excluded: [&'static str; 4],
     pub complete: bool,
 }
@@ -296,17 +296,17 @@ impl Operations {
             provider: ProviderKind::Codex,
             project_key: project.key.clone(),
             project_name: project.name.clone(),
-            workspace: project.workspace,
+            roots: project.roots,
             main_conversations: subtrees.len(),
             descendants: total - subtrees.len(),
             total_sessions: total,
             subtrees: subtrees.clone(),
-            persistent_items: [],
+            scope: "sessions",
             excluded: [
                 "Workspace, repository e worktree",
                 "Configurazione e credenziali",
                 "Archivi e risorse degli altri progetti",
-                "Registrazioni workspace del Desktop",
+                "Registrazione del progetto e preferenze Desktop",
             ],
             complete: true,
         };

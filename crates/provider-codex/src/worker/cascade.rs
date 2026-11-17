@@ -5,7 +5,7 @@ use crate::{
     removal::RemovalRefusal,
 };
 use agentmender_domain::{
-    ProjectIdentity, ProjectLocator, SessionKind, SessionState, canonical_uuid, workspace_identity,
+    CodexMembership, ProjectIdentity, ProjectLocator, SessionKind, SessionState, canonical_uuid,
 };
 use agentmender_provider_api::filesystem;
 use rusqlite::{Connection as Sqlite, types::ValueRef};
@@ -529,16 +529,28 @@ pub(super) fn project_plan(
     revision: String,
     end: Instant,
 ) -> Result<ProjectEvidence, RemovalRefusal> {
-    let ProjectLocator::Workspace(workspace) = &project.locator else {
+    let ProjectLocator::Codex(project_id) = &project.locator else {
         return Err(RemovalRefusal::NotMain);
     };
     if project.provider != ProviderKind::Codex
         || project.state_root != root
-        || workspace_identity(workspace) != Some(workspace)
+        || !canonical_uuid(project_id)
     {
         return Err(RemovalRefusal::Changed);
     }
     let archive = RemovalArchive::read(db, root, end)?;
+    let catalog = super::projects::read(db, root, &archive.layout, revision.clone());
+    if catalog.incomplete {
+        return Err(RemovalRefusal::IncompleteRelationships);
+    }
+    let registration = catalog
+        .projects
+        .into_iter()
+        .find(|item| item.identity == *project)
+        .ok_or(RemovalRefusal::Changed)?;
+    if registration.desktop_backed {
+        return Err(RemovalRefusal::IncompleteRelationships);
+    }
     let empty = BTreeSet::new();
     let canonical = check_references(
         db,
@@ -553,41 +565,45 @@ pub(super) fn project_plan(
         .map_err(|_| unavailable())?;
     let mut rows = query.query([]).map_err(|_| unavailable())?;
     let mut mains = Vec::new();
+    let mut assigned = BTreeSet::new();
+    let mut other_projects = BTreeSet::new();
     while let Some(row) = rows.next().map_err(|_| unavailable())? {
         check_size(0, 1, end)?;
         let id: String = row.get(0).map_err(|_| unavailable())?;
-        let rollout = archive.rollouts.get(&id).ok_or_else(unavailable)?;
-        let recorded: Option<String> = row.get(2).map_err(|_| unavailable())?;
-        let recorded = recorded.as_deref().and_then(workspace_identity);
-        let header = rollout.meta.cwd.as_deref().and_then(workspace_identity);
-        let selected = Some(workspace.as_str());
-        if recorded != selected && header != selected {
-            continue;
-        }
-        let candidate = inventory::row(db, root, row, &archive.layout, end)?;
-        if candidate.session.kind == SessionKind::Unknown
-            || (candidate.session.is_main() && recorded != header)
-            || (!candidate.session.is_main() && rollout.meta.is_main(&id))
-        {
-            return Err(RemovalRefusal::IncompleteRelationships);
-        }
-        if candidate.session.is_main() {
-            check_size(mains.len(), MAX_PROJECT_ROOTS, end)?;
-            mains.push(candidate.session.identity);
+        match inventory::membership(row, 11) {
+            CodexMembership::Native(value) if &value == project_id => {
+                if catalog
+                    .legacy
+                    .get(&id)
+                    .is_some_and(|claim| claim.as_ref() != Some(&project.locator))
+                {
+                    return Err(RemovalRefusal::IncompleteRelationships);
+                }
+                let candidate = inventory::row(db, root, row, &archive.layout, end)?;
+                if candidate.session.kind == SessionKind::Unknown {
+                    return Err(RemovalRefusal::IncompleteRelationships);
+                }
+                if candidate.session.is_main() {
+                    check_size(mains.len(), MAX_PROJECT_ROOTS, end)?;
+                    mains.push(candidate.session.identity);
+                }
+                assigned.insert(id);
+            }
+            CodexMembership::Unknown => return Err(RemovalRefusal::IncompleteRelationships),
+            CodexMembership::Native(_) => {
+                other_projects.insert(id);
+            }
+            CodexMembership::Unassigned => {}
         }
     }
-    for (id, rollout) in &archive.rollouts {
-        if !canonical.contains(id)
+    if archive.rollouts.iter().any(|(id, rollout)| {
+        !canonical.contains(id)
             && !matches!(&rollout.source, ObservedSource::Spawned(_))
-            && rollout
-                .meta
-                .cwd
-                .as_deref()
-                .and_then(workspace_identity)
-                .is_none_or(|path| path == workspace)
-        {
-            return Err(RemovalRefusal::IncompleteRelationships);
-        }
+            && rollout.meta.forked_from_id.is_none()
+            && !rollout.meta.attached_thread
+    }) {
+        // A rollout-only main has no verifiable project membership.
+        return Err(RemovalRefusal::IncompleteRelationships);
     }
 
     let mut trees = Vec::with_capacity(mains.len());
@@ -596,13 +612,24 @@ pub(super) fn project_plan(
         let tree = archive.tree(&id, &revision)?;
         for member in &tree.scope.members {
             check_size(members.len(), MAX_PROJECT_MEMBERS, end)?;
-            if !members.insert(member.id.clone()) {
+            if other_projects.contains(&member.id)
+                || catalog.legacy.get(&member.id).is_some_and(|claim| {
+                    claim
+                        .as_ref()
+                        .is_some_and(|locator| locator != &project.locator)
+                })
+                || !members.insert(member.id.clone())
+            {
                 return Err(RemovalRefusal::IncompleteRelationships);
             }
         }
         trees.push(tree);
     }
+    if !assigned.is_subset(&members) {
+        return Err(RemovalRefusal::IncompleteRelationships);
+    }
     let evidence = ProjectEvidence {
+        registration,
         archive_revision: unrelated_revision(db, &archive.graph, &archive.rollouts, &empty, end)?,
         trees,
     };

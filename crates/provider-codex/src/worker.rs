@@ -3,16 +3,20 @@
 mod cascade;
 #[cfg(target_os = "macos")]
 mod inventory;
+#[cfg(target_os = "macos")]
+mod projects;
 
 use crate::{CodexAdapter, Guard, removal::RemovalRefusal};
 use agentmender_domain::{
-    InventoryObservation, ProjectIdentity, ProviderKind, Session, SessionIdentity,
+    CodexMembership, InventoryObservation, ProjectIdentity, ProjectLocator, ProviderKind,
+    RegisteredProject, Session, SessionIdentity,
 };
 use agentmender_provider_api::{
     ProviderError, evidence::EvidenceSandbox, process, validate_location,
 };
 use serde::{Deserialize, Serialize};
 use std::{
+    collections::{BTreeMap, BTreeSet},
     io::{BufRead, BufReader, Read, Write},
     path::PathBuf,
     sync::mpsc,
@@ -99,9 +103,19 @@ pub(super) struct RemovalScope {
     pub unrelated_revision: String,
 }
 
+#[derive(Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ProjectCatalog {
+    revision: String,
+    projects: Vec<RegisteredProject>,
+    legacy: BTreeMap<String, Option<ProjectLocator>>,
+    incomplete: bool,
+}
+
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct ProjectEvidence {
+    pub registration: RegisteredProject,
     pub archive_revision: String,
     pub trees: Vec<RemovalEvidence>,
 }
@@ -159,6 +173,7 @@ enum Operation {
         cursor: Option<Box<TranscriptCursor>>,
     },
     Removal(SessionIdentity),
+    ProjectCatalog,
     ProjectRemoval(ProjectIdentity),
     VerifyRemoval(RemovalScope),
 }
@@ -170,6 +185,7 @@ enum Response {
     Inventory(InventoryPage),
     Transcript(TranscriptPage),
     Removal(Box<Result<RemovalEvidence, RemovalRefusal>>),
+    ProjectCatalog(ProjectCatalog),
     ProjectRemoval(Result<ProjectEvidence, RemovalRefusal>),
     Verification(Verification),
 }
@@ -209,6 +225,15 @@ fn observe(request: &Request, resident: &mut Option<Snapshot>) -> Result<Respons
         Operation::Removal(identity) => {
             let revision = reader::hash(&serde_json::to_vec(&before).map_err(|_| unavailable())?);
             Response::Removal(Box::new(cascade::plan(&db, root, identity, revision, end)))
+        }
+        Operation::ProjectCatalog => {
+            let revision = reader::hash(&serde_json::to_vec(&before).map_err(|_| unavailable())?);
+            Response::ProjectCatalog(projects::read(
+                &db,
+                root,
+                &inventory::layout(&db)?,
+                revision,
+            ))
         }
         Operation::ProjectRemoval(project) => {
             let revision = reader::hash(&serde_json::to_vec(&before).map_err(|_| unavailable())?);
@@ -473,10 +498,49 @@ impl CodexAdapter {
                 None => break,
             }
         }
+        let Response::ProjectCatalog(catalog) = self.observe(Operation::ProjectCatalog)? else {
+            return Err(unavailable());
+        };
+        if Some(&catalog.revision) != revision.as_ref() {
+            return Err(stale());
+        }
+        let registered: BTreeSet<_> = catalog
+            .projects
+            .iter()
+            .map(|project| &project.identity.locator)
+            .collect();
+        let mut projects_incomplete = catalog.incomplete;
+        let mut codex_members = BTreeMap::new();
+        for session in sessions.iter().filter(|session| session.is_main()) {
+            let legacy = catalog.legacy.get(&session.identity.native_id);
+            let membership = match &session.codex_membership {
+                CodexMembership::Unassigned => legacy.and_then(Option::as_ref).cloned(),
+                CodexMembership::Native(id) => {
+                    let native = ProjectLocator::Codex(id.clone());
+                    if registered.contains(&native)
+                        && legacy.is_none_or(|claim| claim.as_ref() == Some(&native))
+                    {
+                        Some(native)
+                    } else {
+                        projects_incomplete = true;
+                        None
+                    }
+                }
+                CodexMembership::Unknown => {
+                    projects_incomplete = true;
+                    None
+                }
+            };
+            if let Some(locator) = membership {
+                codex_members.insert(session.identity.native_id.clone(), locator);
+            }
+        }
         Ok(InventoryObservation {
             sessions,
+            projects: catalog.projects,
+            codex_members,
             incomplete,
-            ..Default::default()
+            projects_incomplete,
         })
     }
 
@@ -535,10 +599,14 @@ impl CodexAdapter {
         };
         let evidence = result?;
         let mut members = std::collections::BTreeSet::new();
-        if evidence.trees.len() > MAX_PROJECT_ROOTS
+        if evidence.registration.identity != *project || evidence.registration.desktop_backed
+            || evidence.trees.len() > MAX_PROJECT_ROOTS
             || evidence.trees.iter().any(|tree| {
                 !tree.session.is_main()
-                    || ProjectIdentity::for_session(&tree.session) != *project
+                    || tree.session.identity.state_root != project.state_root
+                    || tree.session.identity.provider != project.provider
+                    || !matches!((&project.locator, &tree.session.codex_membership),
+                        (ProjectLocator::Codex(expected), CodexMembership::Native(actual)) if actual == expected)
                     || !tree
                         .scope
                         .members

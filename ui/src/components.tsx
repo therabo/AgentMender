@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { AlertCircle, Archive, ChevronDown, ChevronLeft, ChevronRight, Database, Folder, RefreshCw, Trash2, X } from 'lucide-react'
-import { projectPath, request, type Page, type Project, type Session } from './api'
+import { request, type Page, type Project, type Session } from './api'
 import { dateLabel, kindLabel, numberLabel, sizeLabel, stateLabel } from './format'
 
 export function Notice({ children, tone = 'info' }: { children: ReactNode; tone?: 'info' | 'warning' | 'error' | 'success' }) {
@@ -22,7 +22,7 @@ export function SessionTable({ records, onSelect }: { records: Session[]; onSele
           <div className="session-icon" aria-hidden><Archive size={17} /></div>
           <div className="session-description">
             <button className="session-title" title={session.title ?? undefined} onClick={() => onSelect(session.key)}>{session.title ?? 'Senza titolo'}</button>
-            <span className="session-project" title={session.workspace ?? undefined}><Folder size={13} aria-hidden />{session.project ?? 'Workspace sconosciuto'}<span className="project-separator">/</span>{kindLabel[session.kind]}</span>
+            <span className="session-project" title={session.workspace ?? undefined}><Folder size={13} aria-hidden />{session.project ?? session.workspace ?? 'Workspace sconosciuto'}<span className="project-separator">/</span>{kindLabel[session.kind]}</span>
             <code className="table-id" title={session.native_id}>{session.native_id}</code>
             <span className="mobile-activity">Attività · {dateLabel(session.last_active_at)}</span>
           </div>
@@ -44,7 +44,7 @@ export function ProjectAccordion({ project, expanded, onToggle, onRemove, childr
   const panelId = useId()
   const titleId = useId()
   const contextId = useId()
-  const context = [project.workspace, project.namespace].filter(Boolean).join(' · ')
+  const context = (project.roots.length ? project.roots : [project.workspace, project.namespace]).filter(Boolean).join(' · ')
   return <article className="project">
     <div className="project-header">
       <h3>
@@ -64,13 +64,13 @@ export function ProjectAccordion({ project, expanded, onToggle, onRemove, childr
         </button>
       </h3>
       {project.removal_available && <button type="button" className="button square danger-outline project-remove"
-        aria-label={`Elimina progetto ${project.name}`} title="Anteprima rimozione progetto" onClick={onRemove}>
+        aria-label={`Rimuovi sessioni del progetto ${project.name}`} title="Anteprima rimozione delle sessioni" onClick={onRemove}>
         <Trash2 size={17} aria-hidden />
       </button>}
     </div>
     <div className="project-panel" role="group" id={panelId} aria-labelledby={titleId} hidden={!expanded}>
       {expanded && <>
-        {project.removal_reason && !project.unassigned && <p className="project-reason">{project.removal_reason}</p>}
+        {project.removal_reason && <p className="project-reason">{project.removal_reason}</p>}
         {children}
       </>}
     </div>
@@ -79,14 +79,14 @@ export function ProjectAccordion({ project, expanded, onToggle, onRemove, childr
 
 const SESSION_PAGE_SIZE = 12
 
-export function ProjectSessions({ project, filters, revision, onSelect }: {
-  project: Project; filters: string; revision: string; onSelect: (key: string) => void
+export function SessionList({ path, filters, revision, paginationLabel, emptyLabel, onSelect }: {
+  path: string; filters: string; revision: string; paginationLabel: string; emptyLabel: string
+  onSelect: (key: string) => void
 }) {
   const [pageIndex, setPageIndex] = useState(0)
   const [page, setPage] = useState<Page>()
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
-  const path = projectPath(project.provider, project.key)
 
   useEffect(() => {
     const controller = new AbortController()
@@ -95,7 +95,7 @@ export function ProjectSessions({ project, filters, revision, onSelect }: {
     const query = new URLSearchParams(filters)
     query.set('limit', String(SESSION_PAGE_SIZE))
     query.set('offset', String(pageIndex * SESSION_PAGE_SIZE))
-    request<Page>(`${path}/sessions?${query}`, { signal: controller.signal }).then(result => {
+    request<Page>(`${path}?${query}`, { signal: controller.signal }).then(result => {
       if (controller.signal.aborted) return
       if (pageIndex > 0 && pageIndex * SESSION_PAGE_SIZE >= result.total) setPageIndex(0)
       else setPage(result)
@@ -111,10 +111,10 @@ export function ProjectSessions({ project, filters, revision, onSelect }: {
     {error ? <Notice tone="error">{error}</Notice>
       : page?.rows.length ? <SessionTable records={page.rows} onSelect={onSelect} />
       : loading ? <p className="project-reason" role="status">Caricamento sessioni…</p>
-      : <p className="project-reason">{project.main_conversations === 0 ? 'Nessuna conversazione osservata.' : 'Nessuna conversazione corrisponde ai filtri.'}</p>}
+      : <p className="project-reason">{emptyLabel}</p>}
     {page && page.total > SESSION_PAGE_SIZE && <Pagination
       total={page.total} page={pageIndex} pageSize={SESSION_PAGE_SIZE} onPage={setPageIndex}
-      label={`Pagine delle sessioni di ${project.name}`} />}
+      label={paginationLabel} />}
   </div>
 }
 

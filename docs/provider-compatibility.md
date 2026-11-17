@@ -68,28 +68,56 @@ Desktop visibility, other artifacts and physical bytes reclaimed are outside
 the verification. The [disposable fixture](local-session-manager.md#test-with-disposable-archives)
 checks byte-for-byte preservation of unrelated fixture rollouts and rows.
 
-### Codex workspace groups
+### Registered Codex projects
 
-The exact absolute workspace spelling comes from the scoped thread archive.
-Grouping works for a missing on-disk workspace. Ambiguous path spellings or
-missing metadata go to **Senza progetto**. Workspace paths are never opened
-for removal. A complete preflight checks canonical locators, workspace
-agreement with the rollout header for selected main conversations, orphan
-rollouts that could contain more main conversations and all spawned trees.
-The scan is bounded to 16,384 records per collection, eight seconds per
-worker observation, 32 main conversations and 256 total members (128 per
-tree). The worker also enforces a 112 KiB project evidence payload limit.
-Large or ambiguous archives can still support individual removal where a
-single-tree review succeeds.
+In Codex 0.169.0, migration 49 defines `projects`, `project_roots` and the
+nullable `threads.project_id` association. AgentMender reads these fields from
+the confined SQLite snapshot. Registered projects can have multiple roots,
+duplicate display names and zero conversations. A thread's `cwd` supplies
+context and can match any project's root independently of its assignment.
+[Native schema](https://github.com/openai/codex/blob/rust-v0.169.0/codex-rs/state/migrations/0049_projects.sql).
 
-The published CLI contract and state schema store threads with a workspace
-field. They expose UUID deletion and no separately removable workspace
-object. The Desktop reconciliation contract is for a derived thread catalog.
-Desktop workspace registrations and UI preferences have no verified deletion
-contract here and are excluded. The Codex group disappears from AgentMender
-when its observed main conversations are gone.
-See the [Codex CLI](https://github.com/openai/codex/blob/rust-v0.169.0/codex-rs/cli/src/main.rs)
-and [state migrations](https://github.com/openai/codex/tree/rust-v0.169.0/codex-rs/state/migrations).
+Codex Desktop can retain project registrations in `local-projects` and
+assignments in `thread-project-assignments` while native thread migration is
+incomplete. The worker reads a bounded, no-follow observation of
+`.codex-global-state.json`. It uses the recognized local record shape,
+`thread-project-membership-host-ids`, explicit `projectless-thread-ids`, and the
+migration map under `local:<configured archive>`. Matching registered IDs or
+an explicit migration alias reconcile native and legacy registrations. A
+mapped legacy record whose native target has disappeared is skipped when the
+native catalog is readable. A recognized local legacy assignment can fill a
+null native assignment. Conflicting assignments and dangling IDs go to Recenti.
+Unknown formats qualify coverage. The reader suppresses unrelated state fields
+and checks file identity around the bounded read.
+
+In the inspected Mac installation, the two registered native projects also had
+legacy entries linked by the host migration map. Native `threads.project_id`
+was null throughout the observed database, while Desktop retained explicit
+local thread assignments. The matching inventory therefore needs both sources.
+The installed app-server did not initialize against the live archive with writes
+denied. The installed build's experimental list was verified on a disposable
+archive, and the live catalog was read through the confined snapshot instead.
+
+The app-server exposes experimental `project/list`, `project/read` and
+`project/delete`. The 0.169.0 and 0.169.0-alpha.11.1 fixtures exercised these
+methods, including rejection without experimental initialization. The native
+delete method clears the project assignments of surviving threads and deletes
+the registration. Session deletion requires the separate UUID cascade.
+[Protocol](https://github.com/openai/codex/blob/rust-v0.169.0/codex-rs/app-server-protocol/src/protocol/v2/project.rs) ·
+[Request processor](https://github.com/openai/codex/blob/rust-v0.169.0/codex-rs/app-server/src/request_processors/projects.rs) ·
+[Storage implementation](https://github.com/openai/codex/blob/rust-v0.169.0/codex-rs/state/src/runtime/projects.rs).
+
+AgentMender offers bulk **session** removal for verified native membership.
+Desktop-backed projects support browsing and individual reviews. The bulk
+preflight verifies all assigned roots and spawned descendants, checks
+cross-project assignments and fails closed if a rollout-only main or incomplete
+catalog prevents a complete plan. The scan budget covers 16,384 records per
+collection, eight seconds per worker observation, 32 main conversations and
+256 total members (128 per tree), and a 112 KiB evidence payload. Each step
+revalidates the registration and expected archive. The final observation
+checks that the project remains registered with its reviewed sessions removed.
+Project registrations, root directories, and Desktop preferences are outside
+the operation.
 
 ## Claude Code
 
