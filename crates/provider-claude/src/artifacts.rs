@@ -3,7 +3,7 @@
 use crate::{
     Access, ClaudeAdapter, SessionEvidence,
     read::verify,
-    storage::{ArtifactLocation, Budget, EntryKind, REMOVAL_NOTICE, history_stats},
+    storage::{ArtifactLocation, Budget, EntryKind, history_stats},
     usage::{ArtifactKind, ArtifactMeter, Measurement, Ownership, RootKind},
 };
 use agentmender_domain::SessionIdentity;
@@ -44,7 +44,6 @@ pub struct Artifact {
     size: Measurement,
     scope: Scope,
     writer_state: &'static str,
-    removal_available: bool,
 }
 
 #[derive(Serialize)]
@@ -54,21 +53,6 @@ struct Category {
     logical_bytes: u64,
     allocated_bytes: Option<u64>,
     state: &'static str,
-    removal_available: bool,
-}
-
-#[derive(Serialize)]
-struct Plan {
-    mode: Scope,
-    status: &'static str,
-    candidate_files: usize,
-    associated_logical_bytes: u64,
-    exclusive_logical_bytes: u64,
-    shared_logical_bytes: u64,
-    authorized_logical_bytes: u64,
-    allocated_observed: Option<u64>,
-    operations: [&'static str; 0],
-    blockers: [&'static str; 3],
 }
 
 const CATEGORIES: &[&str] = &[
@@ -100,18 +84,11 @@ pub struct StorageDetail {
     pub history_observation: &'static str,
     pub process_registry: &'static str,
     pub observed: Vec<Artifact>,
-    pub complete: bool,
     pub diagnostic_complete: bool,
-    pub standard_available: bool,
-    pub deep_available: bool,
-    pub backup_status: &'static str,
-    available_volume_bytes: Option<u64>,
-    pub removal_reason: &'static str,
     writer_observation: &'static str,
     fork_references: Vec<String>,
     engine_versions: Vec<String>,
     categories: Vec<Category>,
-    plans: [Plan; 2],
 }
 
 struct Review<'a> {
@@ -192,7 +169,6 @@ impl Review<'_> {
             } else {
                 "unverified"
             },
-            removal_available: false,
         });
     }
 
@@ -236,7 +212,7 @@ impl Review<'_> {
     }
 }
 
-fn exact_sidecar(suffix: &str) -> bool {
+pub(crate) fn exact_sidecar(suffix: &str) -> bool {
     matches!(
         suffix,
         ".ccr-tip.json" | ".precompact.json" | ".desktop-released.json" | ".dir-sync.json"
@@ -301,7 +277,6 @@ fn summarize(key: &'static str, artifacts: &[Artifact], complete: bool) -> Categ
         logical_bytes,
         allocated_bytes,
         state,
-        removal_available: false,
     }
 }
 
@@ -318,57 +293,6 @@ fn sum_allocation<'a>(mut items: impl Iterator<Item = &'a Artifact>) -> Option<u
                 .map(|bytes| sum.saturating_add(bytes))
         }
     })
-}
-
-fn plan(mode: Scope, artifacts: &[Artifact], can_review: bool) -> Plan {
-    let selected = |artifact: &&Artifact| {
-        artifact.scope == Scope::Standard || (mode == Scope::Deep && artifact.scope == Scope::Deep)
-    };
-    let included = || artifacts.iter().filter(selected);
-    Plan {
-        mode,
-        status: if can_review {
-            "requires_preflight"
-        } else {
-            "blocked"
-        },
-        candidate_files: included().map(|row| row.size.files).sum(),
-        associated_logical_bytes: included().map(|row| row.size.logical_bytes).sum(),
-        exclusive_logical_bytes: included()
-            .filter(|row| row.ownership == Ownership::ExclusiveVerified)
-            .map(|row| row.size.logical_bytes)
-            .sum(),
-        shared_logical_bytes: artifacts
-            .iter()
-            .filter(|row| row.ownership == Ownership::SharedVerified)
-            .map(|row| row.size.logical_bytes)
-            .sum(),
-        authorized_logical_bytes: 0,
-        allocated_observed: sum_allocation(included()),
-        operations: [],
-        blockers: [
-            "writer_exclusion_unverified",
-            "shared_state_contract_unverified",
-            if mode == Scope::Deep {
-                "artifact_lifecycles_unverified"
-            } else {
-                "backup_and_recovery_not_admitted"
-            },
-        ],
-    }
-}
-
-fn available_volume(root: &Path) -> Option<u64> {
-    #[cfg(unix)]
-    {
-        let stats = rustix::fs::statvfs(root).ok()?;
-        stats.f_bavail.checked_mul(stats.f_frsize)
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = root;
-        None
-    }
 }
 
 impl ClaudeAdapter {
@@ -585,19 +509,6 @@ impl ClaudeAdapter {
             .iter()
             .map(|&key| summarize(key, &review.artifacts, diagnostic_complete))
             .collect();
-        let can_review = cfg!(target_os = "macos")
-            && !evidence.sidechain
-            && evidence.versions.as_slice() == ["2.1.222"]
-            && exclusive
-            && evidence.metadata_complete;
-        let plans = [
-            plan(Scope::Standard, &review.artifacts, can_review),
-            plan(
-                Scope::Deep,
-                &review.artifacts,
-                can_review && checkpoint_present,
-            ),
-        ];
         Ok(StorageDetail {
             transcript_files: 1,
             logical_bytes: evidence.revision.bytes,
@@ -609,18 +520,11 @@ impl ClaudeAdapter {
             history_observation,
             process_registry,
             observed: review.artifacts,
-            complete: false,
             diagnostic_complete,
-            standard_available: false,
-            deep_available: false,
-            backup_status: "not_created",
-            available_volume_bytes: available_volume(root),
-            removal_reason: REMOVAL_NOTICE,
             writer_observation: process::claude_writer_observation().status,
             fork_references: evidence.fork_references.clone(),
             engine_versions: evidence.versions.clone(),
             categories,
-            plans,
         })
     }
 }

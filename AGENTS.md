@@ -6,7 +6,7 @@ and [provider compatibility](docs/provider-compatibility.md) as the current
 contracts.
 
 - Keep the browser listener on IPv4 loopback. Require exact Host, same-origin
-  mutations, a per-launch browser credential and a server-held one-use receipt.
+  mutations, a per-launch browser credential and explicit confirmation for deletion.
   Scope session IDs and transcript cursors to exact provider/root identities.
   URLs and request bodies carry neither file paths nor commands.
 - Keep Codex SQLite inside the attested read-only worker. Retain fixed queries,
@@ -15,27 +15,14 @@ contracts.
   Preserve secret suppression and honest partial coverage. Unsafe code is
   confined to the existing macOS kernel attestation boundary.
 - Allow only provider-verified main conversations into search, sorting,
-  pagination, counts and opaque key lookup. Keep descendant evidence inside
-  provider observations and inspect the full Codex graph for removal.
-- Admit native removal through a confined version probe, a write-denied
-  command probe and an exercised release and storage contract. Pin the actual
-  executable and root identities. Review the complete persisted subtree across both rollout trees,
-  including edge-only descendants, and check configured protections, writer
-  ownership, rollout identity and external references.
-- Rebuild the bound scope immediately before each native request and
-  constrain rollout writes to reviewed paths. Review all Codex project trees
-  from the full bounded archive, dispatch serially, and stop at the first
-  change or uncertainty. Keep one-use receipts and the
-  single in-flight guard. Verify rows, edges and rollouts through the read-only
-  worker. Ambiguous outcomes stay uncertain and are never retried automatically.
-- Keep Claude cleanup in the provider and admit only verified local targets
-  under ADR 0046. Require closed writers, a reviewed one-use receipt, a verified
-  backup, descriptor-relative mutations and no-clobber recovery. Resolve Codex membership from explicit native or
-  recognized Desktop assignments. Authorize bulk session removal only through
-  a verified native project ID and complete membership. Keep registrations,
-  workspace paths, Desktop preferences and unrelated artifacts outside that
-  scope. Keep the guarded Desktop marker and distinguish verified session
-  evidence from other provider artifacts or physical storage reclaim.
+  pagination, counts and opaque key lookup.
+- Dispatch Codex session deletion to the native executable using the selected
+  archive and UUID. Resolve bulk Codex membership from a complete native
+  project observation. Keep project registrations and workspaces outside it.
+- Keep Claude deletion in the provider under ADR 0046. Scope removals to
+  recognized session files and prune only empty directories. Use the provider's
+  directory lock for shared history. Session deletion is permanent and creates
+  no backup.
 - Keep export discovery, inventory and authorization separate from session
   removal. Preserve user-selected paths, independent backups, links and unknown
   groups. Require a verified exporter lifecycle and platform write boundary

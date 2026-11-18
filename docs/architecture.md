@@ -8,7 +8,7 @@ React / TypeScript / Vite
 agentmender CLI -> application -> domain
         |
         +-> provider-codex  -> provider-api -> confined SQLite / rollout reader
-        |                   -> reviewed Codex native removal + marker request
+        |                   -> Codex native deletion or scoped Claude file removal
         |
         +-> provider-claude -> provider-api -> bounded project JSONL reads
 ```
@@ -59,59 +59,23 @@ revision-keyed metadata and revalidated conversation windows. Root, namespace,
 entrypoint and embedded IDs govern observation. Desktop registrations supply
 metadata when they corroborate an unambiguous transcript identity. Nested
 agents, sidechains and recognized forks stay outside the main index. Storage
-diagnostics report candidate dependencies without issuing receipts.
+diagnostics report candidate dependencies.
 [ADR 0046](adr/claude-session-cleanup.md).
 
 ## Removal path
 
-Claude uses a separate macOS review and mutation namespace. The provider
-binds the plan to archive, namespace, session ID, target identities and
-hashes. It verifies copies in its private same-volume backup store and
-rebuilds the plan immediately before mutation. The loopback API holds the
-plan server-side and accepts a single-use, expiring confirmation. Restore
-uses a new receipt and verifies both the backup and destination identities.
-The process table and recognized session markers are checked at review and
-throughout mutation. A future restart can still race a process check.
+The authenticated browser confirms permanent deletion by opaque session key.
+Codex dispatches its native command for the selected UUID. The CLI uses the
+same archive as the session inventory and returns the native result. The
+project action applies this command serially to the observed conversations
+of an eligible native project. Dispatch stops on command failure.
 
-The browser can review one verified persisted main UUID or the session trees explicitly
-assigned to a verified native Codex project.
-The Codex worker owns the full
-relationship observation. It indexes incoming and outgoing spawn edges and
-walks the outgoing edges iteratively into a unique bounded set, retaining
-descendant IDs with missing canonical rows. Duplicate or conflicting edges,
-cycles, unknown coverage and unsafe or external references block review. The
-worker resolves each physical rollout ID, validates its placement in either
-rollout tree and checks the history chains and native fallback paths.
-Provider-specific classification and graph logic stay in the adapter. The CLI
-keeps the full review server-side and returns counts with an expiring receipt.
-
-Confirmation consumes the receipt under the existing operation lock. The
-provider rebuilds the subtree, compares membership and evidence revisions,
-checks executable and root identity, then dispatches the fixed native command
-once. The provider scopes writes to the configured root, limits rollout writes
-to reviewed paths and denies network access. Codex enforces writer locks and
-checks references during native deletion.
-
-A fresh read-only observation verifies expected row, edge and rollout absence
-and compares unrelated canonical rows and rollout file revisions. The status
-endpoint records verified deletion, pre-dispatch changes, residual evidence
-or uncertainty. Verified deletion can request the existing guarded Desktop
-marker reset. The [compatibility contract](provider-compatibility.md) lists the
-admitted releases and observation limits.
-
-
-Project review reopens the complete bounded archive independently of the UI
-entry budget, builds the existing graph and rollout index once per scan, then
-validates native assignments, trees and references before issuing a receipt.
-Each native step starts from a freshly rebuilt plan. The verified previous
-tree's unrelated evidence is the fingerprint expected for the next remaining
-plan. A final scan verifies the remaining state and project registration.
-The same native dispatch serves individual and bulk session removal.
-
-The operation status exposes each verified, undispatched or uncertain tree.
-An observed failure stops dispatch. Outcomes and capabilities expire with the
-server process. The project inventory is reobserved on restart and the user
-can authorize a newly verified scope explicitly. See [ADR 0044](adr/0044-provider-projects.md).
+On macOS, Claude's provider builds a list of exact session files for Standard
+or Approfondita. The server retains that list until the user confirms. The
+provider unlinks those regular files and prunes empty scoped directories.
+It rewrites applicable history rows under Claude's directory lock. Each
+provider's result invalidates the inventory. Existing export controls are
+independent. [ADR 0046](adr/claude-session-cleanup.md).
 
 ## Storage discovery and exports
 
@@ -134,6 +98,6 @@ Claude's storage view builds bounded measurements under declared provider
 roots. It reports directory groups and ownership evidence and projects the
 existing catalog for transcript rankings. The per-session storage read
 revalidates transcript and reconciled record revisions before returning an
-informational preflight. The route issues no receipt. The Codex export
+storage diagnostic. The Codex export
 inventory retains its own observation and authorization boundary.
 [ADR 0046](adr/claude-session-cleanup.md).

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { Archive, Braces, ChevronRight, Circle, HardDrive, Layers3, RefreshCw, Search, ShieldCheck, SlidersHorizontal, Sparkles } from 'lucide-react'
-import { authorize, projectPath, request, type Operation, type Project, type ProjectPage, type Provider, type State } from './api'
+import { authorize, projectPath, request, type Project, type ProjectPage, type Provider, type State } from './api'
 import { Empty, Notice, Pagination, ProjectAccordion, SessionList } from './components'
 import { ProjectRemoval, SessionDetail } from './detail'
 import { numberLabel, providerLabel } from './format'
@@ -10,7 +10,6 @@ import { Storage } from './storage'
 import './style.css'
 
 const PAGE_SIZE = 12
-const operationKey = 'agentmender.operation'
 const filtersInitial = { search: '', state: '', sort: 'activity', since: '', until: '', minSize: '', maxSize: '' }
 const labels = { installed: 'Installato', state_only: 'Solo archivio', not_detected: 'Non rilevato' }
 
@@ -18,9 +17,7 @@ function errorText(failure: unknown) {
   return failure instanceof Error ? failure.message : 'Il servizio locale non risponde.'
 }
 
-function Inventory({ provider, revision, onConfirm }: {
-  provider: Provider; revision: number; onConfirm: (id: string, phrase: string) => void
-}) {
+function Inventory({ provider }: { provider: Provider }) {
   const [filters, setFilters] = useState(filtersInitial)
   const [pageIndex, setPageIndex] = useState(0)
   const [showDates, setShowDates] = useState(false)
@@ -64,7 +61,7 @@ function Inventory({ provider, revision, onConfirm }: {
         .finally(() => { if (!controller.signal.aborted) setLoading(false) })
     }, 150)
     return () => { window.clearTimeout(timeout); controller.abort() }
-  }, [provider, filterQuery, pageIndex, revision, version])
+  }, [provider, filterQuery, pageIndex, version])
 
   async function refresh() {
     setRefreshing(true)
@@ -148,7 +145,7 @@ function Inventory({ provider, revision, onConfirm }: {
               })}
               onRemove={() => setProjectToRemove(project)}>
               <SessionList key={filterQuery} path={`${projectPath(provider, project.key)}/sessions`}
-                filters={filterQuery} revision={`${revision}:${version}`} onSelect={setSelected}
+                filters={filterQuery} revision={String(version)} onSelect={setSelected}
                 emptyLabel={emptySessions} paginationLabel={`Pagine delle sessioni di ${project.name}`} />
             </ProjectAccordion>)
           : <Empty title={hasFilters ? 'Nessun risultato' : info?.coverage === 'partial' ? 'Nessun progetto registrato osservato' : 'Nessun inventario disponibile'}>
@@ -161,78 +158,24 @@ function Inventory({ provider, revision, onConfirm }: {
       <div className="inventory-heading"><h2>Recenti</h2></div>
       <div className="table-area">
         <SessionList key={filterQuery} path="/api/codex/recents" filters={filterQuery}
-          revision={`${revision}:${version}`} onSelect={setSelected}
+          revision={String(version)} onSelect={setSelected}
           emptyLabel={emptySessions} paginationLabel="Pagine delle conversazioni recenti" />
       </div>
     </section>}
     {projectToRemove && <ProjectRemoval project={projectToRemove} onClose={() => setProjectToRemove(undefined)}
-      onConfirm={(id, phrase) => { setProjectToRemove(undefined); onConfirm(id, phrase) }} />}
-    {selected && <SessionDetail key={selected} rowKey={selected} provider={provider} onClose={() => setSelected(undefined)} onClaudeChange={() => invalidate(value => value + 1)} onConfirm={(id, phrase) => {
-      setSelected(undefined)
-      onConfirm(id, phrase)
-    }} />}
+      onChange={() => invalidate(value => value + 1)} />}
+    {selected && <SessionDetail key={selected} rowKey={selected} provider={provider} onClose={() => setSelected(undefined)}
+      onChange={() => invalidate(value => value + 1)} />}
   </>
 }
-
-const pending = (operation: Operation) => operation.status === 'preparing' || operation.status === 'running'
 
 function App() {
   const [auth, setAuth] = useState<'waiting' | 'ready' | 'failed'>('waiting')
   const [authError, setAuthError] = useState('')
   const [view, setView] = useState<Provider | 'storage'>('codex')
-  const [operationId, setOperationId] = useState(() => sessionStorage.getItem(operationKey))
-  const [operation, setOperation] = useState<Operation>()
-  const [operationError, setOperationError] = useState('')
-  const [poll, retryStatus] = useState(0)
-  const [revision, bump] = useState(0)
-  const [posting, setPosting] = useState(false)
   useEffect(() => {
     authorize().then(() => setAuth('ready')).catch(failure => { setAuthError(errorText(failure)); setAuth('failed') })
   }, [])
-  useEffect(() => {
-    if (!operationId || auth !== 'ready' || posting) return
-    const controller = new AbortController()
-    let timer: number | undefined
-    async function status() {
-      setOperationError('')
-      try {
-        const result = await request<Operation>(`/api/operations/${operationId}`, { signal: controller.signal })
-        if (controller.signal.aborted) return
-        setOperation(result)
-        if (pending(result)) {
-          timer = window.setTimeout(() => void status(), 850)
-        } else {
-          bump(value => value + 1)
-        }
-      } catch (failure) {
-        if (!controller.signal.aborted) setOperationError(errorText(failure))
-      }
-    }
-    void status()
-    return () => { controller.abort(); window.clearTimeout(timer) }
-  }, [operationId, auth, poll, posting])
-
-  async function confirm(id: string, phrase: string) {
-    if (posting) return
-    setPosting(true)
-    setOperation(undefined)
-    setOperationError('')
-    sessionStorage.setItem(operationKey, id)
-    setOperationId(id)
-    try {
-      await request(`/api/operations/${id}/confirm`, { method: 'POST', body: JSON.stringify({ confirmation: phrase }) })
-    } catch (failure) {
-      setOperationError(errorText(failure))
-    } finally {
-      setPosting(false)
-    }
-  }
-  function dismiss() {
-    sessionStorage.removeItem(operationKey)
-    setOperationId(null)
-    setOperation(undefined)
-    setOperationError('')
-  }
 
   return <div className="shell">
     <aside className="sidebar">
@@ -256,22 +199,7 @@ function App() {
       {auth === 'waiting' ? <Empty title="Connessione ad AgentMender" busy />
         : auth === 'failed' ? <><h1>Accesso locale</h1><Notice tone="error">{authError}</Notice></>
         : <>
-          {operationId && <div className="operation">
-            <Notice tone={operation?.status === 'verified' ? 'success' : operationError || (operation && !pending(operation)) ? 'warning' : 'info'}>
-              <div>{posting ? 'Invio conferma…' : operation?.message ?? (operationError || 'Verifica esito…')}</div>
-              {operation?.native_id && <code>{operation.native_id}</code>}
-              {operation?.project && <details className="operation-project">
-                <summary>{operation.project.name} · {operation.project.removed.length} sottoalberi verificati</summary>
-                <ul>{operation.project.removed.map(tree => <li key={tree.main_id}>Rimosso · <code>{tree.main_id}</code> · {tree.total_sessions} sessioni</li>)}
-                  {operation.project.remaining.map(tree => <li key={tree.main_id}>Rimozione non avviata · <code>{tree.main_id}</code> · {tree.total_sessions} sessioni</li>)}
-                  {operation.project.uncertain && <li>{pending(operation) ? 'In esecuzione' : 'Esito incerto'} · <code>{operation.project.uncertain.main_id}</code> · {operation.project.uncertain.total_sessions} sessioni</li>}
-                </ul>
-              </details>}
-              {operationError && <button className="button quiet" onClick={() => retryStatus(value => value + 1)}>Verifica esito</button>}
-              {!posting && (operationError || (operation && !pending(operation))) && <button className="button quiet" onClick={dismiss}>Chiudi esito</button>}
-            </Notice>
-          </div>}
-          {view === 'storage' ? <Storage /> : <Inventory key={view} provider={view} revision={revision} onConfirm={(id, phrase) => void confirm(id, phrase)} />}
+          {view === 'storage' ? <Storage /> : <Inventory key={view} provider={view} />}
         </>}
     </main>
   </div>

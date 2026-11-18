@@ -118,23 +118,20 @@ def probe(engine, real_home, root, port, agentmender=None):
     print("Fixture produced no history.jsonl." if not (config / "history.jsonl").exists()
           else "Fixture produced history.jsonl. The behavior needs separate inspection.")
     if agentmender:
-        from test_local_ui import authorize, claude_remove, ui
+        from test_local_ui import authorize, ui
         server = root / "agentmender"
         server.mkdir()
         with ui(agentmender, server, None, config) as (client, ticket):
             authorize(client, ticket)
-            rows = client.call("GET", "/api/claude/sessions")["rows"]
-            row, = [row for row in rows if row["native_id"] == SESSION]
-            review = client.call("POST", f"/api/claude/sessions/{row['key']}/removal-preview", {"mode": "standard"})
-            result = claude_remove(client, review)
-            assert result["status"] in {"verified", "partial"}, result
+            row, = [row for row in client.call("GET", "/api/claude/sessions")["rows"] if row["native_id"] == SESSION]
+            path = f"/api/claude/sessions/{row['key']}"
+            preview = client.call("POST", path + "/removal-preview", {"mode": "standard"})
+            result = client.call("POST", path + "/delete", {"confirm": True, "review": preview["review"]})
+            assert result["status"] in {"deleted", "partial"}, result
             assert not transcript.exists()
-            backup = f"/api/claude/backups/{result['backup_id']}/preview"
-            recovery = claude_remove(client, client.call("POST", backup, {"action": "restore"}))
-            assert recovery["status"] == "restored", recovery
-            assert transcript.read_bytes() == after
-            assert claude_remove(client, client.call("POST", backup, {"action": "discard"}))["status"] == "discarded"
-        print("AgentMender removed and restored the engine-generated transcript byte-for-byte.")
+            assert client.call("GET", "/api/claude/sessions")["total"] == 0
+            assert not (server / "home" / ".agentmender").exists()
+        print("AgentMender removed the engine-generated transcript without a backup.")
 
 
 if __name__ == "__main__":

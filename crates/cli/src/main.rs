@@ -3,9 +3,7 @@ use std::{env, path::PathBuf, process::ExitCode};
 use agentmender_domain::{ProviderKind, canonical_uuid};
 use agentmender_provider_api::process;
 use agentmender_provider_claude::{ClaudeAdapter, DesktopContext, InstallationView, RootSource};
-use agentmender_provider_codex::{
-    CodexAdapter, NativeRemoval, NativeUnavailable, discovery::Discovery,
-};
+use agentmender_provider_codex::{CodexAdapter, discovery::Discovery};
 use clap::{Parser, Subcommand};
 
 mod ui;
@@ -31,7 +29,7 @@ struct Args {
     codex_executable: Option<PathBuf>,
     #[arg(long, global = true, value_parser = absolute_path)]
     claude_executable: Option<PathBuf>,
-    /// Protect this Codex UUID in the configured root. May be supplied multiple times.
+    /// Block direct deletion of this Codex UUID. May be supplied multiple times.
     #[arg(long, global = true, value_parser = protected_uuid)]
     protect_codex_session: Vec<String>,
     #[arg(long, global = true, default_value_t = 10_000, value_parser = clap::value_parser!(u32).range(1..=100_000))]
@@ -254,22 +252,6 @@ fn run(args: Args) -> Result<(), String> {
         args.codex_executable.clone(),
     )?;
     let codex_location = discovery.location.clone();
-    let overlaps_exports = discovery.storage.iter().any(|item| {
-        item.kind == agentmender_provider_codex::discovery::StorageKind::ExternalExports
-            && (item.path.starts_with(&discovery.selected_root)
-                || discovery.selected_root.starts_with(&item.path))
-    });
-    let native = if overlaps_exports {
-        Err(NativeUnavailable::OverlappingExports)
-    } else if discovery.sqlite_directory != discovery.selected_root {
-        Err(NativeUnavailable::SplitStorage)
-    } else {
-        NativeRemoval::detect(
-            codex_location.executable.as_deref(),
-            &codex_location.state_root,
-            args.protect_codex_session.clone(),
-        )
-    };
     let codex = CodexAdapter::new(codex_location.clone(), helper, home.clone());
     let claude = claude_adapter(&args, &home)?;
     ui::run(ui::Configuration {
@@ -277,7 +259,6 @@ fn run(args: Args) -> Result<(), String> {
         codex,
         discovery,
         claude,
-        native,
         limit: args.max_entries as usize,
         protected: args.protect_codex_session,
         no_open,

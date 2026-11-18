@@ -1,17 +1,15 @@
 //! Fixed operations in the confined Codex reader process.
 #[cfg(target_os = "macos")]
-mod cascade;
-#[cfg(target_os = "macos")]
 mod inventory;
 #[cfg(target_os = "macos")]
 mod projects;
 
 pub use agentmender_domain::TranscriptMessage;
 
-use crate::{CodexAdapter, Guard, removal::RemovalRefusal};
+use crate::{CodexAdapter, Guard};
 use agentmender_domain::{
-    CodexMembership, InventoryObservation, ProjectIdentity, ProjectLocator, ProviderKind,
-    RegisteredProject, Session, SessionIdentity,
+    CodexMembership, InventoryObservation, ProjectLocator, ProviderKind, RegisteredProject,
+    Session, SessionIdentity,
 };
 use agentmender_provider_api::{
     ProviderError, evidence::EvidenceSandbox, process, validate_location,
@@ -28,10 +26,6 @@ use std::{
 const MAX_REQUEST: usize = 64 * 1024;
 const MAX_OUTPUT: usize = 128 * 1024;
 const PAGE_ROWS: usize = 128;
-const MAX_PROJECT_ROOTS: usize = 32;
-const MAX_PROJECT_MEMBERS: usize = 256;
-#[cfg(target_os = "macos")]
-const MAX_SCOPE_MEMBERS: usize = 128;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -75,22 +69,6 @@ pub struct TranscriptPage {
     pub complete: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(super) struct RemovalEvidence {
-    pub session: Session,
-    pub revision: String,
-    pub scope: RemovalScope,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(super) struct RemovalScope {
-    pub members: Vec<ReviewedMember>,
-    pub database_identity: (u64, u64),
-    pub unrelated_revision: String,
-}
-
 #[derive(Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ProjectCatalog {
@@ -98,36 +76,6 @@ struct ProjectCatalog {
     projects: Vec<RegisteredProject>,
     legacy: BTreeMap<String, Option<ProjectLocator>>,
     incomplete: bool,
-}
-
-#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(super) struct ProjectEvidence {
-    pub registration: RegisteredProject,
-    pub archive_revision: String,
-    pub trees: Vec<RemovalEvidence>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(super) struct ReviewedMember {
-    pub id: String,
-    pub rollouts: Vec<PathBuf>,
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ResidualEvidence {
-    pub canonical_rows: usize,
-    pub rollouts: usize,
-    pub spawn_edges: usize,
-    pub unrelated_changed: bool,
-}
-
-#[derive(Serialize, Deserialize)]
-enum Verification {
-    Verified,
-    Residual(ResidualEvidence),
 }
 
 #[derive(Serialize, Deserialize)]
@@ -160,10 +108,7 @@ enum Operation {
         identity: SessionIdentity,
         cursor: Option<Box<TranscriptCursor>>,
     },
-    Removal(SessionIdentity),
     ProjectCatalog,
-    ProjectRemoval(ProjectIdentity),
-    VerifyRemoval(RemovalScope),
 }
 
 #[derive(Serialize, Deserialize)]
@@ -172,10 +117,7 @@ enum Response {
     Stale,
     Inventory(InventoryPage),
     Transcript(TranscriptPage),
-    Removal(Box<Result<RemovalEvidence, RemovalRefusal>>),
     ProjectCatalog(ProjectCatalog),
-    ProjectRemoval(Result<ProjectEvidence, RemovalRefusal>),
-    Verification(Verification),
 }
 
 pub(super) fn unavailable() -> ProviderError {
@@ -210,10 +152,6 @@ fn observe(request: &Request, resident: &mut Option<Snapshot>) -> Result<Respons
             let revision = reader::hash(&serde_json::to_vec(&before).map_err(|_| unavailable())?);
             Response::Inventory(inventory::page(&db, root, after, *limit, revision, end)?)
         }
-        Operation::Removal(identity) => {
-            let revision = reader::hash(&serde_json::to_vec(&before).map_err(|_| unavailable())?);
-            Response::Removal(Box::new(cascade::plan(&db, root, identity, revision, end)))
-        }
         Operation::ProjectCatalog => {
             let revision = reader::hash(&serde_json::to_vec(&before).map_err(|_| unavailable())?);
             Response::ProjectCatalog(projects::read(
@@ -222,13 +160,6 @@ fn observe(request: &Request, resident: &mut Option<Snapshot>) -> Result<Respons
                 &inventory::layout(&db)?,
                 revision,
             ))
-        }
-        Operation::ProjectRemoval(project) => {
-            let revision = reader::hash(&serde_json::to_vec(&before).map_err(|_| unavailable())?);
-            Response::ProjectRemoval(cascade::project_plan(&db, root, project, revision, end))
-        }
-        Operation::VerifyRemoval(scope) => {
-            Response::Verification(cascade::verify(&db, root, scope, end)?)
         }
         Operation::Transcript { identity, cursor } => {
             let candidate = inventory::exact(&db, root, &identity.native_id, end)?;
@@ -558,68 +489,5 @@ impl CodexAdapter {
             return Err(unavailable());
         }
         Ok(page)
-    }
-
-    pub(super) fn removal_evidence(
-        &self,
-        identity: &SessionIdentity,
-    ) -> Result<RemovalEvidence, RemovalRefusal> {
-        match self.observe(Operation::Removal(identity.clone()))? {
-            Response::Removal(result) => {
-                let evidence = (*result)?;
-                if &evidence.session.identity == identity && evidence.session.is_main() {
-                    return Ok(evidence);
-                }
-                Err(RemovalRefusal::IncompleteRelationships)
-            }
-            _ => Err(RemovalRefusal::IncompleteRelationships),
-        }
-    }
-
-    pub(super) fn project_evidence(
-        &self,
-        project: &ProjectIdentity,
-    ) -> Result<ProjectEvidence, RemovalRefusal> {
-        let Response::ProjectRemoval(result) =
-            self.observe(Operation::ProjectRemoval(project.clone()))?
-        else {
-            return Err(RemovalRefusal::IncompleteRelationships);
-        };
-        let evidence = result?;
-        let mut members = std::collections::BTreeSet::new();
-        if evidence.registration.identity != *project || evidence.registration.desktop_backed
-            || evidence.trees.len() > MAX_PROJECT_ROOTS
-            || evidence.trees.iter().any(|tree| {
-                !tree.session.is_main()
-                    || tree.session.identity.state_root != project.state_root
-                    || tree.session.identity.provider != project.provider
-                    || !matches!((&project.locator, &tree.session.codex_membership),
-                        (ProjectLocator::Codex(expected), CodexMembership::Native(actual)) if actual == expected)
-                    || !tree
-                        .scope
-                        .members
-                        .iter()
-                        .any(|member| member.id == tree.session.identity.native_id)
-                    || tree.scope.members.iter().any(|member| {
-                        !agentmender_domain::canonical_uuid(&member.id)
-                            || !members.insert(&member.id)
-                    })
-            })
-            || members.len() > MAX_PROJECT_MEMBERS
-        {
-            return Err(RemovalRefusal::IncompleteRelationships);
-        }
-        Ok(evidence)
-    }
-
-    pub(super) fn verify_removal(
-        &self,
-        scope: RemovalScope,
-    ) -> Result<Option<ResidualEvidence>, ProviderError> {
-        match self.observe(Operation::VerifyRemoval(scope))? {
-            Response::Verification(Verification::Verified) => Ok(None),
-            Response::Verification(Verification::Residual(details)) => Ok(Some(details)),
-            _ => Err(unavailable()),
-        }
     }
 }

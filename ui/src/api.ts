@@ -128,8 +128,6 @@ export type ClaudeStorage = {
   writer_observation: string
   observed: ClaudeArtifact[]
   diagnostic_complete: boolean
-  backup_status: 'not_created'
-  available_volume_bytes: number | null
   engine_versions: string[]
   fork_references: string[]
   categories: {
@@ -139,17 +137,7 @@ export type ClaudeStorage = {
     allocated_bytes: number | null
     state: 'exclusive_verified' | 'unverified' | 'protected' | 'not_observed'
   }[]
-  plans: {
-    mode: 'standard' | 'deep'
-    status: 'blocked' | 'requires_preflight'
-    candidate_files: number
-    associated_logical_bytes: number
-    exclusive_logical_bytes: number
-    shared_logical_bytes: number
-    authorized_logical_bytes: number
-    allocated_observed: number | null
-    blockers: string[]
-  }[]
+
 }
 
 export type ClaudeUsage = {
@@ -172,8 +160,6 @@ export type ClaudeUsage = {
   complete: boolean
   entries_examined: number
   writer_observation: string
-  reclaimable_logical_bytes: number
-  offline_cleanup_supported: boolean
   removal_reason: string
   largest_sessions: {
     key: string
@@ -216,50 +202,20 @@ export type Detail = {
 }
 
 export type ClaudeMode = 'standard' | 'deep'
-export type ClaudeReceipt = Pick<Preview, 'id' | 'confirmation' | 'valid_seconds'>
-export type ClaudeReview = ClaudeReceipt & {
-  review: {
-    session: { native_id: string; namespace: string; state_root: NativePath }
+export type ClaudeReview = {
+  review: string
+  plan: {
     mode: ClaudeMode
-    operations: { root: NativePath; relative_path: NativePath; role: string; bytes: number; allocated_bytes: number }[]
-    empty_directories: { root: NativePath; relative_path: NativePath }[]
+    files: { root: NativePath; relative_path: NativePath; bytes: number }[]
     logical_bytes: number
-    backup_required_bytes: number
     history_matches: number | null
-    history_state: string
-    excluded: string[]
-    residual_risk: string
+    notes: string[]
   }
 }
-export type ClaudeOutcome = {
-  status: string
-  backup_id?: string | null
-  logical_bytes?: number
-  reason?: string | null
-}
-export type ClaudeBackup = {
-  id: string
-  native_id: string
-  mode: ClaudeMode
-  phase: string
-  logical_bytes: number
-  can_restore: boolean
-  can_discard: boolean
-}
-export type Preview = {
-  id: string
-  confirmation: string
-  valid_seconds: number
-  main_id: string
-  main_title: string | null
-  spawned_descendants: number
-  total_sessions: number
-}
-export type Operation = {
-  native_id: string
-  status: 'preparing' | 'running' | 'partial' | 'refused' | 'uncertain' | 'changed' | 'verified' | 'native_uncertain' | 'verification_incomplete' | 'residual'
+export type DeletionResult = {
+  status: 'deleted' | 'partial' | 'failed'
   message: string
-  project?: { key: string; name: string; removed: Subtree[]; remaining: Subtree[]; uncertain: Subtree | null }
+  errors: string[]
 }
 export type Transcript = {
   messages: { role: 'user' | 'assistant'; text: string }[]
@@ -322,24 +278,5 @@ export type Project = {
 }
 
 export type ProjectPage = { provider: ProviderInfo; total: number; rows: Project[] }
-export type Subtree = { main_id: string; total_sessions: number }
-export type ProjectPreview = {
-  id: string
-  confirmation: string
-  valid_seconds: number
-  status: 'ready'
-  provider: Provider
-  project_key: string
-  project_name: string
-  roots: string[]
-  main_conversations: number
-  descendants: number
-  total_sessions: number
-  subtrees: Subtree[]
-  scope: "sessions"
-  excluded: string[]
-  complete: boolean
-}
-
 export const projectPath = (provider: Provider, key: string) =>
   `/api/${provider}/projects/${encodeURIComponent(key)}`

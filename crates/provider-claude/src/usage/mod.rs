@@ -186,8 +186,6 @@ pub struct StorageInventory {
     pub complete: bool,
     pub entries_examined: usize,
     pub writer_observation: &'static str,
-    pub reclaimable_logical_bytes: u64,
-    pub offline_cleanup_supported: bool,
     pub removal_reason: &'static str,
 }
 
@@ -515,8 +513,6 @@ impl ClaudeAdapter {
             size: total.measured,
             entries_examined: MAX_ENTRIES - budget.remaining,
             writer_observation: writers.status,
-            reclaimable_logical_bytes: 0,
-            offline_cleanup_supported: cfg!(target_os = "macos"),
             removal_reason: REMOVAL_NOTICE,
         }
     }

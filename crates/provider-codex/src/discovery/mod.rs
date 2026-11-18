@@ -214,12 +214,6 @@ fn provider_marker(root: &Path) -> bool {
             })
 }
 
-pub(crate) fn sqlite_directory(root: &Path) -> PathBuf {
-    absolute(settings(root).sqlite_home)
-        .or_else(|| environment("CODEX_SQLITE_HOME"))
-        .unwrap_or_else(|| root.to_owned())
-}
-
 fn row(
     root: &Path,
     kind: StorageKind,

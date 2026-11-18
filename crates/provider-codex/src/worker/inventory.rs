@@ -11,7 +11,6 @@ use std::{collections::BTreeMap, path::Path, time::Instant};
 pub(super) struct Candidate {
     pub session: Session,
     pub locator: Option<PathBuf>,
-    pub relations: Relationships,
 }
 
 #[derive(Debug)]
@@ -90,7 +89,6 @@ pub(super) fn has_edges(db: &Sqlite) -> bool {
 
 pub(super) struct Layout {
     pub projection: String,
-    pub relations: String,
     pub metadata_only: bool,
     pub edges: bool,
     pub project_id: bool,
@@ -139,7 +137,6 @@ pub(super) fn layout(db: &Sqlite) -> Result<Layout, ProviderError> {
         projection: format!(
             "SELECT id,{title},cwd,created_at,updated_at,archived,{locator},{relations},{project_id} FROM threads"
         ),
-        relations,
         metadata_only: has_text("forked_from_id") && has_text("attached_thread_parent_id"),
         edges: has_edges(db),
         project_id: has_text("project_id"),
@@ -273,7 +270,6 @@ pub(super) fn row(
             parent: parent.map(|parent| identity(root, parent)),
         },
         locator,
-        relations,
     })
 }
 

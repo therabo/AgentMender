@@ -2,16 +2,14 @@
 use crate::ProviderError;
 use crate::evidence::EvidenceSandbox;
 use agentmender_domain::ProviderKind;
-use std::{path::Path, process::Child, time::Duration};
+use std::{
+    path::Path,
+    process::{Child, Command, Stdio},
+    time::Duration,
+};
 
 #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
-use std::{
-    io::Read,
-    process::{Command, Stdio},
-    sync::mpsc,
-    thread,
-    time::Instant,
-};
+use std::{io::Read, sync::mpsc, thread, time::Instant};
 
 #[cfg(target_os = "macos")]
 const PROFILE: &str = "(version 1)(allow default)(deny file-write*)(deny network*)(deny process-fork)(deny mach-lookup)";
@@ -39,128 +37,55 @@ fn command(executable: &Path) -> Result<Command, ProviderError> {
     Ok(command)
 }
 
-#[derive(Debug, PartialEq, Eq)]
-pub enum NativeExit {
-    Refused,
-    Success,
-    Uncertain,
-}
-
-/// Apply the reviewed Codex home and grant rollout writes only at reviewed paths.
-pub fn run_confined_codex_delete(
+/// Invoke Codex's own deletion command in the selected local archive.
+pub fn codex_delete(
     executable: &Path,
     root: &Path,
+    sqlite_override: &str,
     id: uuid::Uuid,
-    rollouts: &[&Path],
-    timeout: Duration,
-    is_current: impl FnOnce() -> bool,
-) -> NativeExit {
-    #[cfg(target_os = "macos")]
-    {
-        if !executable.is_absolute() || !root.is_absolute() {
-            return NativeExit::Refused;
-        }
-        let sessions = root.join("sessions");
-        let archived = root.join("archived_sessions");
-        let Ok(scope) = policy_literal(root) else {
-            return NativeExit::Refused;
-        };
-        let (Ok(sessions_scope), Ok(archived_scope)) =
-            (policy_literal(&sessions), policy_literal(&archived))
-        else {
-            return NativeExit::Refused;
-        };
-        let mut approved = String::new();
-        for path in rollouts {
-            if !path
-                .strip_prefix(&sessions)
-                .or_else(|_| path.strip_prefix(&archived))
-                .is_ok_and(|relative| {
-                    !relative.as_os_str().is_empty()
-                        && relative
-                            .components()
-                            .all(|part| matches!(part, std::path::Component::Normal(_)))
-                })
-            {
-                return NativeExit::Refused;
-            }
-            let Ok(path) = policy_literal(path) else {
-                return NativeExit::Refused;
-            };
-            approved.push_str(&format!(" (literal {path})"));
-        }
-        let mut policy = format!(
-            "(version 1)(allow default)(deny file-write* (require-not (subpath {scope})))(deny network*)(deny process-fork)(deny mach-lookup)"
-        );
-        // An archive mutation after the final snapshot may introduce a new file.
-        // The provider can remove only the reviewed rollout files in these trees.
-        if approved.is_empty() {
-            policy.push_str(&format!(
-                "(deny file-write* (subpath {sessions_scope}) (subpath {archived_scope}))"
-            ));
+) -> Result<String, String> {
+    let output = Command::new(executable)
+        .args(["-c", sqlite_override, "delete"])
+        .arg(id.to_string())
+        .arg("--force")
+        .env("CODEX_HOME", root)
+        .env("CODEX_SQLITE_HOME", root)
+        .current_dir(root)
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|error| format!("Avvio del comando Codex: {error}"))?;
+    let message = |bytes: &[u8]| {
+        String::from_utf8_lossy(bytes)
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .filter(|line| agentmender_domain::safe_conversation_text(line))
+            .take(12)
+            .collect::<Vec<_>>()
+            .join("\n")
+            .chars()
+            .take(1200)
+            .collect::<String>()
+    };
+    if output.status.success() {
+        let detail = message(&output.stdout);
+        return Ok(if detail.is_empty() {
+            "Sessione eliminata da Codex.".into()
         } else {
-            policy.push_str(&format!(
-                "(deny file-write* (require-all (require-any (subpath {sessions_scope}) (subpath {archived_scope})) (require-not (require-any{approved}))))"
-            ));
-        }
-        for name in [
-            "exports",
-            "attachments",
-            "generated_images",
-            "worktrees",
-            "visualizations",
-            "sqlite",
-        ] {
-            let Ok(protected) = policy_literal(&root.join(name)) else {
-                return NativeExit::Refused;
-            };
-            policy.push_str(&format!("(deny file-write* (subpath {protected}))"));
-        }
-        let mut command = Command::new("/usr/bin/sandbox-exec");
-        command
-            .args(["-p", &policy])
-            .arg(executable)
-            .arg("-c")
-            .arg(format!("sqlite_home={scope}"))
-            .arg("delete")
-            .arg(id.hyphenated().to_string())
-            .arg("--force")
-            .env_clear()
-            .env("PATH", "/usr/bin:/bin")
-            .env("CODEX_HOME", root)
-            .current_dir(root)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null());
-        for name in ["HOME", "TMPDIR"] {
-            if let Some(value) = std::env::var_os(name) {
-                command.env(name, value);
-            }
-        }
-        if !is_current() {
-            return NativeExit::Refused;
-        }
-        let Ok(mut child) = command.spawn() else {
-            return NativeExit::Uncertain;
-        };
-        let started = Instant::now();
-        while started.elapsed() < timeout {
-            match child.try_wait() {
-                Ok(Some(status)) if status.success() => return NativeExit::Success,
-                Ok(Some(_)) => return NativeExit::Uncertain,
-                Ok(None) => thread::sleep(Duration::from_millis(10)),
-                Err(_) => break,
-            }
-        }
-        let _ = child.kill();
-        let _ = child.wait();
-        NativeExit::Uncertain
+            detail
+        });
     }
-    #[cfg(not(target_os = "macos"))]
-    {
-        let _ = (executable, root, id, rollouts, timeout, is_current);
-        NativeExit::Refused
-    }
+    let detail = message(&output.stderr);
+    let detail = if detail.is_empty() {
+        message(&output.stdout)
+    } else {
+        detail
+    };
+    Err(if detail.is_empty() {
+        format!("Comando Codex fallito ({})", output.status)
+    } else {
+        detail
+    })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -295,33 +220,6 @@ pub fn probe_version(kind: ProviderKind, executable: &Path) -> Result<String, Pr
             "provider process isolation is not yet verified on this platform; metadata audit only"
                 .into(),
         ))
-    }
-}
-
-/// Verify the fixed CLI command surface in a write-denied process. The provider
-/// adapter separately admits only releases with an exercised behavioral contract.
-pub fn probe_codex_delete(executable: &Path) -> bool {
-    #[cfg(target_os = "macos")]
-    {
-        let Ok(mut process) = command(executable) else {
-            return false;
-        };
-        process.args(["delete", "--help"]);
-        small_output(process).is_ok_and(|bytes| {
-            std::str::from_utf8(&bytes).is_ok_and(|help| {
-                help.lines()
-                    .any(|line| line == "Usage: codex delete [OPTIONS] <SESSION>")
-                    && help.lines().any(|line| line.trim() == "--force")
-                    && help.lines().any(|line| {
-                        line.trim() == "Delete without prompting. SESSION must be a UUID"
-                    })
-            })
-        })
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        let _ = executable;
-        false
     }
 }
 
@@ -533,21 +431,6 @@ pub struct ClaudeProcessObservation {
     pub executables: Vec<std::path::PathBuf>,
 }
 
-#[cfg(target_os = "macos")]
-pub fn claude_process_table() -> Result<String, ProviderError> {
-    let mut command = Command::new("/bin/ps");
-    command
-        .env_clear()
-        .env("LC_ALL", "C")
-        .env("TZ", "UTC")
-        .args(["-axww", "-o", "pid=,lstart=,comm="])
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null());
-    String::from_utf8(bounded_output(command, 512 * 1024)?)
-        .map_err(|_| ProviderError::CapabilityUnavailable("invalid process table".into()))
-}
-
 /// A process-name observation has no authority over provider writers.
 pub fn claude_writer_observation() -> ClaudeProcessObservation {
     let unavailable = ClaudeProcessObservation {
@@ -707,42 +590,6 @@ mod tests {
                 .success()
         );
         assert_eq!(std::fs::read(auth).unwrap(), b"SECRET CANARY");
-    }
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn native_delete_timeout_stops_the_fixture_process() {
-        use std::os::unix::fs::PermissionsExt;
-        let root = tempfile::tempdir().unwrap();
-        let path = root.path().canonicalize().unwrap();
-        let executable = path.join("fake-codex");
-        std::fs::write(
-            &executable,
-            "#!/bin/sh\nprintf '%s\\n' \"$$\" > pid\nexec /bin/sleep 15\n",
-        )
-        .unwrap();
-        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
-
-        assert_eq!(
-            run_confined_codex_delete(
-                &executable,
-                &path,
-                uuid::Uuid::nil(),
-                &[],
-                Duration::from_secs(1),
-                || true,
-            ),
-            NativeExit::Uncertain
-        );
-        let pid = std::fs::read_to_string(path.join("pid")).unwrap();
-        let status = Command::new("/bin/kill")
-            .args(["-0", pid.trim()])
-            .stderr(Stdio::null())
-            .status()
-            .unwrap();
-        assert!(
-            !status.success(),
-            "timed out fixture should have been reaped"
-        );
     }
 
     #[test]

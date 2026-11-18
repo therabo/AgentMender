@@ -320,7 +320,6 @@ fn duplicate_uuid_uses_scoped_namespace_and_root_and_candidates_cannot_grant_rem
     assert_eq!(storage.sidecar_candidates, 2);
     assert_eq!(storage.history_matches, Some(1));
     assert_eq!(storage.history_observation, "partial_uuid_only");
-    assert!(!storage.standard_available && !storage.deep_available);
     assert_eq!(fs::read_to_string(history).unwrap(), original);
 }
 

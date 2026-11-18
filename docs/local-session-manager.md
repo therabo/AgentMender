@@ -20,8 +20,7 @@ set. An absolute `--claude-root` selects the primary root explicitly.
 Repeat `--claude-additional-root` to include more local archives.
 `--claude-desktop-root` can point at a separate directory of Desktop metadata.
 Supply absolute `--codex-root`, `--codex-executable` or `--claude-executable`
-overrides at launch. `--protect-codex-session <UUID>` protects a UUID in the configured Codex root, including when it
-is a descendant of the selected conversation. `--max-entries` bounds inventory acquisition and defaults to
+overrides at launch. `--protect-codex-session <UUID>` prevents AgentMender from directly selecting that Codex UUID for deletion. `--max-entries` bounds inventory acquisition and defaults to
 10,000. Use refresh to pick up external changes. Date filters use inclusive UTC
 calendar days over last activity.
 
@@ -34,11 +33,11 @@ Codex Recenti lists conversations without a verified project association
 and supports normal session actions. Counts and sizes describe observed
 records and known transcript bytes.
 
-On a supported Codex installation, open **Rimuovi sessioni del progetto**
-from an eligible project header. Confirm with `RIMUOVI SESSIONI DEL PROGETTO`.
-The operation processes the reviewed trees in sequence. The native registration,
-workspace and software repository are outside the scope. Desktop-backed projects
-support individual session reviews.
+Use **Elimina sessione** in a Codex conversation to confirm permanent
+deletion. AgentMender displays the result of the installed native command.
+The existing project action applies that command in sequence to the main
+conversations of eligible native projects. Project registrations and
+workspaces stay separate.
 
 Open **Diagnostica inventario Claude Code** to see the unfiltered local
 counts, exclusions, scan limits, source availability and the matches
@@ -48,36 +47,18 @@ For Claude Code, open a session to read a bounded conversation preview and
 inspect its namespace, file modification time, metadata coverage and storage
 dependencies. Filter by metadata, activity date and transcript size.
 
-On partial completion, inspect the verified, undispatched and uncertain
-subtree IDs. A restart discards receipts and live operation results. Refresh
-and request a fresh review to inspect the remaining provider records.
-AgentMender never resumes removal automatically. SQLite storage reuse,
-snapshots, backups and provider artifacts can affect physical bytes reclaimed.
+## Claude Code storage and deletion
 
-## Claude Code storage
+Open **Export e backup → Storage Claude Code** to inspect paths and
+measurements. In a session's detail, choose **Standard** for recognized
+session files or **Approfondita** to include scoped checkpoints. Review the
+file list and total size, then select **Elimina**.
 
-Open **Export e backup → Storage Claude Code** to inspect the recognized
-Claude roots, directory measurements and transcript-heavy sessions.
-Open **Storage e dipendenze → Risorse osservate** for diagnostic sizes and
-relationships. On macOS, close Claude Desktop and Claude Code and open
-**Rimozione Claude Code → Anteprima rimozione** for an exact plan. Choose
-Standard for verified transcript files and their recognized dependencies.
-Approfondita adds eligible rewind files explicitly referenced by the
-transcript. Type the confirmation phrase before the receipt expires.
-
-Keep Claude and its background processes closed until verification finishes.
-A writer can reopen after a process check. AgentMender verifies copies
-in `~/.agentmender/claude-backups` before moving individual files. The
-result lists residual resources when exclusive files were removed while
-shared history or other data were retained. The displayed logical bytes
-do not account for the retained backup and APFS shared blocks.
-
-Use **Storage Claude Code → Backup di rimozione** to recover a session
-after closing Claude or explicitly discard a completed backup. Review and
-confirm each operation. Restore checks every destination and stops if a
-different file already occupies it. An interrupted operation retains its
-manifest and recovery data across application restarts.
-[Storage audit](audits/claude-code-complete-storage.md).
+Session deletion is permanent. AgentMender creates no backup and offers no
+restore. Existing backups on disk are left untouched. Close Claude before
+confirming to reduce concurrent writes. Errors can leave some files or
+history rows in place. AgentMender displays the result and refreshes the
+inventory. Physical disk space reclaimed can differ from the logical size.
 
 ## Storage and export previews
 
@@ -112,25 +93,17 @@ require exact Origin. All requests require the exact local Host.
 | `GET /api/{provider}/projects` | Search, filter, sort and page provider project groups |
 | `GET /api/{provider}/projects/{key}` | Read an observed group and its coverage and capability |
 | `GET /api/{provider}/projects/{key}/sessions` | Page verified main conversations within a group |
-| `POST /api/{provider}/projects/{key}/removal-preview` | Review native Codex project membership and issue a session-removal receipt |
+| `POST /api/codex/projects/{key}/delete` | Confirm permanent deletion of sessions in an eligible Codex project |
 | `GET /api/codex/recents` | Page verified main conversations without a verified project association |
 | `GET /api/{provider}/sessions` | Search, filter, sort and page over verified main conversations |
 | `GET /api/{provider}/sessions/{key}` | Details of a verified main conversation |
 | `GET /api/{provider}/sessions/{key}/conversation` | Bounded selected Codex transcript page with optional opaque cursor |
 | `POST /api/{provider}/refresh` | Reacquire the provider snapshot |
-| `POST /api/codex/sessions/{key}/removal-preview` | Review one main conversation and its spawned subtree, then issue a two-minute one-use receipt |
-| `POST /api/operations/{receipt}/confirm` | Consume the receipt with the explicit confirmation phrase |
-| `GET /api/operations/{receipt}` | Read operation state and verified project progress |
+| `POST /api/claude/sessions/{key}/removal-preview` | List exact Claude targets for `standard` or `deep` on macOS |
+| `POST /api/{provider}/sessions/{key}/delete` | Delete the selected session after explicit confirmation and return the result |
 
-Session keys bind the provider, root and exact identity. Transcript cursors,
-receipts and outcome tracking are process-local. Hidden descendants have no
-browser entry or selectable key. The irreversible deletion review reports the
-main title and UUID, the verified descendant count and the total number of
-sessions affected. The project review supplies verified counts, the project
-key, the list of reviewed trees and explicit exclusions. A browser cannot
-supply root IDs or a replacement project scope. Session removal uses
-`RIMUOVI`. The project session review uses `RIMUOVI SESSIONI DEL PROGETTO`.
-Ineligible targets show the reason and receive no receipt.
+The JSON confirmation is `{"confirm":true}`. Claude also passes the opaque
+`review` returned by its preview. Browser payloads carry no paths or commands.
 
 ## Test with disposable archives
 
@@ -149,9 +122,6 @@ On Darwin arm64, run the native fixture with a [supported Codex release](provide
 python3 scripts/test_local_ui.py --agentmender target/debug/agentmender --native-codex /absolute/path/to/codex
 ```
 
-The suite initializes disposable archives, checks the release and command
-contract, and exercises the same confined command boundary as the browser.
-The fixture covers unarchived and archived trees, open and closed edges,
-plain and compressed variants, internal and external history references,
-and a byte-for-byte unchanged independent export. Install `zstd` to exercise
-the compressed base. Run it once per binary when validating a release.
+The suite uses disposable archives and checks both command results and the
+refreshed inventory. The optional native Claude fixture exercises deletion
+of a transcript generated by the installed engine.

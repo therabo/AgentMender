@@ -17,9 +17,10 @@ use std::{
 };
 
 #[cfg(target_os = "macos")]
-pub const REMOVAL_NOTICE: &str = "Apri l’anteprima della sessione per verificare formato, proprietà dei file, spazio di backup e stato dei writer Claude.";
+pub const REMOVAL_NOTICE: &str =
+    "L’anteprima della sessione mostra i file interessati dall’eliminazione.";
 #[cfg(not(target_os = "macos"))]
-pub const REMOVAL_NOTICE: &str = "Rimozione Claude in sola lettura su questa piattaforma. Il controllo dei writer e il percorso di ripristino richiedono una verifica nativa.";
+pub const REMOVAL_NOTICE: &str = "Eliminazione Claude disponibile su macOS.";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -273,7 +274,7 @@ fn desktop_record(root: &Path, path: &Path) -> Option<(DesktopRecord, ArtifactLo
 #[derive(Default)]
 pub(crate) struct DesktopRegistry {
     pub(crate) states: BTreeMap<String, DesktopState>,
-    pub(crate) by_cli_id: BTreeMap<String, usize>,
+    by_cli_id: BTreeMap<String, usize>,
     report: DesktopReport,
 }
 

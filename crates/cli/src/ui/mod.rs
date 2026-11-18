@@ -1,7 +1,5 @@
 //! Loopback-only transport and browser authorization for the local UI.
 mod browser;
-#[cfg(target_os = "macos")]
-mod claude_cleanup;
 mod claude_usage;
 mod inventory;
 mod removal;
@@ -16,9 +14,7 @@ use std::{
 
 use agentmender_domain::ProviderKind;
 use agentmender_provider_claude::ClaudeAdapter;
-use agentmender_provider_codex::{
-    CodexAdapter, NativeRemoval, NativeUnavailable, discovery::Discovery,
-};
+use agentmender_provider_codex::{CodexAdapter, discovery::Discovery};
 use axum::{
     Json, Router,
     extract::{DefaultBodyLimit, Path, Query, Request, State},
@@ -34,7 +30,6 @@ use self::{
     inventory::{
         DetailView, Filter, Inventories, PageView, ProjectView, ProjectsPage, ProviderView,
     },
-    removal::{OperationView, Operations, PreviewView, ProjectPreviewView, ReviewedRemoval},
     transcript::{TranscriptCursors, TranscriptQuery, TranscriptView},
 };
 
@@ -52,14 +47,12 @@ struct App {
     claude: ClaudeAdapter,
     limit: usize,
     protected: Vec<String>,
-    native: Result<NativeRemoval, NativeUnavailable>,
     inventory: Inventories,
     discovery: Discovery,
     exports: Mutex<Option<storage::CachedInventory>>,
     claude_usage: Mutex<Option<claude_usage::CachedUsage>>,
     #[cfg(target_os = "macos")]
-    claude_cleanup: Mutex<claude_cleanup::Operations>,
-    operations: Mutex<Operations>,
+    claude_review: Mutex<Option<removal::ClaudeReview>>,
     cursors: Mutex<TranscriptCursors>,
     reads: Arc<Semaphore>,
 }
@@ -305,130 +298,6 @@ async fn claude_storage(
     .await
 }
 
-async fn preview(
-    State(app): State<Arc<App>>,
-    Path((id, key)): Path<(String, String)>,
-) -> Result<Json<PreviewView>, ApiError> {
-    let provider = provider(&id)?;
-    read(app, move |app| {
-        let session = app.inventory.selected(app, provider, &key)?;
-        if provider == ProviderKind::Claude {
-            return Err(ApiError::conflict(
-                agentmender_provider_claude::REMOVAL_NOTICE,
-            ));
-        }
-        if let Some(reason) = removal::refusal(&session, &app.protected) {
-            return Err(ApiError::conflict(reason));
-        }
-        if let Some(reason) = removal::native_reason(&app.native) {
-            return Err(ApiError::conflict(reason));
-        }
-        let native = app.native.as_ref().expect("checked");
-        let evidence = native
-            .prepare(&app.codex, &session)
-            .map_err(removal::refusal_error)?;
-        app.operations
-            .lock()
-            .expect("operation lock")
-            .issue(evidence)
-    })
-    .await
-}
-
-async fn project_preview(
-    State(app): State<Arc<App>>,
-    Path((id, key)): Path<(String, String)>,
-) -> Result<Json<ProjectPreviewView>, ApiError> {
-    let provider = provider(&id)?;
-    read(app, move |app| {
-        let (identity, view) = app
-            .inventory
-            .project(app, provider, &key, |app, _, project| {
-                (project.identity.clone(), ProjectView::new(app, project))
-            })?;
-        if let Some(reason) = view.removal_reason {
-            return Err(ApiError::conflict(reason));
-        }
-        let review = app
-            .native
-            .as_ref()
-            .map_err(|_| ApiError::internal())?
-            .prepare_project(&app.codex, &identity)
-            .map_err(removal::refusal_error)?;
-        app.operations
-            .lock()
-            .expect("operation lock")
-            .issue_project(view, review)
-    })
-    .await
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Confirmation {
-    confirmation: String,
-}
-
-async fn confirm(
-    State(app): State<Arc<App>>,
-    Path(key): Path<String>,
-    Json(request): Json<Confirmation>,
-) -> Result<StatusCode, ApiError> {
-    if app.native.is_err() {
-        return Err(ApiError::conflict(
-            removal::native_reason(&app.native).expect("unavailable"),
-        ));
-    }
-    let review = app
-        .operations
-        .lock()
-        .expect("operation lock")
-        .start(&key, &request.confirmation)?;
-    tokio::spawn(async move {
-        let worker = app.clone();
-        let operation_key = key.clone();
-        let result = tokio::task::spawn_blocking(move || {
-            let operations = || worker.operations.lock().expect("operation lock");
-            let native = worker.native.as_ref().expect("checked");
-            match review {
-                ReviewedRemoval::Session(review) => {
-                    let status = native.execute(&worker.codex, *review);
-                    worker.inventory.invalidate(ProviderKind::Codex);
-                    operations().finish(&operation_key, status);
-                }
-                ReviewedRemoval::Project(review) => {
-                    let outcome = native.execute_project(&worker.codex, *review, |step| {
-                        operations().project_step(&operation_key, step);
-                    });
-                    worker.inventory.invalidate(ProviderKind::Codex);
-                    operations().finish_project(&operation_key, outcome);
-                }
-            }
-        })
-        .await;
-        if result.is_err() {
-            app.inventory.invalidate(ProviderKind::Codex);
-            app.operations
-                .lock()
-                .expect("operation lock")
-                .interrupted(&key);
-        }
-    });
-    Ok(StatusCode::ACCEPTED)
-}
-
-async fn operation(
-    State(app): State<Arc<App>>,
-    Path(key): Path<String>,
-) -> Result<Json<OperationView>, ApiError> {
-    app.operations
-        .lock()
-        .expect("operation lock")
-        .get(&key)
-        .map(Json)
-        .ok_or_else(|| ApiError::missing("Operazione non trovata nella sessione locale."))
-}
-
 fn asset(content_type: &'static str, bytes: &'static str) -> impl IntoResponse {
     ([(header::CONTENT_TYPE, content_type)], bytes)
 }
@@ -436,24 +305,10 @@ fn asset(content_type: &'static str, bytes: &'static str) -> impl IntoResponse {
 fn router(app: Arc<App>) -> Router {
     let routes = Router::new();
     #[cfg(target_os = "macos")]
-    let routes = routes
-        .route(
-            "/api/claude/sessions/{key}/removal-preview",
-            post(claude_cleanup::preview),
-        )
-        .route(
-            "/api/claude/operations/{key}",
-            get(claude_cleanup::operation),
-        )
-        .route(
-            "/api/claude/operations/{key}/confirm",
-            post(claude_cleanup::confirm),
-        )
-        .route("/api/claude/backups", get(claude_cleanup::backups))
-        .route(
-            "/api/claude/backups/{id}/preview",
-            post(claude_cleanup::backup_preview),
-        );
+    let routes = routes.route(
+        "/api/claude/sessions/{key}/removal-preview",
+        post(removal::claude_preview),
+    );
     routes
         .route(
             "/",
@@ -485,10 +340,7 @@ fn router(app: Arc<App>) -> Router {
             "/api/{provider}/projects/{key}/sessions",
             get(project_sessions),
         )
-        .route(
-            "/api/{provider}/projects/{key}/removal-preview",
-            post(project_preview),
-        )
+        .route("/api/codex/projects/{key}/delete", post(removal::project))
         .route("/api/codex/recents", get(recents))
         .route("/api/{provider}/sessions", get(list))
         .route("/api/{provider}/sessions/{key}", get(detail))
@@ -497,13 +349,11 @@ fn router(app: Arc<App>) -> Router {
             get(conversation),
         )
         .route(
-            "/api/{provider}/sessions/{key}/removal-preview",
-            post(preview),
+            "/api/{provider}/sessions/{key}/delete",
+            post(removal::session),
         )
         .route("/api/claude/sessions/{key}/storage", get(claude_storage))
         .route("/api/{provider}/refresh", post(refresh))
-        .route("/api/operations/{key}", get(operation))
-        .route("/api/operations/{key}/confirm", post(confirm))
         .layer(DefaultBodyLimit::max(4096))
         .layer(middleware::from_fn_with_state(app.clone(), boundary))
         .with_state(app)
@@ -514,7 +364,6 @@ pub(super) struct Configuration {
     pub codex: CodexAdapter,
     pub discovery: Discovery,
     pub claude: ClaudeAdapter,
-    pub native: Result<NativeRemoval, NativeUnavailable>,
     pub limit: usize,
     pub protected: Vec<String>,
     pub no_open: bool,
@@ -553,13 +402,11 @@ pub(super) fn run(config: Configuration) -> Result<(), String> {
             exports: Mutex::default(),
             claude_usage: Mutex::default(),
             #[cfg(target_os = "macos")]
-            claude_cleanup: Mutex::default(),
+            claude_review: Mutex::default(),
             claude: config.claude,
-            native: config.native,
             limit: config.limit,
             protected: config.protected,
             inventory: Inventories::default(),
-            operations: Mutex::default(),
             cursors: Mutex::default(),
             reads: Arc::new(Semaphore::new(8)),
         });

@@ -1,5 +1,7 @@
 # ADR 0044 — Provider-scoped projects in the local manager
 
+The current session deletion workflow is defined by [ADR 0046](claude-session-cleanup.md).
+
 Accepted 2026-11-17. Revised 2026-11-18 for Codex Desktop parity.
 Extends ADR 0043.
 
@@ -24,13 +26,9 @@ projects retain an identity. The separately paginated views share session
 details and transcript access. Each provider root and native ID are bound into
 opaque keys. Claude continues to group by the observed directory namespace.
 
-Bulk Codex removal applies only to sessions with a verified native scope.
-The confined reader selects `threads.project_id`, validates every associated
-tree, and checks the full bounded archive for ambiguous membership and
-references. Existing UUID deletion runs serially with a fresh verification at
-each step. The registration and its roots are outside this operation. Archived
-conversations with legacy membership remain eligible for individual review
-under the ordinary native contract.
+Bulk Codex removal applies the same native UUID command serially to the
+observed main conversations of a native project with complete membership.
+The registration and its roots are outside this operation.
 
 Codex `project/delete` removes the registration and clears assignments. The
 browser exposes session removal only. Using the experimental project protocol to
@@ -41,4 +39,4 @@ remove a registration requires a separate verified lifecycle contract.
 Disposable HTTP and native fixtures cover empty registrations, explicit
 assignments, migration conflicts, same-workspace independent conversations,
 and native serial deletion. The architecture check enforces the confined
-reader, native dispatch and read-only Claude boundaries.
+reader and native dispatch boundaries.

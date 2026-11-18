@@ -2,14 +2,12 @@
 """HTTP acceptance on disposable archives, with optional native Codex cascade tests."""
 import argparse
 from contextlib import closing, contextmanager
-from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import http.client
 import json
 import os
 from pathlib import Path
 import platform
-import plistlib
 import selectors
 import shlex
 import shutil
@@ -17,7 +15,6 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
-import time
 from urllib.parse import urlsplit
 
 sys.dont_write_bytecode = True
@@ -27,6 +24,8 @@ CLAUDE_ID = "eb000000-1111-4111-8111-000000000001"
 CLAUDE_DESKTOP_ID = "eb000000-1111-4111-8111-000000000002"
 CLAUDE_SIDECHAIN_ID = "eb000000-1111-4111-8111-000000000003"
 CLAUDE_AGENT_ID = "a123badc"
+PROJECTS = "/api/codex/projects"
+RECENTS = "/api/codex/recents"
 
 
 def scoped_key(provider, root, ident, namespace=None):
@@ -129,15 +128,6 @@ class Client:
         finally:
             conn.close()
 
-    def operation(self, token):
-        deadline = time.monotonic() + 30
-        while time.monotonic() < deadline:
-            value = self.call("GET", f"/api/operations/{token}")
-            if value["status"] not in ("preparing", "running"):
-                return value
-            time.sleep(0.1)
-        raise AssertionError("native operation did not finish")
-
 
 @contextmanager
 def ui(binary, base, codex_root, claude_root, codex=None, max_entries=None, env_overrides=None, extra_args=()):
@@ -155,8 +145,7 @@ def ui(binary, base, codex_root, claude_root, codex=None, max_entries=None, env_
     if max_entries is not None:
         command += ["--max-entries", str(max_entries)]
     if codex:
-        # The fixture setup and the HTTP-dispatched native command both use
-        # write-denying macOS profiles, each scoped to its disposable archive.
+        # Use the executable and archive configured for this fixture.
         command += ["--codex-executable", str(codex), "--protect-codex-session", probe.S]
     else:
         command += ["--codex-executable", str(base / "missing-codex")]
@@ -210,8 +199,6 @@ def inventory_acceptance(client, claude_root):
     detail = client.call("GET", f"/api/claude/sessions/{row['key']}")
     assert detail["conversation_preview"] and detail["session"]["removal_reason"]
     path = f"/api/claude/sessions/{row['key']}"
-    refused = client.call("POST", path + "/removal-preview", code=409)
-    assert refused["error"] and "id" not in refused
     page = client.call("GET", path + "/conversation")
     assert len(page["messages"]) == 20 and not page["complete"]
     assert page["messages"][0] == {"role": "user", "text": "First visible Claude request."}
@@ -219,8 +206,7 @@ def inventory_acceptance(client, claude_root):
     second = client.call("GET", path + "/conversation?cursor=" + page["next"])
     assert len(second["messages"]) == 5 and second["next"] is None and second["complete"]
     storage = client.call("GET", path + "/storage")
-    assert storage["subagents"] == 1 and storage["backup_status"] == "not_created"
-    assert not storage["standard_available"] and not storage["deep_available"]
+    assert storage["subagents"] == 1
     client.call("GET", "/api/claude/sessions/../../config.toml", code=404)
     client.call("GET", "/api/claude/sessions?root=%2Ftmp", code=400)
     desktop = client.call("GET", f"/api/claude/sessions?search={CLAUDE_DESKTOP_ID}")
@@ -259,7 +245,8 @@ def claude_multiple_roots(binary, base, primary):
             source.write_bytes(original + b"{}\n")
             client.call("GET", first + "/conversation?cursor=" + cursor, code=409)
             client.call("GET", first + "/storage", code=409)
-            client.call("POST", first + "/removal-preview", code=409)
+            if platform.system() == "Darwin":
+                client.call("POST", first + "/removal-preview", {"mode": "standard"}, code=409)
             assert source.read_bytes() == original + b"{}\n"
         finally:
             source.write_bytes(original)
@@ -401,7 +388,6 @@ def claude_storage_acceptance(binary, base):
         assert usage["writer_observation"] in {
             "claude_process_observed", "no_named_process_observed", "unavailable",
         }
-        assert usage["reclaimable_logical_bytes"] == 0
         assert [row["kind"] for row in usage["roots"]].count("temporary") == 1
         code = next(row for row in usage["roots"] if row["kind"] == "code")
         skipped = next(row for row in code["groups"] if row["category"] == "unclassified")
@@ -423,19 +409,12 @@ def claude_storage_acceptance(binary, base):
         assert categories["scratchpad"]["files"] == categories["checkpoint"]["files"] == 1
         assert categories["uploads"]["files"] == categories["unknown"]["files"] == 1
         assert detail["history_matches"] == 1 and detail["history_observation"] == "partial_uuid_only"
-        assert detail["backup_status"] == "not_created" and not detail["complete"]
-        standard, deep = detail["plans"]
-        assert standard["mode"] == "standard" and deep["mode"] == "deep"
-        assert deep["associated_logical_bytes"] > standard["associated_logical_bytes"]
-        assert all(row["status"] == "blocked" and row["authorized_logical_bytes"] == 0 and not row["operations"] for row in detail["plans"])
-        assert not any(row["removal_available"] for row in detail["observed"])
+        assert not detail["diagnostic_complete"]
         if os.name != "nt":
             result = next(row for row in detail["observed"] if row["category"] == "tool_results")
             assert result["size"]["links"] == 1 and result["size"]["files"] == 1
             assert result["size"]["logical_bytes"] == len(files[archive / "tool-results/result.txt"])
             assert categories["images"]["allocated_bytes"] is None
-        refused = client.call("POST", detail_path + "/removal-preview", {"mode": "deep"}, code=409)
-        assert refused["error"] and "id" not in refused
         archived = client.call("GET", f"/api/claude/sessions/{keys[CLAUDE_DESKTOP_ID]}/storage")
         registration = next(row for row in archived["observed"] if row["category"] == "desktop_record")
         assert registration["format"] == "desktop_local_registration"
@@ -455,386 +434,170 @@ def claude_storage_acceptance(binary, base):
 
 
 
-def claude_remove(client, preview, *, confirm=True):
-    operation = f"/api/claude/operations/{preview['id']}"
-    client.call("POST", operation + "/confirm", {"confirmation": preview["confirmation"]},
-                code=202 if confirm else 409)
-    if not confirm:
-        return None
-    deadline = time.monotonic() + 35
-    while time.monotonic() < deadline:
-        result = client.call("GET", operation)
-        if result["status"] != "running":
-            return result
-        time.sleep(0.1)
-    raise AssertionError("Claude operation did not finish")
-
-
 def claude_cleanup_acceptance(binary, base):
-    root = base / "claude-offline-cleanup"
-    bucket = root / "projects" / "offline"
-    bucket.mkdir(parents=True)
-    main = bucket / f"{CLAUDE_ID}.jsonl"
-    unrelated = bucket / f"{CLAUDE_DESKTOP_ID}.jsonl"
+    root = base / "claude-delete"
+    desktop = base / "claude-delete-desktop"
+    bucket = root / "projects" / "standard"
     agent = bucket / CLAUDE_ID / "subagents" / f"agent-{CLAUDE_AGENT_ID}.jsonl"
-    agent.parent.mkdir(parents=True)
-    unknown = agent.parent / "user-output.txt"
-    sidecar = bucket / f"{CLAUDE_ID}.precompact.json"
-    history = root / "history.jsonl"
-    locked = root / "history.jsonl.lock"
-    locked.mkdir()
-    (locked / "sentinel").write_bytes(b"lock owned by another writer")
-    checkpoint = root / "file-history" / CLAUDE_ID / "9c20185f9234a1ee@v1"
-    checkpoint.parent.mkdir(parents=True)
-    session_env = root / "session-env" / CLAUDE_ID
-    session_env.mkdir(parents=True)
-    env_inode = session_env.stat().st_ino
-    marker = root / "sessions" / f"{os.getpid()}.json"
-    marker.parent.mkdir()
-    rows = {
-        main: [
-            {"type": "user", "sessionId": CLAUDE_ID, "entrypoint": "cli", "version": "2.1.222",
-             "message": {"content": "Disposable standard cleanup"}},
-            {"type": "file-history-snapshot", "snapshot": {"trackedFileBackups": {
-                "fixture.txt": {"backupFileName": checkpoint.name, "version": 1}}}},
-        ],
-        unrelated: [{"type": "user", "sessionId": CLAUDE_DESKTOP_ID, "entrypoint": "claude-desktop",
-                     "version": "2.1.222", "cwd": "/fixture/Other", "message": {"content": "Preserve this session"}}],
-        agent: [{"type": "user", "sessionId": CLAUDE_ID, "agentId": CLAUDE_AGENT_ID,
-                 "isSidechain": True, "version": "2.1.222"}],
-    }
-    for path, records in rows.items():
-        path.write_text("".join(json.dumps(row) + "\n" for row in records))
-    unknown.write_bytes(b"unclassified file in UUID directory")
-    sidecar.write_bytes(b'{"unknown":true}')
-    history.write_bytes((json.dumps({"sessionId": CLAUDE_ID}) + "\r\ninvalid\r\n" +
-                         json.dumps({"sessionId": CLAUDE_DESKTOP_ID}) + "\n").encode())
-    checkpoint.write_bytes(b"first file rewind data")
-    scope = base / "offline-server"
-    scope.mkdir()
-    backup_home = scope / "home" / ".agentmender" / "claude-backups"
-    desktop = base / "offline-desktop"
+    stored = bucket / f"{CLAUDE_ID}.jsonl"
+    deep = root / "projects" / "deep" / f"{CLAUDE_DESKTOP_ID}.jsonl"
+    blocked_id = CLAUDE_SIDECHAIN_ID
+    blocked = bucket / f"{blocked_id}.jsonl"
     registration = desktop / "claude-code-sessions" / CLAUDE_ID / CLAUDE_DESKTOP_ID / f"local_{CLAUDE_DESKTOP_ID}.json"
-    registration.parent.mkdir(parents=True)
-    registration.write_text(json.dumps({"sessionId": f"local_{CLAUDE_DESKTOP_ID}",
-                                        "cliSessionId": CLAUDE_DESKTOP_ID, "cwd": "/fixture/Other"}))
-    scheduler = registration.with_name("scheduled-sessions.json")
-    scheduler.write_bytes(b'{"fixture":"preserve shared scheduler"}')
-    bundle = base / "Claude.app"
-    (bundle / "Contents/MacOS").mkdir(parents=True)
-    (bundle / "Contents/Info.plist").write_bytes(plistlib.dumps({
-        "CFBundleIdentifier": "com.anthropic.claudefordesktop", "CFBundleExecutable": "Claude",
-        "CFBundleShortVersionString": "5.11492.5",
-    }))
-    desktop_args = ("--claude-desktop-root", str(desktop), "--claude-app-bundle", str(bundle))
-    initial = {path: path.read_bytes() for path in (main, agent, unrelated, sidecar, unknown, history, checkpoint)}
-    with ui(binary, scope, None, root, extra_args=desktop_args) as (client, ticket):
+    history = root / "history.jsonl"
+    sidecar = stored.with_suffix(".precompact.json")
+    env = root / "session-env" / CLAUDE_ID / "env"
+    task = root / "tasks" / CLAUDE_ID / "1.json"
+    debug = root / "debug" / f"{CLAUDE_ID}.txt"
+    checkpoint = root / "file-history" / CLAUDE_ID / "keep"
+    deep_checkpoint = root / "file-history" / CLAUDE_DESKTOP_ID / "delete"
+    preserved = bucket / CLAUDE_ID / "user-output.txt"
+    shared = registration.with_name("scheduled-sessions.json")
+    retained_history = (json.dumps({"sessionId": blocked_id}).encode() + b"\r\n"
+                        + b"malformed, preserve my bytes\r\n"
+                        + json.dumps({"session_id": CLAUDE_DESKTOP_ID}).encode())
+    initial_history = (json.dumps({"sessionId": CLAUDE_ID}).encode() + b"\r\n"
+                       + retained_history)
+    files = {
+        stored: json.dumps({"type": "user", "entrypoint": "cli", "sessionId": CLAUDE_ID,
+                            "version": "2.1.202", "cwd": "/fixture/Standard"}) + "\n",
+        deep: json.dumps({"type": "user", "entrypoint": "claude-desktop", "sessionId": CLAUDE_DESKTOP_ID,
+                          "version": "2.1.222", "cwd": "/fixture/Deep"}) + "\n",
+        blocked: json.dumps({"type": "user", "entrypoint": "cli", "sessionId": blocked_id}) + "\n",
+        agent: json.dumps({"type": "user", "sessionId": CLAUDE_ID, "agentId": CLAUDE_AGENT_ID,
+                           "isSidechain": True}) + "\n",
+        agent.with_suffix(".meta.json"): "{}",
+        registration: json.dumps({"sessionId": f"local_{CLAUDE_DESKTOP_ID}",
+                                   "cliSessionId": CLAUDE_DESKTOP_ID, "cwd": "/fixture/Deep"}),
+        shared: '{"preserve":"scheduler"}',
+        sidecar: '{}',
+        env: "environment fixture",
+        task: "{}",
+        debug: "debug fixture",
+        checkpoint: "standard retains checkpoint",
+        deep_checkpoint: "deep removes checkpoint",
+        preserved: "unknown session output",
+    }
+    for path, value in files.items():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(value)
+    history.write_bytes(initial_history)
+    legacy = base / "home" / ".agentmender" / "claude-backups" / "existing-backup"
+    legacy.mkdir(parents=True)
+    (legacy / "keep").write_bytes(b"existing copy")
+
+    with ui(binary, base, None, root, extra_args=("--claude-desktop-root", str(desktop))) as (client, ticket):
         authorize(client, ticket)
-        key = scoped_key("claude", root, CLAUDE_ID, "offline")
-        path = f"/api/claude/sessions/{key}/removal-preview"
-        marker.write_text(json.dumps({"sessionId": CLAUDE_ID, "pid": os.getpid()}))
-        assert client.call("POST", path, {"mode": "standard"}, code=409)["status"] == "active_writer"
-        marker.write_text(json.dumps({"sessionId": CLAUDE_ID, "pid": os.getpid(),
-                                      "pidDomain": "darwin", "procStart": "Sun Jan 2 00:00:00 2000"}))
-        assert client.call("POST", path, {"mode": "standard"})["review"]["admission"] == "eligible"
-        marker.unlink()
+        paths = {row["native_id"]: f"/api/claude/sessions/{row['key']}"
+                 for row in client.call("GET", "/api/claude/sessions")["rows"]}
+        path = paths[CLAUDE_ID]
+        review = client.call("POST", path + "/removal-preview", {"mode": "standard"})
+        assert review["plan"]["history_matches"] == 1
+        listed = {Path(item["root"]) / item["relative_path"] for item in review["plan"]["files"]}
+        assert set([stored, agent, agent.with_suffix(".meta.json"), sidecar, env, task, debug]) == listed, review
+        assert review["plan"]["logical_bytes"] == sum(item.stat().st_size for item in listed)
+        confirm = {"confirm": True, "review": review["review"]}
+        client.call("POST", path + "/delete", confirm, code=403, Origin=None)
+        client.call("POST", path + "/delete", {**confirm, "path": str(deep)}, code=422)
+        client.call("POST", path + "/delete", {"confirm": False, "review": review["review"]}, code=400)
+        client.call("POST", paths[blocked_id] + "/delete", confirm, code=409)
+        assert all(item.is_file() for item in listed)
+        result = client.call("POST", path + "/delete", confirm)
+        assert result["status"] == "partial" and result["errors"], result
+        assert all(not item.exists() for item in listed)
+        assert checkpoint.read_text() == files[checkpoint] and preserved.read_text() == files[preserved]
+        assert history.read_bytes() == retained_history
+        assert not (root / "history.jsonl.lock").exists() and not list(root.glob("history.jsonl.*.tmp"))
+        assert not env.parent.exists() and not task.parent.exists() and not agent.parent.exists()
+        client.call("POST", path + "/delete", confirm, code=409)
+        assert client.call("GET", "/api/claude/sessions")["total"] == 2
 
-        app = bundle / "Contents/MacOS/Claude"
-        shutil.copyfile("/bin/sleep", app)
-        app.chmod(0o700)
-        with subprocess.Popen([str(app), "20"]) as other:
-            try:
-                assert client.call("POST", path, {"mode": "standard"}, code=409)["status"] == "active_writer"
-            finally:
-                other.terminate()
-        client.call("POST", path, {"mode": "standard", "path": str(main)}, code=422)
-        stale = client.call("POST", path, {"mode": "standard"})
-        main.write_bytes(initial[main] + b"\n")
-        assert claude_remove(client, stale)["status"] == "changed"
-        assert main.exists() and not backup_home.exists()
-        main.write_bytes(initial[main])
-        stale_lock = client.call("POST", path, {"mode": "standard"})
-        parked_lock = locked.with_name("fixture-lock-parked")
-        locked.rename(parked_lock)
-        assert claude_remove(client, stale_lock)["status"] == "changed"
-        parked_lock.rename(locked)
-        stale_directory = client.call("POST", path, {"mode": "standard"})
-        new_file = session_env / "new-from-writer.txt"
-        new_file.write_bytes(b"must preserve files created after the review")
-        assert claude_remove(client, stale_directory)["status"] == "changed"
-        assert new_file.read_bytes() == b"must preserve files created after the review"
-        new_file.unlink()
-        namespace = bucket.with_name("other-namespace")
-        namespace.mkdir()
-        duplicate = namespace / main.name
-        duplicate.write_bytes(initial[main])
-        assert client.call("POST", path, {"mode": "standard"}, code=409)["status"] == "ownership_unverified"
-        duplicate.unlink()
-        fork = namespace / f"{CLAUDE_SIDECHAIN_ID}.jsonl"
-        fork.write_text(json.dumps({"type": "user", "sessionId": CLAUDE_SIDECHAIN_ID, "version": "2.1.222",
-                                    "entrypoint": "cli", "forkedFromSessionId": CLAUDE_ID}) + "\n")
-        assert client.call("POST", path, {"mode": "standard"}, code=409)["status"] == "ownership_unverified"
-        assert fork.exists()
-        fork.unlink()
+        lock = root / "history.jsonl.lock"
+        lock.mkdir()
+        review = client.call("POST", paths[CLAUDE_DESKTOP_ID] + "/removal-preview", {"mode": "deep"})
+        listed = {Path(item["root"]) / item["relative_path"] for item in review["plan"]["files"]}
+        assert {deep, registration, deep_checkpoint} == listed, review
+        result = client.call("POST", paths[CLAUDE_DESKTOP_ID] + "/delete", {"confirm": True, "review": review["review"]})
+        assert result["status"] == "partial" and "occupata" in str(result["errors"]), result
+        assert all(not item.exists() for item in listed) and not deep_checkpoint.parent.exists()
+        assert blocked.read_text() == files[blocked] and shared.read_text() == files[shared]
+        assert history.read_bytes() == retained_history and lock.is_dir()
+        assert client.call("GET", "/api/claude/sessions")["total"] == 1
 
-        review = client.call("POST", path, {"mode": "standard"})
-        targets = review["review"]["operations"]
-        assert {target["role"] for target in targets} == {"transcript", "subagent"}, targets
-        assert [folder["relative_path"] for folder in review["review"]["empty_directories"]] == [f"session-env/{CLAUDE_ID}"]
-        assert review["review"]["history_matches"] == 1
-        assert review["review"]["backup_required_bytes"] > len(initial[main]) + len(initial[agent])
-        client.call("POST", f"/api/claude/operations/{review['id']}/confirm",
-                    {"confirmation": review["confirmation"]}, code=403, Origin=None)
-        result = claude_remove(client, review)
-        assert result["status"] == "partial", result
-        assert not main.exists() and not agent.exists() and not session_env.exists()
-        claude_remove(client, review, confirm=False)
-        assert all(path.read_bytes() == initial[path] for path in (unrelated, sidecar, unknown, history, checkpoint))
-        assert (locked / "sentinel").read_bytes() == b"lock owned by another writer"
-        backup = result["backup_id"]
-        manifest = json.loads((backup_home / backup / "manifest.json").read_text())
-        assert manifest["version"] == 1
-        for i, target in enumerate(manifest["targets"]):
-            assert hashlib.sha256((backup_home / backup / f"file-{i}").read_bytes()).hexdigest() == target["sha256"]
-        assert next(row for row in client.call("GET", "/api/claude/backups") if row["id"] == backup)["can_restore"]
-
-    # The backup survives a server restart and recovery refuses recreated content.
-    with ui(binary, scope, None, root, extra_args=desktop_args) as (client, ticket):
-        authorize(client, ticket)
-        restore = f"/api/claude/backups/{backup}/preview"
-        main.write_bytes(b"recreated conversation")
-        assert claude_remove(client, client.call("POST", restore, {"action": "restore"}))["status"] == "changed"
-        assert main.read_bytes() == b"recreated conversation" and not agent.exists()
-        main.unlink()
-        assert claude_remove(client, client.call("POST", restore, {"action": "restore"}))["status"] == "restored"
-        assert all(item.read_bytes() == data for item, data in initial.items())
-        assert session_env.stat().st_ino == env_inode
-        assert claude_remove(client, client.call("POST", restore, {"action": "discard"}))["status"] == "discarded"
-        assert not (backup_home / backup).exists()
-
-        key = scoped_key("claude", root, CLAUDE_ID, "offline")
-        path = f"/api/claude/sessions/{key}/removal-preview"
-        unexpected = checkpoint.with_name("unverified")
-        unexpected.write_text("protected")
-        assert client.call("POST", path, {"mode": "deep"}, code=409)["status"] == "ownership_unverified"
-        unexpected.unlink()
-        deep = client.call("POST", path, {"mode": "deep"})
-        assert {item["role"] for item in deep["review"]["operations"]} == {"transcript", "subagent", "checkpoint"}
-        deep_result = claude_remove(client, deep)
-        assert deep_result["status"] == "partial", deep_result
-        assert not main.exists() and not checkpoint.parent.exists() and unknown.exists()
-        assert all(item.read_bytes() == initial[item] for item in (unrelated, sidecar, unknown, history))
-        deep_backup = f"/api/claude/backups/{deep_result['backup_id']}/preview"
-        assert claude_remove(client, client.call("POST", deep_backup, {"action": "restore"}))["status"] == "restored"
-        assert checkpoint.read_bytes() == initial[checkpoint]
-        registered = scoped_key("claude", root, CLAUDE_DESKTOP_ID, "offline")
-        review = client.call("POST", f"/api/claude/sessions/{registered}/removal-preview", {"mode": "standard"})
-        assert {item["role"] for item in review["review"]["operations"]} == {"transcript", "desktop_record"}, review["review"]
-        assert claude_remove(client, review)["status"] == "partial"
-        assert not registration.exists() and scheduler.read_bytes() == b'{"fixture":"preserve shared scheduler"}'
+        # History can be absent. A replaced transcript must be left in place.
+        history.unlink()
+        lock.rmdir()
+        path = paths[blocked_id]
+        review = client.call("POST", path + "/removal-preview", {"mode": "standard"})
+        replacement = base / "replacement-transcript"
+        replacement.write_bytes(blocked.read_bytes())
+        replacement.replace(blocked)
+        result = client.call("POST", path + "/delete", {"confirm": True, "review": review["review"]})
+        assert result["status"] == "failed" and blocked.exists(), result
+        review = client.call("POST", path + "/removal-preview", {"mode": "standard"})
+        result = client.call("POST", path + "/delete", {"confirm": True, "review": review["review"]})
+        assert result["status"] == "deleted" and not history.exists(), result
+        assert client.call("GET", "/api/claude/sessions")["total"] == 0
+        client.call("GET", "/api/claude/backups", code=404)
+        assert set(legacy.parent.iterdir()) == {legacy}
+        assert (legacy / "keep").read_bytes() == b"existing copy"
 
 
-def codex_acceptance(client, root, rollouts, binary):
-    import fcntl
-
+def codex_acceptance(client, root, rollouts):
     query = "/api/codex/sessions"
     page = client.call("GET", query)
-    assert page["provider"]["removal_available"], page["provider"]
-    visible = {probe.R, probe.G, probe.F, probe.M, probe.ONE, probe.PROTECTED_PARENT, probe.REPLACEMENT}
     keys = {item["native_id"]: item["key"] for item in page["rows"]}
-    assert set(keys) == visible and page["provider"]["total"] == len(visible)
-    assert client.call("GET", f"{query}?limit=1&offset=1")["total"] == len(visible)
-    for hidden in (probe.C, probe.ORPHAN, probe.SURVIVING_CHILD, probe.S):
-        assert client.call("GET", f"{query}?search={hidden}")["total"] == 0
-        child = f"{query}/{scoped_key('codex', root, hidden)}"
-        client.call("GET", child, code=404)
-        client.call("POST", child + "/removal-preview", code=404)
-
-    def session(ident):
-        return f"{query}/{keys[ident]}"
-
-    def preview(ident, descendants=0):
-        result = client.call("POST", session(ident) + "/removal-preview")
-        assert result["main_id"] == ident
-        assert result["spawned_descendants"] == descendants, result
-        assert result["total_sessions"] == descendants + 1
-        return result
-
-    def refuse(ident, phrase):
-        reply = client.call("POST", session(ident) + "/removal-preview", code=409)
-        assert phrase in reply["error"], reply
-
-    def confirm(review, expected, concurrent=False):
-        path = f"/api/operations/{review['id']}/confirm"
-        phrase = {"confirmation": review["confirmation"]}
-        if concurrent:
-            with ThreadPoolExecutor(max_workers=2) as pool:
-                replies = [pool.submit(client.call, "POST", path, phrase, code=(202, 409))
-                           for _ in range(2)]
-                assert sorted(reply.result() for reply in replies) == [202, 409]
-        else:
-            client.call("POST", path, phrase, code=202)
-        outcome = client.operation(review["id"])
-        assert outcome["status"] == expected, outcome
-        client.call("POST", path, phrase, code=409)
-        return outcome
-
-    def database(sql, params=()):
-        with closing(sqlite3.connect(root / "state_5.sqlite")) as db, db:
-            return db.execute(sql, params).fetchall()
-
-    def refresh():
-        client.call("POST", "/api/codex/refresh")
-
-    refuse(probe.PROTECTED_PARENT, "protetta")
-    candidate = probe.seed(root.parent, probe.session_id(5))
-    fuzzy_collision = candidate.with_name(candidate.stem + "_" + probe.session_id(17) + ".jsonl")
-    fuzzy_collision.write_bytes(candidate.read_bytes())
-    try:
-        refuse(probe.R, "rollout estraneo")
-    finally:
-        fuzzy_collision.unlink()
-        candidate.unlink()
-    target = session(probe.R)
-    client.call("POST", target + "/removal-preview", code=401, Authorization=None)
-    client.call("POST", target + "/removal-preview", code=403, Origin="null")
-    client.call("POST", target + "/removal-preview", code=403, Origin=None)
+    assert page["provider"]["removal_available"] and len(keys) > 2
+    assert probe.C not in keys
+    target = f"{query}/{keys[probe.R]}"
+    other = f"{query}/{keys[probe.REPLACEMENT]}"
     transcript = client.call("GET", target + "/conversation")
     assert any("Visible disposable" in message["text"] for message in transcript["messages"])
     assert "secret-marker" not in json.dumps(transcript)
     cursor = transcript["next"]
-    assert cursor and all(len(message["text"].encode()) <= 16384 for message in transcript["messages"])
-    client.call("GET", session(probe.G) + f"/conversation?cursor={cursor}", code=400)
-    continuation = client.call("GET", target + f"/conversation?cursor={cursor}")
-    assert continuation["messages"] and "secret-marker" not in json.dumps(continuation)
-    review = preview(probe.R)
-    path = f"/api/operations/{review['id']}/confirm"
-    client.call("POST", "/api/operations/forged/confirm", {"confirmation": review["confirmation"]}, code=409)
-    client.call("POST", path, {"confirmed": True}, code=422)
-    client.call("POST", path, {"confirmation": "wrong"}, code=409)
-    with rollouts[probe.R].open("a") as out:
-        out.write("\n")
-    confirm(review, "changed")
-    assert rollouts[probe.R].is_file()
-    refresh()
-
-    # These references exist only in the rollout archive, beyond the canonical rows.
-    ref = probe.session_id(100)
-    fork = probe.seed(root.parent, ref, archived=True, forked_from_id=probe.C)
-    refuse(probe.G, "fork esterno")
-    fork.unlink()
-    shared_history = probe.seed(root.parent, ref, archived=True, history_mode="paginated",
-                                history_base={"thread_id": probe.C, "end_ordinal_exclusive": 1, "end_byte_offset": 10})
-    refuse(probe.G, "fork esterno")
-    shared_history.unlink()
-    attached = probe.seed(root.parent, ref, archived=True, forked_from_id=probe.C, attached_thread=True)
-    refuse(probe.G, "sessione agganciata")
-    attached.unlink()
-    ghost = probe.seed(root.parent, ref, parent=probe.C, archived=True)
-    refuse(probe.G, "relazioni")
-    ghost.unlink()
-
-    database("UPDATE thread_spawn_edges SET parent_thread_id=? WHERE child_thread_id=?", ("bad-parent", probe.C))
-    refuse(probe.G, "relazioni")
-    database("UPDATE thread_spawn_edges SET parent_thread_id=? WHERE child_thread_id=?", (probe.G, probe.C))
-    database("INSERT INTO thread_spawn_edges VALUES(?,?,'closed')", (probe.GRANDCHILD, probe.G))
-    refuse(probe.G, "relazioni")
-    refresh()
-    assert client.call("GET", f"{query}?search={probe.G}")["total"] == 0
-    database("DELETE FROM thread_spawn_edges WHERE child_thread_id=?", (probe.G,))
-    refresh()
-
-    database("UPDATE thread_spawn_edges SET status='unrecognized' WHERE child_thread_id=?", (probe.C,))
-    refuse(probe.G, "in uso")
-    database("UPDATE thread_spawn_edges SET status='open' WHERE child_thread_id=?", (probe.C,))
-
-    database("UPDATE threads SET archived=0 WHERE id=?", (probe.C,))
-    refuse(probe.G, "in uso")
-    database("UPDATE threads SET archived=1 WHERE id=?", (probe.C,))
-
-    locks = root / "thread-writer-locks"
-    locks.mkdir(exist_ok=True)
-    with (locks / f"{probe.C}.lock").open("w") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        refuse(probe.G, "in uso")
-    with (locks / f"{probe.F_CHILD}.lock").open("w") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        refuse(probe.F, "in uso")
-
-    review = preview(probe.G, 5)
-    database("INSERT INTO thread_spawn_edges VALUES(?,?,'closed')", (probe.C, ref))
-    confirm(review, "changed")
-    assert all(path.is_file() for path in rollouts.values())
-    database("DELETE FROM thread_spawn_edges WHERE child_thread_id=?", (ref,))
-    refresh()
-
-    database("INSERT INTO _sqlx_migrations(version,description,success,checksum,execution_time) VALUES(63,'fixture',1,x'',0)")
-    refuse(probe.G, "formato")
-    database("DELETE FROM _sqlx_migrations WHERE version=63")
-
-    # Each successful operation preserves unrelated fixtures and exports.
-    exports = root / "exports"
-    exports.mkdir(exist_ok=True)
-    independent = exports / "separate-backup.zip"
-    independent.write_bytes(b"independent export fixture")
-    variants = tuple(rollouts[probe.F].parent.glob(f"*{probe.F}_*.jsonl"))
-    assert len(variants) == 2
-    for ident, descendants in [(probe.R, set()), (probe.ONE, {probe.ONLY_CHILD}), (probe.F, {probe.F_CHILD}),
-            (probe.G, {probe.C, probe.GRANDCHILD, probe.SIBLING, probe.ORPHAN, probe.session_id(99)})]:
-        affected = {ident} | descendants
-        untouched = {key: path.read_bytes() for key, path in rollouts.items()
-                     if key not in affected and path.exists()}
-        before = [row for row in database("SELECT * FROM threads ORDER BY id") if row[0] not in affected]
-        review = preview(ident, len(descendants))
-        confirm(review, "verified", concurrent=(ident == probe.G))
-        assert all(not path.exists() for key, path in rollouts.items() if key in affected)
-        if ident == probe.F:
-            assert not any(path.exists() for path in variants)
-        assert independent.read_bytes() == b"independent export fixture"
-        assert all(rollouts[key].read_bytes() == original for key, original in untouched.items())
-        assert database("SELECT * FROM threads ORDER BY id") == before
-        assert all(parent not in affected and child not in affected
-                   for parent, child in database("SELECT parent_thread_id,child_thread_id FROM thread_spawn_edges"))
-        visible.remove(ident)
-        remaining = client.call("GET", query)
-        assert {row["native_id"] for row in remaining["rows"]} == visible
-
-    # Invalid config is already present at review. The native process then exits
-    # nonzero and the read-only check independently reports the remaining evidence.
-    config = root / "config.toml"
-    config.write_text("invalid = [")
-    try:
-        outcome = confirm(preview(probe.M), "native_uncertain")
-        assert "Righe di sessione ancora presenti: 1" in outcome["message"], outcome
-    finally:
-        config.unlink()
-    refuse(probe.M, "già un esito")
-
-    review = preview(probe.REPLACEMENT)
-    displaced = root.with_name("provider-before-replacement")
-    root.rename(displaced)
-    root.mkdir()
-    try:
-        confirm(review, "changed")
-        assert not any(root.iterdir())
-    finally:
-        root.rmdir()
-        displaced.rename(root)
-    refresh()
-
-    # Replace the executable at the same name with byte-identical contents. The
-    # operation binds file identity through confirmation, regardless of its digest.
-    review = preview(probe.REPLACEMENT)
-    prior = binary.with_suffix(".prior")
-    binary.rename(prior)
-    shutil.copy2(prior, binary)
-    assert probe.digest(prior) == probe.digest(binary)
-    confirm(review, "changed")
-    assert rollouts[probe.REPLACEMENT].exists()
+    assert cursor
+    client.call("GET", other + f"/conversation?cursor={cursor}", code=400)
+    assert client.call("GET", target + f"/conversation?cursor={cursor}")["messages"]
+    execute = target + "/delete"
+    client.call("POST", execute, {"confirm": True}, code=401, Authorization=None)
+    client.call("POST", execute, {"confirm": True}, code=403, Origin="null")
+    client.call("POST", execute, {"confirm": False}, code=400)
+    client.call("POST", execute, {"confirm": True, "args": ["--other"]}, code=422)
+    client.call("POST", f"{query}/{keys[probe.S]}/delete", {"confirm": True}, code=409)
+    child = f"{query}/{scoped_key('codex', root, probe.C)}"
+    client.call("POST", child + "/delete", {"confirm": True}, code=404)
+    unrelated = rollouts[probe.REPLACEMENT].read_bytes()
+    result = client.call("POST", execute, {"confirm": True})
+    assert result["status"] == "deleted", result
+    assert not rollouts[probe.R].exists()
+    assert rollouts[probe.REPLACEMENT].read_bytes() == unrelated
+    assert probe.R not in {row["native_id"] for row in client.call("GET", query)["rows"]}
+    client.call("POST", execute, {"confirm": True}, code=404)
 
 
-PROJECTS = "/api/codex/projects"
-RECENTS = "/api/codex/recents"
+def codex_project_deletion(binary, base, root, claude, executable, rollouts):
+    workspace = root.parent / "cwd" / "bulk-project"
+    workspace.mkdir()
+    source = workspace / "keep.txt"
+    source.write_bytes(b"project source is outside session deletion")
+    with probe.FixtureServer(root.parent, executable, base / "private-canary") as server:
+        response = server.call("project/import", {
+            "name": "Bulk fixture", "roots": [{"path": str(workspace)}],
+            "threads": [probe.M, probe.REPLACEMENT], "idempotencyKey": "deletion-refactor",
+        })
+        assert "result" in response, response
+    unrelated = rollouts[probe.G].read_bytes()
+    with ui(binary, base, root, claude, executable) as (client, ticket):
+        authorize(client, ticket)
+        path = project_path(client, workspace)
+        before = client.call("GET", path)
+        assert before["main_conversations"] == 2 and before["removal_available"], before
+        result = client.call("POST", path + "/delete", {"confirm": True})
+        assert result["status"] == "deleted", result
+        assert client.call("GET", path)["main_conversations"] == 0
+        assert all(not rollouts[ident].exists() for ident in (probe.M, probe.REPLACEMENT))
+        assert rollouts[probe.G].read_bytes() == unrelated
+        assert source.read_bytes() == b"project source is outside session deletion"
 
 
 def claude_projects(client, root):
@@ -863,8 +626,7 @@ def claude_projects(client, root):
         filtered = client.call("GET", scoped + "/sessions?search=CAFE%CC%81")
         assert filtered["total"] == 1 and filtered["rows"][0]["native_id"] == CLAUDE_ID
         client.call("GET", f"{PROJECTS}/{project['key']}", code=404)
-        message = client.call("POST", scoped + "/removal-preview", code=409)["error"]
-        assert "sidecar" in message
+        client.call("POST", scoped + "/delete", {"confirm": True}, code=404)
     assert unknown.read_bytes() == b"outside transcript contract" and same.is_dir()
     observed = client.call("GET", query + "?search=observed-empty")["rows"]
     assert len(observed) == 1 and observed[0]["main_conversations"] == 0
@@ -876,209 +638,6 @@ def project_path(client, workspace):
     page = client.call("GET", PROJECTS)
     return next(f"{PROJECTS}/{row['key']}" for row in page["rows"]
                 if row["workspace"] == str(workspace))
-
-
-def confirm_project(client, review, expected, concurrent=False):
-    path = f"/api/operations/{review['id']}/confirm"
-    assert review["confirmation"] == "RIMUOVI SESSIONI DEL PROGETTO"
-    phrase = {"confirmation": review["confirmation"]}
-    client.call("POST", path, {"confirmation": "RIMUOVI"}, code=409)
-    client.call("POST", path, {"confirmation": "ELIMINA PROGETTO"}, code=409)
-    client.call("POST", path, {**phrase, "ids": [probe.F]}, code=422)
-    if concurrent:
-        with ThreadPoolExecutor(max_workers=2) as pool:
-            calls = [pool.submit(client.call, "POST", path, phrase, code=(202, 409)) for _ in range(2)]
-            assert sorted(call.result() for call in calls) == [202, 409]
-    else:
-        client.call("POST", path, phrase, code=202)
-    result = client.operation(review["id"])
-    assert result["status"] == expected, result
-    client.call("POST", path, phrase, code=409)
-    return result["project"]
-
-
-def codex_projects(agentmender, base, claude, executable):
-    import fcntl
-
-    extra = probe.session_id(102)
-    recent = probe.session_id(103)
-    workspaces = {
-        probe.R: "other/Target", probe.G: "workspace/Target", probe.ONE: "workspace/Target",
-        probe.C: "different-subagent-cwd", probe.F: "active", probe.PROTECTED_PARENT: "protected",
-        probe.M: "partial", probe.REPLACEMENT: "partial", extra: "partial", recent: "workspace/Target",
-    }
-    with probe.native_fixture(base, executable, workspaces) as (root, rollouts):
-        cwd = root.parent / "cwd"
-        target = cwd / workspaces[probe.G]
-        target.mkdir(parents=True)
-        (target / ".git").mkdir()
-        source = target / "main.rs"
-        source.write_bytes(b"fn main() {}\n")
-        git_config = target / ".git" / "config"
-        git_config.write_bytes(b"[core]\n")
-        live = base / "private-canary"
-        new_id = probe.session_id(101)
-
-        def database(sql, params=()):
-            with closing(sqlite3.connect(root / "state_5.sqlite")) as db, db:
-                return db.execute(sql, params).fetchall()
-
-        with probe.FixtureServer(root.parent, executable, live, experimental=False) as server:
-            rejected = server.call("project/list", {"limit": 1})
-            assert "experimental" in rejected["error"]["message"].lower(), rejected
-        with probe.FixtureServer(root.parent, executable, live) as server:
-            imported = {}
-            for index, (folder, members) in enumerate([
-                (workspaces[probe.G], (probe.G, probe.ONE)),
-                (workspaces[probe.R], (probe.R,)),
-                ("active", (probe.F,)),
-                ("protected", (probe.PROTECTED_PARENT,)),
-                ("partial", (probe.M, probe.REPLACEMENT, extra)),
-                ("temporary", (recent,)),
-            ]):
-                result = server.call("project/import", {
-                    "name": Path(folder).name, "roots": [{"path": str(cwd / folder)}],
-                    "threads": list(members), "idempotencyKey": f"fixture-project-{index}",
-                })
-                assert "result" in result, result
-                imported[folder] = result["result"]["project"]["id"]
-            listed = server.call("project/list", {"limit": 20})["result"]["data"]
-            assert {project["id"] for project in listed} == set(imported.values())
-            target_id = imported[workspaces[probe.G]]
-            singleton_id = imported[workspaces[probe.R]]
-            assert server.call("project/read", {"projectId": target_id})["result"]["project"]["name"] == "Target"
-            assert "result" in server.call("project/delete", {"projectId": imported["temporary"]})
-            assert database("SELECT project_id FROM threads WHERE id=?", (recent,)) == [(None,)]
-            assert rollouts[recent].is_file()
-
-        with ui(agentmender, base, root, claude, executable, max_entries=3) as (client, ticket):
-            authorize(client, ticket)
-            path = project_path(client, target)
-            observed = client.call("GET", path)
-            assert observed["main_conversations"] == 1 and observed["incomplete"]
-            review = client.call("POST", path + "/removal-preview")
-            assert review["main_conversations"] == 2 and review["complete"]
-
-        with ui(agentmender, base, root, claude, executable) as (client, ticket):
-            authorize(client, ticket)
-            path = project_path(client, target)
-            singleton = project_path(client, cwd / workspaces[probe.R])
-            assert path != singleton and not (cwd / workspaces[probe.R]).exists()
-            assert client.call("GET", singleton)["name"] == client.call("GET", path)["name"] == "Target"
-            assert client.call("GET", path + "/sessions?limit=1")["total"] == 2
-            assert client.call("GET", path + f"/sessions?search={probe.C}")["total"] == 0
-            observed_recent = client.call("GET", RECENTS + f"?search={recent}")["rows"][0]
-            assert observed_recent["project"] is None and observed_recent["workspace"] == str(target)
-            client.call("POST", f"{PROJECTS}/{probe.G}/removal-preview", code=404)
-            active = project_path(client, cwd / workspaces[probe.F])
-            assert client.call("POST", active + "/removal-preview")["descendants"] == 1
-            blocked = project_path(client, cwd / workspaces[probe.PROTECTED_PARENT])
-            assert "protetta" in client.call("POST", blocked + "/removal-preview", code=409)["error"]
-
-            database("UPDATE threads SET archived=0 WHERE id=?", (probe.C,))
-            assert "percorso di rollout" in client.call("POST", path + "/removal-preview", code=409)["error"]
-            database("UPDATE threads SET archived=1 WHERE id=?", (probe.C,))
-            locks = root / "thread-writer-locks"
-            locks.mkdir(exist_ok=True)
-            with (locks / f"{probe.ONLY_CHILD}.lock").open("w") as lock:
-                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                assert "in uso" in client.call("POST", path + "/removal-preview", code=409)["error"]
-            fork = probe.seed(root.parent, new_id, archived=True,
-                              cwd=str(cwd / "other"), forked_from_id=probe.C)
-            assert "fork esterno" in client.call("POST", path + "/removal-preview", code=409)["error"]
-            fork.unlink()
-            orphan = probe.seed(root.parent, new_id, archived=True, cwd=str(target))
-            assert "incompleta" in client.call("POST", path + "/removal-preview", code=409)["error"]
-            orphan.unlink()
-
-            review = client.call("POST", path + "/removal-preview")
-            assert review["complete"] and review["status"] == "ready" and review["scope"] == "sessions"
-            assert (review["main_conversations"], review["descendants"], review["total_sessions"]) == (2, 6, 8), review
-
-            # A newly imported main in the same group invalidates the entire receipt.
-            new_rollout = probe.seed(root.parent, new_id, archived=True, cwd=str(target))
-            with probe.FixtureServer(root.parent, executable, live) as server:
-                assert "result" in server.call("thread/read", {"threadId": new_id, "includeTurns": False})
-            database("UPDATE threads SET project_id=? WHERE id=?", (target_id, new_id))
-            assert confirm_project(client, review, "changed")["removed"] == []
-            database("DELETE FROM threads WHERE id=?", (new_id,))
-            new_rollout.unlink()
-
-            review = client.call("POST", path + "/removal-preview")
-            database("UPDATE threads SET project_id=? WHERE id=?", (singleton_id, probe.ONE))
-            assert not confirm_project(client, review, "changed")["removed"]
-            database("UPDATE threads SET project_id=? WHERE id=?", (target_id, probe.ONE))
-
-            database("UPDATE threads SET project_id=? WHERE id=?", (singleton_id, probe.C))
-            client.call("POST", path + "/removal-preview", code=409)
-            database("UPDATE threads SET project_id=NULL WHERE id=?", (probe.C,))
-
-            review = client.call("POST", path + "/removal-preview")
-            desktop_state = root / ".codex-global-state.json"
-            desktop_state.write_text(json.dumps({
-                "local-projects": {
-                    target_id: {"id": target_id, "name": "Target", "rootPaths": [str(target)]},
-                },
-            }))
-            original_desktop = desktop_state.read_bytes()
-            assert not confirm_project(client, review, "refused")["removed"]
-            assert desktop_state.read_bytes() == original_desktop
-            desktop_state.unlink()
-
-            before = {ident: path.read_bytes() for ident, path in rollouts.items()}
-            deleted = {probe.G, probe.ONE, probe.C, probe.GRANDCHILD, probe.SIBLING, probe.ORPHAN, probe.ONLY_CHILD}
-            unrelated = [row for row in database("SELECT * FROM threads ORDER BY id") if row[0] not in deleted]
-            review = client.call("POST", path + "/removal-preview")
-            progress = confirm_project(client, review, "verified", concurrent=True)
-            assert progress["removed"] == review["subtrees"] and not progress["remaining"] and progress["uncertain"] is None
-            assert database("SELECT * FROM threads ORDER BY id") == unrelated
-            for ident, rollout in rollouts.items():
-                if ident in deleted:
-                    assert not rollout.exists()
-                else:
-                    assert rollout.read_bytes() == before[ident]
-            assert source.read_bytes() == b"fn main() {}\n" and git_config.read_bytes() == b"[core]\n"
-            assert client.call("GET", path)["main_conversations"] == 0
-            assert database("SELECT id FROM projects WHERE id=?", (target_id,)) == [(target_id,)]
-            assert client.call("GET", RECENTS + f"?search={recent}")["total"] == 1
-            review = client.call("POST", singleton + "/removal-preview")
-            assert review["main_conversations"] == review["total_sessions"] == 1
-            confirm_project(client, review, "verified")
-            assert client.call("GET", singleton)["main_conversations"] == 0
-            recent_path = f"/api/codex/sessions/{observed_recent['key']}"
-            individual = client.call("POST", recent_path + "/removal-preview")
-            client.call("POST", f"/api/operations/{individual['id']}/confirm", {"confirmation": "RIMUOVI"}, code=202)
-            assert client.operation(individual["id"])["status"] == "verified"
-
-        # Exercise a second dispatch failure with a fixture-only executable wrapper.
-        # The first command is the real verified release. No production hook is used.
-        wrapper = base / "fixture-fail-second"
-        wrapper.write_text(f'''#!/bin/sh
-for arg do
-  [ "$arg" = "{probe.REPLACEMENT}" ] && exit 29
-done
-exec {shlex.quote(str(executable))} "$@"
-''')
-        wrapper.chmod(0o700)
-        with ui(agentmender, base, root, claude, wrapper) as (client, ticket):
-            authorize(client, ticket)
-            path = project_path(client, cwd / "partial")
-            review = client.call("POST", path + "/removal-preview")
-            progress = confirm_project(client, review, "partial")
-            assert [tree["main_id"] for tree in progress["removed"]] == [probe.M], progress
-            assert progress["uncertain"]["main_id"] == probe.REPLACEMENT
-            assert [tree["main_id"] for tree in progress["remaining"]] == [extra]
-            assert rollouts[extra].is_file()
-            assert rollouts[probe.REPLACEMENT].is_file() and not rollouts[probe.M].exists()
-            client.call("POST", path + "/removal-preview", code=409)
-
-        with ui(agentmender, base, root, claude, executable) as (client, ticket):
-            authorize(client, ticket)
-            client.call("GET", f"/api/operations/{review['id']}", code=404)
-            assert client.call("GET", path)["main_conversations"] == 2
-            fresh = client.call("POST", path + "/removal-preview")
-            assert fresh["id"] != review["id"] and fresh["main_conversations"] == 2
-            assert rollouts[probe.REPLACEMENT].is_file()
 
 
 def codex_membership_acceptance(agentmender, base, claude):
@@ -1120,7 +679,7 @@ def codex_membership_acceptance(agentmender, base, claude):
         old_scope = dict(provider="codex", state_root=str(root),
                          locator={"kind": "workspace", "value": "/fixture/Atlas"})
         old_key = hashlib.sha256(json.dumps(old_scope, separators=(",", ":")).encode()).hexdigest()
-        client.call("POST", f"{PROJECTS}/{old_key}/removal-preview", code=404)
+        client.call("POST", f"{PROJECTS}/{old_key}/delete", {"confirm": True}, code=404)
         database("UPDATE threads SET project_id=? WHERE id=?", (empty, sid(10)))
         client.call("POST", "/api/codex/refresh")
         assert client.call("GET", empty_path + "/sessions")["rows"][0]["workspace"] == "/fixture/workspace-10"
@@ -1151,7 +710,7 @@ def codex_membership_acceptance(agentmender, base, claude):
         assert client.call("GET", empty_path)["main_conversations"] == 0
         for number in (4, 5, 10):
             assert client.call("GET", RECENTS + f"?search={sid(number)}")["total"] == 1
-        client.call("POST", path + "/removal-preview", code=409)
+        client.call("POST", path + "/delete", {"confirm": True}, code=409)
         assert state.read_bytes() == original
 
         database("DELETE FROM projects WHERE id=?", (empty,))
@@ -1167,7 +726,7 @@ def codex_membership_acceptance(agentmender, base, claude):
         legacy = project_path(client, "/legacy")
         assert client.call("GET", legacy)["registration"] == "desktop"
         assert client.call("GET", legacy + "/sessions")["rows"][0]["native_id"] == sid(6)
-        client.call("POST", legacy + "/removal-preview", code=409)
+        client.call("POST", legacy + "/delete", {"confirm": True}, code=409)
 
     with ui(agentmender, base, root, claude, max_entries=4) as (client, ticket):
         authorize(client, ticket)
@@ -1307,26 +866,20 @@ def main():
                 with ui(agentmender, base, root, claude, executable_copy) as (client, ticket):
                     authorize(client, ticket)
                     inventory_acceptance(client, claude)
-                    codex_acceptance(client, root, rollouts, executable_copy)
-                unknown = base / "unsupported-executable"
-                unknown.write_text("#!/bin/sh\nprintf 'codex-cli 99.0.0\\n'\n")
-                unknown.chmod(0o700)
-                with ui(agentmender, base, root, claude, unknown) as (client, ticket):
+                    codex_acceptance(client, root, rollouts)
+                failing = base / "codex-failing"
+                failing.write_text("#!/bin/sh\nif [ \"$1\" = --version ]; then printf 'codex-cli 99.0.0\\n'; exit; fi\nprintf 'native fixture refusal\\n' >&2\nexit 1\n")
+                failing.chmod(0o700)
+                with ui(agentmender, base, root, claude, failing) as (client, ticket):
                     authorize(client, ticket)
-                    provider = client.call("GET", "/api/codex/sessions")["provider"]
-                    assert not provider["removal_available"] and "versione" in provider["removal_reason"]
-                banner_only = base / "missing-delete-executable"
-                banner_only.write_text("#!/bin/sh\nprintf 'codex-cli 0.169.0\\n'\n")
-                banner_only.chmod(0o700)
-                with ui(agentmender, base, root, claude, banner_only) as (client, ticket):
-                    authorize(client, ticket)
-                    provider = client.call("GET", "/api/codex/sessions")["provider"]
-                    assert not provider["removal_available"] and "comando" in provider["removal_reason"], provider
-            project_base = base / "project-suite"
-            project_base.mkdir()
-            codex_projects(agentmender, project_base, claude, executable_copy)
-            print("Native Codex projects: full preflight, serial verification, partial completion and fresh review after restart.")
-            print(f"Native Codex UI ({probe.digest(binary)[:12]}): verified singleton and subtree removal, hidden descendants, refusal and one-shot guards, unchanged unrelated rows and rollouts.")
+                    page = client.call("GET", "/api/codex/sessions")
+                    assert page["provider"]["removal_available"]
+                    row = next(row for row in page["rows"] if row["native_id"] == probe.REPLACEMENT)
+                    result = client.call("POST", f"/api/codex/sessions/{row['key']}/delete", {"confirm": True})
+                    assert result["status"] == "failed" and result["errors"] == ["native fixture refusal"], result
+                    assert rollouts[probe.REPLACEMENT].is_file()
+                codex_project_deletion(agentmender, base, root, claude, executable_copy, rollouts)
+            print("Native Codex fixture: command result, archive scope, refresh and provider failure.")
         else:
             storage_acceptance(agentmender, base / "storage-suite", claude)
             root = base / "codex"
@@ -1356,7 +909,7 @@ def main():
                     selected = client.call("GET", "/api/codex/sessions?search=CAFE%CC%81%20Atlas&state=archived&since=1970-01-02&until=1970-01-02&sort=created&ascending=true&limit=2")
                     assert selected["total"] == 1500 and selected["rows"][0]["created_at"] == 1
                     assert not first["provider"]["removal_available"]
-                    client.call("POST", f"/api/codex/sessions/{selected['rows'][0]['key']}/removal-preview", code=409)
+                    assert client.call("POST", f"/api/codex/sessions/{selected['rows'][0]['key']}/delete", {"confirm": True})["status"] == "failed"
                     missing_title = client.call("GET", "/api/codex/sessions?offset=2999")["rows"][0]
                     assert missing_title["title"] is None and missing_title["transcript_bytes"] is None
                     first_codex_key = missing_title["key"]
@@ -1389,7 +942,7 @@ def main():
                     assert truncated["total"] == 0 and truncated["provider"]["total"] == 0
                 codex_membership_acceptance(agentmender, base, other_claude)
                 assert not (other_codex / "thread-writer-locks").exists()
-            print("Local UI: scoped duplicate IDs, provider inventory, unsupported removal, origin and token guards, pagination and coverage.")
+            print("Local UI: scoped duplicate IDs, provider inventory, permanent Claude deletion, origin and token guards, pagination and coverage.")
 
 
 if __name__ == "__main__":

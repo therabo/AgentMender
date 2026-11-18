@@ -106,7 +106,7 @@ h3 { font-size: 15px; font-weight: 650; }
 .search input:focus-visible { outline: 0; }
 .search input::placeholder { color: var(--secondary); }
 .control { flex: 0 1 auto; min-width: 0; }
-.control select, .date-controls input, .confirm-form input {
+.control select, .date-controls input {
   width: 100%; min-height: 40px; background: var(--input); padding: 6px 10px;
   border: 1px solid var(--line); border-radius: 8px; font-size: 13px;
 }
@@ -151,7 +151,6 @@ h3 { font-size: 15px; font-weight: 650; }
 .empty { display: grid; justify-items: center; text-align: center; gap: 9px; padding: 38px 18px; min-height: 175px; align-content: center; }
 .empty-icon { display: grid; place-items: center; width: 45px; height: 45px; background: var(--raised); border: 1px solid var(--line); color: var(--accent); border-radius: 12px; }
 .empty p { color: var(--muted); font-size: 13px; }
-.operation { margin-bottom: 16px; }
 
 .drawer {
   margin: 0 0 0 auto; height: 100dvh; max-height: 100dvh; width: min(520px, 100vw); max-width: 100vw;
@@ -171,7 +170,7 @@ h3 { font-size: 15px; font-weight: 650; }
 .facts div { min-width: 0; }
 .facts dt { color: var(--muted); font-size: 12px; margin-bottom: 2px; }
 .facts dd { margin: 0; font-size: 14px; overflow-wrap: anywhere; }
-.detail-facts > div:last-child, .review-facts > div:nth-child(-n + 2), .project-review-facts > div:nth-child(3) { grid-column: 1 / -1; }
+.detail-facts > div:last-child { grid-column: 1 / -1; }
 .detail-section { padding-top: 17px; margin-top: 17px; border-top: 1px solid var(--line-soft); }
 .detail-section p, .detail-section ul { color: var(--muted); font-size: 13px; margin: 6px 0 9px; }
 .detail-section .button { margin-top: 5px; }
@@ -179,10 +178,6 @@ h3 { font-size: 15px; font-weight: 650; }
 .message { margin-top: 8px; background: var(--raised); border: 1px solid var(--line); border-radius: 8px; padding: 9px 12px; font-size: 13px; }
 .message strong { color: var(--accent); }
 .message p { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text); margin-bottom: 0; }
-.confirm-form { display: grid; gap: 11px; margin-top: 20px; font-size: 14px; }
-.confirm-form input { max-width: 260px; }
-.confirm-form .detail-actions { padding-top: 7px; }
-.back { margin: -5px 0 6px -11px; }
 .spin { animation: spin 1s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
@@ -263,8 +258,6 @@ h3 { font-size: 15px; font-weight: 650; }
 .button.project-remove { flex: none; width: 40px; }
 .project-panel { border-top: 1px solid var(--line-soft); }
 .project-reason { padding: 10px 16px; color: var(--muted); font-size: 13px; }
-.operation-project { margin-top: 6px; overflow-wrap: anywhere; }
-.operation-project ul { padding-left: 20px; }
 
 @media (max-width: 900px) {
   .project-toggle { grid-template-columns: auto minmax(0, 1fr) auto; gap: 5px 10px; }
@@ -289,8 +282,6 @@ h3 { font-size: 15px; font-weight: 650; }
 .storage-tools select { background: var(--input); border: 1px solid var(--line); border-radius: 8px; padding: 8px; min-height: 40px; }
 .claude-cleanup-actions label { display: flex; align-items: center; gap: 8px; }
 .claude-cleanup-actions select { background: var(--input); border: 1px solid var(--line); border-radius: 8px; padding: 8px; min-height: 40px; }
-.claude-backup-body { padding: 0 16px 16px; }
-.claude-backup-body > p:first-child { margin-top: 0; color: var(--muted); }
 .storage-preview { margin: 0 17px 15px; padding: 12px 15px; border: 1px solid var(--line); border-radius: 8px; background: var(--input); color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
 .storage-preview h3 { color: var(--text); margin-bottom: 4px; }
 .export-list, .storage-locations { list-style: none; padding: 0; margin: 0; }
@@ -350,7 +341,7 @@ h3 { font-size: 15px; font-weight: 650; }
 .usage-sessions > li { display: flex; justify-content: space-between; gap: 10px; padding: 9px 16px; border-top: 1px solid var(--line-soft); }
 .usage-sessions > li > div { min-width: 0; }
 .usage-sessions small { display: block; color: var(--muted); overflow-wrap: anywhere; }
-.claude-plans { display: grid; gap: 8px; }
-.claude-plans section { padding: 10px; border: 1px solid var(--line-soft); border-radius: 8px; }
-.claude-plans h5 { margin: 0; font-size: 14px; }
-.claude-plans .facts { margin: 8px 0; }
+
+.removal-result:empty { display: none; }
+.removal-result { margin-bottom: 12px; overflow-wrap: anywhere; }
+.removal-result ul { padding-left: 18px; margin-bottom: 0; }

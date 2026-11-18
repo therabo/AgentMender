@@ -22,53 +22,11 @@ plays no part in classification.
 
 ## Codex native removal
 
-Darwin arm64 builds reporting `0.169.0-alpha.11.1` or `0.169.0` are covered
-by disposable native cascade tests. At launch AgentMender resolves a regular
-executable to its canonical absolute path, probes its version under write
-and network denial, and checks that `delete --help` exposes noninteractive
-UUID deletion. The version, command surface and exercised release semantics
-are all required. AgentMender pins the executable file and configured root
-identities through confirmation. Builds reporting other versions are disabled
-until their cascade, writer and reference behavior is verified.
-
-Removal requires the observed `state_5.sqlite` contract through migration
-62, recognized thread and spawn-edge tables, and the known timestamp and
-recency triggers. The worker traverses all outgoing spawn edges and reconciles
-canonical locators with the complete bounded inventory of both rollout trees.
-Reviewed files may use JSONL or its exact compressed counterpart. Physical
-variants encode the logical thread UUID and a separate rollout UUID.
-The complete `history_base` chain must resolve within the reviewed scope.
-Ambiguous paths, duplicate physical IDs, links and unknown formats block review.
-
-Open and closed spawn edges are recognized. An open edge requires a canonical
-row and matching rollout. A closed edge can establish a descendant with no
-canonical row or file. A recognized unarchived state can be reviewed.
-Writer locks, protected UUIDs, external forks, attached threads and shared
-history outside the scope still block removal. Preflight also rejects
-foreign paths that could match the provider's filename fallback when one
-rollout tree lacks an exact match. The receipt binds the selected session,
-full membership, SQLite and rollout revisions, and provider configuration.
-
-Confirmation runs exactly one `codex delete UUID --force` using the configured
-root and an explicit `sqlite_home` override. Seatbelt denies network and
-process launches, confines filesystem writes to the root, protects known
-artifact subtrees, and allows rollout writes only at the reviewed literals.
-Codex acquires its cross-process writer locks and checks references itself.
-The final observation cannot atomically bind the external CLI's discovery.
-The kernel allowlist protects unrelated files during that interval. A storage
-or ownership change at confirmation invalidates the review.
-[Native rollout discovery](https://github.com/openai/codex/blob/rust-v0.169.0/codex-rs/rollout/src/list.rs#L1273-L1467) ·
-[Native writer and reference checks](https://github.com/openai/codex/blob/rust-v0.169.0/codex-rs/thread-store/src/local/delete_thread.rs).
-
-After dispatch a read-only check looks for remaining canonical rows,
-expected rollout files and spawn edges, and compares evidence of unrelated
-sessions. A failed command, timeout, residual evidence or incomplete read
-produces an uncertain or partial result. AgentMender issues no automatic
-retries. Verified removal can request the existing guarded
-`last_full_reconciled_at` reset for the matching local Desktop catalog.
-Desktop visibility, other artifacts and physical bytes reclaimed are outside
-the verification. The [disposable fixture](local-session-manager.md#test-with-disposable-archives)
-checks byte-for-byte preservation of unrelated fixture rollouts and rows.
+AgentMender invokes `codex delete <UUID> --force` for the selected local
+session and shows the executable's result. Available versions are determined
+by whether the installed command can execute successfully. Codex owns the
+deletion semantics and its protections. AgentMender refreshes the inventory
+following the attempt. [Codex CLI reference](https://learn.chatgpt.com/docs/developer-commands?surface=cli#codex-delete).
 
 ### Registered Codex projects
 
@@ -109,17 +67,10 @@ the registration. Session deletion requires the separate UUID cascade.
 [Request processor](https://github.com/openai/codex/blob/rust-v0.169.0/codex-rs/app-server/src/request_processors/projects.rs) ·
 [Storage implementation](https://github.com/openai/codex/blob/rust-v0.169.0/codex-rs/state/src/runtime/projects.rs).
 
-AgentMender offers bulk **session** removal for verified native membership.
-Desktop-backed projects support browsing and individual reviews. The bulk
-preflight verifies all assigned roots and spawned descendants, checks
-cross-project assignments and fails closed if a rollout-only main or incomplete
-catalog prevents a complete plan. The scan budget covers 16,384 records per
-collection, eight seconds per worker observation, 32 main conversations and
-256 total members (128 per tree), and a 112 KiB evidence payload. Each step
-revalidates the registration and expected archive. The final observation
-checks that the project remains registered with its reviewed sessions removed.
-Project registrations, root directories, and Desktop preferences are outside
-the operation.
+AgentMender offers bulk session deletion for a native registered project
+with complete membership. It dispatches the same command serially for its
+main conversations and stops on failure. Project registrations and workspaces
+remain separate from the session action.
 
 ## Codex discovery and export inventory
 
@@ -127,7 +78,7 @@ the operation.
 |---|---|---|---|
 | Discovery | Verified bundle metadata, native image architecture, fixed version probe, home and Library candidates | CLI paths and XDG candidates with Codex evidence. Version probe requires system Bubblewrap. | CLI paths and Windows AppX registration. Package version and executable headers are available when readable. |
 | Verified session inventory | Seatbelt read-only worker on macOS, including Intel when its reader is available | Unsupported until an isolated catalog reader is verified | Unsupported until an isolated catalog reader is verified |
-| Native session removal | Darwin arm64 with an exercised release, storage and scope | Unsupported | Unsupported |
+| Native session removal | Installed executable with `delete` and readable session inventory | Browsing requires a supported inventory reader | Browsing requires a supported inventory reader |
 | Export inventory and diagnostic selection | Metadata-only, with Unix block counts | Metadata-only, with Unix block counts | Metadata-only. Reparse points are protected and allocated bytes are unavailable. |
 | Export removal | Unsupported | Unsupported | Unsupported |
 
@@ -155,10 +106,9 @@ removal entry point or proves exclusive ownership.
 | Discovery | CLI, Desktop bundle and bundled Code engine, default and explicit roots | CLI and configuration roots. The version probe requires Bubblewrap | CLI and Win32 candidates, recognized Store/MSIX AppX registration, native and explicit roots |
 | Inventory and preview | Bounded local project JSONL | Bounded local project JSONL | Read-only project JSONL with reparse point, volume and link checks. Native Windows runners are in the CI matrix |
 | Storage metadata and preview | Descriptor-relative inventory with observed file blocks | Descriptor-relative inventory with observed file blocks | Reparse-point checks and logical sizes. Allocation is unavailable |
-| Standard cleanup | Offline Claude Code 2.1.222, exact verified transcripts and subagents. Recognized individual registration for Desktop 5.11492.5 | Read-only pending native mutation and writer tests | Read-only pending native mutation and writer tests |
-| Approfondita | Standard plus a fully enumerated set of transcript-referenced rewind files | Read-only | Read-only |
-| Backup and restore | Private same-volume store with SHA-256 and no-clobber restore | Read-only | Read-only |
-| Shared history | Read-only | Read-only | Read-only |
+| Standard cleanup | Recognized local transcripts, associated subagents, registered Desktop session files, known sidecars and session state | Read-only | Read-only |
+| Approfondita | Standard plus scoped `file-history` files | Read-only | Read-only |
+| Shared history | Rewrite under the canonical directory lock when UUID ownership and the current file can be checked | Read-only | Read-only |
 
 Project identity includes the archive root and namespace. Equal UUIDs in
 different namespaces remain distinct. Corroborated Desktop records supply
@@ -168,11 +118,10 @@ time are independent. Server-held conversation cursors expire and become stale
 when the underlying transcript changes. Unknown versions can be read if the
 location and record evidence support the format.
 
-Session storage diagnostics distinguish protected shared data and candidate
-dependencies from session-scoped transcript evidence. A UUID match does not
-establish exclusive ownership. A missing marker does not establish writer
-exclusion. On macOS, process and marker checks are repeated during the
-offline workflow. A writer can still reopen between checks.
+Claude deletion is permanent and best-effort. Active writers can change or
+recreate files. Shared history or UUID-only state is preserved when it cannot
+be safely associated with the selected conversation. A locked or changed history
+file is reported in the result.
 [Storage audit](audits/claude-code-storage.md) ·
 [ADR 0046](adr/claude-session-cleanup.md).
 

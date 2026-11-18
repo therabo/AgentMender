@@ -1,36 +1,23 @@
 """Isolated archive seed for the native Codex UI acceptance contract."""
 from contextlib import closing, contextmanager
-import hashlib
 import json
 import os
 from pathlib import Path
 import selectors
-import shutil
 import sqlite3
 import subprocess
 import sys
 import time
 
-VERSIONS = {"0.169.0-alpha.11.1", "0.169.0"}
 MAX_OUTPUT = 8 * 1024 * 1024
 METHODS = {
-    "initialize", "thread/read", "project/list", "project/read", "project/import", "project/delete",
+    "initialize", "thread/read", "project/import",
 }
 def session_id(n):
     return f"ab000000-1111-4111-8111-{n:012d}"
 
 
-R, C, G, S, F, M, GRANDCHILD, SIBLING, ORPHAN, ONE, ONLY_CHILD, PROTECTED_PARENT, MISSING_PARENT, SURVIVING_CHILD, REPLACEMENT, F_CHILD = map(session_id, range(1, 17))
-F = "ffeeddcc-aabb-4abc-8abc-abcdefabcdef"
-F_CHILD = "deedface-ccdd-4dad-8cad-dadebadeface"
-
-
-def digest(path):
-    h = hashlib.sha256()
-    with path.open("rb") as stream:
-        while chunk := stream.read(65536):
-            h.update(chunk)
-    return h.hexdigest()
+R, C, G, S, M, REPLACEMENT = map(session_id, range(1, 7))
 
 
 def lit(path):
@@ -93,7 +80,7 @@ print(json.dumps(results))
     return results
 
 
-def seed(case, ident, parent=None, archived=False, **relationships):
+def seed(case, ident, parent=None, archived=False):
     folder = case / "provider" / ("archived_sessions" if archived else "sessions/2026/10/31")
     folder.mkdir(parents=True, exist_ok=True)
     path = folder / f"rollout-2026-10-31T10-00-00-{ident}.jsonl"
@@ -103,7 +90,7 @@ def seed(case, ident, parent=None, archived=False, **relationships):
             "cwd": str(case / "cwd" / "target-project"), "originator": "codex_cli_rs",
             "cli_version": "synthetic-ui-fixture", "source": source,
             "model_provider": "openai",
-            "base_instructions": {"text": "Synthetic AgentMender fixture only."}, **relationships}
+            "base_instructions": {"text": "Synthetic AgentMender fixture only."}}
     rows = [
         {"timestamp": "2026-10-31T10:00:00.000Z", "type": "session_meta", "payload": meta},
         {"timestamp": "2026-10-31T10:00:01.000Z", "type": "event_msg",
@@ -115,7 +102,7 @@ def seed(case, ident, parent=None, archived=False, **relationships):
 
 
 class FixtureServer:
-    def __init__(self, case, binary, private_home, *, experimental=True):
+    def __init__(self, case, binary, private_home):
         self.case, self.n, self.buf, self.total = case, 0, b"", 0
         self.err = (case / "native-stderr-private.log").open("wb")
         self.sel = selectors.DefaultSelector()
@@ -130,12 +117,10 @@ class FixtureServer:
                 stderr=self.err, bufsize=0)
             self.sel.register(self.proc.stdout, selectors.EVENT_READ)
             response = self.call("initialize", {"clientInfo": {"name": "agentmender-ui-fixture", "version": "0.1.0"},
-                                                 "capabilities": {"experimentalApi": experimental}})
+                                                 "capabilities": {"experimentalApi": True}})
             result = response.get("result", {})
             if Path(result.get("codexHome", "/missing")).resolve() != (case / "provider").resolve():
                 raise ValueError("unexpected native state root")
-            if not any(f"/{version} " in result.get("userAgent", "") for version in VERSIONS):
-                raise ValueError("unexpected App Server version")
             self.send({"method": "initialized", "params": {}})
         except BaseException:
             self.close()
@@ -205,37 +190,16 @@ class FixtureServer:
 
 
 @contextmanager
-def native_fixture(base, binary, workspaces=None):
+def native_fixture(base, binary):
     private_home = base / "private-canary"
     private_home.mkdir(mode=0o700)
     (private_home / "canary").write_text("fixture")
     validate_isolation(base, binary, private_home)
     case = new_case(base, "native")
-    def rollout(ident, *args, **kwargs):
-        if workspaces and ident in workspaces:
-            kwargs["cwd"] = str(case / "cwd" / workspaces[ident])
-        return seed(case, ident, *args, **kwargs)
-
     rollouts = {
-        R: rollout(R, archived=True),
-        PROTECTED_PARENT: rollout(PROTECTED_PARENT, archived=True),
-        S: rollout(S, parent=PROTECTED_PARENT, archived=True),
-        F: rollout(F),
-        F_CHILD: rollout(F_CHILD, parent=F),
-        M: rollout(M, archived=True),
-        REPLACEMENT: rollout(REPLACEMENT, archived=True),
-        G: rollout(G, archived=True),
-        C: rollout(C, parent=G, archived=True),
-        GRANDCHILD: rollout(GRANDCHILD, parent=C, archived=True),
-        SIBLING: rollout(SIBLING, parent=G, archived=True),
-        ONE: rollout(ONE, archived=True),
-        ONLY_CHILD: rollout(ONLY_CHILD, parent=ONE, archived=True),
-        ORPHAN: rollout(ORPHAN, parent=C, archived=True),
-        SURVIVING_CHILD: rollout(SURVIVING_CHILD, parent=MISSING_PARENT, archived=True),
+        ident: seed(case, ident, parent=G if ident == C else None, archived=(ident != R))
+        for ident in (R, G, C, S, M, REPLACEMENT)
     }
-    for ident in workspaces or ():
-        if ident not in rollouts:
-            rollouts[ident] = rollout(ident, archived=True)
     with rollouts[R].open("a") as out:
         for text in ("Visible disposable message.", "password: secret-marker", "fixture text " * 1536):
             row = {"type": "response_item", "payload": {"type": "message", "role": "user",
@@ -246,34 +210,9 @@ def native_fixture(base, binary, workspaces=None):
             result = server.call("thread/read", {"threadId": ident, "includeTurns": False})
             assert "result" in result, result.get("error")
     root = case / "provider"
-    # Keep the disposable WAL sidecars live. The read-only worker has no
-    # authority to create coordination files for a closed database.
+    # Keep the disposable WAL sidecars live for the read-only worker.
     with closing(sqlite3.connect(root / "state_5.sqlite")) as db:
         with db:
-            db.execute("DELETE FROM threads WHERE id=?", (ORPHAN,))
-            db.executemany("INSERT OR REPLACE INTO thread_spawn_edges VALUES(?,?,'closed')", [
-                (G, C), (C, GRANDCHILD), (G, SIBLING), (ONE, ONLY_CHILD),
-                (C, ORPHAN), (C, session_id(99)), (PROTECTED_PARENT, S),
-                (MISSING_PARENT, SURVIVING_CHILD),
-            ])
-            db.execute("INSERT OR REPLACE INTO thread_spawn_edges VALUES(?,?,'open')", (F, F_CHILD))
-        base_rollout = rollouts[F]
-        original = base_rollout.read_bytes()
-        header, rest = original.split(b"\n", 1)
-        member_meta = json.loads(header)
-        if zstd := shutil.which("zstd"):
-            subprocess.run([zstd, "-q", "--", str(base_rollout)], check=True, timeout=10)
-            compressed = base_rollout.with_name(base_rollout.name + ".zst")
-            base_rollout.unlink()
-            rollouts[F] = compressed
-        first_variant = "eeddadaa-eeee-4eed-8dad-deadeedeaded"
-        second_variant = "ffefdeed-aaaa-4fee-8ddd-dddaadbadbad"
-        for ident, base_ident in [(first_variant, F), (second_variant, first_variant)]:
-            variant = base_rollout.with_name(base_rollout.stem + "_" + ident + ".jsonl")
-            member_meta["payload"]["history_mode"] = "paginated"
-            member_meta["payload"]["history_base"] = {
-                "thread_id": base_ident, "end_ordinal_exclusive": 1, "end_byte_offset": len(header) + 1,
-            }
-            variant.write_bytes(json.dumps(member_meta).encode() + b"\n" + rest)
+            db.execute("INSERT OR REPLACE INTO thread_spawn_edges VALUES(?,?,'closed')", (G, C))
         assert (root / "state_5.sqlite-wal").is_file() and (root / "state_5.sqlite-shm").is_file()
         yield root, rollouts

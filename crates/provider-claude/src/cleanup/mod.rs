@@ -1,33 +1,23 @@
-//! Claude offline cleanup, scoped to the macOS layout exercised for engine 2.1.222.
-mod backup;
-mod directories;
-mod files;
-mod writers;
+//! Permanent removal of provider-scoped local Claude files.
+mod history;
 
 use crate::{
     ClaudeAdapter, SessionEvidence,
-    read::{Lines, verify},
+    artifacts::exact_sidecar,
+    read::verify,
     storage::{Budget, EntryKind, history_stats},
 };
 use agentmender_domain::SessionIdentity;
-use agentmender_provider_api::filesystem;
+use rustix::fs::{self as fs, AtFlags, FileType, OFlags};
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::{BTreeMap, BTreeSet},
-    path::{Path, PathBuf},
-    time::Instant,
+    collections::BTreeSet,
+    fs::File,
+    io,
+    path::{Component, Path, PathBuf},
 };
 
-pub use backup::{Backup, Outcome};
-use files::{DirectoryTarget, Target, directory};
-
-const ENGINE: &str = "2.1.222";
-const MAX_BYTES: u64 = 256 * 1024 * 1024;
-const MAX_TARGETS: usize = 128;
-const MAX_RECORDS: usize = 100_000;
-pub const RESIDUAL_RISK: &str = "Tieni Claude Desktop, CLI e processi Claude chiusi fino all’esito. Un writer può riaprirsi dopo un controllo. Un’interruzione può lasciare una rimozione parziale recuperabile dal backup.";
-
-#[derive(Clone, Copy, Default, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Default, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Mode {
     #[default]
@@ -35,454 +25,314 @@ pub enum Mode {
     Deep,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Refusal {
-    ActiveWriter,
-    WriterUnverified,
-    OwnershipUnverified,
-    Changed,
-    UnsupportedFormat,
-    InsufficientBackupSpace,
-    PartialScope,
-}
-
-impl Refusal {
-    pub fn message(self) -> &'static str {
-        match self {
-            Self::ActiveWriter => "Chiudi le istanze Claude. È stato rilevato un writer attivo.",
-            Self::WriterUnverified => {
-                "Stato dei writer Claude o dei marker di processo da verificare."
-            }
-            Self::OwnershipUnverified => {
-                "Proprietà esclusiva dei file da verificare. Controlla duplicati e fork."
-            }
-            Self::Changed => "Archivio o backup cambiato. Richiedi una nuova anteprima.",
-            Self::UnsupportedFormat => {
-                "La rimozione richiede il layout Claude Code 2.1.222 verificato su macOS."
-            }
-            Self::InsufficientBackupSpace => {
-                "Spazio o volume di backup insufficiente per questa rimozione."
-            }
-            Self::PartialScope => "Il perimetro dei file non può essere enumerato completamente.",
-        }
-    }
-}
-
-#[derive(PartialEq, Eq)]
-pub struct Review {
-    session: SessionIdentity,
-    mode: Mode,
-    targets: Vec<Target>,
-    empty_directories: Vec<DirectoryTarget>,
-    excluded: BTreeSet<&'static str>,
-    history_matches: Option<usize>,
-    history_state: &'static str,
-    history_revision: Option<crate::Revision>,
-    history_lock_present: bool,
-    desktop_links: usize,
-    directories: BTreeMap<PathBuf, BTreeSet<PathBuf>>,
-    unrelated: BTreeMap<SessionIdentity, crate::Revision>,
-    required_bytes: u64,
+#[derive(Serialize)]
+pub struct Target {
+    #[serde(with = "agentmender_domain::path_serde")]
+    root: PathBuf,
+    #[serde(with = "agentmender_domain::path_serde")]
+    relative_path: PathBuf,
+    bytes: u64,
+    #[serde(skip)]
+    identity: (i64, u64),
 }
 
 #[derive(Serialize)]
-pub struct Preview<'a> {
-    session: &'a SessionIdentity,
+pub struct Plan {
     mode: Mode,
-    operations: &'a [Target],
-    empty_directories: &'a [DirectoryTarget],
+    files: Vec<Target>,
     logical_bytes: u64,
-    backup_required_bytes: u64,
     history_matches: Option<usize>,
-    history_state: &'static str,
-    excluded: &'a BTreeSet<&'static str>,
-    residual_risk: &'static str,
-    admission: &'static str,
+    notes: Vec<&'static str>,
+    #[serde(skip)]
+    directories: Vec<(PathBuf, PathBuf)>,
+    #[serde(skip)]
+    history: Option<(PathBuf, String)>,
 }
 
-impl Review {
-    pub fn preview(&self) -> Preview<'_> {
-        Preview {
-            session: &self.session,
-            mode: self.mode,
-            operations: &self.targets,
-            empty_directories: &self.empty_directories,
-            logical_bytes: self.targets.iter().map(|target| target.bytes).sum(),
-            backup_required_bytes: self.required_bytes,
-            history_matches: self.history_matches,
-            history_state: self.history_state,
-            excluded: &self.excluded,
-            residual_risk: RESIDUAL_RISK,
-            admission: "eligible",
-        }
-    }
+#[derive(Serialize)]
+pub struct Outcome {
+    pub removed_files: usize,
+    pub removed_bytes: u64,
+    pub history_rows: usize,
+    pub errors: Vec<String>,
 }
 
-fn checkpoint_names(root: &Path, transcript: &Path) -> Result<BTreeSet<String>, Refusal> {
-    let mut file =
-        filesystem::open_observed_read(root, transcript).map_err(|_| Refusal::Changed)?;
-    let size = file.metadata().map_err(|_| Refusal::Changed)?.len();
-    if size > MAX_BYTES {
-        return Err(Refusal::PartialScope);
-    }
-    let mut names = BTreeSet::new();
-    let mut lines = Lines::new(&mut file, 0, size).map_err(|_| Refusal::Changed)?;
-    for _ in 0..MAX_RECORDS {
-        let Some(line) = lines.next().map_err(|_| Refusal::Changed)? else {
-            return Ok(names);
+impl Plan {
+    pub fn delete(self) -> Outcome {
+        let mut outcome = Outcome {
+            removed_files: 0,
+            removed_bytes: 0,
+            history_rows: 0,
+            errors: self.notes.into_iter().map(str::to_owned).collect(),
         };
-        let record: serde_json::Value =
-            serde_json::from_slice(line.bytes.ok_or(Refusal::PartialScope)?)
-                .map_err(|_| Refusal::PartialScope)?;
-        if record["type"] != "file-history-snapshot" {
-            continue;
-        }
-        let files = record["snapshot"]["trackedFileBackups"]
-            .as_object()
-            .ok_or(Refusal::PartialScope)?;
-        for backup in files.values() {
-            if let Some(name) = backup
-                .get("backupFileName")
-                .and_then(serde_json::Value::as_str)
-                && files::checkpoint_name(name)
-            {
-                names.insert(name.to_owned());
+        for (index, target) in self.files.into_iter().enumerate() {
+            match target.delete() {
+                Ok(bytes) => {
+                    outcome.removed_files += 1;
+                    outcome.removed_bytes += bytes;
+                }
+                Err(error) => {
+                    outcome
+                        .errors
+                        .push(format!("{}: {error}", target.relative_path.display()));
+                    if index == 0 {
+                        return outcome;
+                    }
+                }
             }
         }
+        for (root, path) in self.directories {
+            if let Err(error) = remove_directory(&root, &path)
+                && !matches!(
+                    error.kind(),
+                    io::ErrorKind::DirectoryNotEmpty | io::ErrorKind::NotFound
+                )
+            {
+                outcome.errors.push(format!("{}: {error}", path.display()));
+            }
+        }
+        if let Some((root, id)) = self.history {
+            match history::remove_rows(&root, &id) {
+                Ok(count) => outcome.history_rows = count,
+                Err(error) => outcome.errors.push(format!("history.jsonl: {error}")),
+            }
+        }
+        outcome
     }
-    Err(Refusal::PartialScope)
 }
 
 impl ClaudeAdapter {
-    pub fn prepare_cleanup(
+    pub fn removal_plan(
         &self,
-        session: &SessionIdentity,
-        mode: Mode,
-        limit: usize,
-    ) -> Result<Review, Refusal> {
-        self.plan_cleanup(session, mode, limit, true)
-    }
-
-    fn plan_cleanup(
-        &self,
-        session: &SessionIdentity,
-        mode: Mode,
-        limit: usize,
-        check_space: bool,
-    ) -> Result<Review, Refusal> {
-        writers::closed(&session.state_root, &session.native_id)?;
-        let mut catalog = self.local_catalog(limit);
-        if catalog
-            .inventory
-            .sessions
-            .iter()
-            .any(|row| row.forked_from.as_deref() == Some(session.native_id.as_str()))
-        {
-            return Err(Refusal::OwnershipUnverified);
-        }
-        let evidence = catalog.evidence.remove(session).ok_or(Refusal::Changed)?;
-        let desktop_links = catalog
-            .desktop_links
-            .get(&session.native_id)
-            .copied()
-            .unwrap_or_default();
-        self.plan(
-            session,
-            &evidence,
-            mode,
-            catalog.evidence,
-            desktop_links,
-            check_space,
-        )
-    }
-
-    fn plan(
-        &self,
-        session: &SessionIdentity,
+        identity: &SessionIdentity,
         evidence: &SessionEvidence,
         mode: Mode,
-        mut unrelated: BTreeMap<SessionIdentity, SessionEvidence>,
-        desktop_links: usize,
-        check_space: bool,
-    ) -> Result<Review, Refusal> {
-        if evidence.sidechain || evidence.versions.as_slice() != [ENGINE] {
-            return Err(Refusal::UnsupportedFormat);
-        }
-        if evidence.same_uuid_elsewhere != 0 || evidence.forks != 0 {
-            return Err(Refusal::OwnershipUnverified);
-        }
-        if !evidence.metadata_complete || !evidence.ownership_scope_complete {
-            return Err(Refusal::PartialScope);
-        }
-        let root = &session.state_root;
+    ) -> io::Result<Plan> {
+        let root = &identity.state_root;
         let transcript = self
-            .transcript_path(session)
-            .map_err(|_| Refusal::Changed)?;
-        let path = transcript.with_extension("");
-        let mut budget = Budget::new(4096);
-        let mut targets = Vec::new();
-        let mut excluded = BTreeSet::new();
-        let mut total = 0u64;
-        let mut add = |target_root: &Path,
-                       target: &Path,
-                       role: &'static str,
-                       expected: Option<&crate::Revision>| {
-            if targets.len() >= MAX_TARGETS {
-                return Err(Refusal::PartialScope);
-            }
-            let (file, size) = Target::inspect(
-                target_root,
-                target,
-                role,
-                expected,
-                MAX_BYTES.saturating_sub(total),
-            )?;
-            total += size;
-            targets.push(file);
-            Ok(())
+            .transcript_path(identity)
+            .map_err(|_| io::ErrorKind::InvalidInput)?;
+        verify(root, &transcript, &evidence.revision).map_err(|_| io::ErrorKind::InvalidData)?;
+        let mut plan = Plan {
+            mode,
+            files: Vec::new(),
+            logical_bytes: 0,
+            history_matches: None,
+            notes: Vec::new(),
+            directories: Vec::new(),
+            history: None,
         };
-        add(root, &transcript, "transcript", Some(&evidence.revision))?;
-        let namespace = transcript.parent().ok_or(Refusal::Changed)?;
-        let agent_folder = path.join("subagents");
-        let mut agents = BTreeSet::new();
-        for agent in &evidence.subagent_artifacts {
-            if agent.path.parent() != Some(agent_folder.as_path()) {
-                return Err(Refusal::OwnershipUnverified);
-            }
-            add(root, &agent.path, "subagent", Some(&agent.revision))?;
-            agents.insert(agent.path.as_path());
-        }
-        if agents.len() != evidence.subagents {
-            return Err(Refusal::PartialScope);
-        }
-        for entry in budget.list(&agent_folder) {
-            if !agents.contains(entry.path.as_path()) {
-                excluded.insert("Elementi aggiuntivi nella directory dei subagent");
-            }
-        }
-        for entry in budget.list(&path) {
-            if entry.path != agent_folder {
-                excluded.insert("Dipendenze annidate da preservare, inclusi task e tool results");
-            }
-        }
+        plan.add_file(root, &transcript)?;
+        let id = &identity.native_id;
+        let mut budget = Budget::new(8192);
+        let namespace = transcript
+            .parent()
+            .expect("recognized transcript namespace");
         for entry in budget.list(namespace) {
-            if entry.path != transcript
-                && entry.path != path
-                && entry
-                    .path
-                    .file_name()
-                    .and_then(|name| name.to_str())
-                    .is_some_and(|name| {
-                        name.strip_prefix(&session.native_id)
-                            .is_some_and(|suffix| suffix.starts_with(['.', '-']))
-                    })
+            if entry
+                .path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .and_then(|name| name.strip_prefix(id))
+                .is_some_and(exact_sidecar)
             {
-                excluded.insert("Sidecar o varianti con proprietà non attestata");
+                plan.candidate(root, &entry.path);
             }
         }
-        let session_env = root.join("session-env").join(&session.native_id);
-        let mut empty_directories = Vec::new();
-        if fs_present(&session_env)? {
-            if directory(&session_env)
-                .and_then(|dir| files::empty(&dir))
-                .is_ok()
-            {
-                empty_directories.extend(DirectoryTarget::inspect(root, &session_env)?);
+
+        let nested = transcript.with_extension("");
+        let agents = nested.join("subagents");
+        let mut known_agents = BTreeSet::new();
+        for agent in &evidence.subagent_artifacts {
+            if verify(&agent.root, &agent.path, &agent.revision).is_ok() {
+                known_agents.insert(agent.path.clone());
+                known_agents.insert(agent.path.with_extension("meta.json"));
+                plan.candidate(root, &agent.path);
+                plan.candidate(root, &agent.path.with_extension("meta.json"));
             } else {
-                excluded.insert("Metadati session-env con proprietà non attestata");
+                plan.note("Subagent cambiato o non leggibile.");
             }
         }
-        for name in ["tasks", "image-cache", "uploads", "dev-mods"] {
-            if fs_present(&root.join(name).join(&session.native_id))? {
-                excluded.insert("Stato locale o allegati con proprietà non attestata");
-            }
-        }
-        for (dir, suffix) in [("debug", "txt"), ("todos", "json")] {
-            if fs_present(
-                &root
-                    .join(dir)
-                    .join(format!("{}.{suffix}", session.native_id)),
-            )? {
-                excluded.insert("Log o todo individuali con proprietà non attestata");
-            }
-        }
-        if let Some(namespace) = session.namespace.as_deref() {
-            for temp in self.session_temp_roots() {
-                let scoped = temp.path.join(namespace).join(&session.native_id);
-                if fs_present(&scoped.join("scratchpad"))? || fs_present(&scoped.join("images"))? {
-                    excluded.insert("Scratchpad o immagini temporanee protetti");
-                }
-            }
-        }
-        if let Some(registration) = &evidence.desktop_artifact {
-            excluded.insert("Scheduler e dati Desktop condivisi");
-            if self.installations().iter().any(|item| {
-                item.confirmed
-                    && item.source == "desktop_bundle"
-                    && item.version.as_deref() == Some("5.11492.5")
-            }) {
-                add(
-                    &registration.root,
-                    &registration.path,
-                    "desktop_record",
-                    Some(&registration.revision),
-                )?;
-            } else {
-                excluded.insert("Registrazione Desktop di versione non verificata");
-            }
-        } else if desktop_links != 0
-            || evidence.desktop_record
-            || matches!(
-                evidence.surface,
-                Some(crate::local::Surface::Desktop | crate::local::Surface::Mixed)
-            )
-        {
-            excluded.insert("Riferimenti Desktop e scheduler nel perimetro condiviso");
-        }
-        let checkpoint = root.join("file-history").join(&session.native_id);
-        if fs_present(&checkpoint)? {
-            if mode == Mode::Deep {
-                let valid_names = checkpoint_names(root, &transcript)?;
-                let entries = budget.list(&checkpoint);
-                if entries.is_empty()
-                    || entries.iter().any(|item| {
-                        item.kind != EntryKind::File
-                            || item
-                                .path
-                                .file_name()
-                                .and_then(|name| name.to_str())
-                                .is_none_or(|name| !valid_names.contains(name))
-                    })
-                {
-                    return Err(Refusal::OwnershipUnverified);
-                }
-                for item in entries {
-                    add(root, &item.path, "checkpoint", None)?;
-                }
-            } else {
-                excluded.insert("Checkpoint di rewind");
-            }
-        } else if mode == Mode::Deep {
-            return Err(Refusal::UnsupportedFormat);
-        }
-        let directories = directory_fingerprints([namespace, &path, &agent_folder, &checkpoint])?;
-        if budget.issues != 0 {
-            return Err(Refusal::PartialScope);
-        }
-        let mut removed: BTreeSet<_> = targets
+        if budget
+            .list(&agents)
             .iter()
-            .map(|target| target.root.join(&target.relative_path))
-            .collect();
-        for folder in [&agent_folder, &path, &checkpoint] {
-            if folder == &checkpoint && mode != Mode::Deep {
+            .any(|entry| !known_agents.contains(&entry.path))
+        {
+            plan.note("Risorse non riconosciute nella directory dei subagent.");
+        }
+        plan.prune(root, &agents);
+        for entry in budget.list(&nested) {
+            if entry.path == agents {
                 continue;
             }
-            if directories[folder]
-                .iter()
-                .all(|entry| removed.contains(entry))
-                && let Some(target) = DirectoryTarget::inspect(root, folder)?
-            {
-                removed.insert(folder.clone());
-                empty_directories.push(target);
+            if matches!(
+                entry.path.file_name().and_then(|name| name.to_str()),
+                Some("tool-results" | "mcp-tasks")
+            ) {
+                plan.walk(root, &entry.path, &mut budget, 0);
+            } else {
+                plan.note("Risorse non riconosciute nella directory della sessione.");
             }
         }
-        verify(root, &transcript, &evidence.revision).map_err(|_| Refusal::Changed)?;
-        let history_revision = history_revision(root);
-        let history_lock_present = fs_present(&root.join("history.jsonl.lock"))?;
-        let (history_matches, history_state) = history_stats(
-            root,
-            &session.native_id,
-            Instant::now() + std::time::Duration::from_secs(2),
-        );
-        if history_matches.is_some_and(|count| count > 0)
-            || matches!(history_state, "unverified" | "partial_uuid_only")
-        {
-            excluded.insert("History condivisa conservata integralmente");
+        plan.prune(root, &nested);
+
+        if evidence.same_uuid_elsewhere == 0 && evidence.ownership_scope_complete {
+            if let Some(desktop) = &evidence.desktop_artifact {
+                if verify(&desktop.root, &desktop.path, &desktop.revision).is_ok() {
+                    plan.candidate(&desktop.root, &desktop.path);
+                } else {
+                    plan.note("Registrazione Desktop cambiata o non leggibile.");
+                }
+            }
+            for directory in ["session-env", "tasks"] {
+                plan.walk(root, &root.join(directory).join(id), &mut budget, 0);
+            }
+            plan.candidate(root, &root.join("debug").join(format!("{id}.txt")));
+            if matches!(mode, Mode::Deep) {
+                let checkpoints = root.join("file-history").join(id);
+                plan.walk(root, &checkpoints, &mut budget, 0);
+            }
+            plan.history_matches = history_stats(root, id, budget.deadline).0;
+            plan.history = Some((root.clone(), id.clone()));
+        } else {
+            plan.note("Risorse per UUID preservate perché lo stesso ID potrebbe appartenere a più sessioni.");
         }
-        let required_bytes = total.saturating_add(4096 * (targets.len() as u64 + 16));
-        if check_space {
-            let home = self.backup_home()?;
-            files::check_space(&home, &targets, required_bytes)?;
+        if budget.issues != 0 {
+            plan.note(
+                "Alcune risorse protette o fuori dal limite della scansione sono state conservate.",
+            );
         }
-        let agent_prefix = format!("{}/agent:", session.native_id);
-        unrelated.retain(|id, _| {
-            id != session
-                && !(id.state_root == session.state_root
-                    && id.namespace == session.namespace
-                    && id.native_id.starts_with(&agent_prefix))
+        Ok(plan)
+    }
+}
+
+impl Plan {
+    fn note(&mut self, message: &'static str) {
+        if !self.notes.contains(&message) {
+            self.notes.push(message);
+        }
+    }
+
+    fn add_file(&mut self, root: &Path, path: &Path) -> io::Result<()> {
+        let relative = path
+            .strip_prefix(root)
+            .map_err(|_| io::ErrorKind::InvalidInput)?;
+        let (parent, name) = open_parent(root, relative)?;
+        let info = fs::statat(parent, name, AtFlags::SYMLINK_NOFOLLOW)?;
+        if FileType::from_raw_mode(info.st_mode) != FileType::RegularFile || info.st_nlink != 1 {
+            return Err(io::ErrorKind::InvalidData.into());
+        }
+        let bytes = info
+            .st_size
+            .try_into()
+            .map_err(|_| io::ErrorKind::InvalidData)?;
+        self.logical_bytes = self.logical_bytes.saturating_add(bytes);
+        self.files.push(Target {
+            root: root.to_owned(),
+            relative_path: relative.to_owned(),
+            bytes,
+            identity: (i64::from(info.st_dev), info.st_ino),
         });
-        Ok(Review {
-            session: session.clone(),
-            mode,
-            targets,
-            empty_directories,
-            excluded,
-            history_matches,
-            history_state,
-            history_revision,
-            history_lock_present,
-            desktop_links,
-            directories,
-            unrelated: unrelated
-                .into_iter()
-                .map(|(id, meta)| (id, meta.revision))
-                .collect(),
-            required_bytes,
-        })
+        Ok(())
     }
 
-    fn backup_home(&self) -> Result<PathBuf, Refusal> {
-        let home = std::env::var_os("HOME")
-            .map(PathBuf::from)
-            .ok_or(Refusal::PartialScope)?;
-        let location = home.join(".agentmender");
-        if !crate::local_path(&home)
-            || self
-                .roots
-                .iter()
-                .map(|(root, _)| root.as_path())
-                .chain(self.desktop_roots())
-                .any(|root| location.starts_with(root) || root.starts_with(&location))
+    fn candidate(&mut self, root: &Path, path: &Path) {
+        if let Err(error) = self.add_file(root, path)
+            && error.kind() != io::ErrorKind::NotFound
         {
-            return Err(Refusal::PartialScope);
+            self.note("Alcuni file associati sono protetti o non leggibili.");
         }
-        directory(&home).map_err(|_| Refusal::PartialScope)?;
-        Ok(home)
+    }
+
+    fn walk(&mut self, root: &Path, path: &Path, budget: &mut Budget, depth: usize) {
+        if depth >= 16 {
+            self.note("Directory di sessione oltre il limite di profondità.");
+            return;
+        }
+        for entry in budget.list(path) {
+            match entry.kind {
+                EntryKind::File => self.candidate(root, &entry.path),
+                EntryKind::Directory => self.walk(root, &entry.path, budget, depth + 1),
+                EntryKind::Protected => self.note("Collegamento o file speciale preservato."),
+            }
+        }
+        self.prune(root, path);
+    }
+
+    fn prune(&mut self, root: &Path, path: &Path) {
+        if std::fs::symlink_metadata(path).is_ok_and(|metadata| metadata.is_dir()) {
+            self.directories.push((
+                root.to_owned(),
+                path.strip_prefix(root).expect("fixed scope").to_owned(),
+            ));
+        }
     }
 }
 
-fn history_revision(root: &Path) -> Option<crate::Revision> {
-    let path = root.join("history.jsonl");
-    let file = filesystem::open_observed_read(root, &path).ok()?;
-    crate::Revision::read(&file, &path).ok()
+impl Target {
+    fn delete(&self) -> io::Result<u64> {
+        let (parent, name) = open_parent(&self.root, &self.relative_path)?;
+        let current = fs::statat(&parent, name, AtFlags::SYMLINK_NOFOLLOW)?;
+        if (i64::from(current.st_dev), current.st_ino) != self.identity
+            || current.st_nlink != 1
+            || FileType::from_raw_mode(current.st_mode) != FileType::RegularFile
+        {
+            return Err(io::Error::other("File cambiato dopo l’anteprima."));
+        }
+        fs::unlinkat(parent, name, AtFlags::empty())?;
+        Ok(current.st_size.try_into().unwrap_or_default())
+    }
 }
 
-fn directory_fingerprints<'a>(
-    paths: impl IntoIterator<Item = &'a Path>,
-) -> Result<BTreeMap<PathBuf, BTreeSet<PathBuf>>, Refusal> {
-    let mut budget = Budget::new(4096);
-    let result = paths
-        .into_iter()
-        .map(|path| {
-            let entries = budget
-                .list(path)
-                .into_iter()
-                .map(|entry| entry.path)
-                .collect();
-            (path.to_owned(), entries)
-        })
-        .collect();
-    if budget.issues != 0 {
-        return Err(Refusal::PartialScope);
+const DIR_FLAGS: OFlags = OFlags::RDONLY
+    .union(OFlags::DIRECTORY)
+    .union(OFlags::NOFOLLOW)
+    .union(OFlags::CLOEXEC);
+
+fn directory(path: &Path) -> io::Result<File> {
+    let mut parts = path.components();
+    if parts.next() != Some(Component::RootDir) {
+        return Err(io::ErrorKind::InvalidInput.into());
     }
-    Ok(result)
+    let mut dir = fs::open("/", DIR_FLAGS, fs::Mode::empty())?;
+    for part in parts {
+        let Component::Normal(name) = part else {
+            return Err(io::ErrorKind::InvalidInput.into());
+        };
+        dir = fs::openat(dir, name, DIR_FLAGS, fs::Mode::empty())?;
+    }
+    Ok(File::from(dir))
 }
 
-fn fs_present(path: &Path) -> Result<bool, Refusal> {
-    match std::fs::symlink_metadata(path) {
-        Ok(_) => Ok(true),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
-        Err(_) => Err(Refusal::PartialScope),
+fn open_parent<'a>(root: &Path, relative: &'a Path) -> io::Result<(File, &'a std::ffi::OsStr)> {
+    let name = relative.file_name().ok_or(io::ErrorKind::InvalidInput)?;
+    let parent = relative.parent().ok_or(io::ErrorKind::InvalidInput)?;
+    if !relative
+        .components()
+        .all(|part| matches!(part, Component::Normal(_)))
+    {
+        return Err(io::ErrorKind::InvalidInput.into());
     }
+    let mut dir = directory(root)?;
+    let device = fs::fstat(&dir)?.st_dev;
+    for component in parent.components() {
+        dir = File::from(fs::openat(
+            &dir,
+            component.as_os_str(),
+            DIR_FLAGS,
+            fs::Mode::empty(),
+        )?);
+        if fs::fstat(&dir)?.st_dev != device {
+            return Err(io::Error::other(
+                "Percorso su un volume estraneo all’archivio.",
+            ));
+        }
+    }
+    Ok((dir, name))
+}
+
+fn remove_directory(root: &Path, path: &Path) -> io::Result<()> {
+    let (parent, name) = open_parent(root, path)?;
+    fs::unlinkat(parent, name, AtFlags::REMOVEDIR)?;
+    Ok(())
 }

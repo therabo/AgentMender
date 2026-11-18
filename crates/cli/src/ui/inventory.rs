@@ -225,7 +225,7 @@ impl Snapshot {
         let removal_reason = match provider {
             ProviderKind::Claude => Some(REMOVAL_NOTICE),
             ProviderKind::Codex if !can_read => Some("L'archivio Codex è indisponibile."),
-            ProviderKind::Codex => removal::native_reason(&app.native),
+            ProviderKind::Codex => removal::native_reason(app),
         };
         let grouped = projects::build(&observation);
         let project_conversations = grouped
@@ -446,7 +446,8 @@ impl Inventories {
     }
 }
 
-pub(super) const NO_CLAUDE_PROJECT_REMOVAL: &str = "Sola lettura. Proprietà di sidecar e riferimenti condivisi e coordinamento dei writer Claude Code non verificati.";
+pub(super) const NO_CLAUDE_PROJECT_REMOVAL: &str =
+    "Seleziona una conversazione Claude Code individuale.";
 
 #[derive(Serialize)]
 pub(super) struct ProjectsPage {
@@ -505,7 +506,7 @@ impl ProjectView {
         } else if project.sessions.is_empty() {
             Some("Il progetto registrato non ha conversazioni principali osservate.")
         } else {
-            removal::native_reason(&app.native).or_else(|| {
+            removal::native_reason(app).or_else(|| {
                 project
                     .sessions
                     .sessions()

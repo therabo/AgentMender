@@ -1,463 +1,204 @@
-//! Browser confirmation receipts and operation status, scoped to one launch.
-use super::{ApiError, inventory::ProjectView, token};
-use agentmender_domain::{ProviderKind, Session, SessionState};
-use agentmender_provider_codex::{
-    NativeRemoval, NativeUnavailable, ProjectOutcome, ProjectRemovalReview, ProjectStep,
-    RemovalOutcome, RemovalRefusal, RemovalReview, Subtree,
+//! Explicit session deletion through the existing loopback authorization.
+use super::{ApiError, App, inventory::ProjectView, provider, read};
+use agentmender_domain::{ProviderKind, Session};
+use axum::{
+    Json,
+    extract::{Path, State},
 };
-use serde::Serialize;
-use std::{
-    collections::HashMap,
-    time::{Duration, Instant},
-};
+use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 
-pub(super) fn refusal_error(error: RemovalRefusal) -> ApiError {
-    ApiError::conflict(match error {
-        RemovalRefusal::NotMain => "Seleziona una conversazione principale verificata.",
-        RemovalRefusal::Protected => PROTECTED,
-        RemovalRefusal::UnsupportedStorage => {
-            "Il formato dell’archivio non rientra nel contratto di rimozione Codex verificato."
-        }
-        RemovalRefusal::IncompleteRelationships => {
-            "Copertura delle relazioni o dei transcript incompleta. Impossibile verificare l’intero albero."
-        }
-        RemovalRefusal::ExternalFork => {
-            "Un fork esterno o la sua cronologia fa riferimento all’albero. La rimozione è bloccata."
-        }
-        RemovalRefusal::AmbiguousNativeLookup => {
-            "La ricerca nativa potrebbe selezionare un rollout estraneo. Rimozione bloccata prima del comando."
-        }
-        RemovalRefusal::AttachedThread => {
-            "Una sessione agganciata fa riferimento all’albero. La rimozione è bloccata."
-        }
-        RemovalRefusal::UnsafeMember => {
-            "L’albero include una sessione in uso, uno stato di spawn non verificabile o un percorso di rollout incompatibile."
-        }
-        RemovalRefusal::Changed => CHANGED,
-    })
-}
+pub(super) const PROTECTED: &str = "La sessione è protetta dalla configurazione di avvio.";
 
-const PREVIEW_TTL: Duration = Duration::from_secs(120);
-const CONFIRMATION: &str = "RIMUOVI";
-const PROJECT_CONFIRMATION: &str = "RIMUOVI SESSIONI DEL PROGETTO";
-
-const CHANGED: &str =
-    "L’archivio o l’eseguibile è cambiato. Aggiorna l’inventario e richiedi una nuova anteprima.";
-pub(super) const PROTECTED: &str =
-    "Una sessione nell’albero è protetta dalla configurazione di avvio.";
-const UNKNOWN_STATE: &str = "Lo stato di archiviazione della sessione non è verificato.";
-
-pub(super) fn native_reason(
-    native: &Result<NativeRemoval, NativeUnavailable>,
-) -> Option<&'static str> {
-    match native {
-        Ok(native) if native.is_current() => None,
-        Ok(_) => Some(CHANGED),
-        Err(reason) => Some(match reason {
-            NativeUnavailable::Platform => {
-                "La rimozione Codex è verificata solo su macOS con Apple Silicon."
-            }
-            NativeUnavailable::Executable => {
-                "Eseguibile Codex regolare e avviabile non disponibile."
-            }
-            NativeUnavailable::Root => "Directory dell’archivio Codex non verificabile all’avvio.",
-            NativeUnavailable::OverlappingExports => {
-                "Una root di export esterna si sovrappone all’archivio delle sessioni."
-            }
-            NativeUnavailable::SplitStorage => {
-                "Il database risiede in una root separata. Il contratto nativo locale richiede la stessa root."
-            }
-            NativeUnavailable::VersionProbe => {
-                "Impossibile verificare la versione di Codex nel processo confinato."
-            }
-            NativeUnavailable::VersionContract => {
-                "La versione di Codex non ha un contratto di rimozione a cascata verificato."
-            }
-            NativeUnavailable::CommandProbe => {
-                "Il comando nativo Codex per la rimozione tramite UUID non è disponibile."
-            }
-        }),
+pub(super) fn native_reason(app: &App) -> Option<&'static str> {
+    if app
+        .discovery
+        .location
+        .executable
+        .as_ref()
+        .is_some_and(|path| path.is_file())
+    {
+        None
+    } else {
+        Some("Eseguibile Codex non disponibile.")
     }
 }
 
 pub(super) fn refusal(session: &Session, protected: &[String]) -> Option<&'static str> {
-    if protected.contains(&session.identity.native_id) {
-        Some(PROTECTED)
-    } else if session.state == SessionState::Unknown {
-        Some(UNKNOWN_STATE)
-    } else {
-        None
-    }
+    (session.identity.provider == ProviderKind::Codex
+        && protected.contains(&session.identity.native_id))
+    .then_some(PROTECTED)
 }
 
-#[derive(Clone, Copy, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub(super) enum OperationStatus {
-    Preparing,
-    Ready,
-    Running,
-    Partial,
-    Refused,
-    Uncertain,
-    Changed,
-    Verified,
-    NativeUncertain,
-    VerificationIncomplete,
-    Residual,
-}
-
-#[derive(Clone, Serialize)]
-pub(super) struct OperationView {
-    pub status: OperationStatus,
-    pub native_id: String,
-    pub message: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    project: Option<ProjectProgress>,
-}
-
-impl OperationView {
-    fn new(status: OperationStatus, native_id: String) -> Self {
-        let message = match status {
-            OperationStatus::Preparing => "Verifica delle sessioni associate al progetto.",
-            OperationStatus::Ready => "Il piano è pronto per la conferma.",
-            OperationStatus::Partial => "Rimozione interrotta. Solo i sottoalberi indicati come verificati risultano rimossi.",
-            OperationStatus::Refused => "Le verifiche del progetto hanno impedito la rimozione.",
-            OperationStatus::Uncertain => "La rimozione del sottoalbero in corso ha un esito incerto.",
-            OperationStatus::Running => "Codex sta eseguendo il comando nativo.",
-            OperationStatus::Changed => "L’archivio o l’eseguibile è cambiato dopo l’anteprima. Il comando non è stato avviato.",
-            OperationStatus::Verified => "Verificata la rimozione delle sessioni, dei transcript attesi e dei relativi legami di origine.",
-            OperationStatus::NativeUncertain => "Il comando nativo non ha confermato l’esito. Sono possibili effetti parziali.",
-            OperationStatus::VerificationIncomplete => "Il comando nativo è riuscito, ma non è stato possibile verificare l’archivio dopo l’esecuzione.",
-            OperationStatus::Residual => "La verifica ha rilevato modifiche inattese o elementi ancora presenti.",
-        }.into();
-        Self {
-            status,
-            native_id,
-            message,
-            project: None,
-        }
-    }
-}
-
-#[derive(Clone, Serialize)]
-struct ProjectProgress {
+#[cfg(target_os = "macos")]
+pub(super) struct ClaudeReview {
+    id: String,
     key: String,
-    name: String,
-    removed: Vec<Subtree>,
-    remaining: Vec<Subtree>,
-    uncertain: Option<Subtree>,
+    plan: agentmender_provider_claude::cleanup::Plan,
 }
 
-pub(super) enum ReviewedRemoval {
-    Session(Box<RemovalReview>),
-    Project(Box<ProjectRemovalReview>),
-}
-
-struct Preview {
-    evidence: ReviewedRemoval,
-    project: Option<ProjectProgress>,
-    expires: Instant,
-}
-
-impl Preview {
-    fn confirmation(&self) -> &'static str {
-        match self.evidence {
-            ReviewedRemoval::Session(_) => CONFIRMATION,
-            ReviewedRemoval::Project(_) => PROJECT_CONFIRMATION,
-        }
-    }
-}
-
-#[derive(Serialize)]
-pub(super) struct PreviewView {
-    pub id: String,
-    pub confirmation: &'static str,
-    pub valid_seconds: u64,
-    pub main_id: String,
-    pub main_title: Option<String>,
-    pub spawned_descendants: usize,
-    pub total_sessions: usize,
-}
-
-#[derive(Serialize)]
-pub(super) struct ProjectPreviewView {
-    pub id: String,
-    pub confirmation: &'static str,
-    pub valid_seconds: u64,
-    pub status: OperationStatus,
-    pub provider: ProviderKind,
-    pub project_key: String,
-    pub project_name: String,
-    pub roots: Vec<String>,
-    pub main_conversations: usize,
-    pub descendants: usize,
-    pub total_sessions: usize,
-    pub subtrees: Vec<Subtree>,
-    pub scope: &'static str,
-    pub excluded: [&'static str; 4],
-    pub complete: bool,
-}
-
-#[derive(Default)]
-pub(super) struct Operations {
-    previews: HashMap<String, Preview>,
-    completed: HashMap<String, OperationView>,
-    running: bool,
-}
-
-impl Operations {
-    fn prune(&mut self) {
-        self.previews
-            .retain(|_, preview| preview.expires > Instant::now());
-    }
-
-    fn reserve_preview(&self) -> Result<String, ApiError> {
-        self.require_idle()?;
-        if self.previews.len() >= 32 {
-            return Err(ApiError::conflict(
-                "Troppe anteprime in attesa. Attendi la loro scadenza.",
-            ));
-        }
-        token()
-    }
-
-    fn require_idle(&self) -> Result<(), ApiError> {
-        if self.running || self.completed.len() >= 512 {
-            return Err(ApiError::conflict(
-                "Un’operazione è in corso o è stato raggiunto il limite della sessione locale.",
-            ));
-        }
-        Ok(())
-    }
-
-    fn require_new_target(&self, id: &str) -> Result<(), ApiError> {
-        if self.completed.values().any(|item| {
-            if let Some(project) = &item.project {
-                project
-                    .removed
-                    .iter()
-                    .chain(&project.uncertain)
-                    .any(|tree| tree.main_id == id)
-            } else {
-                item.native_id == id && item.status != OperationStatus::Changed
-            }
-        }) {
-            return Err(ApiError::conflict(
-                "Esiste già un esito per questo UUID nella sessione locale.",
-            ));
-        }
-        Ok(())
-    }
-
-    pub(super) fn issue(&mut self, evidence: RemovalReview) -> Result<PreviewView, ApiError> {
-        self.prune();
-        self.require_new_target(evidence.native_id())?;
-        self.previews.retain(|_, previous| {
-            !matches!(&previous.evidence, ReviewedRemoval::Session(old) if old.native_id() == evidence.native_id())
-        });
-        let id = self.reserve_preview()?;
-        let view = PreviewView {
-            id: id.clone(),
-            confirmation: CONFIRMATION,
-            valid_seconds: PREVIEW_TTL.as_secs(),
-            main_id: evidence.native_id().into(),
-            main_title: evidence.session().title.clone(),
-            spawned_descendants: evidence.total_sessions() - 1,
-            total_sessions: evidence.total_sessions(),
-        };
-        self.previews.insert(
-            id,
-            Preview {
-                evidence: ReviewedRemoval::Session(Box::new(evidence)),
-                project: None,
-                expires: Instant::now() + PREVIEW_TTL,
-            },
-        );
-        Ok(view)
-    }
-
-    pub(super) fn issue_project(
-        &mut self,
-        project: ProjectView,
-        evidence: ProjectRemovalReview,
-    ) -> Result<ProjectPreviewView, ApiError> {
-        self.prune();
-        let subtrees: Vec<_> = evidence.subtrees().collect();
-        for tree in &subtrees {
-            self.require_new_target(&tree.main_id)?;
-        }
-        self.previews.retain(|_, previous| {
-            previous
-                .project
-                .as_ref()
-                .is_none_or(|old| old.key != project.key)
-        });
-        let id = self.reserve_preview()?;
-        let total = subtrees
-            .iter()
-            .map(|tree| tree.total_sessions)
-            .sum::<usize>();
-        let view = ProjectPreviewView {
-            id: id.clone(),
-            confirmation: PROJECT_CONFIRMATION,
-            valid_seconds: PREVIEW_TTL.as_secs(),
-            status: OperationStatus::Ready,
-            provider: ProviderKind::Codex,
-            project_key: project.key.clone(),
-            project_name: project.name.clone(),
-            roots: project.roots,
-            main_conversations: subtrees.len(),
-            descendants: total - subtrees.len(),
-            total_sessions: total,
-            subtrees: subtrees.clone(),
-            scope: "sessions",
-            excluded: [
-                "Workspace, repository e worktree",
-                "Configurazione e credenziali",
-                "Archivi e risorse degli altri progetti",
-                "Registrazione del progetto e preferenze Desktop",
-            ],
-            complete: true,
-        };
-        self.previews.insert(
-            id,
-            Preview {
-                evidence: ReviewedRemoval::Project(Box::new(evidence)),
-                project: Some(ProjectProgress {
-                    key: project.key,
-                    name: project.name,
-                    removed: Vec::new(),
-                    remaining: subtrees,
-                    uncertain: None,
-                }),
-                expires: Instant::now() + PREVIEW_TTL,
-            },
-        );
-        Ok(view)
-    }
-
-    pub(super) fn start(
-        &mut self,
-        key: &str,
-        confirmation: &str,
-    ) -> Result<ReviewedRemoval, ApiError> {
-        self.prune();
-        let preview = self
-            .previews
-            .get(key)
-            .filter(|preview| confirmation == preview.confirmation())
-            .ok_or_else(|| {
-                ApiError::conflict("Conferma o anteprima non valida, scaduta o già usata.")
+#[cfg(target_os = "macos")]
+pub(super) async fn claude_preview(
+    State(app): State<Arc<App>>,
+    Path(key): Path<String>,
+    Json(request): Json<Selection>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    read(app, move |app| {
+        let (session, evidence) = app.inventory.selected_claude(app, &key)?;
+        let plan = app
+            .claude
+            .removal_plan(&session.identity, &evidence, request.mode)
+            .map_err(|_| {
+                ApiError::conflict(
+                    "Transcript Claude cambiato o non leggibile. Aggiorna l’inventario.",
+                )
             })?;
-        self.require_idle()?;
-        let operation = match &preview.evidence {
-            ReviewedRemoval::Session(review) => {
-                self.require_new_target(review.native_id())?;
-                OperationView::new(OperationStatus::Running, review.native_id().into())
-            }
-            ReviewedRemoval::Project(review) => {
-                for tree in review.subtrees() {
-                    self.require_new_target(&tree.main_id)?;
-                }
-                let mut view = OperationView::new(OperationStatus::Preparing, String::new());
-                view.project = preview.project.clone();
-                view
-            }
-        };
-        let preview = self.previews.remove(key).expect("under exclusive lock");
-        self.running = true;
-        self.completed.insert(key.into(), operation);
-        Ok(preview.evidence)
-    }
+        let id = super::token()?;
+        let view = serde_json::json!({ "review": id, "plan": &plan });
+        *app.claude_review.lock().expect("Claude review") = Some(ClaudeReview { id, key, plan });
+        Ok(view)
+    })
+    .await
+}
 
-    pub(super) fn project_step(&mut self, key: &str, step: ProjectStep) {
-        let view = self.completed.get_mut(key).expect("running operation");
-        let project = view.project.as_mut().expect("project operation");
-        match step {
-            ProjectStep::Dispatching(tree) => {
-                project.remaining.remove(0);
-                view.status = OperationStatus::Running;
-                view.message = format!(
-                    "Sottoalberi verificati: {}. Rimozione in corso.",
-                    project.removed.len()
-                );
-                project.uncertain = Some(tree);
-            }
-            ProjectStep::Verified => {
-                project.removed.extend(project.uncertain.take());
-                view.status = OperationStatus::Preparing;
-                view.message = format!(
-                    "Sottoalberi verificati: {}. Verifica del piano in corso.",
-                    project.removed.len()
-                );
-            }
-        }
-    }
+#[cfg(target_os = "macos")]
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct Selection {
+    mode: agentmender_provider_claude::cleanup::Mode,
+}
 
-    pub(super) fn finish_project(&mut self, key: &str, outcome: ProjectOutcome) {
-        let view = self.completed.get_mut(key).expect("running operation");
-        let mut project = view.project.take().expect("project operation");
-        if outcome != ProjectOutcome::Uncertain
-            && let Some(tree) = project.uncertain.take()
-        {
-            project.remaining.insert(0, tree);
-        }
-        let status = match outcome {
-            ProjectOutcome::Verified => OperationStatus::Verified,
-            _ if !project.removed.is_empty() => OperationStatus::Partial,
-            ProjectOutcome::Changed => OperationStatus::Changed,
-            ProjectOutcome::Refused(_) => OperationStatus::Refused,
-            ProjectOutcome::Uncertain => OperationStatus::Uncertain,
-        };
-        *view = OperationView::new(status, String::new());
-        if let ProjectOutcome::Refused(reason) = outcome {
-            view.message.push(' ');
-            view.message.push_str(refusal_error(reason).1);
-        }
-        view.project = Some(project);
-        self.running = false;
-    }
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct Confirmation {
+    confirm: bool,
+    review: Option<String>,
+}
 
-    pub(super) fn interrupted(&mut self, key: &str) {
-        if self
-            .completed
-            .get(key)
-            .is_some_and(|view| view.project.is_some())
-        {
-            self.finish_project(key, ProjectOutcome::Uncertain);
+#[derive(Serialize)]
+pub(super) struct ResultView {
+    status: &'static str,
+    message: String,
+    errors: Vec<String>,
+}
+
+fn result(removed: usize, message: String, errors: Vec<String>) -> ResultView {
+    ResultView {
+        status: if errors.is_empty() {
+            "deleted"
+        } else if removed > 0 {
+            "partial"
         } else {
-            self.finish(key, RemovalOutcome::NativeUncertain(None));
-        }
+            "failed"
+        },
+        message,
+        errors,
     }
+}
 
-    pub(super) fn finish(&mut self, key: &str, outcome: RemovalOutcome) {
-        if let Some(operation) = self.completed.get_mut(key) {
-            let status = match &outcome {
-                RemovalOutcome::Changed => OperationStatus::Changed,
-                RemovalOutcome::Verified => OperationStatus::Verified,
-                RemovalOutcome::NativeUncertain(_) => OperationStatus::NativeUncertain,
-                RemovalOutcome::VerificationIncomplete => OperationStatus::VerificationIncomplete,
-                RemovalOutcome::Residual(_) => OperationStatus::Residual,
-            };
-            *operation = OperationView::new(status, std::mem::take(&mut operation.native_id));
-            if let RemovalOutcome::Residual(residual)
-            | RemovalOutcome::NativeUncertain(Some(residual)) = outcome
-            {
-                operation.message.push_str(&format!(
-                    " Righe di sessione ancora presenti: {}. Transcript: {}. Legami di origine: {}.",
-                    residual.canonical_rows, residual.rollouts, residual.spawn_edges,
+pub(super) async fn session(
+    State(app): State<Arc<App>>,
+    Path((name, key)): Path<(String, String)>,
+    Json(request): Json<Confirmation>,
+) -> Result<Json<ResultView>, ApiError> {
+    if !request.confirm {
+        return Err(ApiError::bad("Conferma l’eliminazione definitiva."));
+    }
+    let provider = provider(&name)?;
+    read(app, move |app| {
+        let outcome = match provider {
+            ProviderKind::Codex => {
+                if request.review.is_some() {
+                    return Err(ApiError::bad("Conferma Codex non valida."));
+                }
+                let session = app.inventory.selected(app, provider, &key)?;
+                if let Some(reason) = refusal(&session, &app.protected) {
+                    return Err(ApiError::conflict(reason));
+                }
+                match app.codex.delete_session(&session.identity) {
+                    Ok(message) => result(1, message, Vec::new()),
+                    Err(error) => result(
+                        0,
+                        "Codex non ha completato l’eliminazione.".into(),
+                        vec![error],
+                    ),
+                }
+            }
+            ProviderKind::Claude => {
+                #[cfg(target_os = "macos")]
+                {
+                    let review = {
+                        let mut slot = app.claude_review.lock().expect("Claude review");
+                        slot.take_if(|plan| {
+                            plan.key == key && Some(&plan.id) == request.review.as_ref()
+                        })
+                        .ok_or_else(|| ApiError::conflict("Apri una nuova anteprima Claude."))?
+                    };
+                    let outcome = review.plan.delete();
+                    *app.claude_usage.lock().expect("Claude usage") = None;
+                    result(
+                        outcome.removed_files,
+                        format!(
+                            "{} file eliminati · {} byte logici · {} righe di history eliminate.",
+                            outcome.removed_files, outcome.removed_bytes, outcome.history_rows,
+                        ),
+                        outcome.errors,
+                    )
+                }
+                #[cfg(not(target_os = "macos"))]
+                return Err(ApiError::conflict(
+                    agentmender_provider_claude::REMOVAL_NOTICE,
                 ));
-                if residual.unrelated_changed {
-                    operation.message.push_str(
-                        " Sono cambiate anche le evidenze di sessioni esterne all’albero.",
-                    );
+            }
+        };
+        app.inventory.invalidate(provider);
+        Ok(outcome)
+    })
+    .await
+}
+
+pub(super) async fn project(
+    State(app): State<Arc<App>>,
+    Path(key): Path<String>,
+    Json(request): Json<Confirmation>,
+) -> Result<Json<ResultView>, ApiError> {
+    if !request.confirm || request.review.is_some() {
+        return Err(ApiError::bad("Conferma l’eliminazione definitiva."));
+    }
+    read(app, move |app| {
+        let sessions =
+            app.inventory
+                .project(app, ProviderKind::Codex, &key, |app, _, project| {
+                    if let Some(reason) = ProjectView::new(app, project).removal_reason {
+                        return Err(ApiError::conflict(reason));
+                    }
+                    Ok(project
+                        .sessions
+                        .sessions()
+                        .map(|row| row.identity.clone())
+                        .collect::<Vec<_>>())
+                })??;
+        let mut removed = 0;
+        let mut errors = Vec::new();
+        for session in &sessions {
+            match app.codex.delete_session(session) {
+                Ok(_) => removed += 1,
+                Err(error) => {
+                    errors.push(format!("{}: {error}", session.native_id));
+                    break;
                 }
             }
         }
-        self.running = false;
-    }
-
-    pub(super) fn get(&self, key: &str) -> Option<OperationView> {
-        self.completed.get(key).cloned()
-    }
+        app.inventory.invalidate(ProviderKind::Codex);
+        Ok(result(
+            removed,
+            format!(
+                "Codex ha confermato {} operazioni su {}.",
+                removed,
+                sessions.len()
+            ),
+            errors,
+        ))
+    })
+    .await
 }

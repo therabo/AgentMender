@@ -23,8 +23,8 @@ without model services, MCP or external credentials.
 
 | Provider | Available workflow |
 |---|---|
-| Codex | Storage discovery and export inventory for macOS, Linux and Windows. Registered projects, Recenti, partial main-conversation inventory and bounded transcript pages on macOS. Native cascade removal under the [verified release, command and storage contract](docs/provider-compatibility.md). |
-| Claude Code | Namespace groups and bounded inventory of verified local project JSONL, including Desktop-origin Code. Offline cleanup and recovery for admitted macOS sessions. |
+| Codex | Storage discovery and export inventory for macOS, Linux and Windows. Registered projects, Recenti, partial main-conversation inventory and bounded transcript pages on macOS. Permanent deletion through the installed native command. |
+| Claude Code | Namespace groups and bounded inventory of verified local project JSONL, including Desktop-origin Code. Permanent Standard and Approfondita deletion on macOS. |
 
 Open **Storage → Export e backup** to measure export groups, inspect why they
 are protected and review a multi-selection. An export location or manifest
@@ -32,12 +32,9 @@ does not authorize mutation. Installed exporters have no verified removal
 contract in this release. **Installazioni e archivi** shows the discovered
 roots separately, including the root selected for the Session Manager.
 
-A project review lists the main conversations, descendants and exclusions.
-Codex removes each reviewed session tree in sequence. The project
-registration and its source files stay outside the removal scope. AgentMender verifies canonical rows, rollouts and spawn edges after
-each command and stops if the next scope changes or a result is uncertain.
-Those checks measure archive state. Desktop visibility and physical disk space
-reclaimed can differ.
+Session deletion requires explicit confirmation and creates no backup.
+Codex uses its native command. Claude lists the recognized local files
+before deletion. Both providers refresh the inventory after the attempt.
 
 [Launch options and API](docs/local-session-manager.md) ·
 [Architecture](docs/architecture.md) · [Roadmap](docs/product-roadmap.md) ·
