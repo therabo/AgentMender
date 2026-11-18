@@ -56,6 +56,17 @@ and request a fresh review to inspect the remaining provider records.
 AgentMender never resumes removal automatically. SQLite storage reuse,
 snapshots, backups and provider artifacts can affect physical bytes reclaimed.
 
+## Claude Code storage
+
+Open **Export e backup → Storage Claude Code** to inspect the recognized
+Claude roots, directory measurements and transcript-heavy sessions.
+Open a session's **Storage e dipendenze → Risorse osservate** to see
+Standard and Approfondita as read-only plans with associated, exclusive
+and authorized logical bytes. Allocated bytes describe observed blocks.
+The installed writer does not honor an advisory transcript flock, so both
+plans refuse cleanup without issuing a receipt.
+[Storage audit](audits/claude-code-complete-storage.md).
+
 ## Storage and export previews
 
 Choose **Storage → Export e backup**. The list supports search, size/date

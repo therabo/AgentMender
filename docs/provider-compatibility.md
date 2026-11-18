@@ -154,7 +154,9 @@ removal entry point or proves exclusive ownership.
 |---|---|---|---|
 | Discovery | CLI, Desktop bundle and bundled Code engine, default and explicit roots | CLI and configuration roots. The version probe requires Bubblewrap | CLI and Win32 candidates, recognized Store/MSIX AppX registration, native and explicit roots |
 | Inventory and preview | Bounded local project JSONL | Bounded local project JSONL | Read-only project JSONL with reparse point, volume and link checks. Native Windows runners are in the CI matrix |
-| Session removal, history rewrite and recovery | Disabled | Disabled | Disabled |
+| Storage metadata and preview | Descriptor-relative inventory with observed file blocks | Descriptor-relative inventory with observed file blocks | Reparse-point checks and logical sizes. Allocation is unavailable |
+| Standard and deep cleanup | Blocked, read-only plans | Blocked, read-only plans | Blocked, read-only plans |
+| History rewrite, backup, restore | No admitted writer contract | No admitted writer contract | No admitted writer contract |
 
 Project identity includes the archive root and namespace. Equal UUIDs in
 different namespaces remain distinct. Corroborated Desktop records supply
@@ -170,3 +172,5 @@ establish exclusive ownership. A missing marker does not establish writer
 exclusion. The observed local formats lack a verified selective-removal
 contract. [Storage audit](audits/claude-code-storage.md) ·
 [ADR 0046](adr/claude-session-cleanup.md).
+
+[Complete storage audit and native writer probe](audits/claude-code-complete-storage.md).

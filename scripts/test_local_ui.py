@@ -347,6 +347,112 @@ def claude_reconciliation(binary, base):
         assert registry["associated"] == registry["without_transcript"] == 0
 
 
+
+def claude_storage_acceptance(binary, base):
+    root = base / "claude-storage"
+    desktop = base / "claude-storage-desktop"
+    temp_base = base / "claude-storage-temp"
+    claude_fixture(root)
+    project = root / "projects/project"
+    archive = project / CLAUDE_ID
+    source = project / f"{CLAUDE_ID}.jsonl"
+    desktop_source = project / f"{CLAUDE_DESKTOP_ID}.jsonl"
+    history = root / "history.jsonl"
+    other = base / "outsider-fixture.txt"
+    registry = desktop / "claude-code-sessions" / CLAUDE_ID / CLAUDE_DESKTOP_ID
+    desktop_registration = registry / f"local_{CLAUDE_DESKTOP_ID}.json"
+    temp = temp_base / ("claude" if os.name == "nt" else f"claude-{os.getuid()}") / "project" / CLAUDE_ID
+    files = {
+        archive / "tool-results/result.txt": b"result" * 19,
+        archive / "mcp-tasks/running.json": b'{"state":"running"}',
+        archive / "mcp-tasks/completed.json": b'{"state":"completed"}',
+        root / "file-history" / CLAUDE_ID / "checkpoint": b"checkpoint payload",
+        root / "image-cache" / CLAUDE_ID / "image.png": b"legacy image",
+        root / "uploads" / CLAUDE_ID / "upload.bin": b"batch upload",
+        temp / "images/new.png": b"temporary image",
+        temp / "scratchpad/output.txt": b"user output",
+        project / f"{CLAUDE_ID}.precompact.json": b"observed sidecar",
+        project / f"{CLAUDE_ID}.orphaned-1700000000-A1.jsonl": b"historical candidate",
+        project / f"{CLAUDE_ID}.jsonl.superseded-1700000001": b"second historical candidate",
+        project / f"{CLAUDE_ID}.other": b"unknown sibling",
+        root / "unclassified-private-directory" / "payload": b"must not descend",
+        history: (json.dumps({"sessionId": CLAUDE_ID}) + "\r\nmalformed\r\n" + json.dumps({"sessionId": CLAUDE_DESKTOP_ID})).encode(),
+        desktop_registration: json.dumps({"sessionId": f"local_{CLAUDE_DESKTOP_ID}",
+            "cliSessionId": CLAUDE_DESKTOP_ID, "isArchived": True, "cwd": "/fixture/First"}).encode(),
+        desktop / "Cache/sample.bin": b"shared cache",
+        other: b"outside all audited roots",
+    }
+    for file, data in files.items():
+        file.parent.mkdir(parents=True, exist_ok=True)
+        file.write_bytes(data)
+    files[source] = source.read_bytes()
+    files[desktop_source] = desktop_source.read_bytes()
+    if os.name != "nt":
+        (archive / "tool-results/external-link").symlink_to(other)
+        os.link(root / "image-cache" / CLAUDE_ID / "image.png", root / "image-cache" / CLAUDE_ID / "image-hardlink.png")
+
+    storage_path = "/api/storage/claude"
+    with ui(binary, base, None, root, extra_args=("--claude-desktop-root", str(desktop)),
+            env_overrides={"CLAUDE_CODE_TMPDIR": str(temp_base)}) as (client, ticket):
+        client.call("GET", storage_path, code=401)
+        authorize(client, ticket)
+        usage = client.call("GET", storage_path)
+        assert usage["writer_observation"] in {
+            "claude_process_observed", "no_named_process_observed", "unavailable",
+        }
+        assert usage["reclaimable_logical_bytes"] == 0
+        assert [row["kind"] for row in usage["roots"]].count("temporary") == 1
+        code = next(row for row in usage["roots"] if row["kind"] == "code")
+        skipped = next(row for row in code["groups"] if row["category"] == "unclassified")
+        assert skipped["size"]["files"] == 0 and not skipped["size"]["complete"]
+        assert all("path" not in row for row in usage["largest_sessions"])
+        assert usage["associated_transcript_bytes"] > len(files[source])
+        client.call("GET", storage_path + "?root=/tmp", code=400)
+        client.call("POST", storage_path + "/refresh", code=204)
+
+        rows = client.call("GET", "/api/claude/sessions")["rows"]
+        keys = {row["native_id"]: row["key"] for row in rows}
+        detail_path = f"/api/claude/sessions/{keys[CLAUDE_ID]}"
+        detail = client.call("GET", detail_path + "/storage")
+        categories = {row["key"]: row for row in detail["categories"]}
+        assert categories["subagent"]["files"] == 1
+        assert categories["variant"]["files"] == 2
+        assert categories["mcp_tasks"]["files"] == 2
+        assert categories["images"]["files"] == 2 + int(os.name != "nt")
+        assert categories["scratchpad"]["files"] == categories["checkpoint"]["files"] == 1
+        assert categories["uploads"]["files"] == categories["unknown"]["files"] == 1
+        assert detail["history_matches"] == 1 and detail["history_observation"] == "partial_uuid_only"
+        assert detail["backup_status"] == "not_created" and not detail["complete"]
+        standard, deep = detail["plans"]
+        assert standard["mode"] == "standard" and deep["mode"] == "deep"
+        assert deep["associated_logical_bytes"] > standard["associated_logical_bytes"]
+        assert all(row["status"] == "blocked" and row["authorized_logical_bytes"] == 0 and not row["operations"] for row in detail["plans"])
+        assert not any(row["removal_available"] for row in detail["observed"])
+        if os.name != "nt":
+            result = next(row for row in detail["observed"] if row["category"] == "tool_results")
+            assert result["size"]["links"] == 1 and result["size"]["files"] == 1
+            assert result["size"]["logical_bytes"] == len(files[archive / "tool-results/result.txt"])
+            assert categories["images"]["allocated_bytes"] is None
+        refused = client.call("POST", detail_path + "/removal-preview", {"mode": "deep"}, code=409)
+        assert "writer" in refused["error"] and "id" not in refused
+        archived = client.call("GET", f"/api/claude/sessions/{keys[CLAUDE_DESKTOP_ID]}/storage")
+        registration = next(row for row in archived["observed"] if row["category"] == "desktop_record")
+        assert registration["format"] == "desktop_local_registration"
+        assert registration["owner"] == CLAUDE_DESKTOP_ID
+        assert all(path.read_bytes() == data for path, data in files.items())
+        # A stale correlated registration invalidates the scoped preflight as well.
+        desktop_registration.write_bytes(files[desktop_registration] + b"\n")
+        client.call("GET", f"/api/claude/sessions/{keys[CLAUDE_DESKTOP_ID]}/storage", code=409)
+        # Matching content and mtime cannot substitute for the indexed file identity.
+        original_stat = source.stat()
+        replacement = base / "replacement.jsonl"
+        replacement.write_bytes(files[source])
+        os.utime(replacement, ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns))
+        replacement.replace(source)
+        client.call("GET", detail_path + "/storage", code=409)
+        assert files[source] == source.read_bytes() and files[history] == history.read_bytes()
+
+
 def codex_acceptance(client, root, rollouts, binary):
     import fcntl
 
@@ -1001,6 +1107,7 @@ def main():
         claude_fixture(claude)
         claude_multiple_roots(agentmender, base, claude)
         claude_reconciliation(agentmender, base)
+        claude_storage_acceptance(agentmender, base)
         if args.native_codex:
             binary = args.native_codex.resolve(strict=True)
             assert platform.system() == "Darwin" and platform.machine() == "arm64"

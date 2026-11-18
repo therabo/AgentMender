@@ -119,3 +119,12 @@ preview. Export keys bind the observed root, group path and metadata revision.
 The router applies the existing loopback browser and Origin boundaries.
 Export confirmation has an independent namespace and is unavailable until
 there is an exercised exporter write contract. [ADR 0045](adr/0045-codex-storage-capabilities.md)
+
+
+Claude's storage view builds bounded measurements under declared provider
+roots. It reports directory groups and ownership evidence and projects the
+existing catalog for transcript rankings. The per-session storage read
+revalidates transcript and reconciled record revisions before returning an
+informational preflight. The route issues no receipt. The Codex export
+inventory retains its own observation and authorization boundary.
+[ADR 0046](adr/claude-session-cleanup.md).

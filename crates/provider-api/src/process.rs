@@ -171,7 +171,12 @@ pub struct BundleMetadata {
 }
 
 #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
-fn small_output(mut command: Command) -> Result<Vec<u8>, ProviderError> {
+fn small_output(command: Command) -> Result<Vec<u8>, ProviderError> {
+    bounded_output(command, 4096)
+}
+
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+fn bounded_output(mut command: Command, limit: u64) -> Result<Vec<u8>, ProviderError> {
     let mut child = command.spawn().map_err(|_| {
         ProviderError::CapabilityUnavailable("write-denied metadata process could not start".into())
     })?;
@@ -183,7 +188,7 @@ fn small_output(mut command: Command) -> Result<Vec<u8>, ProviderError> {
         let mut bytes = Vec::new();
         let result = output
             .by_ref()
-            .take(4097)
+            .take(limit + 1)
             .read_to_end(&mut bytes)
             .map(|_| bytes);
         let _ = sender.send(result);
@@ -213,7 +218,7 @@ fn small_output(mut command: Command) -> Result<Vec<u8>, ProviderError> {
         .recv_timeout(Duration::from_millis(500))
         .map_err(|_| ProviderError::CapabilityUnavailable("metadata output timed out".into()))?
         .map_err(|_| ProviderError::CapabilityUnavailable("metadata output unreadable".into()))?;
-    if bytes.len() > 4096 {
+    if bytes.len() as u64 > limit {
         return Err(ProviderError::CapabilityUnavailable(
             "metadata output byte budget exceeded".into(),
         ));
@@ -521,6 +526,89 @@ pub fn find_executables(kind: ProviderKind) -> Vec<std::path::PathBuf> {
         })
         .filter(|candidate| candidate.is_file())
         .collect()
+}
+
+pub struct ClaudeProcessObservation {
+    pub status: &'static str,
+    pub executables: Vec<std::path::PathBuf>,
+}
+
+/// A process-name observation has no authority over provider writers.
+pub fn claude_writer_observation() -> ClaudeProcessObservation {
+    let unavailable = ClaudeProcessObservation {
+        status: "unavailable",
+        executables: Vec::new(),
+    };
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    let mut command = {
+        let mut command = Command::new("/bin/ps");
+        command.env_clear().args(["-axo", "comm="]);
+        command
+    };
+    #[cfg(windows)]
+    let mut command = {
+        let Some(root) = std::env::var_os("SystemRoot")
+            .map(std::path::PathBuf::from)
+            .filter(|root| root.is_absolute())
+        else {
+            return unavailable;
+        };
+        let mut command = Command::new(root.join("System32/tasklist.exe"));
+        command.env_clear().env("SystemRoot", &root).args([
+            "/FI",
+            "IMAGENAME eq claude.exe",
+            "/FO",
+            "CSV",
+            "/NH",
+        ]);
+        command
+    };
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+    {
+        command
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null());
+        let Ok(bytes) = bounded_output(command, 64 * 1024) else {
+            return unavailable;
+        };
+        let output = String::from_utf8_lossy(&bytes);
+        let mut executables = Vec::new();
+        let mut found = false;
+        for line in output.lines() {
+            #[cfg(unix)]
+            let executable = Path::new(line.trim());
+            #[cfg(windows)]
+            let executable = Path::new(
+                line.trim()
+                    .strip_prefix('"')
+                    .and_then(|value| value.split('"').next())
+                    .unwrap_or(""),
+            );
+            if executable
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| {
+                    name.eq_ignore_ascii_case("claude") || name.eq_ignore_ascii_case("claude.exe")
+                })
+            {
+                found = true;
+                if executable.is_absolute() && executables.len() < 64 {
+                    executables.push(executable.into());
+                }
+            }
+        }
+        ClaudeProcessObservation {
+            status: if found {
+                "claude_process_observed"
+            } else {
+                "no_named_process_observed"
+            },
+            executables,
+        }
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
+    unavailable
 }
 
 /// Read Microsoft's registered package metadata. Only the OS-supplied

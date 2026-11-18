@@ -49,6 +49,13 @@ impl Revision {
         })
     }
 
+    pub(crate) fn filesystem_identity(&self) -> Option<String> {
+        #[cfg(any(unix, windows))]
+        return Some(format!("{}:{}", self.physical.0, self.physical.1));
+        #[cfg(not(any(unix, windows)))]
+        None
+    }
+
     pub(crate) fn read(file: &File, path: &Path) -> Result<Self, ProviderError> {
         file.metadata()
             .and_then(|meta| Self::from_metadata(meta, file))

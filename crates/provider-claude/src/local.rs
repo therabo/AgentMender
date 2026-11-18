@@ -3,7 +3,7 @@ use super::{ClaudeAdapter, TranscriptShape, strict_version, transcript_shape};
 use crate::{
     diagnostics::{Access, Exclusion, Reconciliation, ScanIssue, TranscriptReport},
     read::{Lines, Revision, verify},
-    storage::{self, Budget, DesktopState, Entry, EntryKind, RootView},
+    storage::{self, ArtifactLocation, Budget, DesktopState, Entry, EntryKind, RootView},
 };
 use agentmender_domain::*;
 use agentmender_provider_api::{ProviderError, filesystem, io_error};
@@ -164,7 +164,29 @@ pub struct SessionEvidence {
     pub subagents: usize,
     pub forks: usize,
     #[serde(skip)]
+    pub(crate) desktop_artifact: Option<ArtifactLocation>,
+    #[serde(skip)]
+    pub(crate) subagent_artifacts: Vec<ArtifactLocation>,
+    #[serde(skip)]
+    pub(crate) fork_references: Vec<String>,
+    #[serde(skip)]
+    pub(crate) ownership_scope_complete: bool,
+    #[serde(skip)]
     pub revision: Revision,
+}
+
+impl SessionEvidence {
+    pub fn transcript_footprint(&self) -> (u64, u64) {
+        let total = self
+            .subagent_artifacts
+            .iter()
+            .fold(self.revision.bytes, |sum, artifact| {
+                sum.saturating_add(artifact.revision.bytes)
+            });
+        let exclusive =
+            self.ownership_scope_complete && self.same_uuid_elsewhere == 0 && self.forks == 0;
+        (total, if exclusive { total } else { 0 })
+    }
 }
 
 #[derive(Clone)]
@@ -615,22 +637,35 @@ impl ClaudeAdapter {
             }
         }
         *cache = next_cache;
-        let mut dependencies = BTreeMap::<&SessionIdentity, usize>::new();
         for row in &inventory.sessions {
-            if let Some(parent) = &row.parent {
-                *dependencies.entry(parent).or_default() += 1;
+            if let Some(parent) = &row.parent
+                && let Some(agent) = row
+                    .identity
+                    .native_id
+                    .strip_prefix(&format!("{}/agent:", parent.native_id))
+                && let Some(meta) = evidence.get(&row.identity)
+                && let Ok(parent_path) = self.transcript_path(parent)
+            {
+                let revision = meta.revision.clone();
+                if let Some(source) = evidence.get_mut(parent) {
+                    source.subagents += 1;
+                    source.subagent_artifacts.push(ArtifactLocation {
+                        root: parent.state_root.clone(),
+                        path: parent_path
+                            .with_extension("")
+                            .join("subagents")
+                            .join(format!("agent-{agent}.jsonl")),
+                        revision,
+                    });
+                }
             }
             if let Some(fork) = &row.forked_from {
                 let mut parent = row.identity.clone();
                 parent.native_id = fork.clone();
                 if let Some(source) = evidence.get_mut(&parent) {
                     source.forks += 1;
+                    source.fork_references.push(row.identity.native_id.clone());
                 }
-            }
-        }
-        for (id, subagents) in dependencies {
-            if let Some(source) = evidence.get_mut(id) {
-                source.subagents = subagents;
             }
         }
         let desktop_projects: BTreeSet<_> = evidence
@@ -657,6 +692,9 @@ impl ClaudeAdapter {
         let desktop_report = desktop.reconcile(&uuid_counts, &associated, !projects_incomplete);
         inventory.incomplete = budget.issues > 0;
         inventory.projects_incomplete = projects_incomplete;
+        for meta in evidence.values_mut() {
+            meta.ownership_scope_complete = !inventory.incomplete && !projects_incomplete;
+        }
         Catalog {
             inventory,
             evidence,
@@ -793,6 +831,10 @@ fn observe(
             same_uuid_elsewhere: 0,
             subagents: 0,
             forks: 0,
+            desktop_artifact: desktop.map(|state| state.artifact.clone()),
+            subagent_artifacts: Vec::new(),
+            fork_references: Vec::new(),
+            ownership_scope_complete: false,
             revision,
         },
     })

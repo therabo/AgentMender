@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { AlertTriangle, ArrowLeft, FileText, ShieldCheck, Trash2 } from 'lucide-react'
 import { projectPath, request, sessionPath, type ClaudeStorage, type Detail, type Preview, type Project, type ProjectPreview, type Provider, type Transcript } from './api'
 import { CloseButton, Dialog, Empty, Notice, SessionStatus } from './components'
-import { dateLabel, kindLabel, numberLabel, pathLabel, providerLabel, sizeLabel } from './format'
+import { claudeCategories, claudeOwnership, claudeWriter, dateLabel, kindLabel, numberLabel, pathLabel, providerLabel, sizeLabel } from './format'
 
 const errorText = (failure: unknown) => failure instanceof Error ? failure.message : 'Operazione non disponibile.'
 
@@ -90,11 +90,37 @@ function ClaudeDependencies({ path, reason }: { path: string; reason: string }) 
           <Fact label="Righe history" value={storage.history_matches === null ? historyLabels[storage.history_observation] : `${numberLabel(storage.history_matches)} · ${historyLabels[storage.history_observation]}`} />
           <Fact label="Registro dei processi" value={storage.process_registry === 'present_unverified' ? 'Presente · writer non verificati' : storage.process_registry === 'blocked' ? 'Inaccessibile o protetto' : 'Non osservato · writer non verificati'} />
           <Fact label="Backup" value="Non creato" />
+          <Fact label="Disponibile sul volume" value={sizeLabel(storage.available_volume_bytes)} />
         </dl>
-        <ul className="claude-artifacts">{storage.observed.map(resource => {
-          const relativePath = pathLabel(resource.relative_path)
-          return <li key={relativePath}><code>{relativePath}</code><span>{resource.status === 'protected' ? 'Protetta' : resource.status === 'unverified' ? 'Proprietà non verificata' : 'Sola lettura'}</span></li>
-        })}</ul>
+        <p>{claudeWriter[storage.writer_observation] ?? claudeWriter.unavailable}.</p>
+        {!storage.diagnostic_complete && <Notice tone="warning">Alcune risorse o relazioni non sono state verificate.</Notice>}
+        <h4>Anteprima per modalità</h4>
+        <div className="claude-plans">{storage.plans.map(plan => <section key={plan.mode}>
+          <h5>{plan.mode === 'standard' ? 'Standard' : 'Approfondita'}</h5>
+          <dl className="facts detail-facts">
+            <Fact label="File candidati" value={numberLabel(plan.candidate_files)} />
+            <Fact label="Dimensione associata" value={sizeLabel(plan.associated_logical_bytes)} />
+            <Fact label="Allocazione osservata" value={sizeLabel(plan.allocated_observed)} />
+            <Fact label="Esclusività verificata" value={sizeLabel(plan.exclusive_logical_bytes)} />
+            <Fact label="Condivisi e protetti" value={sizeLabel(plan.shared_logical_bytes)} />
+            <Fact label="Recupero autorizzato" value={sizeLabel(plan.authorized_logical_bytes)} />
+          </dl>
+          <p>{plan.mode === 'deep' ? 'Ciclo di vita di checkpoint, task e allegati da verificare.' : 'Esclusione dei writer, integrità dello stato condiviso e recupero da verificare.'}</p>
+        </section>)}</div>
+        <h4>Categorie osservate</h4>
+        <ul className="claude-artifacts">{storage.categories.map(category =>
+          <li key={category.key}>
+            <strong>{claudeCategories[category.key] ?? category.key}</strong>
+            <span>{numberLabel(category.files)} file · {sizeLabel(category.logical_bytes)} · {category.state === 'not_observed' ? 'Non osservati' : category.state === 'protected' ? 'Protetti' : category.state === 'exclusive_verified' ? 'Esclusività verificata' : 'Da verificare'}</span>
+          </li>
+        )}</ul>
+        {storage.fork_references.length > 0 && <p>Fork da preservare · {storage.fork_references.join(', ')}</p>}
+        <details><summary>Percorsi e identità</summary>
+          <ul className="claude-artifacts">{storage.observed.map((resource, index) => {
+            const relativePath = pathLabel(resource.relative_path)
+            return <li key={index}><code>{relativePath}</code><span>{pathLabel(resource.root)}</span><span>{claudeOwnership[resource.ownership]} · {sizeLabel(resource.bytes)}{resource.identity && ` · ${resource.identity}`}</span></li>
+          })}</ul>
+        </details>
       </>}
     </details>
   </section>

@@ -59,6 +59,7 @@ dependencies = [
  "agentmender-domain",
  "agentmender-provider-api",
  "chrono",
+ "rustix",
  "serde",
  "serde_json",
  "sha2",

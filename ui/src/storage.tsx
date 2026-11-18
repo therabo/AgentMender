@@ -1,3 +1,4 @@
+import { ClaudeUsageView } from './claude-usage'
 import { useEffect, useState } from 'react'
 import { Archive, ChevronRight, Database, HardDrive, RefreshCw, Search, ShieldCheck } from 'lucide-react'
 import { Empty, Notice, Pagination } from './components'
@@ -90,17 +91,18 @@ function Installations() {
 }
 
 export function Storage() {
-  const [tab, setTab] = useState<'exports' | 'roots'>('exports')
+  const [tab, setTab] = useState<'exports' | 'roots' | 'claude'>('exports')
   return <>
     <header className="headline">
-      <div><div className="breadcrumb"><HardDrive size={15} aria-hidden /> Storage <ChevronRight size={14} aria-hidden /> Codex</div>
-        <h1>{tab === 'exports' ? 'Export e backup' : 'Installazioni e archivi'}</h1></div>
+      <div><div className="breadcrumb"><HardDrive size={15} aria-hidden /> Storage <ChevronRight size={14} aria-hidden /> {tab === 'claude' ? 'Claude Code' : 'Codex'}</div>
+        <h1>{tab === 'exports' ? 'Export e backup' : tab === 'roots' ? 'Installazioni e archivi' : 'Storage Claude Code'}</h1></div>
     </header>
     <nav className="storage-tabs" aria-label="Viste storage">
       <button className={tab === 'exports' ? 'button' : 'button quiet'} aria-current={tab === 'exports' ? 'page' : undefined} onClick={() => setTab('exports')}>Export e backup</button>
       <button className={tab === 'roots' ? 'button' : 'button quiet'} aria-current={tab === 'roots' ? 'page' : undefined} onClick={() => setTab('roots')}>Installazioni e archivi</button>
+      <button className={tab === 'claude' ? 'button' : 'button quiet'} aria-current={tab === 'claude' ? 'page' : undefined} onClick={() => setTab('claude')}>Storage Claude Code</button>
     </nav>
-    {tab === 'exports' ? <Exports /> : <Installations />}
+    {tab === 'exports' ? <Exports /> : tab === 'roots' ? <Installations /> : <ClaudeUsageView />}
   </>
 }
 

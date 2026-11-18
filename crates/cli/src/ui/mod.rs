@@ -1,5 +1,6 @@
 //! Loopback-only transport and browser authorization for the local UI.
 mod browser;
+mod claude_usage;
 mod inventory;
 mod removal;
 mod storage;
@@ -53,6 +54,7 @@ struct App {
     inventory: Inventories,
     discovery: Discovery,
     exports: Mutex<Option<storage::CachedInventory>>,
+    claude_usage: Mutex<Option<claude_usage::CachedUsage>>,
     operations: Mutex<Operations>,
     cursors: Mutex<TranscriptCursors>,
     reads: Arc<Semaphore>,
@@ -444,6 +446,8 @@ fn router(app: Arc<App>) -> Router {
         .route("/favicon.ico", get(|| async { StatusCode::NO_CONTENT }))
         .route("/api/authorize", post(authorize))
         .route("/api/storage/codex", get(storage::discover))
+        .route("/api/storage/claude", get(claude_usage::inspect))
+        .route("/api/storage/claude/refresh", post(claude_usage::refresh))
         .route("/api/storage/exports", get(storage::list))
         .route("/api/storage/exports/refresh", post(storage::refresh))
         .route("/api/storage/exports/preview", post(storage::preview))
@@ -523,6 +527,7 @@ pub(super) fn run(config: Configuration) -> Result<(), String> {
             codex: config.codex,
             discovery: config.discovery,
             exports: Mutex::default(),
+            claude_usage: Mutex::default(),
             claude: config.claude,
             native: config.native,
             limit: config.limit,

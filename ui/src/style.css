@@ -330,3 +330,23 @@ h3 { font-size: 15px; font-weight: 650; }
 .claude-discovery h3, .claude-discovery h4 { margin: 0 0 8px; color: var(--text); }
 .claude-discovery .diagnostic-counts { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); margin: 8px 0 12px; }
 .claude-discovery .diagnostic-counts dd { color: var(--text); font-variant-numeric: tabular-nums; }
+
+.claude-usage > .inventory-heading { padding-inline: 0; }
+.claude-usage-panel { margin: 18px 0; overflow: hidden; }
+.claude-usage-panel > p { padding-inline: 16px; color: var(--muted); }
+.usage-root { padding: 10px 16px; border-top: 1px solid var(--line-soft); }
+.usage-root summary { cursor: pointer; display: flex; justify-content: space-between; gap: 10px; align-items: start; }
+.usage-root summary > span:first-child { min-width: 0; }
+.usage-root summary > span:last-child { flex-shrink: 0; color: var(--muted); }
+.usage-root summary strong, .usage-root summary code, .usage-root summary small { display: block; overflow-wrap: anywhere; }
+.usage-root summary code, .usage-root summary small { color: var(--muted); }
+.usage-root p { color: var(--muted); }
+.usage-files, .usage-sessions { list-style: none; padding: 0; margin: 0; }
+.usage-files li { overflow-wrap: anywhere; }
+.usage-sessions > li { display: flex; justify-content: space-between; gap: 10px; padding: 9px 16px; border-top: 1px solid var(--line-soft); }
+.usage-sessions > li > div { min-width: 0; }
+.usage-sessions small { display: block; color: var(--muted); overflow-wrap: anywhere; }
+.claude-plans { display: grid; gap: 8px; }
+.claude-plans section { padding: 10px; border: 1px solid var(--line-soft); border-radius: 8px; }
+.claude-plans h5 { margin: 0; font-size: 14px; }
+.claude-plans .facts { margin: 8px 0; }

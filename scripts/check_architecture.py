@@ -95,6 +95,13 @@ require("crates/provider-claude/src/local.rs", 'path.join("projects")', "desktop
 require("crates/provider-claude/src/storage.rs", 'root.join("claude-code-sessions")',
         "projects_complete && !candidates.contains_key(&id)")
 
+require("crates/provider-claude/src/usage/walk.rs", "OFlags::NOFOLLOW",
+        "AtFlags::SYMLINK_NOFOLLOW", "MAX_DEPTH", "self.budget.take()")
+require("crates/provider-claude/src/artifacts.rs", "verify(&file.root, &file.path, &file.revision)",
+        "authorized_logical_bytes: 0", "operations: []")
+require("crates/cli/src/ui/mod.rs", "/api/storage/claude", "/api/storage/claude/refresh")
+assert "operations" not in source("crates/cli/src/ui/claude_usage.rs")
+
 for path in ["crates/provider-codex/src/exports.rs", "crates/cli/src/ui/storage.rs"]:
     assert not re.search(r"\b(remove_file|remove_dir_all|run_confined_codex_delete|ReviewedRemoval)\b", source(path)), path
 require("crates/cli/src/ui/mod.rs", "/api/storage/exports/preview", "/api/storage/exports/operations/{key}/confirm")

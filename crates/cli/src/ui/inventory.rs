@@ -401,6 +401,24 @@ impl Inventories {
         })
     }
 
+    pub(super) fn claude_footprints(&self, app: &App) -> super::claude_usage::Footprints {
+        self.with(app, ProviderKind::Claude, |snapshot| {
+            let entries = snapshot.index.sessions().filter_map(|row| {
+                let evidence = snapshot.claude_evidence.get(&row.identity)?;
+                let (logical_bytes, exclusive_logical_bytes) = evidence.transcript_footprint();
+                Some(super::claude_usage::SessionUsage {
+                    key: key(row),
+                    title: row.title.clone(),
+                    native_id: row.identity.native_id.clone(),
+                    namespace: row.identity.namespace.clone(),
+                    logical_bytes,
+                    exclusive_logical_bytes,
+                })
+            });
+            super::claude_usage::Footprints::new(entries, !snapshot.info.inventory_incomplete)
+        })
+    }
+
     pub(super) fn selected_claude(
         &self,
         app: &App,

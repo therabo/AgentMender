@@ -85,6 +85,36 @@ export type ClaudeSession = {
   same_uuid_elsewhere: number
 }
 
+export type ClaudeOwnership = 'exclusive_verified' | 'shared_verified' | 'unknown' | 'global' | 'user_owned_output' | 'in_use'
+
+export type ClaudeMeasurement = {
+  logical_bytes: number
+  allocated_bytes: number | null
+  files: number
+  directories: number
+  links: number
+  hardlink_paths: number | null
+  last_modified: number | null
+  complete: boolean
+}
+
+type ClaudeArtifact = {
+  category: string
+  root_kind: string
+  root: NativePath
+  relative_path: NativePath
+  identity: string | null
+  ownership: ClaudeOwnership
+  owner: string | null
+  evidence: string
+  format: string
+  status: 'protected' | 'unverified' | 'read_only'
+  bytes: number | null
+  access: SourceAccess
+  size: ClaudeMeasurement
+  scope: 'standard' | 'deep' | 'preserve'
+}
+
 export type ClaudeStorage = {
   transcript_files: number
   logical_bytes: number
@@ -95,8 +125,66 @@ export type ClaudeStorage = {
   history_matches: number | null
   history_observation: 'not_observed' | 'unverified' | 'uuid_only' | 'partial_uuid_only'
   process_registry: 'present_unverified' | 'blocked' | 'not_observed'
-  observed: { category: string; relative_path: NativePath; status: 'protected' | 'unverified' | 'read_only'; bytes: number | null }[]
+  writer_observation: string
+  observed: ClaudeArtifact[]
+  diagnostic_complete: boolean
   backup_status: 'not_created'
+  available_volume_bytes: number | null
+  engine_versions: string[]
+  fork_references: string[]
+  categories: {
+    key: string
+    files: number
+    logical_bytes: number
+    allocated_bytes: number | null
+    state: 'exclusive_verified' | 'unverified' | 'protected' | 'not_observed'
+  }[]
+  plans: {
+    mode: 'standard' | 'deep'
+    status: 'blocked'
+    candidate_files: number
+    associated_logical_bytes: number
+    exclusive_logical_bytes: number
+    shared_logical_bytes: number
+    authorized_logical_bytes: number
+    allocated_observed: number | null
+    blockers: string[]
+  }[]
+}
+
+export type ClaudeUsage = {
+  roots: {
+    path: NativePath
+    kind: string
+    evidence: string
+    access: SourceAccess
+    size: ClaudeMeasurement
+    groups: {
+      relative_path: NativePath
+      category: string
+      ownership: ClaudeOwnership
+      size: ClaudeMeasurement
+      formats: [string, number][]
+      largest_files: { relative_path: NativePath; logical_bytes: number; allocated_bytes: number | null }[]
+    }[]
+  }[]
+  size: ClaudeMeasurement
+  complete: boolean
+  entries_examined: number
+  writer_observation: string
+  reclaimable_logical_bytes: number
+  removal_reason: string
+  largest_sessions: {
+    key: string
+    title: string | null
+    native_id: string
+    namespace: string | null
+    logical_bytes: number
+    exclusive_logical_bytes: number
+  }[]
+  associated_transcript_bytes: number
+  exclusive_transcript_bytes: number
+  catalog_complete: boolean
 }
 
 export type Session = {

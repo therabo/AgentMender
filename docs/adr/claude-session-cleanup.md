@@ -43,3 +43,16 @@ candidates only when project enumeration covered the configured roots. A
 registration with unresolved ownership remains diagnostic evidence. The UI
 shows the same snapshot as the inventory before any list filtering.
 [Reconciliation report](../audits/claude-desktop-code-reconciliation.md).
+
+## Artifact storage inventory
+
+Keep usage measurements and dependency evidence in the Claude adapter.
+Enumerate bounded metadata in recognized provider roots. Model allocation,
+scope attribution, protection and cleanup eligibility as independent fields.
+Link exact transcripts and reconciled registrations through the existing
+catalog identity. Treat version-dependent filenames and temporary layouts
+as candidates. Serve usage through a dedicated read-only endpoint and reuse
+the loopback session for mode-by-mode preflight in the session detail.
+
+The [complete storage audit](../audits/claude-code-complete-storage.md)
+records the native writer experiments and remaining admission requirements.

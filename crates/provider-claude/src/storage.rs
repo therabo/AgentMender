@@ -1,12 +1,11 @@
 //! Recognized storage locations, association evidence and read-only diagnostics.
 use crate::{
-    ClaudeAdapter,
     diagnostics::{Access, DesktopReport, RegistryRoot},
-    local::{self, SessionEvidence},
+    local,
     read::{Lines, Revision, verify},
     safe_path,
 };
-use agentmender_domain::{SessionIdentity, uuid_shape};
+use agentmender_domain::uuid_shape;
 use agentmender_provider_api::{ProviderError, filesystem, io_error};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -129,7 +128,6 @@ pub(crate) enum EntryKind {
 pub(crate) struct Entry {
     pub(crate) path: PathBuf,
     pub(crate) kind: EntryKind,
-    bytes: u64,
 }
 
 impl Budget {
@@ -200,11 +198,7 @@ impl Budget {
                         self.mark();
                         EntryKind::Protected
                     };
-                    result.push(Entry {
-                        path,
-                        kind,
-                        bytes: meta.len(),
-                    });
+                    result.push(Entry { path, kind });
                 }
                 Err(_) => self.mark(),
             }
@@ -214,6 +208,13 @@ impl Budget {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ArtifactLocation {
+    pub(crate) root: PathBuf,
+    pub(crate) path: PathBuf,
+    pub(crate) revision: Revision,
+}
+
 #[derive(Clone, PartialEq, Eq)]
 pub(crate) struct DesktopState {
     pub(crate) archived: Option<bool>,
@@ -221,6 +222,7 @@ pub(crate) struct DesktopState {
     pub(crate) has_fork: bool,
     pub(crate) parent_cli_id: Option<String>,
     pub(crate) workspaces: Vec<String>,
+    pub(crate) artifact: ArtifactLocation,
 }
 
 #[derive(Deserialize)]
@@ -239,7 +241,7 @@ fn valid_desktop_id(id: &str) -> bool {
     id.strip_prefix("local_").is_some_and(uuid_shape)
 }
 
-fn desktop_record(root: &Path, path: &Path) -> Option<DesktopRecord> {
+fn desktop_record(root: &Path, path: &Path) -> Option<(DesktopRecord, ArtifactLocation)> {
     let mut file = filesystem::open_observed_read(root, path).ok()?;
     let revision = Revision::read(&file, path).ok()?;
     if revision.bytes > 256 * 1024 {
@@ -255,7 +257,14 @@ fn desktop_record(root: &Path, path: &Path) -> Option<DesktopRecord> {
     (valid_desktop_id(&record.session_id)
         && record.cli_session_id.as_deref().is_none_or(uuid_shape)
         && path.file_stem().and_then(|s| s.to_str()) == Some(record.session_id.as_str()))
-    .then_some(record)
+    .then_some((
+        record,
+        ArtifactLocation {
+            root: root.into(),
+            path: path.into(),
+            revision,
+        },
+    ))
 }
 
 #[derive(Default)]
@@ -322,7 +331,7 @@ pub(crate) fn desktop_states(
                             .is_some_and(valid_desktop_id)
                     {
                         if item.kind == EntryKind::File
-                            && let Some(record) = desktop_record(root, &item.path)
+                            && let Some((record, artifact)) = desktop_record(root, &item.path)
                         {
                             observed.report.registrations += 1;
                             if let Some(id) = &record.cli_session_id {
@@ -333,7 +342,7 @@ pub(crate) fn desktop_states(
                             }
                             let account = account.path.clone();
                             if records
-                                .insert(record.session_id.clone(), (record, account))
+                                .insert(record.session_id.clone(), (record, account, artifact))
                                 .is_some()
                             {
                                 budget.mark();
@@ -362,13 +371,13 @@ pub(crate) fn desktop_states(
     let unique = |id: &str| observed.by_cli_id.get(id) == Some(&1);
     observed.states = records
         .values()
-        .filter_map(|(record, account)| {
+        .filter_map(|(record, account, artifact)| {
             let id = record.cli_session_id.as_ref().filter(|id| unique(id))?;
             let parent = record.forked_from_session_id.as_ref();
             let parent_cli_id = parent
                 .and_then(|id| records.get(id))
-                .filter(|(_, parent_account)| parent_account == account)
-                .and_then(|(record, _)| record.cli_session_id.as_ref().filter(|id| unique(id)))
+                .filter(|(_, parent_account, _)| parent_account == account)
+                .and_then(|(record, _, _)| record.cli_session_id.as_ref().filter(|id| unique(id)))
                 .cloned();
             Some((
                 id.clone(),
@@ -381,6 +390,7 @@ pub(crate) fn desktop_states(
                         .map(|time| time.timestamp()),
                     has_fork: parent.is_some(),
                     parent_cli_id,
+                    artifact: artifact.clone(),
                     workspaces: [record.origin_cwd.as_ref(), record.cwd.as_ref()]
                         .into_iter()
                         .flatten()
@@ -406,155 +416,6 @@ fn uuid_dir(entry: &Entry) -> bool {
             .is_some_and(uuid_shape)
 }
 
-#[derive(Serialize)]
-pub struct StorageDetail {
-    pub transcript_files: usize,
-    pub logical_bytes: u64,
-    pub subagents: usize,
-    pub forks: usize,
-    pub sidecar_candidates: usize,
-    pub checkpoint_present: bool,
-    pub history_matches: Option<usize>,
-    pub history_observation: &'static str,
-    pub process_registry: &'static str,
-    pub observed: Vec<Artifact>,
-    pub complete: bool,
-    pub standard_available: bool,
-    pub deep_available: bool,
-    pub backup_status: &'static str,
-    pub removal_reason: &'static str,
-}
-
-#[derive(Serialize)]
-pub struct Artifact {
-    category: &'static str,
-    #[serde(serialize_with = "agentmender_domain::path_serde::serialize")]
-    relative_path: PathBuf,
-    evidence: &'static str,
-    status: &'static str,
-    bytes: Option<u64>,
-}
-
-impl ClaudeAdapter {
-    pub fn storage_detail(
-        &self,
-        identity: &SessionIdentity,
-        evidence: &SessionEvidence,
-    ) -> Result<StorageDetail, ProviderError> {
-        let path = self.transcript_path(identity)?;
-        let root = &identity.state_root;
-        verify(root, &path, &evidence.revision)?;
-        let immediate = path.parent().expect("transcript namespace");
-        let mut budget = Budget::new(4096);
-        budget.deadline = Instant::now() + Duration::from_secs(2);
-        let id = &identity.native_id;
-        let mut observed = Vec::new();
-        let mut record = |path: &Path, category, source, status, bytes| {
-            observed.push(Artifact {
-                category,
-                relative_path: path.strip_prefix(root).expect("archive artifact").into(),
-                evidence: source,
-                status,
-                bytes,
-            });
-        };
-        record(
-            &path,
-            "transcript",
-            "embedded_identity",
-            "read_only",
-            Some(evidence.revision.bytes),
-        );
-        let mut sidecar_candidates = 0;
-        for entry in budget.list(immediate) {
-            let Some(suffix) = entry
-                .path
-                .file_name()
-                .and_then(|name| name.to_str())
-                .and_then(|name| name.strip_prefix(id))
-            else {
-                continue;
-            };
-            if matches!(
-                suffix,
-                ".ccr-tip.json" | ".precompact.json" | ".desktop-released.json" | ".dir-sync.json"
-            ) || suffix
-                .strip_prefix('-')
-                .and_then(|rest| rest.strip_suffix(".cast"))
-                .is_some_and(|stamp| {
-                    (1..=16).contains(&stamp.len())
-                        && stamp.bytes().all(|byte| byte.is_ascii_digit())
-                })
-            {
-                sidecar_candidates += 1;
-                record(
-                    &entry.path,
-                    "sidecar",
-                    "filename_only",
-                    "unverified",
-                    (entry.kind == EntryKind::File).then_some(entry.bytes),
-                );
-            }
-        }
-        let matches = [
-            ("session_directory", immediate.join(id)),
-            ("session_environment", root.join("session-env").join(id)),
-            ("tasks", root.join("tasks").join(id)),
-            ("debug", root.join("debug").join(format!("{id}.txt"))),
-            ("checkpoint", root.join("file-history").join(id)),
-            ("shared_memory", immediate.join("memory")),
-            ("shared_history", root.join("history.jsonl")),
-        ];
-        let mut checkpoint_present = false;
-        for (category, candidate) in matches {
-            if candidate.parent().is_some_and(safe_path)
-                && let Ok(info) = fs::symlink_metadata(&candidate)
-            {
-                checkpoint_present |= category == "checkpoint";
-                let shared = category.starts_with("shared_");
-                record(
-                    &candidate,
-                    category,
-                    if shared {
-                        "fixed_location"
-                    } else {
-                        "uuid_path_only"
-                    },
-                    if shared { "protected" } else { "unverified" },
-                    (info.is_file() && !filesystem::is_link(&info)).then_some(info.len()),
-                );
-            }
-        }
-        let (history_matches, history_observation) = history_stats(root, id, &budget);
-        let registry = root.join("sessions");
-        let process_registry = if safe_path(&registry) && registry.is_dir() {
-            "present_unverified"
-        } else if fs::symlink_metadata(&registry).is_ok() {
-            "blocked"
-        } else {
-            "not_observed"
-        };
-        verify(root, &path, &evidence.revision)?;
-        Ok(StorageDetail {
-            transcript_files: 1,
-            logical_bytes: evidence.revision.bytes,
-            subagents: evidence.subagents,
-            forks: evidence.forks,
-            sidecar_candidates,
-            checkpoint_present,
-            history_matches,
-            history_observation,
-            process_registry,
-            observed,
-            complete: false,
-            standard_available: false,
-            deep_available: false,
-            backup_status: "not_created",
-            removal_reason: REMOVAL_BLOCKER,
-        })
-    }
-}
-
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct HistoryRow {
@@ -562,13 +423,17 @@ struct HistoryRow {
     session_id: Option<String>,
 }
 
-fn history_stats(root: &Path, id: &str, budget: &Budget) -> (Option<usize>, &'static str) {
+pub(crate) fn history_stats(
+    root: &Path,
+    id: &str,
+    deadline: Instant,
+) -> (Option<usize>, &'static str) {
     let path = root.join("history.jsonl");
     if fs::symlink_metadata(&path).is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound)
     {
         return (None, "not_observed");
     }
-    match count_history(root, &path, id, budget.deadline) {
+    match count_history(root, &path, id, deadline) {
         Ok((count, true)) => (Some(count), "uuid_only"),
         Ok((count, false)) => (Some(count), "partial_uuid_only"),
         Err(_) => (None, "unverified"),
