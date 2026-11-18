@@ -39,7 +39,14 @@ def claude_fixture(root):
     records = [
         {"type": "user", "sessionId": CLAUDE_ID, "entrypoint": "cli",
          "cwd": "/fixture/Atlas", "timestamp": "2026-11-10T09:00:00Z",
-         "message": {"content": "Never expose full Claude messages."}},
+         "message": {"content": "First visible Claude request."}},
+        {"type": "user", "sessionId": CLAUDE_ID,
+         "message": {"content": [{"type": "tool_result", "content": "TOOL CANARY"}]}},
+        {"type": "assistant", "sessionId": CLAUDE_ID,
+         "message": {"content": "Authorization: bearer SECRET CANARY"}},
+        *[{"type": "assistant", "sessionId": CLAUDE_ID,
+           "message": {"content": [{"type": "text", "text": f"Claude answer {index}"}]}}
+          for index in range(24)],
         {"type": "custom-title", "sessionId": CLAUDE_ID, "customTitle": "Atlas Café"},
     ]
     (bucket / f"{CLAUDE_ID}.jsonl").write_text("".join(json.dumps(row) + "\n" for row in records))
@@ -132,7 +139,7 @@ class Client:
 
 
 @contextmanager
-def ui(binary, base, codex_root, claude_root, codex=None, max_entries=None, env_overrides=None):
+def ui(binary, base, codex_root, claude_root, codex=None, max_entries=None, env_overrides=None, extra_args=()):
     other = base / "empty-path"
     other.mkdir(exist_ok=True)
     home = base / "home"
@@ -141,7 +148,7 @@ def ui(binary, base, codex_root, claude_root, codex=None, max_entries=None, env_
     if os.name == "nt":
         environment["SystemRoot"] = os.environ["SystemRoot"]
     environment.update(env_overrides or {})
-    command = [str(binary), "--claude-root", str(claude_root), "ui", "--no-open"]
+    command = [str(binary), "--claude-root", str(claude_root), *extra_args, "ui", "--no-open"]
     if codex_root is not None:
         command += ["--codex-root", str(codex_root)]
     if max_entries is not None:
@@ -193,17 +200,34 @@ def inventory_acceptance(client, claude_root):
     assert first["total"] == 1 and first["provider"]["coverage"] == "partial"
     row = first["rows"][0]
     assert row["title"] == "Atlas Café" and row["workspace"] == "/fixture/Atlas"
-    assert row["state"] == "unknown" and row["created_at"] is None
+    assert row["state"] == "unknown" and row["created_at"] == row["last_active_at"]
+    assert row["created_at"] is not None and row["claude"]["modified_at"] is not None
+    assert row["namespace"] == "project"
+    assert client.call("GET", "/api/claude/sessions?search=project&min_bytes=1000")["total"] == 1
+    assert client.call("GET", "/api/claude/sessions?min_bytes=10&max_bytes=1", code=400)
+    assert client.call("GET", "/api/claude/sessions?since=2026-11-11")["total"] == 0
     detail = client.call("GET", f"/api/claude/sessions/{row['key']}")
-    assert not detail["conversation_preview"] and detail["session"]["removal_reason"]
-    client.call("POST", f"/api/claude/sessions/{row['key']}/removal-preview", code=409)
-    client.call("GET", f"/api/claude/sessions/{row['key']}/conversation", code=409)
+    assert detail["conversation_preview"] and detail["session"]["removal_reason"]
+    path = f"/api/claude/sessions/{row['key']}"
+    refused = client.call("POST", path + "/removal-preview", code=409)
+    assert "writer" in refused["error"] and "id" not in refused
+    page = client.call("GET", path + "/conversation")
+    assert len(page["messages"]) == 20 and not page["complete"]
+    assert page["messages"][0] == {"role": "user", "text": "First visible Claude request."}
+    assert "CANARY" not in repr(page) and len(page["next"]) == 64
+    second = client.call("GET", path + "/conversation?cursor=" + page["next"])
+    assert len(second["messages"]) == 5 and second["next"] is None and second["complete"]
+    storage = client.call("GET", path + "/storage")
+    assert storage["subagents"] == 1 and storage["backup_status"] == "not_created"
+    assert not storage["standard_available"] and not storage["deep_available"]
     client.call("GET", "/api/claude/sessions/../../config.toml", code=404)
     client.call("GET", "/api/claude/sessions?root=%2Ftmp", code=400)
     desktop = client.call("GET", f"/api/claude/sessions?search={CLAUDE_DESKTOP_ID}")
     assert desktop["total"] == 1 and desktop["rows"][0]["workspace"] is None
+    foreign = f"/api/claude/sessions/{desktop['rows'][0]['key']}/conversation"
+    client.call("GET", foreign + "?cursor=" + page["next"], code=400)
     sources = list(claude_root.glob("projects/*/*.jsonl"))
-    assert len(sources) == 3 and "Never expose" in next(path for path in sources if path.stem == CLAUDE_ID).read_text()
+    assert len(sources) == 3 and "First visible" in next(path for path in sources if path.stem == CLAUDE_ID).read_text()
     info = client.call("GET", "/api/claude/sessions?limit=1")
     assert info["provider"]["total"] == 2 and info["total"] == 2
     assert client.call("GET", "/api/claude/sessions?search=Hidden")["total"] == 0
@@ -211,6 +235,33 @@ def inventory_acceptance(client, claude_root):
     client.call("GET", f"/api/claude/sessions/{agent_key}", code=404)
     return row["key"]
 
+
+
+def claude_multiple_roots(binary, base, primary):
+    additional = base / "additional-claude"
+    claude_fixture(additional)
+    with ui(binary, base, None, primary, extra_args=("--claude-additional-root", str(additional))) as (client, ticket):
+        authorize(client, ticket)
+        result = client.call("GET", f"/api/claude/sessions?search={CLAUDE_ID}")
+        assert result["total"] == 2 and len({row["key"] for row in result["rows"]}) == 2
+        assert all(row["claude"]["same_uuid_elsewhere"] == 1 for row in result["rows"])
+        roots = result["provider"]["claude_storage"]["roots"]
+        assert {item["source"] for item in roots} == {"explicit", "additional"}
+        assert {Path(item["path"]) for item in roots} == {primary, additional}
+        first, second = [f"/api/claude/sessions/{row['key']}" for row in result["rows"]]
+        cursor = client.call("GET", first + "/conversation")["next"]
+        client.call("GET", second + "/conversation?cursor=" + cursor, code=400)
+        row = result["rows"][0]
+        source = Path(row["archive_root"]) / "projects/project" / f"{CLAUDE_ID}.jsonl"
+        original = source.read_bytes()
+        try:
+            source.write_bytes(original + b"{}\n")
+            client.call("GET", first + "/conversation?cursor=" + cursor, code=409)
+            client.call("GET", first + "/storage", code=409)
+            client.call("POST", first + "/removal-preview", code=409)
+            assert source.read_bytes() == original + b"{}\n"
+        finally:
+            source.write_bytes(original)
 
 def codex_acceptance(client, root, rollouts, binary):
     import fcntl
@@ -864,6 +915,7 @@ def main():
         base = Path(directory).resolve()
         claude = base / "claude"
         claude_fixture(claude)
+        claude_multiple_roots(agentmender, base, claude)
         if args.native_codex:
             binary = args.native_codex.resolve(strict=True)
             assert platform.system() == "Darwin" and platform.machine() == "arm64"

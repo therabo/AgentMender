@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { AlertCircle, Archive, ChevronDown, ChevronLeft, ChevronRight, Database, Folder, RefreshCw, Trash2, X } from 'lucide-react'
 import { request, type Page, type Project, type Session } from './api'
-import { dateLabel, kindLabel, numberLabel, sizeLabel, stateLabel } from './format'
+import { dateLabel, kindLabel, numberLabel, pathLabel, sizeLabel, stateLabel } from './format'
 
 export function Notice({ children, tone = 'info' }: { children: ReactNode; tone?: 'info' | 'warning' | 'error' | 'success' }) {
   return <div className={`notice ${tone}`} role={tone === 'error' ? 'alert' : 'status'}>
@@ -31,7 +31,7 @@ export function SessionTable({ records, onSelect }: { records: Session[]; onSele
           <span className="created">Creata · {dateLabel(session.created_at)}</span>
         </td>
         <td className="size-cell">{sizeLabel(session.transcript_bytes)}</td>
-        <td><SessionStatus session={session} />{session.protected && <span className="protected-label">Protetta</span>}</td>
+        <td><SessionStatus session={session} />{session.protected && <span className="protected-label">Protetta</span>}{session.claude && <span className="protected-label">{session.claude.metadata_complete ? 'Sola lettura' : 'Metadati parziali'}</span>}</td>
         <td><ChevronRight size={16} aria-hidden className="row-chevron" /></td>
       </tr>)}
     </tbody>
@@ -44,7 +44,9 @@ export function ProjectAccordion({ project, expanded, onToggle, onRemove, childr
   const panelId = useId()
   const titleId = useId()
   const contextId = useId()
-  const context = (project.roots.length ? project.roots : [project.workspace, project.namespace]).filter(Boolean).join(' · ')
+  const context = (project.roots.length ? project.roots : [
+    project.workspace, project.namespace, project.archive_root && pathLabel(project.archive_root),
+  ]).filter(Boolean).join(' · ')
   return <article className="project">
     <div className="project-header">
       <h3>

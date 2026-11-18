@@ -2,11 +2,11 @@
 use crate::{
     rollout_reader::{self, RolloutReader},
     worker::{
-        Checkpoint, SourceAnchor, TranscriptCursor, TranscriptMessage, TranscriptPage,
-        TranscriptRole, stale, unavailable,
+        Checkpoint, SourceAnchor, TranscriptCursor, TranscriptMessage, TranscriptPage, stale,
+        unavailable,
     },
 };
-use agentmender_domain::{SessionIdentity, safe_conversation_text};
+use agentmender_domain::{SessionIdentity, TranscriptRole, safe_conversation_text};
 use agentmender_provider_api::{ProviderError, filesystem};
 use sha2::{Digest, Sha256};
 use std::{

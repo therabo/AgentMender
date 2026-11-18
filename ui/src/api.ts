@@ -16,6 +16,51 @@ export type ProviderInfo = {
   total: number
   removal_available: boolean
   removal_reason: string | null
+  claude_storage?: ClaudeDiscovery
+}
+
+type NativePath = string | { encoding: string; hex: string }
+
+export type ClaudeDiscovery = {
+  roots: {
+    path: NativePath
+    source: 'default' | 'environment' | 'explicit' | 'additional'
+    readable: boolean
+    same_filesystem_root: boolean
+    present: boolean
+    transcript_candidates: number
+    enumeration_incomplete: boolean
+    project_override: string | null
+  }[]
+  installations: { path: NativePath; source: string; version: string | null; confirmed: boolean }[]
+  subagents: number
+  forks: number
+  sidechains: number
+  desktop_metadata_roots: string[]
+}
+
+export type ClaudeSession = {
+  metadata_complete: boolean
+  modified_at: number | null
+  surface: 'cli' | 'desktop' | 'mixed' | null
+  title_source: 'custom' | 'generated' | 'first_request' | 'fallback'
+  versions: string[]
+  desktop_record: boolean
+  same_uuid_elsewhere: number
+}
+
+export type ClaudeStorage = {
+  transcript_files: number
+  logical_bytes: number
+  subagents: number
+  forks: number
+  sidecar_candidates: number
+  checkpoint_present: boolean
+  history_matches: number | null
+  history_observation: 'not_observed' | 'unverified' | 'uuid_only' | 'partial_uuid_only'
+  process_registry: 'present_unverified' | 'blocked' | 'not_observed'
+  observed: { category: string; relative_path: NativePath; status: 'protected' | 'unverified' | 'read_only'; bytes: number | null }[]
+  backup_status: 'not_created'
 }
 
 export type Session = {
@@ -27,6 +72,9 @@ export type Session = {
   provider: Provider
   state: State
   kind: Kind
+  namespace?: string
+  archive_root?: NativePath
+  claude?: ClaudeSession
   created_at: number | null
   last_active_at: number | null
   transcript_bytes: number | null
@@ -102,6 +150,7 @@ export type Project = {
   provider: Provider
   workspace: string | null
   namespace: string | null
+  archive_root?: NativePath
   roots: string[]
   registration: "native" | "desktop" | "native_and_desktop" | "namespace"
   main_conversations: number

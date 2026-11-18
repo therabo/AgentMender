@@ -45,7 +45,6 @@ struct App {
     launch: Mutex<Option<String>>,
     authorization: String,
     codex_root: PathBuf,
-    claude_root: PathBuf,
     codex: CodexAdapter,
     claude: ClaudeAdapter,
     limit: usize,
@@ -283,15 +282,35 @@ async fn conversation(
     read(app, move |app| transcript::page(app, provider, &key, query)).await
 }
 
+async fn claude_storage(
+    State(app): State<Arc<App>>,
+    Path(key): Path<String>,
+) -> Result<Json<agentmender_provider_claude::StorageDetail>, ApiError> {
+    read(app, move |app| {
+        let (session, evidence) = app.inventory.selected_claude(app, &key)?;
+        app.claude
+            .storage_detail(&session.identity, &evidence)
+            .map_err(|_| {
+                ApiError::conflict(
+                    "Archivio Claude cambiato o non leggibile. Aggiorna l’inventario.",
+                )
+            })
+    })
+    .await
+}
+
 async fn preview(
     State(app): State<Arc<App>>,
     Path((id, key)): Path<(String, String)>,
 ) -> Result<Json<PreviewView>, ApiError> {
-    if provider(&id)? != ProviderKind::Codex {
-        return Err(ApiError::conflict(inventory::NO_CLAUDE_REMOVAL));
-    }
+    let provider = provider(&id)?;
     read(app, move |app| {
-        let session = app.inventory.selected(app, ProviderKind::Codex, &key)?;
+        let session = app.inventory.selected(app, provider, &key)?;
+        if provider == ProviderKind::Claude {
+            return Err(ApiError::conflict(
+                agentmender_provider_claude::REMOVAL_BLOCKER,
+            ));
+        }
         if let Some(reason) = removal::refusal(&session, &app.protected) {
             return Err(ApiError::conflict(reason));
         }
@@ -453,6 +472,7 @@ fn router(app: Arc<App>) -> Router {
             "/api/{provider}/sessions/{key}/removal-preview",
             post(preview),
         )
+        .route("/api/claude/sessions/{key}/storage", get(claude_storage))
         .route("/api/{provider}/refresh", post(refresh))
         .route("/api/operations/{key}", get(operation))
         .route("/api/operations/{key}/confirm", post(confirm))
@@ -463,7 +483,6 @@ fn router(app: Arc<App>) -> Router {
 
 pub(super) struct Configuration {
     pub codex_root: PathBuf,
-    pub claude_root: PathBuf,
     pub codex: CodexAdapter,
     pub discovery: Discovery,
     pub claude: ClaudeAdapter,
@@ -501,7 +520,6 @@ pub(super) fn run(config: Configuration) -> Result<(), String> {
             launch: Mutex::new(Some(launch.clone())),
             authorization: format!("Bearer {bearer}"),
             codex_root: config.codex_root,
-            claude_root: config.claude_root,
             codex: config.codex,
             discovery: config.discovery,
             exports: Mutex::default(),

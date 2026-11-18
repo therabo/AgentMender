@@ -1,11 +1,20 @@
-//! Read-only detection and project JSONL inventory for Claude Code.
+//! Read-only inventory and conversation pages for local Claude Code.
 mod local;
+mod read;
+mod storage;
 
-use agentmender_domain::{Installation, ProviderKind, uuid_shape};
-use agentmender_provider_api::{ProviderError, ProviderLocation, process, validate_location};
+pub use local::{Catalog, Cursor, SessionEvidence};
+pub use read::Revision;
+pub use storage::{REMOVAL_BLOCKER, RootSource, RootView, StorageDetail};
+
+use agentmender_domain::{ProviderKind, SessionIdentity, uuid_shape};
+use agentmender_provider_api::{ProviderError, filesystem, process};
+use serde::Serialize;
 use std::{
+    collections::{BTreeMap, BTreeSet},
     fs,
     path::{Path, PathBuf},
+    sync::Mutex,
 };
 
 pub struct DesktopContext {
@@ -14,78 +23,141 @@ pub struct DesktopContext {
 }
 
 pub struct ClaudeAdapter {
-    location: ProviderLocation,
-    desktop: Option<DesktopContext>,
+    roots: Vec<(PathBuf, RootSource)>,
+    desktop: Vec<DesktopContext>,
+    cache: Mutex<BTreeMap<SessionIdentity, local::Cached>>,
+    installations: Vec<InstallationView>,
+}
+
+#[derive(Clone, Serialize)]
+pub struct InstallationView {
+    #[serde(serialize_with = "agentmender_domain::path_serde::serialize")]
+    pub path: PathBuf,
+    pub source: &'static str,
+    pub version: Option<String>,
+    pub confirmed: bool,
 }
 
 impl ClaudeAdapter {
-    pub fn new(location: ProviderLocation) -> Self {
-        Self {
-            location,
-            desktop: None,
+    pub fn new(
+        roots: Vec<(PathBuf, RootSource)>,
+        desktop: Vec<DesktopContext>,
+        cli_candidates: Vec<PathBuf>,
+        registered_desktop: Vec<InstallationView>,
+    ) -> Result<Self, ProviderError> {
+        if roots.is_empty()
+            || roots.len() > 16
+            || desktop.len() > 8
+            || roots.iter().any(|(path, _)| !local_path(path))
+            || desktop.iter().any(|item| !local_path(&item.data_root))
+        {
+            return Err(ProviderError::InvalidScope(
+                "invalid Claude archive roots".into(),
+            ));
+        }
+        let mut seen = BTreeSet::new();
+        let roots = roots
+            .into_iter()
+            .filter(|(path, _)| seen.insert(path.clone()))
+            .collect();
+        let mut seen = BTreeSet::new();
+        let desktop: Vec<_> = desktop
+            .into_iter()
+            .filter(|item| seen.insert(item.data_root.clone()))
+            .collect();
+        let mut installations = registered_desktop;
+        installations.extend(observe_installations(&desktop, cli_candidates));
+        Ok(Self {
+            roots,
+            desktop,
+            cache: Mutex::default(),
+            installations,
+        })
+    }
+
+    pub fn installations(&self) -> &[InstallationView] {
+        &self.installations
+    }
+
+    pub fn desktop_roots(&self) -> impl Iterator<Item = &Path> {
+        self.desktop
+            .iter()
+            .map(|desktop| desktop.data_root.as_path())
+    }
+}
+
+fn observe_installations(
+    desktops: &[DesktopContext],
+    candidates: Vec<PathBuf>,
+) -> Vec<InstallationView> {
+    let mut installations = Vec::new();
+    let mut seen = BTreeSet::new();
+    for candidate in candidates
+        .into_iter()
+        .filter(|path| local_path(path))
+        .take(16)
+    {
+        let Ok(path) = candidate.canonicalize() else {
+            continue;
+        };
+        if safe_path(&path) && path.is_file() && seen.insert(path.clone()) {
+            let version = process::probe_version(ProviderKind::Claude, &path).ok();
+            installations.push(InstallationView {
+                confirmed: version.is_some(),
+                path,
+                source: "cli",
+                version,
+            });
         }
     }
-
-    pub fn with_desktop_context(mut self, context: DesktopContext) -> Self {
-        self.desktop = Some(context);
-        self
-    }
-
-    pub fn detect(&self) -> Result<Installation, ProviderError> {
-        validate_location(&self.location)?;
-        let mut detected = false;
-        let mut versions = Vec::new();
-        if let Some(desktop) = &self.desktop {
-            detected = desktop.app_bundles.iter().any(|bundle| {
-                safe_path(bundle)
-                    && process::read_bundle_metadata(bundle).is_ok_and(|metadata| {
-                        metadata.identifier == "com.anthropic.claudefordesktop"
+    for desktop in desktops {
+        for path in &desktop.app_bundles {
+            if !safe_path(&path.join("Contents/Info.plist")) || !seen.insert(path.clone()) {
+                continue;
+            }
+            if let Ok(metadata) = process::read_bundle_metadata(path)
+                && metadata.identifier == "com.anthropic.claudefordesktop"
+            {
+                installations.push(InstallationView {
+                    path: path.clone(),
+                    source: "desktop_bundle",
+                    version: Some(metadata.version),
+                    confirmed: true,
+                });
+            }
+        }
+        let engines = desktop.data_root.join("claude-code");
+        if !safe_path(&engines) {
+            continue;
+        }
+        if let Ok(entries) = fs::read_dir(engines) {
+            for entry in entries.take(128).flatten() {
+                let name = entry.file_name();
+                let Some(version) = name.to_str().filter(|value| strict_version(value)) else {
+                    continue;
+                };
+                let bundle = entry.path().join("claude.app");
+                let executable = bundle.join("Contents/MacOS/claude");
+                if safe_path(&bundle.join("Contents/Info.plist"))
+                    && safe_path(&executable)
+                    && executable.is_file()
+                    && process::read_bundle_metadata(&bundle).is_ok_and(|metadata| {
+                        metadata.identifier == "com.anthropic.claude-code"
+                            && metadata.executable == "claude"
+                            && metadata.version == version
                     })
-            });
-            if let Ok(entries) = fs::read_dir(desktop.data_root.join("claude-code")) {
-                for entry in entries.take(128).flatten() {
-                    let name = entry.file_name();
-                    let Some(version) = name.to_str().filter(|value| strict_version(value)) else {
-                        continue;
-                    };
-                    let bundle = entry.path().join("claude.app");
-                    let executable = bundle.join("Contents/MacOS/claude");
-                    if !safe_path(&bundle.join("Contents/Info.plist"))
-                        || !safe_path(&executable)
-                        || !executable.is_file()
-                        || !process::read_bundle_metadata(&bundle).is_ok_and(|metadata| {
-                            metadata.identifier == "com.anthropic.claude-code"
-                                && metadata.executable == "claude"
-                                && metadata.version == version
-                        })
-                    {
-                        continue;
-                    }
-                    match process::probe_version(ProviderKind::Claude, &executable) {
-                        Ok(observed) if observed == version => {
-                            detected = true;
-                            versions.push(observed);
-                        }
-                        Err(_) => detected = true,
-                        Ok(_) => {}
-                    }
+                {
+                    installations.push(InstallationView {
+                        path: executable,
+                        source: "desktop_engine_bundle",
+                        version: Some(version.into()),
+                        confirmed: true,
+                    });
                 }
             }
         }
-        let version = if let Some(executable) = &self.location.executable {
-            if safe_path(executable) && executable.is_file() {
-                detected = true;
-                process::probe_version(ProviderKind::Claude, executable).ok()
-            } else {
-                None
-            }
-        } else if versions.len() == 1 {
-            versions.pop()
-        } else {
-            None
-        };
-        Ok(Installation { detected, version })
     }
+    installations
 }
 
 struct TranscriptShape {
@@ -95,7 +167,7 @@ struct TranscriptShape {
 }
 fn transcript_shape(path: &Path) -> Option<TranscriptShape> {
     let parts: Vec<_> = path.iter().map(|p| p.to_str()).collect::<Option<_>>()?;
-    if parts.len() < 3 || parts[0] != "projects" {
+    if parts.len() < 3 || parts[0] != "projects" || parts[1].contains(['/', '\\', ':']) {
         return None;
     }
     if parts.len() == 3 {
@@ -134,21 +206,28 @@ fn strict_version(v: &str) -> bool {
                 && p.parse::<u32>().is_ok()
         })
 }
-fn safe_path(path: &Path) -> bool {
-    if !path.is_absolute()
-        || path.components().any(|component| {
-            matches!(
-                component,
+fn local_path(path: &Path) -> bool {
+    #[cfg(windows)]
+    {
+        use std::path::{Component, Prefix};
+        if !matches!(path.components().next(), Some(Component::Prefix(prefix))
+            if matches!(prefix.kind(), Prefix::Disk(_) | Prefix::VerbatimDisk(_)))
+        {
+            return false;
+        }
+    }
+    path.is_absolute()
+        && path.components().all(|part| {
+            !matches!(
+                part,
                 std::path::Component::ParentDir | std::path::Component::CurDir
             )
         })
-    {
-        return false;
-    }
-    let mut ancestors: Vec<_> = path.ancestors().collect();
-    ancestors.reverse();
-    ancestors.into_iter().all(|ancestor| {
-        ancestor.is_absolute()
-            && std::fs::symlink_metadata(ancestor).is_ok_and(|m| !m.file_type().is_symlink())
-    })
+}
+
+fn safe_path(path: &Path) -> bool {
+    local_path(path)
+        && path.ancestors().all(|ancestor| {
+            fs::symlink_metadata(ancestor).is_ok_and(|meta| !filesystem::is_link(&meta))
+        })
 }

@@ -150,25 +150,23 @@ removal entry point or proves exclusive ownership.
 
 ## Claude Code
 
-Project JSONL with recognized location and embedded session identity supplies
-bounded metadata on all supported Rust build platforms. Only verified main
-conversations appear in the browser. Archive status,
-workspace, title and dates may be unknown. The manager exposes Claude Code as
-read-only. Desktop installation detection supplies presence and version
-observations without promoting sidecar formats into a mutation capability.
+| Capability | macOS | Linux | Windows |
+|---|---|---|---|
+| Discovery | CLI, Desktop bundle and bundled Code engine, default and explicit roots | CLI and configuration roots. The version probe requires Bubblewrap | CLI and Win32 candidates, recognized Store/MSIX AppX registration, native and explicit roots |
+| Inventory and preview | Bounded local project JSONL | Bounded local project JSONL | Read-only project JSONL with reparse point, volume and link checks. Native Windows runners are in the CI matrix |
+| Session removal, history rewrite and recovery | Disabled | Disabled | Disabled |
 
+Project identity includes the archive root and namespace. Equal UUIDs in
+different namespaces remain distinct. Corroborated Desktop records supply
+archive status and some relationships. Subagents, sidechains and recognized
+forks stay outside the main list. Transcript dates and filesystem modification
+time are independent. Server-held conversation cursors expire and become stale
+when the underlying transcript changes. Unknown versions can be read if the
+location and record evidence support the format.
 
-Each observed directory directly under the configured `projects` root is a
-persistent archive namespace. Namespaces with the same recorded workspace
-retain separate identities. Empty observed directories can appear in the
-project list. Main transcript identity comes from its filename and embedded
-session ID. Nested subagent transcripts, tool-result sidecars, task state and
-auto memory have distinct lifecycles and are not exposed as conversations.
-
-Anthropic's documented `claude purge` resolves a workspace path and can
-touch history, project-specific trust settings in global configuration,
-and state outside the namespace. Its documented interface has a human-readable
-dry run. AgentMender has no verified contract to bind that plan to an exact
-observed namespace, prove ownership of every sidecar and coordinate concurrent
-Claude Code or Desktop writers. All Claude projects stay read-only, including
-unknown files and metadata. [Claude Code archive layout and purge](https://code.claude.com/docs/en/claude-directory#clear-local-data).
+Session storage diagnostics distinguish protected shared data and candidate
+dependencies from session-scoped transcript evidence. A UUID match does not
+establish exclusive ownership. A missing marker does not establish writer
+exclusion. The observed local formats lack a verified selective-removal
+contract. [Storage audit](audits/claude-code-storage.md) ·
+[ADR 0046](adr/claude-session-cleanup.md).

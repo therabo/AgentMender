@@ -1,4 +1,8 @@
-use std::{collections::HashMap, fs, sync::Mutex};
+use std::{
+    collections::{BTreeMap, HashMap},
+    fs,
+    sync::Mutex,
+};
 
 use agentmender_application::{
     local_inventory::{InventoryPage, InventoryQuery, InventorySort, LocalInventory},
@@ -6,6 +10,7 @@ use agentmender_application::{
 };
 use agentmender_domain::*;
 use agentmender_provider_api::ProviderError;
+use agentmender_provider_claude::{InstallationView, REMOVAL_BLOCKER, RootView, SessionEvidence};
 use chrono::NaiveDate;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -34,10 +39,29 @@ pub(super) struct ProviderView {
     pub projects_incomplete: bool,
     pub removal_available: bool,
     pub removal_reason: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub claude_storage: Option<ClaudeStorage>,
 }
 
-pub(super) const NO_CLAUDE_REMOVAL: &str =
-    "Claude Code è in sola lettura. La rimozione per singola sessione non è disponibile.";
+#[derive(Clone, Serialize)]
+pub(super) struct ClaudeStorage {
+    roots: Vec<RootView>,
+    installations: Vec<InstallationView>,
+    desktop_metadata_roots: Vec<String>,
+    subagents: usize,
+    forks: usize,
+    sidechains: usize,
+}
+
+struct Observation {
+    presence: Presence,
+    coverage: Coverage,
+    description: &'static str,
+    inventory: InventoryObservation,
+    version: Option<String>,
+    claude_storage: Option<ClaudeStorage>,
+    claude_evidence: BTreeMap<SessionIdentity, SessionEvidence>,
+}
 
 pub(super) struct Snapshot {
     info: ProviderView,
@@ -48,26 +72,21 @@ pub(super) struct Snapshot {
     ids: HashMap<String, usize>,
     projects: HashMap<String, Project>,
     codex_project_keys: HashMap<String, String>,
+    claude_evidence: BTreeMap<SessionIdentity, SessionEvidence>,
 }
 
-impl Snapshot {
-    fn load(app: &App, provider: ProviderKind) -> Self {
-        let (root, detected) = match provider {
-            ProviderKind::Codex => (&app.codex_root, app.codex.detect()),
-            ProviderKind::Claude => (&app.claude_root, app.claude.detect()),
-        };
-        let detected = detected.unwrap_or_default();
-        let transcript_preview = provider == ProviderKind::Codex && cfg!(target_os = "macos");
-        let blocked_root = provider == ProviderKind::Codex
-            && matches!(
-                app.discovery.selected_access(),
-                agentmender_provider_codex::discovery::Access::Linked
-                    | agentmender_provider_codex::discovery::Access::NetworkPath
-            );
+impl Observation {
+    fn codex(app: &App) -> Self {
+        let detected = app.codex.detect().unwrap_or_default();
+        let blocked_root = matches!(
+            app.discovery.selected_access(),
+            agentmender_provider_codex::discovery::Access::Linked
+                | agentmender_provider_codex::discovery::Access::NetworkPath
+        );
         let root_check = if blocked_root {
             Err(std::io::ErrorKind::PermissionDenied.into())
         } else {
-            fs::symlink_metadata(root)
+            fs::symlink_metadata(&app.codex_root)
         };
         let presence = if detected.detected {
             Presence::Installed
@@ -76,7 +95,7 @@ impl Snapshot {
         } else {
             Presence::NotDetected
         };
-        let (coverage, coverage_description, observation) = match root_check {
+        let (coverage, description, inventory) = match root_check {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                 if presence == Presence::NotDetected {
                     (
@@ -92,55 +111,132 @@ impl Snapshot {
                     )
                 }
             }
-            Ok(info) if info.is_dir() => {
-                let result = match provider {
-                    ProviderKind::Codex => app.codex.local_inventory(app.limit),
-                    ProviderKind::Claude => app.claude.local_inventory(app.limit),
-                };
-                match result {
-                    Ok(observation) => {
-                        let description = if observation.incomplete
-                            || observation.projects_incomplete
-                        {
-                            "La lettura è incompleta. Altre sessioni o progetti potrebbero essere presenti."
-                        } else if provider == ProviderKind::Codex {
-                            "Dati del database Codex locale riconosciuto. Sono visibili solo le conversazioni principali verificate."
-                        } else {
-                            "Conversazioni principali riconosciute nei transcript di progetto. Titoli e date possono essere incompleti."
-                        };
-                        (Coverage::Partial, description, observation)
-                    }
-                    Err(ProviderError::PermissionDenied(_)) => (
-                        Coverage::Unavailable,
-                        "Accesso negato all’archivio del provider.",
-                        InventoryObservation::default(),
-                    ),
-                    Err(ProviderError::InvalidScope(reason)) if reason == "stale_codex_source" => (
-                        Coverage::Unavailable,
-                        "L’archivio è cambiato durante la lettura. Aggiorna l’inventario.",
-                        InventoryObservation::default(),
-                    ),
-                    Err(_) if provider == ProviderKind::Codex && !transcript_preview => (
-                        Coverage::Unavailable,
-                        "La lettura confinata dell’archivio Codex è attualmente disponibile su macOS.",
-                        InventoryObservation::default(),
-                    ),
-                    Err(_) => (
-                        Coverage::Unavailable,
-                        "L’archivio non è leggibile o usa un formato non riconosciuto.",
-                        InventoryObservation::default(),
-                    ),
+            Ok(info) if info.is_dir() => match app.codex.local_inventory(app.limit) {
+                Ok(observation) => {
+                    let description = if observation.incomplete || observation.projects_incomplete {
+                        "La lettura è incompleta. Altre sessioni o progetti potrebbero essere presenti."
+                    } else {
+                        "Dati del database Codex locale riconosciuto. Sono visibili solo le conversazioni principali verificate."
+                    };
+                    (Coverage::Partial, description, observation)
                 }
-            }
+                Err(ProviderError::PermissionDenied(_)) => (
+                    Coverage::Unavailable,
+                    "Accesso negato all’archivio del provider.",
+                    InventoryObservation::default(),
+                ),
+                Err(ProviderError::InvalidScope(reason)) if reason == "stale_codex_source" => (
+                    Coverage::Unavailable,
+                    "L’archivio è cambiato durante la lettura. Aggiorna l’inventario.",
+                    InventoryObservation::default(),
+                ),
+                Err(_) if !cfg!(target_os = "macos") => (
+                    Coverage::Unavailable,
+                    "La lettura confinata dell’archivio Codex è attualmente disponibile su macOS.",
+                    InventoryObservation::default(),
+                ),
+                Err(_) => (
+                    Coverage::Unavailable,
+                    "L’archivio non è leggibile o usa un formato non riconosciuto.",
+                    InventoryObservation::default(),
+                ),
+            },
             _ => (
                 Coverage::Unavailable,
                 "La directory dell’archivio non è accessibile o è un collegamento.",
                 InventoryObservation::default(),
             ),
         };
-        let can_read = matches!(coverage, Coverage::Partial);
+        Self {
+            presence,
+            coverage,
+            description,
+            inventory,
+            version: detected.version,
+            claude_storage: None,
+            claude_evidence: BTreeMap::new(),
+        }
+    }
+
+    fn claude(app: &App) -> Self {
+        let catalog = app.claude.local_catalog(app.limit);
+        let installations = app.claude.installations().to_vec();
+        let present = catalog.roots.iter().any(|root| root.present);
+        let presence = if installations.iter().any(|item| item.confirmed) {
+            Presence::Installed
+        } else if present {
+            Presence::StateOnly
+        } else {
+            Presence::NotDetected
+        };
+        let (coverage, description) = if catalog.roots.iter().any(|root| root.readable) {
+            let description = if catalog.inventory.incomplete {
+                "Lettura incompleta. Alcuni transcript o metadati potrebbero mancare."
+            } else {
+                "Conversazioni locali riconosciute nei transcript di progetto Claude Code."
+            };
+            (Coverage::Partial, description)
+        } else if presence == Presence::NotDetected {
+            (
+                Coverage::NotDetected,
+                "Installazione e archivio locale non rilevati.",
+            )
+        } else {
+            (
+                Coverage::Unavailable,
+                "Nessun archivio di progetto accessibile.",
+            )
+        };
+        let subagents = catalog
+            .inventory
+            .sessions
+            .iter()
+            .filter(|row| row.kind == SessionKind::Subagent)
+            .count();
+        let forks = catalog
+            .inventory
+            .sessions
+            .iter()
+            .filter(|row| row.kind == SessionKind::Fork)
+            .count();
+        let sidechains = catalog
+            .evidence
+            .values()
+            .filter(|row| row.sidechain)
+            .count();
+        Self {
+            presence,
+            coverage,
+            description,
+            inventory: catalog.inventory,
+            version: None,
+            claude_storage: Some(ClaudeStorage {
+                roots: catalog.roots,
+                installations,
+                desktop_metadata_roots: app
+                    .claude
+                    .desktop_roots()
+                    .map(|path| path.to_string_lossy().into_owned())
+                    .collect(),
+                subagents,
+                forks,
+                sidechains,
+            }),
+            claude_evidence: catalog.evidence,
+        }
+    }
+}
+
+impl Snapshot {
+    fn load(app: &App, provider: ProviderKind) -> Self {
+        let observed = match provider {
+            ProviderKind::Codex => Observation::codex(app),
+            ProviderKind::Claude => Observation::claude(app),
+        };
+        let observation = observed.inventory;
+        let can_read = matches!(observed.coverage, Coverage::Partial);
         let removal_reason = match provider {
-            ProviderKind::Claude => Some(NO_CLAUDE_REMOVAL),
+            ProviderKind::Claude => Some(REMOVAL_BLOCKER),
             ProviderKind::Codex if !can_read => Some("L'archivio Codex è indisponibile."),
             ProviderKind::Codex => removal::native_reason(&app.native),
         };
@@ -176,9 +272,9 @@ impl Snapshot {
         Self {
             info: ProviderView {
                 id: provider,
-                presence,
-                coverage,
-                coverage_description,
+                presence: observed.presence,
+                coverage: observed.coverage,
+                coverage_description: observed.description,
                 inventory_incomplete: observation.incomplete,
                 projects_incomplete: observation.projects_incomplete,
                 registered_projects: projects.len(),
@@ -187,14 +283,17 @@ impl Snapshot {
                 total: index.len(),
                 removal_available: removal_reason.is_none(),
                 removal_reason,
+                claude_storage: observed.claude_storage,
             },
-            version: detected.version,
-            conversation_preview: transcript_preview && can_read,
+            version: observed.version,
+            conversation_preview: can_read
+                && (provider == ProviderKind::Claude || cfg!(target_os = "macos")),
             index,
             recents: grouped.recents,
             ids,
             projects,
             codex_project_keys,
+            claude_evidence: observed.claude_evidence,
         }
     }
 
@@ -315,6 +414,21 @@ impl Inventories {
         })
     }
 
+    pub(super) fn selected_claude(
+        &self,
+        app: &App,
+        key: &str,
+    ) -> Result<(Session, SessionEvidence), ApiError> {
+        self.with(app, ProviderKind::Claude, |snapshot| {
+            let session = snapshot.selected(key)?;
+            let evidence = snapshot
+                .claude_evidence
+                .get(&session.identity)
+                .ok_or_else(ApiError::internal)?;
+            Ok((session.clone(), evidence.clone()))
+        })
+    }
+
     pub(super) fn selected(
         &self,
         app: &App,
@@ -335,12 +449,20 @@ pub(super) struct ProjectsPage {
 }
 
 #[derive(Serialize)]
+#[serde(transparent)]
+struct DisplayPath(
+    #[serde(serialize_with = "agentmender_domain::path_serde::serialize")] std::path::PathBuf,
+);
+
+#[derive(Serialize)]
 pub(super) struct ProjectView {
     pub key: String,
     provider: ProviderKind,
     pub name: String,
     workspace: Option<String>,
     namespace: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    archive_root: Option<DisplayPath>,
     pub roots: Vec<String>,
     registration: &'static str,
     main_conversations: usize,
@@ -391,6 +513,8 @@ impl ProjectView {
             persistent_instance: true,
             roots: project.roots.clone(),
             registration,
+            archive_root: (project.identity.provider == ProviderKind::Claude)
+                .then(|| DisplayPath(project.identity.state_root.clone())),
             namespace,
             main_conversations: project.sessions.len(),
             last_active_at: project.last_active_at,
@@ -453,6 +577,12 @@ struct SessionView {
     state: SessionState,
     transcript_bytes: Option<u64>,
     kind: SessionKind,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    claude: Option<SessionEvidence>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    namespace: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    archive_root: Option<DisplayPath>,
     protected: bool,
     removal_reason: Option<&'static str>,
 }
@@ -486,6 +616,10 @@ impl SessionView {
             state: meta.state,
             transcript_bytes: session.transcript_bytes,
             kind: session.kind,
+            namespace: meta.identity.namespace.clone(),
+            archive_root: (meta.identity.provider == ProviderKind::Claude)
+                .then(|| DisplayPath(meta.identity.state_root.clone())),
+            claude: snapshot.claude_evidence.get(&meta.identity).cloned(),
             protected,
             removal_reason,
         }
@@ -499,6 +633,8 @@ pub(super) struct Filter {
     state: Option<SessionState>,
     since: Option<NaiveDate>,
     until: Option<NaiveDate>,
+    min_bytes: Option<u64>,
+    max_bytes: Option<u64>,
     sort: Option<InventorySort>,
     ascending: Option<bool>,
     offset: Option<usize>,
@@ -515,6 +651,10 @@ impl TryFrom<Filter> for InventoryQuery {
             || search.chars().any(char::is_control)
             || offset > 100_000
             || !(1..=100).contains(&limit)
+            || value
+                .min_bytes
+                .zip(value.max_bytes)
+                .is_some_and(|(min, max)| min > max)
             || value
                 .since
                 .zip(value.until)
@@ -533,6 +673,8 @@ impl TryFrom<Filter> for InventoryQuery {
             state: value.state,
             since: value.since.map(to_seconds),
             before: value.until.map(to_seconds).map(|time| time + 86_400),
+            min_bytes: value.min_bytes,
+            max_bytes: value.max_bytes,
             sort: value.sort.unwrap_or_default(),
             ascending: value.ascending.unwrap_or_default(),
             offset,

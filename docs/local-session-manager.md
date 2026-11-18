@@ -15,10 +15,12 @@ server with Ctrl+C.
 
 Codex prefers `--codex-root`, then `CODEX_HOME`, then the provider default.
 With the default absent, discovery can select a single corroborated alternate.
-Claude Code defaults to
-`CLAUDE_CONFIG_DIR` or `~/.claude`. Supply absolute `--codex-root`,
-`--claude-root`, `--codex-executable` or `--claude-executable` overrides at
-launch. `--protect-codex-session <UUID>` protects a UUID in the configured Codex root, including when it
+Claude Code observes `~/.claude` and a distinct `CLAUDE_CONFIG_DIR` when
+set. An absolute `--claude-root` selects the primary root explicitly.
+Repeat `--claude-additional-root` to include more local archives.
+`--claude-desktop-root` can point at a separate directory of Desktop metadata.
+Supply absolute `--codex-root`, `--codex-executable` or `--claude-executable`
+overrides at launch. `--protect-codex-session <UUID>` protects a UUID in the configured Codex root, including when it
 is a descendant of the selected conversation. `--max-entries` bounds inventory acquisition and defaults to
 10,000. Use refresh to pick up external changes. Date filters use inclusive UTC
 calendar days over last activity.
@@ -36,7 +38,13 @@ On a supported Codex installation, open **Rimuovi sessioni del progetto**
 from an eligible project header. Confirm with `RIMUOVI SESSIONI DEL PROGETTO`.
 The operation processes the reviewed trees in sequence. The native registration,
 workspace and software repository are outside the scope. Desktop-backed projects
-support individual session reviews. Claude Code project namespaces are read-only.
+support individual session reviews.
+
+For Claude Code, open a session to read a bounded conversation preview and
+inspect its namespace, file modification time, metadata coverage and storage
+dependencies. Filter by metadata, activity date and transcript size. Standard
+and deep cleanup are disabled until the writer and ownership contracts can
+be verified. The Storage and dependencies section explains the blocker.
 
 On partial completion, inspect the verified, undispatched and uncertain
 subtree IDs. A restart discards receipts and live operation results. Refresh

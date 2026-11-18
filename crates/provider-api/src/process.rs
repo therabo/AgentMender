@@ -527,6 +527,20 @@ pub fn find_executables(kind: ProviderKind) -> Vec<std::path::PathBuf> {
 /// PowerShell executable and a fixed, parameter-free query are used.
 #[cfg(windows)]
 pub fn codex_windows_packages() -> Result<Vec<u8>, ProviderError> {
+    windows_packages(
+        "$env:PSModulePath=Join-Path $PSHOME Modules; [Console]::OutputEncoding=[Text.Encoding]::UTF8; Get-AppxPackage -Name OpenAI.Codex* | Select-Object Name,PublisherId,InstallLocation,PackageFamilyName,@{n='Architecture';e={$_.Architecture.ToString()}},@{n='Version';e={$_.Version.ToString()}} | ConvertTo-Json -Compress",
+    )
+}
+
+#[cfg(windows)]
+pub fn claude_windows_packages() -> Result<Vec<u8>, ProviderError> {
+    windows_packages(
+        "$env:PSModulePath=Join-Path $PSHOME Modules; [Console]::OutputEncoding=[Text.Encoding]::UTF8; Get-AppxPackage -Name Claude | Select-Object Name,InstallLocation,PackageFamilyName,@{n='SignatureKind';e={$_.SignatureKind.ToString()}},@{n='Version';e={$_.Version.ToString()}} | ConvertTo-Json -Compress",
+    )
+}
+
+#[cfg(windows)]
+fn windows_packages(script: &'static str) -> Result<Vec<u8>, ProviderError> {
     let root = std::env::var_os("SystemRoot")
         .map(std::path::PathBuf::from)
         .filter(|root| root.is_absolute())
@@ -534,9 +548,17 @@ pub fn codex_windows_packages() -> Result<Vec<u8>, ProviderError> {
             ProviderError::CapabilityUnavailable("Windows system root unavailable".into())
         })?;
     let mut command = Command::new(root.join("System32/WindowsPowerShell/v1.0/powershell.exe"));
-    command.args(["-NoLogo", "-NoProfile", "-NonInteractive", "-Command",
-        "$env:PSModulePath=Join-Path $PSHOME Modules; [Console]::OutputEncoding=[Text.Encoding]::UTF8; Get-AppxPackage -Name OpenAI.Codex* | Select-Object Name,PublisherId,InstallLocation,PackageFamilyName,@{n='Architecture';e={$_.Architecture.ToString()}},@{n='Version';e={$_.Version.ToString()}} | ConvertTo-Json -Compress"])
-        .stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null());
+    command
+        .args([
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            script,
+        ])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
     small_output(command)
 }
 

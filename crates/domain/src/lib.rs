@@ -5,7 +5,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-mod path_serde;
+pub mod path_serde;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -136,6 +136,20 @@ impl Session {
     pub fn is_main(&self) -> bool {
         self.kind == SessionKind::Main && self.parent.is_none() && self.forked_from.is_none()
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TranscriptRole {
+    User,
+    Assistant,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TranscriptMessage {
+    pub role: TranscriptRole,
+    pub text: String,
 }
 
 /// Codex stores UUIDs in lowercase canonical form. Claude locators may use

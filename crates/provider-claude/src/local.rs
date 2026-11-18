@@ -1,199 +1,865 @@
-//! Bounded observation of Claude Code project JSONL metadata.
-use super::{ClaudeAdapter, transcript_shape};
+//! Metadata and display text derived from scoped Claude Code JSONL files.
+use super::{ClaudeAdapter, TranscriptShape, strict_version, transcript_shape};
+use crate::{
+    read::{Lines, Revision, verify},
+    storage::{self, Budget, DesktopState, EntryKind, RootView},
+};
 use agentmender_domain::*;
-use agentmender_provider_api::{ProviderError, filesystem, io_error, validate_location};
-use serde::Deserialize;
-use std::{io, path::Path};
+use agentmender_provider_api::{ProviderError, filesystem, io_error};
+use serde::{Deserialize, Serialize};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fs::File,
+    path::{Path, PathBuf},
+    time::{Duration, Instant},
+};
 
-const PREFIX: usize = 64 * 1024;
+const HEAD: u64 = 20 * 1024 * 1024;
+const TAIL: u64 = 4 * 1024 * 1024;
+const MAX_LINES: usize = 100_000;
+const CACHE_SIZE: usize = 4096;
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Record {
+    #[serde(alias = "session_id")]
     session_id: Option<String>,
     agent_id: Option<String>,
     is_sidechain: Option<bool>,
+    #[serde(default)]
+    is_meta: bool,
+    #[serde(default)]
+    is_compact_summary: bool,
+    #[serde(default)]
+    is_visible_in_transcript_only: bool,
     #[serde(rename = "type")]
-    kind: Option<String>,
+    kind: String,
     cwd: Option<String>,
     created_at: Option<String>,
     timestamp: Option<String>,
     custom_title: Option<String>,
+    ai_title: Option<String>,
+    summary: Option<String>,
     entrypoint: Option<String>,
+    version: Option<String>,
+    forked_from_session_id: Option<String>,
+    message: Option<Message>,
 }
 
-fn timestamp(value: Option<&str>) -> Option<i64> {
+#[derive(Deserialize)]
+struct Message {
+    content: Option<Content>,
+    model: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum Content {
+    Text(String),
+    Blocks(Vec<Block>),
+}
+
+#[derive(Deserialize)]
+struct Block {
+    #[serde(rename = "type")]
+    kind: String,
+    text: Option<String>,
+}
+
+pub(crate) fn timestamp(value: Option<&str>) -> Option<i64> {
     chrono::DateTime::parse_from_rfc3339(value?)
         .ok()
         .map(|time| time.timestamp())
 }
 
-fn displayable(value: &str) -> bool {
+pub(crate) fn displayable(value: &str) -> bool {
     !value.trim().is_empty()
         && value.len() <= 4096
         && !value.chars().any(char::is_control)
         && safe_conversation_text(value)
 }
 
-impl ClaudeAdapter {
-    pub fn local_inventory(&self, limit: usize) -> Result<InventoryObservation, ProviderError> {
-        validate_location(&self.location)?;
-        let projects = self.location.state_root.join("projects");
-        let inventory = filesystem::inventory(&projects, limit)?;
-        let mut incomplete =
-            inventory.incomplete || inventory.truncated || inventory.permission_denied;
-        let instances = inventory
-            .directories
-            .iter()
-            .filter_map(|name| {
-                name.to_str()
-                    .filter(|name| displayable(name) && name.len() <= 900)
-            })
-            .map(|name| RegisteredProject {
-                identity: ProjectIdentity {
-                    provider: ProviderKind::Claude,
-                    state_root: self.location.state_root.clone(),
-                    locator: ProjectLocator::Namespace(name.into()),
+fn text_visible(value: &str) -> bool {
+    !value.trim().is_empty()
+        && !value
+            .chars()
+            .any(|ch| ch.is_control() && !matches!(ch, '\t' | '\r' | '\n'))
+        && ![
+            "<local-command-",
+            "<command-name>",
+            "<command-message>",
+            "<command-args>",
+            "<system-reminder>",
+            "<tool_result",
+            "<task-notification>",
+            "<available-deferred-tools",
+            "<claude-code-",
+            "[Request interrupted",
+        ]
+        .iter()
+        .any(|marker| value.contains(marker))
+        && safe_conversation_text(value)
+}
+
+pub(crate) fn title(value: &str) -> Option<String> {
+    (value.len() <= 32 * 1024 && text_visible(value)).then(|| {
+        value
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .chars()
+            .take(180)
+            .collect()
+    })
+}
+
+fn shorten_text(text: &str, max: usize) -> &str {
+    let mut boundary = max.min(text.len());
+    while !text.is_char_boundary(boundary) {
+        boundary -= 1;
+    }
+    &text[..boundary]
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Surface {
+    Cli,
+    Desktop,
+    Mixed,
+}
+
+impl Surface {
+    fn parse(value: &str) -> Option<Self> {
+        match value {
+            "cli" | "sdk-cli" => Some(Self::Cli),
+            "claude-desktop" => Some(Self::Desktop),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TitleSource {
+    Custom,
+    Generated,
+    FirstRequest,
+    Fallback,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct SessionEvidence {
+    pub metadata_complete: bool,
+    pub modified_at: Option<i64>,
+    pub surface: Option<Surface>,
+    pub title_source: TitleSource,
+    pub versions: Vec<String>,
+    pub desktop_record: bool,
+    pub sidechain: bool,
+    pub same_uuid_elsewhere: usize,
+    pub subagents: usize,
+    pub forks: usize,
+    #[serde(skip)]
+    pub revision: Revision,
+}
+
+#[derive(Clone)]
+pub(crate) struct Cached {
+    session: Session,
+    evidence: SessionEvidence,
+    desktop: Option<DesktopState>,
+}
+
+pub struct Catalog {
+    pub inventory: InventoryObservation,
+    pub evidence: BTreeMap<SessionIdentity, SessionEvidence>,
+    pub roots: Vec<RootView>,
+}
+
+#[derive(Default)]
+struct Scan {
+    found: bool,
+    sidechain: bool,
+    conflict: bool,
+    incomplete: bool,
+    custom: Option<String>,
+    generated: Option<String>,
+    first: Option<String>,
+    workspace: Option<String>,
+    workspace_ambiguous: bool,
+    workspace_match: Option<usize>,
+    foreign_rows: bool,
+    surface: Option<Surface>,
+    versions: BTreeSet<String>,
+    created: Option<i64>,
+    first_message_at: Option<i64>,
+    last_message_at: Option<i64>,
+    fork: Option<String>,
+}
+
+impl Record {
+    fn role(&self) -> Option<TranscriptRole> {
+        match self.kind.as_str() {
+            "user" => Some(TranscriptRole::User),
+            "assistant" => Some(TranscriptRole::Assistant),
+            _ => None,
+        }
+    }
+
+    fn visible(&self, max: usize) -> Option<String> {
+        if self.role().is_none()
+            || self.is_meta
+            || self.is_visible_in_transcript_only
+            || self.is_compact_summary
+            || self.message.as_ref()?.model.as_deref() == Some("<synthetic>")
+        {
+            return None;
+        }
+        let mut result = String::new();
+        let mut append = |text: &str| {
+            if !result.is_empty() && result.len() < max {
+                result.push('\n');
+            }
+            result.push_str(shorten_text(text.trim(), max - result.len()));
+        };
+        match self.message.as_ref()?.content.as_ref()? {
+            Content::Text(value) if text_visible(value) => append(value),
+            Content::Blocks(parts) => {
+                if self.role() == Some(TranscriptRole::User)
+                    && parts.iter().any(|part| part.kind == "tool_result")
+                {
+                    return None;
+                }
+                for part in parts {
+                    if part.kind == "text"
+                        && let Some(text) = &part.text
+                    {
+                        if !text_visible(text) {
+                            return None;
+                        }
+                        append(text);
+                    }
+                }
+            }
+            _ => return None,
+        }
+        (!result.is_empty() && text_visible(&result)).then_some(result)
+    }
+}
+
+impl Scan {
+    fn record(&mut self, record: Record, shape: &TranscriptShape, desktop: Option<&DesktopState>) {
+        let sid = record.session_id.as_deref();
+        let Some(sid) = sid else {
+            // Legacy summaries can be file-scoped. They cannot establish identity.
+            if record.kind == "summary"
+                && let Some(value) = record.summary.as_deref().and_then(title)
+            {
+                self.generated = Some(value);
+            }
+            return;
+        };
+        if sid != shape.session_id {
+            self.foreign_rows = true;
+            self.conflict |= desktop.and_then(|state| state.parent_cli_id.as_deref()) != Some(sid);
+            return;
+        }
+        if shape.agent_id.is_none() && record.is_sidechain == Some(true) {
+            self.sidechain = true;
+            return;
+        }
+        if record
+            .agent_id
+            .as_ref()
+            .is_some_and(|agent| Some(agent) != shape.agent_id.as_ref())
+        {
+            self.conflict = true;
+            return;
+        }
+        if let Some(entrypoint) = record.entrypoint.as_deref() {
+            let Some(surface) = Surface::parse(entrypoint) else {
+                self.conflict = true;
+                return;
+            };
+            self.surface = Some(match self.surface {
+                Some(prior) if prior != surface => Surface::Mixed,
+                _ => surface,
+            });
+        }
+        self.found |= match &shape.agent_id {
+            Some(agent) => {
+                record.agent_id.as_ref() == Some(agent) && record.is_sidechain == Some(true)
+            }
+            None => record.role().is_some() && record.agent_id.is_none(),
+        };
+        if let Some(fork) = record.forked_from_session_id.as_deref() {
+            if !uuid_shape(fork)
+                || fork == sid
+                || self.fork.as_deref().is_some_and(|prior| prior != fork)
+            {
+                self.conflict = true;
+            } else {
+                self.fork = Some(fork.into());
+            }
+        }
+        if let Some(cwd) = record
+            .cwd
+            .as_ref()
+            .filter(|cwd| displayable(cwd) && observed_path_is_absolute(Path::new(cwd)))
+        {
+            self.workspace_ambiguous |= self.workspace.as_ref().is_some_and(|prior| prior != cwd);
+            self.workspace.get_or_insert_with(|| cwd.clone());
+            if let Some(index) =
+                desktop.and_then(|state| state.workspaces.iter().position(|path| path == cwd))
+            {
+                self.workspace_match =
+                    Some(self.workspace_match.map_or(index, |prior| prior.min(index)));
+            }
+        }
+        if let Some(version) = record
+            .version
+            .as_ref()
+            .filter(|value| strict_version(value))
+        {
+            if self.versions.len() < 16 {
+                self.versions.insert(version.clone());
+            } else if !self.versions.contains(version) {
+                self.incomplete = true;
+            }
+        }
+        if let Some(created) = timestamp(record.created_at.as_deref()) {
+            self.created = Some(self.created.map_or(created, |prior| prior.min(created)));
+        }
+        if record.role().is_some()
+            && !record.is_meta
+            && !record.is_compact_summary
+            && let Some(date) = timestamp(record.timestamp.as_deref())
+        {
+            self.first_message_at =
+                Some(self.first_message_at.map_or(date, |prior| prior.min(date)));
+            self.last_message_at = self.last_message_at.max(Some(date));
+        }
+        let generated = match record.kind.as_str() {
+            "ai-title" => record.ai_title.as_deref(),
+            "summary" => record.summary.as_deref(),
+            _ => None,
+        };
+        if let Some(value) = generated.and_then(title) {
+            self.generated = Some(value);
+        }
+        if record.kind == "custom-title"
+            && let Some(value) = &record.custom_title
+        {
+            // An unsafe newer title also supersedes the former title.
+            self.custom = title(value);
+        }
+        if self.first.is_none() && record.role() == Some(TranscriptRole::User) {
+            self.first = record.visible(1024).as_deref().and_then(title);
+        }
+    }
+}
+
+fn scan_file(
+    file: &mut File,
+    path: &Path,
+    bytes: u64,
+    shape: &TranscriptShape,
+    desktop: Option<&DesktopState>,
+    budget: &mut Budget,
+) -> Result<Scan, ProviderError> {
+    let available = budget.bytes.min(HEAD + TAIL);
+    let bytes_to_scan = available.min(bytes);
+    budget.bytes -= bytes_to_scan;
+    let mut scan = Scan {
+        incomplete: bytes_to_scan < bytes,
+        ..Default::default()
+    };
+    if bytes_to_scan == 0 {
+        return Ok(scan);
+    }
+    let (head, tail) = if bytes_to_scan == bytes {
+        (bytes, 0)
+    } else {
+        let tail = (bytes_to_scan / 3).min(TAIL);
+        (bytes_to_scan - tail, tail)
+    };
+    // Reserve part of the record budget and wall time for the end when
+    // the initial scan cannot cover the entire file.
+    let now = Instant::now();
+    let deadline = budget.deadline.min(now + Duration::from_secs(2));
+    let prefix_deadline = budget.deadline.min(now + Duration::from_millis(1500));
+    let mut scan_range = |start: u64, end: u64, limit: usize, cutoff: Instant| {
+        let mut lines = Lines::new(file, start, end).map_err(|e| io_error(path, e))?;
+        if start != 0 {
+            // A tail window may start inside a record.
+            lines.next().map_err(|e| io_error(path, e))?;
+        }
+        for index in 0..limit {
+            if index % 64 == 0 && Instant::now() >= cutoff {
+                break;
+            }
+            let Some(line) = lines.next().map_err(|e| io_error(path, e))? else {
+                break;
+            };
+            match line.bytes {
+                Some(line) if line.iter().all(u8::is_ascii_whitespace) => {}
+                Some(line) => match serde_json::from_slice(line) {
+                    Ok(record) => scan.record(record, shape, desktop),
+                    Err(_) => scan.incomplete = true,
                 },
-                name: None,
-                roots: Vec::new(),
-                desktop_backed: false,
-            })
-            .collect();
-        let mut sessions = Vec::new();
-        for file in inventory.files {
-            let locator = Path::new("projects").join(&file.relative_path);
-            let Some(shape) = transcript_shape(&locator) else {
+                None => scan.incomplete = true,
+            }
+        }
+        scan.incomplete |= lines.offset < lines.end;
+        Ok::<_, ProviderError>(lines.offset)
+    };
+    let reserve = MAX_LINES / 4;
+    let scanned = scan_range(0, head, MAX_LINES - reserve, prefix_deadline)?;
+    if scanned < bytes && Instant::now() < deadline {
+        let tail = if tail == 0 {
+            TAIL.min(bytes - scanned)
+        } else {
+            tail
+        };
+        let start = bytes - tail;
+        scan_range(start, bytes, reserve, deadline)?;
+    }
+    Ok(scan)
+}
+
+impl ClaudeAdapter {
+    pub fn local_catalog(&self, limit: usize) -> Catalog {
+        let mut budget = Budget::new(limit);
+        let mut candidates = Vec::new();
+        let mut inventory = InventoryObservation::default();
+        let mut roots = Vec::new();
+        let mut folders = BTreeSet::new();
+        let mut physical_roots = BTreeSet::new();
+        for (path, source) in &self.roots {
+            let mut view = storage::root_view(path, *source);
+            view.same_filesystem_root = view
+                .filesystem_identity
+                .as_ref()
+                .is_some_and(|id| !physical_roots.insert(id.clone()));
+            if view.same_filesystem_root {
+                roots.push(view);
                 continue;
-            };
-            let Ok(bytes) = filesystem::read_prefix(&self.location.state_root, &file.path, PREFIX)
-            else {
-                incomplete = true;
-                continue;
-            };
-            let mut found = false;
-            let mut conflict = false;
-            let mut sidechain = false;
-            let mut workspace = None;
-            let mut workspace_ambiguous = false;
-            let mut title = None;
-            let mut created_at = None;
-            let mut last_active_at = None;
-            let complete = file.size_bytes <= bytes.len() as u64;
-            let mut lines = bytes.split(|b| *b == b'\n').peekable();
-            let mut examined = 0;
-            while let Some(line) = lines.next() {
-                if line.is_empty() {
-                    continue;
-                }
-                if examined == 96 || (!complete && lines.peek().is_none()) {
-                    break;
-                }
-                examined += 1;
-                let Ok(record) = serde_json::from_slice::<Record>(line) else {
-                    continue;
-                };
-                let id = record.session_id.as_deref();
-                if shape.agent_id.is_none() && record.is_sidechain == Some(true) {
-                    sidechain = true;
-                    break;
-                }
-                if id.is_some_and(|id| id != shape.session_id)
-                    || record
-                        .agent_id
-                        .as_ref()
-                        .is_some_and(|id| Some(id) != shape.agent_id.as_ref())
-                    || record
-                        .entrypoint
-                        .as_deref()
-                        .is_some_and(|entry| !matches!(entry, "cli" | "sdk-cli" | "claude-desktop"))
+            }
+            let read_at_start = budget.issues;
+            let count = candidates.len();
+            if view.readable {
+                let projects = path.join("projects");
+                let namespaces = budget.list(&projects);
+                for namespace in namespaces
+                    .iter()
+                    .filter(|entry| entry.kind == EntryKind::Directory)
                 {
-                    conflict = true;
-                    break;
+                    let Some(name) = namespace
+                        .path
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .filter(|name| name.len() <= 900 && displayable(name))
+                    else {
+                        budget.mark();
+                        continue;
+                    };
+                    let identity = ProjectIdentity {
+                        provider: ProviderKind::Claude,
+                        state_root: path.clone(),
+                        locator: ProjectLocator::Namespace(name.into()),
+                    };
+                    if !folders.insert(identity.clone()) {
+                        continue;
+                    }
+                    inventory.projects.push(RegisteredProject {
+                        identity,
+                        name: None,
+                        roots: Vec::new(),
+                        desktop_backed: false,
+                    });
+                    for entry in budget.list(&namespace.path) {
+                        if entry.kind == EntryKind::File {
+                            if transcript_shape(
+                                entry.path.strip_prefix(path).expect("enumerated root"),
+                            )
+                            .is_some()
+                            {
+                                candidates.push((path.clone(), entry.path));
+                            }
+                        } else if entry.kind == EntryKind::Directory
+                            && entry
+                                .path
+                                .file_name()
+                                .and_then(|name| name.to_str())
+                                .is_some_and(uuid_shape)
+                        {
+                            for child in budget.list(&entry.path.join("subagents")) {
+                                if child.kind == EntryKind::File
+                                    && transcript_shape(
+                                        child.path.strip_prefix(path).expect("enumerated root"),
+                                    )
+                                    .is_some()
+                                {
+                                    candidates.push((path.clone(), child.path));
+                                }
+                            }
+                        }
+                    }
                 }
-                if id.is_none() {
-                    continue;
-                }
-                found |= match shape.agent_id.as_ref() {
-                    Some(agent) => record.agent_id.as_ref() == Some(agent),
-                    None => record.agent_id.is_none(),
-                };
-                if let Some(cwd) = record
-                    .cwd
-                    .filter(|cwd| displayable(cwd) && observed_path_is_absolute(Path::new(cwd)))
-                {
-                    workspace_ambiguous |= workspace.as_ref().is_some_and(|prior| prior != &cwd);
-                    workspace = Some(cwd);
-                }
-                if record.kind.as_deref() == Some("custom-title") {
-                    title = record.custom_title.filter(|value| displayable(value));
-                }
-                created_at = created_at.or(timestamp(record.created_at.as_deref()));
-                if matches!(record.kind.as_deref(), Some("user" | "assistant")) {
-                    last_active_at = last_active_at.max(timestamp(record.timestamp.as_deref()));
-                }
+            } else if view.present {
+                budget.mark();
             }
-            if !found || conflict || sidechain {
-                incomplete |= !sidechain;
-                continue;
+            roots.push(RootView {
+                transcript_candidates: candidates.len() - count,
+                enumeration_incomplete: budget.issues != read_at_start,
+                ..view
+            });
+        }
+        let mut uuid_counts = BTreeMap::new();
+        for (_, path) in &candidates {
+            if let Some(id) = path
+                .file_stem()
+                .and_then(|name| name.to_str())
+                .filter(|id| uuid_shape(id))
+            {
+                *uuid_counts.entry(id.to_string()).or_insert(0usize) += 1;
             }
-            if workspace_ambiguous {
-                workspace = None;
+        }
+        let desktop = if roots.iter().any(|root| root.enumeration_incomplete) {
+            BTreeMap::new()
+        } else {
+            storage::desktop_states(&self.desktop, &mut budget)
+        };
+        let mut evidence = BTreeMap::new();
+        let mut cache = self.cache.lock().expect("Claude metadata cache");
+        let mut next_cache = BTreeMap::new();
+        for (root, path) in candidates {
+            if budget.expired() {
+                break;
             }
-            let root = &self.location.state_root;
-            let native = shape.agent_id.as_ref().map_or_else(
+            let relative = path.strip_prefix(&root).expect("enumerated root");
+            let shape = transcript_shape(relative).expect("filtered locator");
+            let native_id = shape.agent_id.as_ref().map_or_else(
                 || shape.session_id.clone(),
                 |agent| format!("{}/agent:{agent}", shape.session_id),
             );
-            if shape.bucket.len() + native.len() > 1000
-                || shape.bucket.len() > 900
-                || !displayable(&shape.bucket)
-            {
-                incomplete = true;
+            if shape.bucket.len() + native_id.len() > 1000 {
+                budget.mark();
                 continue;
             }
-            let identity = |native_id| SessionIdentity {
+            let identity = SessionIdentity {
                 provider: ProviderKind::Claude,
                 state_root: root.clone(),
                 namespace: Some(shape.bucket.clone()),
                 native_id,
             };
-            let parent = shape.agent_id.as_ref().map(|_| identity(shape.session_id));
-            sessions.push(Session {
-                project: workspace
-                    .as_ref()
-                    .and_then(|cwd| Path::new(cwd).file_name()?.to_str().map(str::to_owned)),
-                identity: identity(native),
-                codex_membership: CodexMembership::Unassigned,
-                title,
-                created_at,
-                last_active_at: (complete && lines.next().is_none() && examined < 96)
-                    .then_some(last_active_at)
-                    .flatten(),
-                state: SessionState::Unknown,
-                workspace,
-                transcript_bytes: Some(file.size_bytes),
-                kind: if parent.is_some() {
-                    SessionKind::Subagent
-                } else {
-                    SessionKind::Main
-                },
-                forked_from: None,
-                parent,
-            });
+            let duplicates = uuid_counts.get(&shape.session_id).copied().unwrap_or(0);
+            let linked = (shape.agent_id.is_none() && duplicates == 1)
+                .then(|| desktop.get(&shape.session_id))
+                .flatten();
+            match observe(&path, &shape, identity, linked, &cache, &mut budget) {
+                Ok(mut row) => {
+                    row.evidence.same_uuid_elsewhere = duplicates.saturating_sub(1);
+                    if next_cache.len() < CACHE_SIZE && row.evidence.metadata_complete {
+                        next_cache.insert(row.session.identity.clone(), row.clone());
+                    }
+                    if !row.evidence.metadata_complete {
+                        budget.mark();
+                    }
+                    evidence.insert(row.session.identity.clone(), row.evidence);
+                    inventory.sessions.push(row.session);
+                }
+                Err(_) => budget.mark(),
+            }
         }
-        if sessions.is_empty() && inventory.permission_denied {
-            return Err(io_error(
-                projects,
-                io::Error::from(io::ErrorKind::PermissionDenied),
+        *cache = next_cache;
+        let mut dependencies = BTreeMap::<&SessionIdentity, usize>::new();
+        for row in &inventory.sessions {
+            if let Some(parent) = &row.parent {
+                *dependencies.entry(parent).or_default() += 1;
+            }
+            if let Some(fork) = &row.forked_from {
+                let mut parent = row.identity.clone();
+                parent.native_id = fork.clone();
+                if let Some(source) = evidence.get_mut(&parent) {
+                    source.forks += 1;
+                }
+            }
+        }
+        for (id, subagents) in dependencies {
+            if let Some(source) = evidence.get_mut(id) {
+                source.subagents = subagents;
+            }
+        }
+        let desktop_projects: BTreeSet<_> = evidence
+            .iter()
+            .filter_map(|(id, meta)| {
+                (meta.desktop_record)
+                    .then_some(id.namespace.as_ref())
+                    .flatten()
+                    .map(|ns| ProjectIdentity {
+                        provider: ProviderKind::Claude,
+                        state_root: id.state_root.clone(),
+                        locator: ProjectLocator::Namespace(ns.clone()),
+                    })
+            })
+            .collect();
+        for project in &mut inventory.projects {
+            project.desktop_backed = desktop_projects.contains(&project.identity);
+        }
+        inventory.incomplete = budget.issues > 0;
+        inventory.projects_incomplete =
+            roots.iter().any(|root| root.enumeration_incomplete) || budget.expired();
+        Catalog {
+            inventory,
+            evidence,
+            roots,
+        }
+    }
+}
+
+fn observe(
+    path: &Path,
+    shape: &TranscriptShape,
+    identity: SessionIdentity,
+    desktop: Option<&DesktopState>,
+    cache: &BTreeMap<SessionIdentity, Cached>,
+    budget: &mut Budget,
+) -> Result<Cached, ProviderError> {
+    let root = &identity.state_root;
+    let mut file = filesystem::open_observed_read(root, path)?;
+    let revision = Revision::read(&file, path)?;
+    if let Some(prior) = cache
+        .get(&identity)
+        .filter(|entry| entry.evidence.revision == revision && entry.desktop.as_ref() == desktop)
+    {
+        verify(root, path, &revision)?;
+        return Ok(prior.clone());
+    }
+    let scan = scan_file(&mut file, path, revision.bytes, shape, desktop, budget)?;
+    verify(root, path, &revision)?;
+    if (!scan.found && !scan.sidechain) || scan.conflict {
+        return Err(ProviderError::InvalidScope(
+            "unverified Claude transcript".into(),
+        ));
+    }
+    let desktop_workspace = desktop
+        .filter(|_| scan.surface == Some(Surface::Desktop))
+        .zip(scan.workspace_match)
+        .and_then(|(state, index)| state.workspaces.get(index));
+    let desktop = desktop.filter(|_| desktop_workspace.is_some());
+    if scan.foreign_rows && desktop.is_none() {
+        return Err(ProviderError::InvalidScope(
+            "unverified Claude fork relationship".into(),
+        ));
+    }
+    let workspace = desktop_workspace.cloned().or_else(|| {
+        (!scan.workspace_ambiguous)
+            .then_some(scan.workspace)
+            .flatten()
+    });
+    let forked_from = desktop
+        .and_then(|state| state.parent_cli_id.clone())
+        .or(scan.fork);
+    let kind = if shape.agent_id.is_some() {
+        SessionKind::Subagent
+    } else if scan.sidechain {
+        SessionKind::Unknown
+    } else if forked_from.is_some() || desktop.is_some_and(|state| state.has_fork) {
+        SessionKind::Fork
+    } else {
+        SessionKind::Main
+    };
+    let parent = shape.agent_id.as_ref().map(|_| SessionIdentity {
+        native_id: shape.session_id.clone(),
+        ..identity.clone()
+    });
+    let fallback = format!("Sessione {}", &shape.session_id[..8]);
+    let (title, title_source) = if let Some(value) = scan.custom {
+        (value, TitleSource::Custom)
+    } else if let Some(value) = scan.generated {
+        (value, TitleSource::Generated)
+    } else if let Some(value) = scan.first {
+        (value, TitleSource::FirstRequest)
+    } else {
+        (fallback, TitleSource::Fallback)
+    };
+    Ok(Cached {
+        desktop: desktop.cloned(),
+        session: Session {
+            project: workspace
+                .as_ref()
+                .and_then(|cwd| cwd.trim_end_matches(['/', '\\']).rsplit(['/', '\\']).next())
+                .map(str::to_owned),
+            identity,
+            codex_membership: CodexMembership::Unassigned,
+            title: Some(title),
+            created_at: scan
+                .created
+                .or_else(|| desktop.and_then(|state| state.created))
+                .or(scan.first_message_at),
+            last_active_at: scan.last_message_at,
+            state: match desktop.and_then(|state| state.archived) {
+                Some(true) => SessionState::Archived,
+                Some(false) => SessionState::Active,
+                None => SessionState::Unknown,
+            },
+            workspace,
+            transcript_bytes: Some(revision.bytes),
+            kind,
+            forked_from,
+            parent,
+        },
+        evidence: SessionEvidence {
+            metadata_complete: !scan.incomplete,
+            modified_at: revision
+                .modified
+                .map(|time| chrono::DateTime::<chrono::Utc>::from(time).timestamp()),
+            surface: scan.surface,
+            title_source,
+            versions: scan.versions.into_iter().collect(),
+            desktop_record: desktop.is_some(),
+            sidechain: scan.sidechain,
+            same_uuid_elsewhere: 0,
+            subagents: 0,
+            forks: 0,
+            revision,
+        },
+    })
+}
+
+#[derive(Clone)]
+pub struct Cursor {
+    identity: SessionIdentity,
+    revision: Revision,
+    offset: u64,
+    discard_fragment: bool,
+    incomplete: bool,
+}
+
+pub struct TranscriptPage {
+    pub messages: Vec<TranscriptMessage>,
+    pub next: Option<Cursor>,
+    pub complete: bool,
+}
+
+const PAGE_BYTES: u64 = 4 * 1024 * 1024;
+
+impl ClaudeAdapter {
+    pub fn transcript_page(
+        &self,
+        identity: &SessionIdentity,
+        revision: &Revision,
+        cursor: Option<Cursor>,
+    ) -> Result<TranscriptPage, ProviderError> {
+        let path = self.transcript_path(identity)?;
+        let root = &identity.state_root;
+        let mut file = filesystem::open_observed_read(root, &path)?;
+        if Revision::read(&file, &path)? != *revision
+            || cursor
+                .as_ref()
+                .is_some_and(|saved| &saved.identity != identity || &saved.revision != revision)
+        {
+            return Err(ProviderError::InvalidScope(
+                "Claude transcript revision changed".into(),
             ));
         }
-        Ok(InventoryObservation {
-            sessions,
-            projects: instances,
+        let offset = cursor.as_ref().map_or(0, |saved| saved.offset);
+        let mut discard_fragment = cursor.as_ref().is_some_and(|saved| saved.discard_fragment);
+        let mut incomplete = cursor.is_some_and(|saved| saved.incomplete);
+        let end = revision.bytes.min(offset.saturating_add(PAGE_BYTES));
+        let mut lines = Lines::new(&mut file, offset, end).map_err(|e| io_error(&path, e))?;
+        let mut messages = Vec::new();
+        let mut text_remaining = 24 * 1024;
+        let deadline = Instant::now() + Duration::from_secs(1);
+        let mut position = offset;
+        for _ in 0..4096 {
+            if messages.len() >= 20 || text_remaining < 1024 || Instant::now() >= deadline {
+                break;
+            }
+            // Leave room to find the boundary of a large or skipped record.
+            // The last page can instead consume a physical EOF fragment.
+            if end < revision.bytes && lines.offset >= end - crate::read::MAX_RECORD as u64 {
+                break;
+            }
+            let Some(line) = lines.next().map_err(|e| io_error(&path, e))? else {
+                break;
+            };
+            position = line.end;
+            let discard = discard_fragment;
+            discard_fragment = !line.terminated;
+            if discard {
+                continue;
+            }
+            let Some(line) = line.bytes else {
+                incomplete = true;
+                continue;
+            };
+            if line.iter().all(u8::is_ascii_whitespace) {
+                continue;
+            }
+            let Ok(record) = serde_json::from_slice::<Record>(line) else {
+                incomplete = true;
+                continue;
+            };
+            if record.session_id.as_deref() != Some(identity.native_id.as_str())
+                || record.is_sidechain == Some(true)
+                || record.agent_id.is_some()
+                || record
+                    .entrypoint
+                    .as_deref()
+                    .is_some_and(|entry| Surface::parse(entry).is_none())
+            {
+                continue;
+            }
+            if let Some(role) = record.role()
+                && let Some(text) = record.visible(text_remaining.min(4096))
+            {
+                text_remaining -= text.len();
+                messages.push(TranscriptMessage { role, text });
+            }
+        }
+        verify(root, &path, revision)?;
+        let next = (position > offset && position < revision.bytes).then(|| Cursor {
+            identity: identity.clone(),
+            revision: revision.clone(),
+            offset: position,
+            discard_fragment,
             incomplete,
-            projects_incomplete: incomplete,
-            ..Default::default()
+        });
+        Ok(TranscriptPage {
+            messages,
+            complete: position == revision.bytes && !incomplete,
+            next,
         })
+    }
+
+    pub(crate) fn transcript_path(
+        &self,
+        identity: &SessionIdentity,
+    ) -> Result<PathBuf, ProviderError> {
+        if identity.provider == ProviderKind::Claude
+            && self
+                .roots
+                .iter()
+                .any(|(path, _)| path == &identity.state_root)
+            && uuid_shape(&identity.native_id)
+            && let Some(namespace) = &identity.namespace
+            && let [std::path::Component::Normal(_)] = Path::new(namespace)
+                .components()
+                .collect::<Vec<_>>()
+                .as_slice()
+            && !namespace.contains(['/', '\\', ':'])
+        {
+            return Ok(identity
+                .state_root
+                .join("projects")
+                .join(namespace)
+                .join(format!("{}.jsonl", identity.native_id)));
+        }
+        Err(ProviderError::InvalidScope(
+            "invalid Claude session locator".into(),
+        ))
     }
 }

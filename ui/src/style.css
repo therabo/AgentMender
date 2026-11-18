@@ -317,3 +317,11 @@ h3 { font-size: 15px; font-weight: 650; }
   .export-row time { grid-column: 1 / -1; }
   .storage-detail dl { grid-template-columns: minmax(0, 1fr); }
 }
+
+.claude-session .drawer-header { position: sticky; z-index: 1; top: 0; }
+.claude-discovery { margin: 12px 0 20px; color: var(--muted); font-size: 13px; }
+.claude-discovery summary, .removal-section summary { cursor: pointer; font-weight: 600; }
+.claude-artifacts { list-style: none; padding: 0; margin: 10px 0; }
+.claude-artifacts li { display: grid; gap: 3px; padding: 7px 0; border-bottom: 1px solid var(--line-soft); }
+.claude-artifacts code { overflow-wrap: anywhere; }
+.date-controls input[type="number"] { width: 8ch; }

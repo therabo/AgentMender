@@ -32,3 +32,7 @@ export function sizeLabel(bytes: number | null): string {
 }
 
 export const numberLabel = (count: number) => integer.format(count)
+
+export function pathLabel(path: string | { encoding: string; hex: string } | undefined) {
+  return typeof path === 'string' ? path : 'Percorso non rappresentabile'
+}

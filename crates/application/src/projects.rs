@@ -213,6 +213,8 @@ pub fn page<'a>(
                 return query.state.is_none()
                     && query.since.is_none()
                     && query.before.is_none()
+                    && query.min_bytes.is_none()
+                    && query.max_bytes.is_none()
                     && search
                         .split_whitespace()
                         .all(|word| project.labels.iter().any(|label| label.contains(word)));

@@ -1,8 +1,8 @@
 use std::{env, path::PathBuf, process::ExitCode};
 
 use agentmender_domain::{ProviderKind, canonical_uuid};
-use agentmender_provider_api::{ProviderLocation, process};
-use agentmender_provider_claude::{ClaudeAdapter, DesktopContext};
+use agentmender_provider_api::process;
+use agentmender_provider_claude::{ClaudeAdapter, DesktopContext, InstallationView, RootSource};
 use agentmender_provider_codex::{
     CodexAdapter, NativeRemoval, NativeUnavailable, discovery::Discovery,
 };
@@ -19,6 +19,9 @@ struct Args {
     /// Override CLAUDE_CONFIG_DIR or ~/.claude.
     #[arg(long, global = true, value_parser = absolute_path)]
     claude_root: Option<PathBuf>,
+    /// Also inspect a separate Claude Code configuration root.
+    #[arg(long, global = true, value_parser = absolute_path)]
+    claude_additional_root: Vec<PathBuf>,
     /// Inspect installations under this Claude Desktop data root.
     #[arg(long, global = true, value_parser = absolute_path)]
     claude_desktop_root: Option<PathBuf>,
@@ -81,36 +84,160 @@ fn root(
     }
 }
 
-fn claude_adapter(
-    args: &Args,
-    location: ProviderLocation,
-    home: &std::path::Path,
-) -> Result<ClaudeAdapter, String> {
-    let default_desktop = cfg!(target_os = "macos")
-        && args.claude_root.is_none()
-        && env::var_os("CLAUDE_CONFIG_DIR").is_none();
-    let default_root = home.join("Library/Application Support/Claude");
-    let desktop = args
-        .claude_desktop_root
-        .clone()
-        .or_else(|| default_desktop.then(|| default_root.clone()));
-    let adapter = ClaudeAdapter::new(location);
-    let Some(data_root) = desktop else {
-        return if args.claude_app_bundle.is_empty() {
-            Ok(adapter)
-        } else {
-            Err("--claude-app-bundle requires a Desktop root".into())
-        };
+fn claude_adapter(args: &Args, home: &std::path::Path) -> Result<ClaudeAdapter, String> {
+    let config = root(
+        args.claude_root.as_ref(),
+        "CLAUDE_CONFIG_DIR",
+        ".claude",
+        home,
+    )?;
+    let source = if args.claude_root.is_some() {
+        RootSource::Explicit
+    } else if env::var_os("CLAUDE_CONFIG_DIR").is_some() {
+        RootSource::Environment
+    } else {
+        RootSource::Default
     };
-    let mut app_bundles = args.claude_app_bundle.clone();
-    if default_desktop && data_root == default_root {
-        app_bundles.push(PathBuf::from("/Applications/Claude.app"));
-        app_bundles.push(home.join("Applications/Claude.app"));
+    let mut roots = vec![(config.clone(), source)];
+    if source == RootSource::Environment && config != home.join(".claude") {
+        roots.push((home.join(".claude"), RootSource::Default));
     }
-    Ok(adapter.with_desktop_context(DesktopContext {
-        data_root,
-        app_bundles,
-    }))
+    roots.extend(
+        args.claude_additional_root
+            .iter()
+            .cloned()
+            .map(|path| (path, RootSource::Additional)),
+    );
+
+    let mut cli_candidates = args.claude_executable.iter().cloned().collect::<Vec<_>>();
+    if cli_candidates.is_empty() && source != RootSource::Explicit {
+        cli_candidates = process::find_executables(ProviderKind::Claude);
+        cli_candidates.push(home.join(".local/bin").join(if cfg!(windows) {
+            "claude.exe"
+        } else {
+            "claude"
+        }));
+    }
+    let (mut desktop, installations) = if source == RootSource::Explicit {
+        (Vec::new(), Vec::new())
+    } else {
+        native_claude_desktop(home)
+    };
+    if let Some(data_root) = &args.claude_desktop_root {
+        desktop.retain(|item| &item.data_root != data_root);
+        desktop.insert(
+            0,
+            DesktopContext {
+                data_root: data_root.clone(),
+                app_bundles: args.claude_app_bundle.clone(),
+            },
+        );
+    } else if !args.claude_app_bundle.is_empty() {
+        desktop
+            .first_mut()
+            .ok_or("--claude-app-bundle requires a Desktop root")?
+            .app_bundles
+            .extend(args.claude_app_bundle.iter().cloned());
+    }
+    ClaudeAdapter::new(roots, desktop, cli_candidates, installations).map_err(|err| err.to_string())
+}
+
+#[cfg(not(windows))]
+fn native_claude_desktop(home: &std::path::Path) -> (Vec<DesktopContext>, Vec<InstallationView>) {
+    let desktop = cfg!(target_os = "macos").then(|| DesktopContext {
+        data_root: home.join("Library/Application Support/Claude"),
+        app_bundles: vec![
+            PathBuf::from("/Applications/Claude.app"),
+            home.join("Applications/Claude.app"),
+        ],
+    });
+    (desktop.into_iter().collect(), Vec::new())
+}
+
+#[cfg(windows)]
+fn native_claude_desktop(home: &std::path::Path) -> (Vec<DesktopContext>, Vec<InstallationView>) {
+    #[derive(serde::Deserialize)]
+    #[serde(rename_all = "PascalCase")]
+    struct Package {
+        name: String,
+        install_location: PathBuf,
+        package_family_name: String,
+        signature_kind: String,
+        version: String,
+    }
+    let absolute_env = |key| {
+        env::var_os(key)
+            .map(PathBuf::from)
+            .filter(|path| path.is_absolute())
+    };
+    let roaming = absolute_env("APPDATA").unwrap_or_else(|| home.join("AppData/Roaming"));
+    let local = absolute_env("LOCALAPPDATA").unwrap_or_else(|| home.join("AppData/Local"));
+    let mut contexts = vec![DesktopContext {
+        data_root: roaming.join("Claude"),
+        app_bundles: Vec::new(),
+    }];
+    let mut installations = Vec::new();
+    if let Ok(bytes) = process::claude_windows_packages() {
+        let bytes = bytes.strip_prefix(b"\xef\xbb\xbf").unwrap_or(&bytes);
+        let packages = serde_json::from_slice::<Vec<Package>>(bytes)
+            .or_else(|_| serde_json::from_slice::<Package>(bytes).map(|item| vec![item]))
+            .unwrap_or_default();
+        for package in packages.into_iter().take(4) {
+            if package.name == "Claude"
+                && package.package_family_name == "Claude_pzs8sxrjxfjjc"
+                && package.install_location.is_absolute()
+                && matches!(
+                    package.signature_kind.as_str(),
+                    "Store" | "Developer" | "Enterprise"
+                )
+            {
+                installations.push(InstallationView {
+                    path: package.install_location.join("app/Claude.exe"),
+                    source: if package.signature_kind == "Store" {
+                        "desktop_store"
+                    } else {
+                        "desktop_msix"
+                    },
+                    version: Some(package.version),
+                    confirmed: true,
+                });
+                contexts.push(DesktopContext {
+                    data_root: local
+                        .join("Packages")
+                        .join(package.package_family_name)
+                        .join("LocalCache/Roaming/Claude"),
+                    app_bundles: Vec::new(),
+                });
+            }
+        }
+    }
+    // A conventional Win32 install is a candidate. Package evidence is stronger.
+    let win32 = local.join("AnthropicClaude");
+    if let Ok(entries) = std::fs::read_dir(win32) {
+        for entry in entries.take(32).flatten() {
+            let Some(version) = entry
+                .file_name()
+                .to_str()
+                .and_then(|name| name.strip_prefix("app-"))
+                .filter(|version| {
+                    version.len() < 32 && version.bytes().all(|b| b.is_ascii_digit() || b == b'.')
+                })
+                .map(str::to_owned)
+            else {
+                continue;
+            };
+            let path = entry.path().join("Claude.exe");
+            if path.is_file() {
+                installations.push(InstallationView {
+                    path,
+                    source: "desktop_win32_candidate",
+                    version: Some(version),
+                    confirmed: false,
+                });
+            }
+        }
+    }
+    (contexts, installations)
 }
 
 fn run(args: Args) -> Result<(), String> {
@@ -127,18 +254,6 @@ fn run(args: Args) -> Result<(), String> {
         args.codex_executable.clone(),
     )?;
     let codex_location = discovery.location.clone();
-    let claude_location = ProviderLocation {
-        state_root: root(
-            args.claude_root.as_ref(),
-            "CLAUDE_CONFIG_DIR",
-            ".claude",
-            &home,
-        )?,
-        executable: args
-            .claude_executable
-            .clone()
-            .or_else(|| process::find_executable(ProviderKind::Claude)),
-    };
     let overlaps_exports = discovery.storage.iter().any(|item| {
         item.kind == agentmender_provider_codex::discovery::StorageKind::ExternalExports
             && (item.path.starts_with(&discovery.selected_root)
@@ -156,10 +271,9 @@ fn run(args: Args) -> Result<(), String> {
         )
     };
     let codex = CodexAdapter::new(codex_location.clone(), helper, home.clone());
-    let claude = claude_adapter(&args, claude_location.clone(), &home)?;
+    let claude = claude_adapter(&args, &home)?;
     ui::run(ui::Configuration {
         codex_root: codex_location.state_root,
-        claude_root: claude_location.state_root,
         codex,
         discovery,
         claude,

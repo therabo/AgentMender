@@ -84,6 +84,12 @@ require("crates/provider-api/src/process.rs", "sqlite_home={scope}", "(deny netw
         'process.args(["delete", "--help"])', "if !is_current()")
 require("crates/cli/src/ui/browser.rs", "Ipv4Addr::LOCALHOST", "byte.is_ascii_hexdigit()")
 
+require("crates/provider-claude/src/read.rs", "MAX_RECORD", "Revision::read", "filesystem::open_observed_read")
+require("crates/provider-claude/src/local.rs", "desktop_workspace", "verify(root,&path,revision)",
+        "saved.identity", "scan.foreign_rows")
+require("crates/cli/src/ui/mod.rs", "/api/claude/sessions/{key}/storage",
+        "return Err(ApiError::conflict(agentmender_provider_claude::REMOVAL_BLOCKER,))")
+
 for path in ["crates/provider-codex/src/exports.rs", "crates/cli/src/ui/storage.rs"]:
     assert not re.search(r"\b(remove_file|remove_dir_all|run_confined_codex_delete|ReviewedRemoval)\b", source(path)), path
 require("crates/cli/src/ui/mod.rs", "/api/storage/exports/preview", "/api/storage/exports/operations/{key}/confirm")

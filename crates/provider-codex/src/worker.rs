@@ -6,6 +6,8 @@ mod inventory;
 #[cfg(target_os = "macos")]
 mod projects;
 
+pub use agentmender_domain::TranscriptMessage;
+
 use crate::{CodexAdapter, Guard, removal::RemovalRefusal};
 use agentmender_domain::{
     CodexMembership, InventoryObservation, ProjectIdentity, ProjectLocator, ProviderKind,
@@ -63,20 +65,6 @@ pub struct TranscriptCursor {
     pub(super) identity: SessionIdentity,
     pub(super) anchor: SourceAnchor,
     pub(super) checkpoint: Checkpoint,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum TranscriptRole {
-    User,
-    Assistant,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct TranscriptMessage {
-    pub role: TranscriptRole,
-    pub text: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

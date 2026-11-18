@@ -3,7 +3,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use agentmender_domain::ProviderKind;
+use agentmender_domain::{ProviderKind, TranscriptMessage};
 use agentmender_provider_codex::TranscriptCursor;
 use serde::{Deserialize, Serialize};
 
@@ -11,8 +11,14 @@ use super::{ApiError, App, token};
 
 struct Cursor {
     key: String,
-    checkpoint: TranscriptCursor,
+    checkpoint: Checkpoint,
     expires: Instant,
+}
+
+#[derive(Clone)]
+enum Checkpoint {
+    Codex(TranscriptCursor),
+    Claude(agentmender_provider_claude::Cursor),
 }
 
 #[derive(Default)]
@@ -26,7 +32,7 @@ pub(super) struct TranscriptQuery {
 
 #[derive(Serialize)]
 pub(super) struct TranscriptView {
-    messages: Vec<agentmender_provider_codex::TranscriptMessage>,
+    messages: Vec<TranscriptMessage>,
     next: Option<String>,
     complete: bool,
 }
@@ -37,12 +43,11 @@ pub(super) fn page(
     key: &str,
     query: TranscriptQuery,
 ) -> Result<TranscriptView, ApiError> {
-    if provider != ProviderKind::Codex || !cfg!(target_os = "macos") {
+    if provider == ProviderKind::Codex && !cfg!(target_os = "macos") {
         return Err(ApiError::conflict(
             "Anteprima del transcript non disponibile per questo provider.",
         ));
     }
-    let session = app.inventory.selected(app, provider, key)?;
     let checkpoint = if let Some(cursor) = query.cursor {
         let mut cursors = app.cursors.lock().expect("cursor lock");
         let now = Instant::now();
@@ -58,16 +63,49 @@ pub(super) fn page(
     } else {
         None
     };
-    let result = app
-        .codex
-        .transcript_page(&session.identity, checkpoint)
-        .map_err(|_| {
-            ApiError::conflict(
-                "Transcript cambiato, non leggibile o in un formato non riconosciuto.",
+    let changed = |_| {
+        ApiError::conflict("Transcript cambiato, non leggibile o in un formato non riconosciuto.")
+    };
+    let (messages, next, complete) = match (provider, checkpoint) {
+        (ProviderKind::Codex, checkpoint @ (None | Some(Checkpoint::Codex(_)))) => {
+            let session = app.inventory.selected(app, provider, key)?;
+            let cursor = checkpoint.and_then(|value| match value {
+                Checkpoint::Codex(cursor) => Some(cursor),
+                Checkpoint::Claude(_) => None,
+            });
+            let result = app
+                .codex
+                .transcript_page(&session.identity, cursor)
+                .map_err(changed)?;
+            (
+                result.messages,
+                result.next.map(Checkpoint::Codex),
+                result.complete,
             )
-        })?;
-    let next = result
-        .next
+        }
+        (ProviderKind::Claude, checkpoint @ (None | Some(Checkpoint::Claude(_)))) => {
+            let (session, evidence) = app.inventory.selected_claude(app, key)?;
+            let cursor = checkpoint.and_then(|value| match value {
+                Checkpoint::Claude(cursor) => Some(cursor),
+                Checkpoint::Codex(_) => None,
+            });
+            let result = app
+                .claude
+                .transcript_page(&session.identity, &evidence.revision, cursor)
+                .map_err(changed)?;
+            (
+                result.messages,
+                result.next.map(Checkpoint::Claude),
+                result.complete,
+            )
+        }
+        _ => {
+            return Err(ApiError::bad(
+                "Pagina scaduta. Riapri l’anteprima della conversazione.",
+            ));
+        }
+    };
+    let next = next
         .map(|checkpoint| {
             let id = token()?;
             let mut cursors = app.cursors.lock().expect("cursor lock");
@@ -92,8 +130,8 @@ pub(super) fn page(
         })
         .transpose()?;
     Ok(TranscriptView {
-        messages: result.messages,
+        messages,
         next,
-        complete: result.complete,
+        complete,
     })
 }

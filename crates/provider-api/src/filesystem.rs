@@ -219,6 +219,83 @@ pub fn read_bounded(root: &Path, path: &Path, max_bytes: usize) -> Result<Vec<u8
     Ok(bytes)
 }
 
+#[cfg(windows)]
+pub fn windows_file_identity(file: &fs::File) -> std::io::Result<(u64, u64)> {
+    let info = winapi_util::file::information(winapi_util::HandleRef::from_file(file))?;
+    if info.number_of_links() != 1 {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "shared file identity",
+        ));
+    }
+    Ok((info.volume_serial_number(), info.file_index()))
+}
+
+#[cfg(windows)]
+pub fn windows_directory_identity(path: &Path) -> std::io::Result<(u64, u64)> {
+    use std::os::windows::fs::OpenOptionsExt;
+    let dir = fs::OpenOptions::new()
+        .read(true)
+        // FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT.
+        .custom_flags(0x02200000)
+        .open(path)?;
+    let meta = dir.metadata()?;
+    if !meta.is_dir() || is_link(&meta) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "linked directory identity",
+        ));
+    }
+    let info = winapi_util::file::information(winapi_util::HandleRef::from_file(&dir))?;
+    Ok((info.volume_serial_number(), info.file_index()))
+}
+
+/// Read-only provider observation. Unix uses descriptor-relative component
+/// traversal. Windows checks all ancestors and opens the leaf without following
+/// a reparse point. Callers must revalidate the observation before reuse.
+pub fn open_observed_read(root: &Path, path: &Path) -> Result<fs::File, ProviderError> {
+    if !path.starts_with(root) || !path.is_absolute() {
+        return Err(ProviderError::InvalidScope(
+            "read outside observation root".into(),
+        ));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let file = open_source_read(Path::new("/"), path)?;
+        let root_meta = fs::symlink_metadata(root).map_err(|e| io_error(root, e))?;
+        let file_meta = file.metadata().map_err(|e| io_error(path, e))?;
+        if !root_meta.is_dir() || root_meta.dev() != file_meta.dev() {
+            return Err(ProviderError::InvalidScope(
+                "source outside the archive volume".into(),
+            ));
+        }
+        Ok(file)
+    }
+    #[cfg(windows)]
+    {
+        for ancestor in root.ancestors() {
+            let metadata = fs::symlink_metadata(ancestor).map_err(|e| io_error(ancestor, e))?;
+            if is_link(&metadata) || !metadata.is_dir() {
+                return Err(ProviderError::InvalidScope(
+                    "linked observation root".into(),
+                ));
+            }
+        }
+        let identity = windows_directory_identity(root).map_err(|e| io_error(root, e))?;
+        let file = open_regular(root, path)?;
+        let (volume, _) = windows_file_identity(&file).map_err(|e| io_error(path, e))?;
+        if volume != identity.0 || windows_directory_identity(root).ok() != Some(identity) {
+            return Err(ProviderError::InvalidScope(
+                "observation root or volume changed".into(),
+            ));
+        }
+        Ok(file)
+    }
+    #[cfg(not(any(unix, windows)))]
+    open_regular(root, path)
+}
+
 /// Descriptor-relative no-follow source read, used only inside attested workers.
 /// Returning a reader grants no write or arbitrary command capability.
 pub fn open_source_read(root: &Path, path: &Path) -> Result<fs::File, ProviderError> {

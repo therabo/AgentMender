@@ -54,10 +54,13 @@ decoded in the worker. Replay state is bound to the source and finite. Message
 suppression, unknown records and external paginated history are reflected in
 partial coverage. Browser cursors hold neither a path nor provider internals.
 
-Claude uses its existing bounded project JSONL metadata profile. Roots,
-entrypoints and matching embedded IDs govern observation. Nested agent and
-sidechain records stay outside the main-conversation index. Conflicting workspace
-values remain unknown. There is no Claude mutation operation.
+Claude observes bounded project JSONL across configured roots, with
+revision-keyed metadata and revalidated conversation windows. Root, namespace,
+entrypoint and embedded IDs govern observation. Desktop registrations supply
+metadata when they corroborate an unambiguous transcript identity. Nested
+agents, sidechains and recognized forks stay outside the main index. Storage
+diagnostics report candidate dependencies and a removal blocker without issuing
+receipts. [ADR 0046](adr/claude-session-cleanup.md).
 
 ## Removal path
 

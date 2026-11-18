@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react'
 import { AlertTriangle, ArrowLeft, FileText, ShieldCheck, Trash2 } from 'lucide-react'
-import { projectPath, request, sessionPath, type Detail, type Preview, type Project, type ProjectPreview, type Provider, type Transcript } from './api'
+import { projectPath, request, sessionPath, type ClaudeStorage, type Detail, type Preview, type Project, type ProjectPreview, type Provider, type Transcript } from './api'
 import { CloseButton, Dialog, Empty, Notice, SessionStatus } from './components'
-import { dateLabel, kindLabel, providerLabel, sizeLabel } from './format'
+import { dateLabel, kindLabel, numberLabel, pathLabel, providerLabel, sizeLabel } from './format'
 
 const errorText = (failure: unknown) => failure instanceof Error ? failure.message : 'Operazione non disponibile.'
 
@@ -40,6 +40,63 @@ function Conversation({ path }: { path: string }) {
       {page?.next && <button type="button" className="button" disabled={busy} onClick={() => void load(page.next ?? undefined)}>{busy ? 'Caricamento…' : 'Pagina successiva del transcript'}</button>}
       {page && <button type="button" className="button quiet" disabled={busy} onClick={() => setPage(undefined)}>Chiudi anteprima</button>}
     </div>
+  </section>
+}
+
+const titleSources = {
+  custom: 'Personalizzato',
+  generated: 'Generato',
+  first_request: 'Prima richiesta visibile',
+  fallback: 'Identificativo breve',
+}
+
+const historyLabels = {
+  not_observed: 'Non osservata',
+  unverified: 'Lettura non verificabile',
+  uuid_only: 'Corrispondenza per UUID, ownership incerta',
+  partial_uuid_only: 'Lettura parziale, corrispondenza per UUID',
+}
+
+function ClaudeDependencies({ path, reason }: { path: string; reason: string }) {
+  const [storage, setStorage] = useState<ClaudeStorage>()
+  const [error, setError] = useState('')
+  const [open, setOpen] = useState(false)
+  useEffect(() => {
+    if (!open || storage) return
+    setError('')
+    const controller = new AbortController()
+    request<ClaudeStorage>(`${path}/storage`, { signal: controller.signal })
+      .then(result => { if (!controller.signal.aborted) setStorage(result) })
+      .catch(failure => { if (!controller.signal.aborted) setError(errorText(failure)) })
+    return () => controller.abort()
+  }, [path, open, storage])
+
+  return <section className="detail-section removal-section">
+    <h3>Storage e dipendenze</h3>
+    <dl className="facts detail-facts">
+      <Fact label="Pulizia standard" value="Disabilitata" />
+      <Fact label="Pulizia approfondita" value="Disabilitata" />
+    </dl>
+    <p>{reason}</p>
+    <details onToggle={event => setOpen(event.currentTarget.open)}>
+      <summary>Risorse osservate</summary>
+      {error ? <Notice tone="error">{error}</Notice> : !storage ? <p role="status">Lettura dell’archivio…</p> : <>
+        <dl className="facts detail-facts">
+          <Fact label="Transcript selezionato" value={`${numberLabel(storage.transcript_files)} file · ${sizeLabel(storage.logical_bytes)}`} />
+          <Fact label="Subagent riconosciuti" value={numberLabel(storage.subagents)} />
+          <Fact label="Fork riconosciuti" value={numberLabel(storage.forks)} />
+          <Fact label="Sidecar candidati" value={numberLabel(storage.sidecar_candidates)} />
+          <Fact label="Checkpoint candidato" value={storage.checkpoint_present ? 'Osservato' : 'Non osservato'} />
+          <Fact label="Righe history" value={storage.history_matches === null ? historyLabels[storage.history_observation] : `${numberLabel(storage.history_matches)} · ${historyLabels[storage.history_observation]}`} />
+          <Fact label="Registro dei processi" value={storage.process_registry === 'present_unverified' ? 'Presente · writer non verificati' : storage.process_registry === 'blocked' ? 'Inaccessibile o protetto' : 'Non osservato · writer non verificati'} />
+          <Fact label="Backup" value="Non creato" />
+        </dl>
+        <ul className="claude-artifacts">{storage.observed.map(resource => {
+          const relativePath = pathLabel(resource.relative_path)
+          return <li key={relativePath}><code>{relativePath}</code><span>{resource.status === 'protected' ? 'Protetta' : resource.status === 'unverified' ? 'Proprietà non verificata' : 'Sola lettura'}</span></li>
+        })}</ul>
+      </>}
+    </details>
   </section>
 }
 
@@ -156,7 +213,7 @@ export function SessionDetail({ provider, rowKey, onClose, onConfirm }: {
   }
   const session = detail?.session
   const close = () => preview ? setPreview(undefined) : onClose()
-  return <Dialog onClose={close} label="session-title">
+  return <Dialog onClose={close} label="session-title" className={session?.claude ? "drawer claude-session" : "drawer"}>
     <header className="drawer-header"><span>Dettagli sessione</span><CloseButton onClose={close} /></header>
     {detail && preview ? <RemovalReview preview={preview} onBack={close} onConfirm={onConfirm} />
       : detail && session ? <div className="detail-body">
@@ -169,17 +226,28 @@ export function SessionDetail({ provider, rowKey, onClose, onConfirm }: {
           <Fact label="Creazione (UTC)" value={dateLabel(session.created_at)} />
           <Fact label="Ultima attività (UTC)" value={dateLabel(session.last_active_at)} />
           <Fact label="Dimensione transcript" value={sizeLabel(session.transcript_bytes)} />
-          <Fact label="Versione rilevata" value={detail.version ?? 'Non disponibile'} />
+          <Fact label={session.claude ? "Versioni nel transcript" : "Versione rilevata"} value={(session.claude ? session.claude.versions.join(', ') : detail.version) || 'Non disponibile'} />
           <Fact label="Compatibilità" value={session.removal_reason ? 'Sola lettura' : 'Rimozione soggetta a verifica'} />
           <Fact label="Workspace" value={session.workspace ?? 'Non disponibile'} mono />
+          {session.claude && <>
+            <Fact label="Namespace" value={session.namespace ?? 'Non disponibile'} mono />
+            <Fact label="Root archivio" value={pathLabel(session.archive_root)} mono />
+            <Fact label="Superficie" value={session.claude.surface === 'desktop' ? 'Claude Code in Desktop' : session.claude.surface === 'cli' ? 'CLI' : session.claude.surface === 'mixed' ? 'CLI e Desktop' : 'Non osservata'} />
+            <Fact label="Origine del titolo" value={titleSources[session.claude.title_source]} />
+            <Fact label="Scansione metadati" value={session.claude.metadata_complete ? 'Completa' : 'Parziale'} />
+            <Fact label="Ultima modifica del file (UTC)" value={dateLabel(session.claude.modified_at)} />
+            {session.claude.same_uuid_elsewhere > 0 && <Fact label="Stesso UUID in altre posizioni" value={numberLabel(session.claude.same_uuid_elsewhere)} />}
+          </>}
         </dl>
         {detail.conversation_preview ? <Conversation path={path} /> : <section className="detail-section"><h3>Conversazione</h3><p>Anteprima del transcript non disponibile.</p></section>}
-        <section className="detail-section removal-section">
+        {session.claude && session.removal_reason
+          ? <ClaudeDependencies path={path} reason={session.removal_reason} />
+          : <section className="detail-section removal-section">
           <h3>Rimozione</h3>
           {session.removal_reason && <p><AlertTriangle size={15} aria-hidden />{session.removal_reason}</p>}
           {error && <Notice tone="error">{error}</Notice>}
           <button className="button danger-outline" disabled={!!session.removal_reason || busy} onClick={() => void prepare()}><Trash2 size={16} aria-hidden />{busy ? 'Verifica in corso…' : 'Anteprima rimozione'}</button>
-        </section>
+        </section>}
       </div> : <div className="detail-body"><h2 id="session-title">Dettagli sessione</h2>{error ? <Notice tone="error">{error}</Notice> : <Empty title="Caricamento dettagli" busy />}</div>}
   </Dialog>
 }

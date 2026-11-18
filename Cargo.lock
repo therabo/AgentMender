@@ -49,6 +49,7 @@ dependencies = [
  "tempfile",
  "thiserror",
  "uuid",
+ "winapi-util",
 ]
 
 [[package]]
@@ -60,6 +61,8 @@ dependencies = [
  "chrono",
  "serde",
  "serde_json",
+ "sha2",
+ "tempfile",
 ]
 
 [[package]]

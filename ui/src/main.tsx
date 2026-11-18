@@ -4,13 +4,13 @@ import { Archive, Braces, ChevronRight, Circle, HardDrive, Layers3, RefreshCw, S
 import { authorize, projectPath, request, type Operation, type Project, type ProjectPage, type Provider, type State } from './api'
 import { Empty, Notice, Pagination, ProjectAccordion, SessionList } from './components'
 import { ProjectRemoval, SessionDetail } from './detail'
-import { numberLabel, providerLabel } from './format'
+import { numberLabel, pathLabel, providerLabel } from './format'
 import { Storage } from './storage'
 import './style.css'
 
 const PAGE_SIZE = 12
 const operationKey = 'agentmender.operation'
-const filtersInitial = { search: '', state: '', sort: 'activity', since: '', until: '' }
+const filtersInitial = { search: '', state: '', sort: 'activity', since: '', until: '', minSize: '', maxSize: '' }
 const labels = { installed: 'Installato', state_only: 'Solo archivio', not_detected: 'Non rilevato' }
 
 function errorText(failure: unknown) {
@@ -31,7 +31,7 @@ function Inventory({ provider, revision, onConfirm }: {
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
-  const hasFilters = !!(filters.search || filters.state || filters.since || filters.until)
+  const hasFilters = !!(filters.search || filters.state || filters.since || filters.until || filters.minSize || filters.maxSize)
 
   const query = new URLSearchParams({
     sort: filters.sort.replace('-asc', ''), ascending: String(filters.sort.endsWith('-asc')),
@@ -40,6 +40,8 @@ function Inventory({ provider, revision, onConfirm }: {
   if (filters.state) query.set('state', filters.state)
   if (filters.since) query.set('since', filters.since)
   if (filters.until) query.set('until', filters.until)
+  if (filters.minSize) query.set('min_bytes', String(Math.max(0, Math.round(Number(filters.minSize) * 1024))))
+  if (filters.maxSize) query.set('max_bytes', String(Math.max(0, Math.round(Number(filters.maxSize) * 1024))))
   const filterQuery = query.toString()
 
   useEffect(() => {
@@ -104,6 +106,23 @@ function Inventory({ provider, revision, onConfirm }: {
     </div>
     {info && <Notice tone="warning"><strong>{info.coverage === 'partial' ? 'Copertura parziale.' : info.coverage === 'not_detected' ? 'Provider non rilevato.' : 'Archivio indisponibile.'}</strong> {info.coverage_description}{info.id === 'codex' && info.coverage === 'partial' && info.removal_reason && <p>{info.removal_reason}</p>}</Notice>}
 
+    {info?.claude_storage && <details className="claude-discovery">
+      <summary>Archivi e installazioni Claude Code</summary>
+      <ul className="claude-artifacts">
+        {info.claude_storage.roots.map(root => <li key={pathLabel(root.path)}>
+          <code>{pathLabel(root.path)}</code><span>{root.same_filesystem_root ? 'Stesso archivio di un’altra root rilevata' : root.readable ? `${numberLabel(root.transcript_candidates)} transcript candidati${root.enumeration_incomplete ? ' · copertura parziale' : ''}` : root.present ? 'Accesso bloccato' : 'Non osservato'}</span>
+          {root.project_override && <span>Namespace configurato · {root.project_override}</span>}
+        </li>)}
+        {info.claude_storage.desktop_metadata_roots.map(root => <li key={root}>
+          <code>{root}</code><span>Root candidata per metadati Desktop</span>
+        </li>)}
+        {info.claude_storage.installations.map(install => <li key={pathLabel(install.path)}>
+          <code>{pathLabel(install.path)}</code><span>{install.confirmed ? 'Installazione rilevata' : 'Installazione candidata'}{install.version && ` · ${install.version}`}</span>
+        </li>)}
+      </ul>
+      <p>{numberLabel(info.claude_storage.subagents)} subagent · {numberLabel(info.claude_storage.forks)} fork{info.claude_storage.sidechains > 0 && ` · ${numberLabel(info.claude_storage.sidechains)} sidechain`}</p>
+    </details>}
+
     <section className="inventory" aria-label="Inventario dei progetti">
       <div className="inventory-heading"><h2>Progetti</h2><span>{page ? `${numberLabel(page.total)} ${page.total === 1 ? 'progetto' : 'progetti'}${info?.projects_incomplete || info?.inventory_incomplete ? ' osservati' : ''}` : '—'}</span></div>
       <div className="controls">
@@ -117,12 +136,16 @@ function Inventory({ provider, revision, onConfirm }: {
           <option value="created">Creazione più recente</option><option value="created-asc">Creazione meno recente</option>
           <option value="size">Transcript più grandi</option><option value="size-asc">Transcript più piccoli</option>
         </select></label>
-        <button className="button date-toggle" type="button" aria-expanded={showDates} onClick={() => setShowDates(value => !value)}><SlidersHorizontal size={16} aria-hidden /> Date</button>
+        <button className="button date-toggle" type="button" aria-expanded={showDates} onClick={() => setShowDates(value => !value)}><SlidersHorizontal size={16} aria-hidden /> {provider === 'claude' ? 'Filtri' : 'Date'}</button>
       </div>
       {showDates && <div className="date-controls">
         <span>Ultima attività (UTC)</span>
         <label>Da <input type="date" value={filters.since} max={filters.until || undefined} onChange={event => filter('since', event.target.value)} /></label>
         <label>A <input type="date" value={filters.until} min={filters.since || undefined} onChange={event => filter('until', event.target.value)} /></label>
+        {provider === 'claude' && <>
+          <label>Min. KiB <input type="number" min="0" max="1000000000" value={filters.minSize} onChange={event => filter('minSize', event.target.value)} /></label>
+          <label>Max. KiB <input type="number" min="0" max="1000000000" value={filters.maxSize} onChange={event => filter('maxSize', event.target.value)} /></label>
+        </>}
       </div>}
       {hasFilters && <button className="button quiet clear-filters" onClick={() => { setFilters(filtersInitial); setPageIndex(0) }}>Azzera filtri</button>}
       {error && <div className="inventory-error"><Notice tone="error">{error}</Notice></div>}
