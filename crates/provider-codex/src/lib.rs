@@ -1,6 +1,8 @@
 //! Codex inventory, bounded transcript previews and exact native removal.
 #[cfg(target_os = "macos")]
 mod desktop_reconciliation;
+pub mod discovery;
+pub mod exports;
 #[cfg(any(target_os = "macos", all(test, unix)))]
 mod reader;
 mod removal;

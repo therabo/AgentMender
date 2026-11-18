@@ -33,30 +33,32 @@ until their cascade, writer and reference behavior is verified.
 
 Removal requires the observed `state_5.sqlite` contract through migration
 62, recognized thread and spawn-edge tables, and the known timestamp and
-recency triggers. The read-only worker traverses all outgoing spawn edges
-from the selected main UUID, including IDs with an edge but no canonical
-row. It reconciles canonical locators and active/archived rollout headers
-against the complete bounded graph. Reviewed files must be unshared, plain,
-canonical archived rollouts. A closed edge can establish a descendant with
-no canonical row and no observed file. Other archive representations,
-ambiguous locators, unsupported storage or exhausted evidence budgets can
-block removal even while inventory remains available.
+recency triggers. The worker traverses all outgoing spawn edges and reconciles
+canonical locators with the complete bounded inventory of both rollout trees.
+Reviewed files may use JSONL or its exact compressed counterpart. Physical
+variants encode the logical thread UUID and a separate rollout UUID.
+The complete `history_base` chain must resolve within the reviewed scope.
+Ambiguous paths, duplicate physical IDs, links and unknown formats block review.
 
-An active or in-use member, an unclosed edge, a protected UUID anywhere in
-the tree, or an external fork, attachment or shared history reference blocks
-review. The receipt binds the selected session, full membership, SQLite and
-rollout revisions and provider config file revision. A change observed before
-dispatch invalidates the review.
+Open and closed spawn edges are recognized. An open edge requires a canonical
+row and matching rollout. A closed edge can establish a descendant with no
+canonical row or file. A recognized unarchived state can be reviewed.
+Writer locks, protected UUIDs, external forks, attached threads and shared
+history outside the scope still block removal. Preflight also rejects
+foreign paths that could match the provider's filename fallback when one
+rollout tree lacks an exact match. The receipt binds the selected session,
+full membership, SQLite and rollout revisions, and provider configuration.
 
-Confirmation runs exactly one `codex delete UUID --force` in the original
-root with the fixed `sqlite_home` override, a 180-second deadline, kernel
-write confinement and network denial. Writes in the rollout trees are limited
-to the exact reviewed paths. Codex applies its cross-process writer and
-reference checks. The CLI has no expected-graph-revision parameter, so an
-independent writer may still change SQLite after the final observation and
-before native discovery. Use a fresh review after any pre-dispatch refusal.
-See the [Codex deletion implementation](https://github.com/openai/codex/blob/rust-v0.169.0/codex-rs/app-server/src/request_processors/thread_delete.rs)
-and the [native writer and reference checks](https://github.com/openai/codex/blob/rust-v0.169.0/codex-rs/thread-store/src/local/delete_thread.rs).
+Confirmation runs exactly one `codex delete UUID --force` using the configured
+root and an explicit `sqlite_home` override. Seatbelt denies network and
+process launches, confines filesystem writes to the root, protects known
+artifact subtrees, and allows rollout writes only at the reviewed literals.
+Codex acquires its cross-process writer locks and checks references itself.
+The final observation cannot atomically bind the external CLI's discovery.
+The kernel allowlist protects unrelated files during that interval. A storage
+or ownership change at confirmation invalidates the review.
+[Native rollout discovery](https://github.com/openai/codex/blob/rust-v0.169.0/codex-rs/rollout/src/list.rs#L1273-L1467) ·
+[Native writer and reference checks](https://github.com/openai/codex/blob/rust-v0.169.0/codex-rs/thread-store/src/local/delete_thread.rs).
 
 After dispatch a read-only check looks for remaining canonical rows,
 expected rollout files and spawn edges, and compares evidence of unrelated
@@ -118,6 +120,33 @@ revalidates the registration and expected archive. The final observation
 checks that the project remains registered with its reviewed sessions removed.
 Project registrations, root directories, and Desktop preferences are outside
 the operation.
+
+## Codex discovery and export inventory
+
+| Capability | macOS | Linux | Windows |
+|---|---|---|---|
+| Discovery | Verified bundle metadata, native image architecture, fixed version probe, home and Library candidates | CLI paths and XDG candidates with Codex evidence. Version probe requires system Bubblewrap. | CLI paths and Windows AppX registration. Package version and executable headers are available when readable. |
+| Verified session inventory | Seatbelt read-only worker on macOS, including Intel when its reader is available | Unsupported until an isolated catalog reader is verified | Unsupported until an isolated catalog reader is verified |
+| Native session removal | Darwin arm64 with an exercised release, storage and scope | Unsupported | Unsupported |
+| Export inventory and diagnostic selection | Metadata-only, with Unix block counts | Metadata-only, with Unix block counts | Metadata-only. Reparse points are protected and allocated bytes are unavailable. |
+| Export removal | Unsupported | Unsupported | Unsupported |
+
+The usable default is `CODEX_HOME` or the provider home. The platform adapter
+can select a single corroborated alternate when the default is absent.
+The discovery view also shows additional archives, split SQLite or log
+roots, installed executables and protected user output. Separate SQLite
+roots are reported even when the current session worker cannot read them.
+Network paths on Windows are displayed as protected. WSL is a separate
+environment and the Windows manager does not auto-traverse it.
+
+The `exports` directory is a candidate based on location. File groups without
+a recognized producer remain protected. Desktop Artifact Session publications
+have a versioned marker and lease, a shared `latest` area and an exporter-owned
+quota protocol. AgentMender recognizes that structure for inspection.
+Neither its presence nor an expired lease establishes a supported manual
+removal entry point or proves exclusive ownership.
+[Windows AppX registration](https://learn.microsoft.com/en-us/powershell/module/appx/get-appxpackage) ·
+[Codex config reference](https://github.com/openai/codex/blob/rust-v0.169.0/codex-rs/config/src/config_toml.rs).
 
 ## Claude Code
 

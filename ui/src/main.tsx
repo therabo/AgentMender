@@ -5,6 +5,7 @@ import { authorize, projectPath, request, type Operation, type Project, type Pro
 import { Empty, Notice, Pagination, ProjectAccordion, SessionList } from './components'
 import { ProjectRemoval, SessionDetail } from './detail'
 import { numberLabel, providerLabel } from './format'
+import { Storage } from './storage'
 import './style.css'
 
 const PAGE_SIZE = 12
@@ -109,7 +110,7 @@ function Inventory({ provider, revision, onConfirm }: {
         <label className="search"><Search size={18} aria-hidden /><span className="sr-only">Cerca progetto, titolo, UUID o workspace</span>
           <input type="search" placeholder="Cerca progetto, titolo, UUID o workspace" value={filters.search} maxLength={128} onChange={event => filter('search', event.target.value)} /></label>
         <label className="control"><span className="sr-only">Stato</span><select value={filters.state} onChange={event => filter('state', event.target.value as State | '')}>
-          <option value="">Tutti gli stati</option><option value="active">Attive</option><option value="archived">Archiviate</option><option value="unknown">Stato sconosciuto</option>
+          <option value="">Tutti gli stati</option><option value="active">Non archiviate</option><option value="archived">Archiviate</option><option value="unknown">Stato sconosciuto</option>
         </select></label>
         <label className="control"><span className="sr-only">Ordina</span><select value={filters.sort} onChange={event => filter('sort', event.target.value)}>
           <option value="activity">Ultima attività</option><option value="activity-asc">Attività meno recente</option>
@@ -169,7 +170,7 @@ const pending = (operation: Operation) => operation.status === 'preparing' || op
 function App() {
   const [auth, setAuth] = useState<'waiting' | 'ready' | 'failed'>('waiting')
   const [authError, setAuthError] = useState('')
-  const [provider, setProvider] = useState<Provider>('codex')
+  const [view, setView] = useState<Provider | 'storage'>('codex')
   const [operationId, setOperationId] = useState(() => sessionStorage.getItem(operationKey))
   const [operation, setOperation] = useState<Operation>()
   const [operationError, setOperationError] = useState('')
@@ -227,14 +228,18 @@ function App() {
   return <div className="shell">
     <aside className="sidebar">
       <div className="brand"><div className="brand-icon"><Layers3 size={22} aria-hidden /></div><span>AgentMender</span></div>
-      <nav aria-label="Provider">
+      <nav aria-label="Navigazione locale">
         <p className="nav-label">Provider</p>
         {(['codex', 'claude'] as const).map(id => {
           const Icon = id === 'codex' ? Braces : Sparkles
-          return <button type="button" key={id} aria-current={id === provider ? 'page' : undefined} className={`nav-item ${id === provider ? 'current' : ''}`} onClick={() => setProvider(id)}>
-            <Icon size={18} aria-hidden /><span>{providerLabel[id]}</span>{id === provider && <ChevronRight className="nav-chevron" size={15} aria-hidden />}
+          return <button type="button" key={id} aria-current={id === view ? 'page' : undefined} className={`nav-item ${id === view ? 'current' : ''}`} onClick={() => setView(id)}>
+            <Icon size={18} aria-hidden /><span>{providerLabel[id]}</span>{id === view && <ChevronRight className="nav-chevron" size={15} aria-hidden />}
           </button>
         })}
+        <p className="nav-label storage-nav-label">Storage</p>
+        <button type="button" aria-current={view === 'storage' ? 'page' : undefined} className={view === 'storage' ? 'nav-item current' : 'nav-item'} onClick={() => setView('storage')}>
+          <HardDrive size={18} aria-hidden /><span>Export e backup</span>{view === 'storage' && <ChevronRight className="nav-chevron" size={15} aria-hidden />}
+        </button>
       </nav>
       <div className="local"><Circle size={8} fill="currentColor" aria-hidden /><span>Sessione locale</span></div>
     </aside>
@@ -257,7 +262,7 @@ function App() {
               {!posting && (operationError || (operation && !pending(operation))) && <button className="button quiet" onClick={dismiss}>Chiudi esito</button>}
             </Notice>
           </div>}
-          <Inventory key={provider} provider={provider} revision={revision} onConfirm={(id, phrase) => void confirm(id, phrase)} />
+          {view === 'storage' ? <Storage /> : <Inventory key={view} provider={view} revision={revision} onConfirm={(id, phrase) => void confirm(id, phrase)} />}
         </>}
     </main>
   </div>

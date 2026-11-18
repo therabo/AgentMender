@@ -12,13 +12,18 @@ serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 uuid.workspace = true
+same-file = "1.0.6"
+toml = "0.8.23"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 rusqlite.workspace = true
+chrono.workspace = true
 zstd = { version = "=0.13.3", default-features = false }
 
-[target.'cfg(unix)'.dev-dependencies]
+[dev-dependencies]
 tempfile.workspace = true
+
+[target.'cfg(unix)'.dev-dependencies]
 zstd = { version = "=0.13.3", default-features = false }
 
 [lints]

@@ -1,7 +1,7 @@
 //! Compatibility admission, reviewed scope and dispatch for Codex native deletion.
 use crate::{
     CodexAdapter,
-    worker::{ProjectEvidence, RemovalEvidence},
+    worker::{ProjectEvidence, RemovalEvidence, RemovalScope},
 };
 use agentmender_domain::{ProjectIdentity, ProviderKind, Session, SessionState};
 use agentmender_provider_api::{
@@ -79,6 +79,8 @@ pub enum NativeUnavailable {
     Executable,
     Root,
     VersionProbe,
+    SplitStorage,
+    OverlappingExports,
     VersionContract,
     CommandProbe,
 }
@@ -147,6 +149,7 @@ pub enum RemovalRefusal {
     UnsupportedStorage,
     IncompleteRelationships,
     ExternalFork,
+    AmbiguousNativeLookup,
     AttachedThread,
     UnsafeMember,
     Changed,
@@ -190,8 +193,8 @@ fn config_revision(root: &Path) -> Result<Option<String>, RemovalRefusal> {
     }
 }
 
-fn check_writer_locks(root: &Path, evidence: &RemovalEvidence) -> Result<(), RemovalRefusal> {
-    for member in &evidence.scope.members {
+fn check_writer_locks(root: &Path, scope: &RemovalScope) -> Result<(), RemovalRefusal> {
+    for member in &scope.members {
         let path = root
             .join("thread-writer-locks")
             .join(format!("{}.lock", member.id));
@@ -286,10 +289,13 @@ impl NativeRemoval {
         if self.protected.contains(&session.identity.native_id) {
             return Err(RemovalRefusal::Protected);
         }
-        if session.state != SessionState::Archived {
+        if session.state == SessionState::Unknown {
             return Err(RemovalRefusal::UnsafeMember);
         }
         let config_before = config_revision(&self.root)?;
+        if crate::discovery::sqlite_directory(&self.root) != self.root {
+            return Err(RemovalRefusal::UnsupportedStorage);
+        }
         let evidence = adapter.removal_evidence(&session.identity)?;
         if &evidence.session != session
             || !self.is_current()
@@ -305,7 +311,7 @@ impl NativeRemoval {
         {
             return Err(RemovalRefusal::Protected);
         }
-        check_writer_locks(&self.root, &evidence)?;
+        check_writer_locks(&self.root, &evidence.scope)?;
         Ok(RemovalReview {
             identity: self.identity.clone(),
             evidence,
@@ -337,6 +343,9 @@ impl NativeRemoval {
             return Err(RemovalRefusal::Changed);
         }
         let config_before = config_revision(&self.root)?;
+        if crate::discovery::sqlite_directory(&self.root) != self.root {
+            return Err(RemovalRefusal::UnsupportedStorage);
+        }
         let evidence = adapter.project_evidence(project)?;
         for tree in &evidence.trees {
             if tree
@@ -347,7 +356,7 @@ impl NativeRemoval {
             {
                 return Err(RemovalRefusal::Protected);
             }
-            check_writer_locks(&self.root, tree)?;
+            check_writer_locks(&self.root, &tree.scope)?;
         }
         if !self.is_current() || config_revision(&self.root)? != config_before {
             return Err(RemovalRefusal::Changed);
@@ -445,7 +454,7 @@ impl NativeRemoval {
         let rollouts: Vec<_> = scope
             .members
             .iter()
-            .filter_map(|member| member.rollout.as_deref())
+            .flat_map(|member| member.rollouts.iter().map(PathBuf::as_path))
             .collect();
         let exit = process::run_confined_codex_delete(
             &self.identity.executable,
@@ -455,6 +464,7 @@ impl NativeRemoval {
             Duration::from_secs(180),
             || {
                 self.is_current()
+                    && check_writer_locks(&self.root, &scope).is_ok()
                     && config_revision(&self.root)
                         .is_ok_and(|value| value == review.config_revision)
             },

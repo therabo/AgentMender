@@ -4,9 +4,26 @@ The local manager is the primary surface. Current work focuses on predictable
 main-conversation inventory by project and verified outcomes for individual
 Codex trees and verified native project assignments.
 
+## Delivered within the storage workflow
+
+- Discovery separates platform installations and archives from session and
+  export authorizations.
+- Supported macOS arm64 releases review persisted unarchived trees and
+  compressed variants with the same kernel and writer checks as archived trees.
+- Export inventory and diagnostic preview expose protected groups without
+  sharing the session removal receipt.
+
 ## Coverage and compatibility
 
-- Establish an isolated Codex read contract for additional platforms.
+- Exercise Linux reader confinement with read-only mounts or Landlock write
+  denial plus an independent syscall and network boundary. Verify an isolated
+  SQLite working set, including live WAL behavior, before enabling session reads.
+- Exercise Windows handle-relative scope, reparse rejection and a real OS
+  isolation boundary for provider processes. AppContainer or a restricted
+  broker requires Windows-native fixtures before enabling a writer.
+- Qualify a cooperative exporter removal API or lock/lease contract. Verify
+  live references including `latest`, stale previews, partial failures and
+  logical versus physical recovery before issuing any export receipt.
 - Qualify additional Codex releases and storage revisions against the native
   cascade, writer-lock, reference and unrelated-session preservation fixtures.
 - Improve Claude format coverage with fixtures for observed missing metadata.

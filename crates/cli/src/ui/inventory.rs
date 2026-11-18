@@ -58,7 +58,17 @@ impl Snapshot {
         };
         let detected = detected.unwrap_or_default();
         let transcript_preview = provider == ProviderKind::Codex && cfg!(target_os = "macos");
-        let root_check = fs::symlink_metadata(root);
+        let blocked_root = provider == ProviderKind::Codex
+            && matches!(
+                app.discovery.selected_access(),
+                agentmender_provider_codex::discovery::Access::Linked
+                    | agentmender_provider_codex::discovery::Access::NetworkPath
+            );
+        let root_check = if blocked_root {
+            Err(std::io::ErrorKind::PermissionDenied.into())
+        } else {
+            fs::symlink_metadata(root)
+        };
         let presence = if detected.detected {
             Presence::Installed
         } else if root_check.is_ok() {

@@ -64,7 +64,8 @@ require("crates/application/src/local_inventory.rs", ".filter(Session::is_main)"
 require("crates/provider-codex/src/worker/inventory.rs", "thread_spawn_edges",
         "reader::relationship_header", "attached_thread_parent_id")
 require("crates/provider-codex/src/worker/cascade.rs", "SessionState::Archived", "thread_spawn_edges",
-        "archived_sessions", "reader::relationship_header", "strict_source_files", "unrelated_revision")
+        "archived_sessions", "reader::relationship_header", "strict_source_files", "unrelated_revision",
+        "check_native_lookup", "rollout.meta", "history_base")
 require("crates/provider-codex/src/removal.rs", "self.prepare(adapter, review.session())",
         "self.is_current()", "probe_version", "probe_codex_delete", "check_writer_locks",
         "run_confined_codex_delete", "adapter.verify_removal(scope)", "Duration::from_secs(180)")
@@ -82,6 +83,11 @@ require("crates/provider-api/src/process.rs", "sqlite_home={scope}", "(deny netw
         "(deny file-write* (require-not (subpath {scope})))", '.arg("--force")',
         'process.args(["delete", "--help"])', "if !is_current()")
 require("crates/cli/src/ui/browser.rs", "Ipv4Addr::LOCALHOST", "byte.is_ascii_hexdigit()")
+
+for path in ["crates/provider-codex/src/exports.rs", "crates/cli/src/ui/storage.rs"]:
+    assert not re.search(r"\b(remove_file|remove_dir_all|run_confined_codex_delete|ReviewedRemoval)\b", source(path)), path
+require("crates/cli/src/ui/mod.rs", "/api/storage/exports/preview", "/api/storage/exports/operations/{key}/confirm")
+require("crates/cli/src/ui/storage.rs", "receipt: None", "snapshot(app, true)")
 
 native = source("crates/provider-codex/src/removal.rs")
 assert not re.search(r"\b[a-f0-9]{64}\b", native)

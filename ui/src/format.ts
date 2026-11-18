@@ -2,7 +2,7 @@ import type { Kind, Provider, State } from './api'
 
 export const providerLabel: Record<Provider, string> = { codex: 'Codex', claude: 'Claude Code' }
 export const stateLabel: Record<State, string> = {
-  active: 'Attiva',
+  active: 'Non archiviata',
   archived: 'Archiviata',
   unknown: 'Sconosciuto',
 }

@@ -18,7 +18,7 @@ agentmender CLI -> application -> domain
 | `domain` | Provider/root/session and project identity, coverage-neutral metadata and display safety. |
 | `application` | Verified main-conversation filtering, project grouping, normalized metadata queries and stable paging. |
 | `provider-api` | Bounded filesystem reads, fixed version probes, isolated worker and native command launch, kernel write-denial attestation. |
-| `provider-codex` | Fixed SQLite and rollout observations, bounded compressed transcript parsing, native release and storage admission and the existing guarded success marker. |
+| `provider-codex` | Fixed SQLite and rollout observations, bounded compressed transcript parsing, platform discovery, bounded export observations, native release and storage admission, and the guarded success marker. |
 | `provider-claude` | Bounded read-only project transcript inventory and installation detection. |
 | `cli` | Launch configuration, embedded Vite assets, browser authorization, provider routing, one-use confirmation and operation results. |
 
@@ -61,13 +61,15 @@ values remain unknown. There is no Claude mutation operation.
 
 ## Removal path
 
-The browser can review one verified main UUID or the session trees explicitly
+The browser can review one verified persisted main UUID or the session trees explicitly
 assigned to a verified native Codex project.
 The Codex worker owns the full
 relationship observation. It indexes incoming and outgoing spawn edges and
 walks the outgoing edges iteratively into a unique bounded set, retaining
 descendant IDs with missing canonical rows. Duplicate or conflicting edges,
-cycles, unknown coverage and unsafe or external references block review.
+cycles, unknown coverage and unsafe or external references block review. The
+worker resolves each physical rollout ID, validates its placement in either
+rollout tree and checks the history chains and native fallback paths.
 Provider-specific classification and graph logic stay in the adapter. The CLI
 keeps the full review server-side and returns counts with an expiring receipt.
 
@@ -98,3 +100,19 @@ The operation status exposes each verified, undispatched or uncertain tree.
 An observed failure stops dispatch. Outcomes and capabilities expire with the
 server process. The project inventory is reobserved on restart and the user
 can authorize a newly verified scope explicitly. See [ADR 0044](adr/0044-provider-projects.md).
+
+## Storage discovery and exports
+
+`provider-codex/discovery` gathers OS-specific installation and root evidence.
+It selects one launch root for the existing session manager. The browser can
+inspect other roots independently. Discovery never grants a native writer
+capability. Storage records differentiate presence, format evidence, ownership
+and supported operations.
+
+`provider-codex/exports.rs` enumerates metadata within entry, depth and time
+budgets and projects only recognized manifest fields. The CLI caches the
+inventory for pagination and produces a new observation before a selection
+preview. Export keys bind the observed root, group path and metadata revision.
+The router applies the existing loopback browser and Origin boundaries.
+Export confirmation has an independent namespace and is unavailable until
+there is an exercised exporter write contract. [ADR 0045](adr/0045-codex-storage-capabilities.md)

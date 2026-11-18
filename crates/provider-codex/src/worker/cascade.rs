@@ -84,7 +84,7 @@ impl Graph {
             if self
                 .inbound
                 .get(id)
-                .is_some_and(|edge| edge.status != "closed")
+                .is_some_and(|edge| !matches!(edge.status.as_str(), "open" | "closed"))
             {
                 return Err(RemovalRefusal::UnsafeMember);
             }
@@ -104,12 +104,15 @@ struct Rollout {
     source: ObservedSource,
 }
 
-fn rollout_index(root: &Path, end: Instant) -> Result<BTreeMap<String, Rollout>, ProviderError> {
+fn rollout_index(
+    root: &Path,
+    end: Instant,
+) -> Result<BTreeMap<String, Vec<Rollout>>, ProviderError> {
     let files = filesystem::strict_source_files(root, FOLDERS, MAX_RECORDS, end)?;
     let mut index = BTreeMap::new();
     let mut rollout_ids = BTreeSet::new();
     for path in &files {
-        check_size(index.len(), MAX_RECORDS, end)?;
+        check_size(rollout_ids.len(), MAX_RECORDS, end)?;
         let name = path
             .file_name()
             .and_then(|name| name.to_str())
@@ -121,18 +124,17 @@ fn rollout_index(root: &Path, end: Instant) -> Result<BTreeMap<String, Rollout>,
         let Some(stem) = name.strip_suffix(".jsonl") else {
             continue;
         };
-        let timestamp = stem.as_bytes().get(..19).ok_or_else(unavailable)?;
-        if !timestamp
-            .iter()
-            .zip(b"0000-00-00T00-00-00")
-            .all(|(byte, marker)| {
-                if *marker == b'0' {
-                    byte.is_ascii_digit()
-                } else {
-                    byte == marker
-                }
-            })
-            || stem.as_bytes().get(19) != Some(&b'-')
+        let timestamp = stem.get(..19).ok_or_else(unavailable)?;
+        if stem.as_bytes().get(19) != Some(&b'-')
+            || chrono::NaiveDateTime::parse_from_str(timestamp, "%Y-%m-%dT%H-%M-%S").is_err()
+            || !timestamp
+                .bytes()
+                .enumerate()
+                .all(|(index, byte)| match index {
+                    4 | 7 | 13 | 16 => byte == b'-',
+                    10 => byte == b'T',
+                    _ => byte.is_ascii_digit(),
+                })
         {
             return Err(unavailable());
         }
@@ -140,7 +142,6 @@ fn rollout_index(root: &Path, end: Instant) -> Result<BTreeMap<String, Rollout>,
         let (id, rollout_id) = ids.split_once('_').unwrap_or((ids, ids));
         if !canonical_uuid(id)
             || !canonical_uuid(rollout_id)
-            || index.contains_key(id)
             || !rollout_ids.insert(rollout_id.to_owned())
         {
             return Err(unavailable());
@@ -149,21 +150,21 @@ fn rollout_index(root: &Path, end: Instant) -> Result<BTreeMap<String, Rollout>,
         let stamp = reader::stamp(&file.metadata().map_err(|_| unavailable())?);
         let meta = reader::relationship_header(&file, path, id, end)?;
         let source = meta.source()?;
-        index.insert(
-            id.to_owned(),
-            Rollout {
+        index
+            .entry(id.to_owned())
+            .or_insert_with(Vec::new)
+            .push(Rollout {
                 path: path.clone(),
                 rollout_id: rollout_id.into(),
                 stamp,
                 meta,
                 source,
-            },
-        );
+            });
     }
     if filesystem::strict_source_files(root, FOLDERS, MAX_RECORDS, end)? != files {
         return Err(stale());
     }
-    for rollout in index.values() {
+    for rollout in index.values().flatten() {
         check_size(0, 1, end)?;
         let file = filesystem::open_source_read(root, &rollout.path)?;
         if reader::stamp(&file.metadata().map_err(|_| unavailable())?) != rollout.stamp {
@@ -247,7 +248,7 @@ fn check_references(
     db: &Sqlite,
     layout: &inventory::Layout,
     graph: &Graph,
-    rollouts: &BTreeMap<String, Rollout>,
+    rollouts: &BTreeMap<String, Vec<Rollout>>,
     ids: &BTreeSet<String>,
     end: Instant,
 ) -> Result<BTreeSet<String>, RemovalRefusal> {
@@ -282,10 +283,12 @@ fn check_references(
             check_spawn_reference(graph, ids, &id, parent)?;
         }
         let locator: String = row.get(1).map_err(|_| unavailable())?;
-        if rollouts
-            .get(&id)
-            .is_none_or(|rollout| rollout.path != Path::new(&locator))
-        {
+        let path = Path::new(&locator);
+        if rollouts.get(&id).is_none_or(|files| {
+            !files.iter().any(|rollout| {
+                rollout.path == path || rollout.path == reader::other_representation(path)
+            })
+        }) {
             return Err(RemovalRefusal::IncompleteRelationships);
         }
         if !canonical_rows.insert(id) {
@@ -296,9 +299,12 @@ fn check_references(
     let selected_rollouts: BTreeSet<_> = rollouts
         .iter()
         .filter(|(id, _)| ids.contains(*id))
-        .map(|(_, rollout)| &rollout.rollout_id)
+        .flat_map(|(_, files)| files.iter().map(|rollout| &rollout.rollout_id))
         .collect();
-    for (id, rollout) in rollouts {
+    for (id, rollout) in rollouts
+        .iter()
+        .flat_map(|(id, files)| files.iter().map(move |file| (id, file)))
+    {
         let meta = &rollout.meta;
         let fork_of_member = meta
             .forked_from_id
@@ -330,13 +336,86 @@ fn check_references(
             return Err(RemovalRefusal::IncompleteRelationships);
         }
     }
+    let physical: BTreeMap<_, _> = rollouts
+        .values()
+        .flatten()
+        .filter(|file| selected_rollouts.contains(&file.rollout_id))
+        .map(|file| (&file.rollout_id, file))
+        .collect();
+    let mut resolved = BTreeSet::new();
+    for start in physical.keys().copied() {
+        let mut chain = BTreeSet::new();
+        let mut current = start;
+        while !resolved.contains(current) {
+            check_size(chain.len(), MAX_RECORDS, end)?;
+            if !chain.insert(current) {
+                return Err(RemovalRefusal::IncompleteRelationships);
+            }
+            let file = physical.get(current).ok_or(RemovalRefusal::ExternalFork)?;
+            let Some(base) = &file.meta.history_base else {
+                break;
+            };
+            if &base.thread_id == current {
+                break;
+            }
+            current = &base.thread_id;
+        }
+        resolved.extend(chain);
+    }
     Ok(canonical_rows)
+}
+
+/// These releases fall back to fuzzy filename search when a store side lacks
+/// an exact thread match. Refuse up front if a foreign rollout can match.
+/// The kernel path allowlist still protects against changes after preflight.
+fn check_native_lookup(
+    root: &Path,
+    rollouts: &BTreeMap<String, Vec<Rollout>>,
+    ids: &BTreeSet<String>,
+    end: Instant,
+) -> Result<(), RemovalRefusal> {
+    for id in ids {
+        for subdir in FOLDERS {
+            let prefix = root.join(subdir);
+            if rollouts
+                .get(id)
+                .is_some_and(|files| files.iter().any(|file| file.path.starts_with(&prefix)))
+            {
+                continue;
+            }
+            for (owner, files) in rollouts {
+                check_size(0, 1, end)?;
+                if ids.contains(owner) {
+                    continue;
+                }
+                if files.iter().any(|file| {
+                    let Ok(path) = file.path.strip_prefix(&prefix) else {
+                        return false;
+                    };
+                    let Some(name) = path.to_str().filter(|path| path.is_ascii()) else {
+                        return true;
+                    };
+                    let mut query = id.bytes();
+                    let mut next = query.next();
+                    for byte in name.bytes() {
+                        if next == Some(byte.to_ascii_lowercase()) {
+                            next = query.next();
+                        }
+                    }
+                    next.is_none()
+                }) {
+                    return Err(RemovalRefusal::AmbiguousNativeLookup);
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 fn unrelated_revision(
     db: &Sqlite,
     graph: &Graph,
-    rollouts: &BTreeMap<String, Rollout>,
+    rollouts: &BTreeMap<String, Vec<Rollout>>,
     ids: &BTreeSet<String>,
     end: Instant,
 ) -> Result<String, ProviderError> {
@@ -386,12 +465,14 @@ fn unrelated_revision(
             hash.update(serde_json::to_vec(&(child, edge)).map_err(|_| unavailable())?);
         }
     }
-    for (id, rollout) in rollouts {
+    for (id, files) in rollouts {
         if !ids.contains(id) {
-            hash.update(
-                serde_json::to_vec(&(id, &rollout.path, &rollout.stamp))
-                    .map_err(|_| unavailable())?,
-            );
+            for rollout in files {
+                hash.update(
+                    serde_json::to_vec(&(id, &rollout.path, &rollout.stamp))
+                        .map_err(|_| unavailable())?,
+                );
+            }
         }
     }
     Ok(reader::hash(&hash.finalize()))
@@ -413,7 +494,7 @@ struct RemovalArchive<'a> {
     root: &'a Path,
     layout: inventory::Layout,
     graph: Graph,
-    rollouts: BTreeMap<String, Rollout>,
+    rollouts: BTreeMap<String, Vec<Rollout>>,
     end: Instant,
 }
 
@@ -450,60 +531,68 @@ impl<'a> RemovalArchive<'a> {
             return Err(RemovalRefusal::NotMain);
         }
         let canonical_rows = check_references(db, layout, graph, rollouts, &ids, end)?;
+        check_native_lookup(root, rollouts, &ids, end)?;
 
         let mut members = Vec::with_capacity(ids.len());
+        let mut affected = Vec::new();
         for id in &ids {
-            let rollout = rollouts.get(id);
-            if canonical_rows.contains(id) {
-                let canonical = inventory::exact(db, root, id, end)?;
-                if canonical.session.state != SessionState::Archived {
-                    return Err(RemovalRefusal::UnsafeMember);
-                }
-                if rollout.is_none_or(|rollout| canonical.locator.as_ref() != Some(&rollout.path))
+            let files = rollouts.get(id).map_or(&[][..], Vec::as_slice);
+            let canonical = canonical_rows
+                .contains(id)
+                .then(|| inventory::exact(db, root, id, end))
+                .transpose()?;
+            let parent = graph.inbound.get(id).map(|edge| &edge.parent);
+            if let Some(canonical) = &canonical {
+                if canonical.session.state == SessionState::Unknown
                     || canonical.relations.attached.is_some()
+                    || parent.is_some_and(|parent| {
+                        !matches!(&canonical.relations.source, ObservedSource::Spawned(actual) if actual == parent)
+                    })
                 {
                     return Err(RemovalRefusal::IncompleteRelationships);
                 }
-                if id != main
-                    && !matches!(&canonical.relations.source,
-                ObservedSource::Spawned(parent) if parent == &graph.inbound[id].parent)
-                {
-                    return Err(RemovalRefusal::IncompleteRelationships);
-                }
+            } else if graph
+                .inbound
+                .get(id)
+                .is_some_and(|edge| edge.status == "open")
+            {
+                // An open edge without a canonical row does not identify a
+                // persisted writer lifecycle we can verify.
+                return Err(RemovalRefusal::UnsafeMember);
             }
-            if let Some(rollout) = rollout {
-                if !rollout.path.starts_with(root.join("archived_sessions"))
-                    || reader::compressed_path(&rollout.path)
-                    || rollout.rollout_id != *id
-                    || rollout
+            for file in files {
+                check_size(affected.len(), MAX_SCOPE_MEMBERS, end)?;
+                let archived = file.path.starts_with(root.join("archived_sessions"));
+                if canonical
+                    .as_ref()
+                    .is_some_and(|item| archived != (item.session.state == SessionState::Archived))
+                    || file
                         .path
                         .to_str()
                         .is_none_or(|path| path.len() > 512 || path.chars().any(char::is_control))
                 {
                     return Err(RemovalRefusal::UnsafeMember);
                 }
-                if id != main
-                    && (!matches!(&rollout.source,
-                ObservedSource::Spawned(parent) if parent == &graph.inbound[id].parent)
-                        || rollout.meta.attached_thread
-                        || rollout
-                            .meta
-                            .session_id
-                            .as_ref()
-                            .is_some_and(|root| root != id && root != main))
+                if file.meta.attached_thread
+                    || parent.is_some_and(|parent| {
+                        !matches!(&file.source, ObservedSource::Spawned(actual) if actual == parent)
+                            || file
+                                .meta
+                                .session_id
+                                .as_ref()
+                                .is_some_and(|root| root != id && root != main)
+                    })
+                    || parent.is_none() && file.source != candidate.relations.source
                 {
                     return Err(RemovalRefusal::IncompleteRelationships);
                 }
+                affected.push((id, &file.path, &file.stamp));
             }
             members.push(ReviewedMember {
                 id: id.clone(),
-                rollout: rollout.map(|rollout| rollout.path.clone()),
+                rollouts: files.iter().map(|file| file.path.clone()).collect(),
             });
         }
-        let affected: Vec<_> = ids
-            .iter()
-            .map(|id| (id, rollouts.get(id).map(|r| &r.stamp)))
-            .collect();
         let revision =
             reader::hash(&serde_json::to_vec(&(revision, affected)).map_err(|_| unavailable())?);
         let scope = RemovalScope {
@@ -596,11 +685,13 @@ pub(super) fn project_plan(
             CodexMembership::Unassigned => {}
         }
     }
-    if archive.rollouts.iter().any(|(id, rollout)| {
+    if archive.rollouts.iter().any(|(id, rollouts)| {
         !canonical.contains(id)
-            && !matches!(&rollout.source, ObservedSource::Spawned(_))
-            && rollout.meta.forked_from_id.is_none()
-            && !rollout.meta.attached_thread
+            && rollouts.iter().any(|file| {
+                !matches!(&file.source, ObservedSource::Spawned(_))
+                    && file.meta.forked_from_id.is_none()
+                    && !file.meta.attached_thread
+            })
     }) {
         // A rollout-only main has no verifiable project membership.
         return Err(RemovalRefusal::IncompleteRelationships);
@@ -673,16 +764,19 @@ pub(super) fn verify(
     for member in &scope.members {
         residual.canonical_rows +=
             usize::from(row_exists.exists([&member.id]).map_err(|_| unavailable())?);
-        let mut file_remains = rollouts.contains_key(&member.id);
-        if let Some(path) = &member.rollout {
+        let observed = rollouts.get(&member.id).map_or(&[][..], Vec::as_slice);
+        residual.rollouts += observed.len();
+        for path in &member.rollouts {
+            if observed.iter().any(|file| &file.path == path) {
+                continue;
+            }
             match filesystem::open_source_read(root, path) {
-                Ok(_) => file_remains = true,
+                Ok(_) => residual.rollouts += 1,
                 Err(ProviderError::CapabilityUnavailable(code))
                     if code == "source file missing" => {}
                 Err(_) => return Err(unavailable()),
             }
         }
-        residual.rollouts += usize::from(file_remains);
     }
     residual.spawn_edges = graph
         .inbound

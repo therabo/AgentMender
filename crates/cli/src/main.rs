@@ -3,7 +3,9 @@ use std::{env, path::PathBuf, process::ExitCode};
 use agentmender_domain::{ProviderKind, canonical_uuid};
 use agentmender_provider_api::{ProviderLocation, process};
 use agentmender_provider_claude::{ClaudeAdapter, DesktopContext};
-use agentmender_provider_codex::CodexAdapter;
+use agentmender_provider_codex::{
+    CodexAdapter, NativeRemoval, NativeUnavailable, discovery::Discovery,
+};
 use clap::{Parser, Subcommand};
 
 mod ui;
@@ -119,14 +121,12 @@ fn run(args: Args) -> Result<(), String> {
         .filter(|path| path.is_absolute())
         .ok_or("an absolute home directory is required")?;
     let helper = env::current_exe().map_err(|_| "could not resolve the reader executable")?;
-    let codex_location = ProviderLocation {
-        state_root: root(args.codex_root.as_ref(), "CODEX_HOME", ".codex", &home)?,
-        executable: args
-            .codex_executable
-            .clone()
-            .or_else(|| process::find_executable(ProviderKind::Codex))
-            .or_else(process::find_codex_desktop_executable),
-    };
+    let discovery = Discovery::detect(
+        &home,
+        args.codex_root.clone(),
+        args.codex_executable.clone(),
+    )?;
+    let codex_location = discovery.location.clone();
     let claude_location = ProviderLocation {
         state_root: root(
             args.claude_root.as_ref(),
@@ -139,17 +139,29 @@ fn run(args: Args) -> Result<(), String> {
             .clone()
             .or_else(|| process::find_executable(ProviderKind::Claude)),
     };
-    let native = agentmender_provider_codex::NativeRemoval::detect(
-        codex_location.executable.as_deref(),
-        &codex_location.state_root,
-        args.protect_codex_session.clone(),
-    );
+    let overlaps_exports = discovery.storage.iter().any(|item| {
+        item.kind == agentmender_provider_codex::discovery::StorageKind::ExternalExports
+            && (item.path.starts_with(&discovery.selected_root)
+                || discovery.selected_root.starts_with(&item.path))
+    });
+    let native = if overlaps_exports {
+        Err(NativeUnavailable::OverlappingExports)
+    } else if discovery.sqlite_directory != discovery.selected_root {
+        Err(NativeUnavailable::SplitStorage)
+    } else {
+        NativeRemoval::detect(
+            codex_location.executable.as_deref(),
+            &codex_location.state_root,
+            args.protect_codex_session.clone(),
+        )
+    };
     let codex = CodexAdapter::new(codex_location.clone(), helper, home.clone());
     let claude = claude_adapter(&args, claude_location.clone(), &home)?;
     ui::run(ui::Configuration {
         codex_root: codex_location.state_root,
         claude_root: claude_location.state_root,
         codex,
+        discovery,
         claude,
         native,
         limit: args.max_entries as usize,

@@ -24,11 +24,14 @@ pub(super) fn refusal_error(error: RemovalRefusal) -> ApiError {
         RemovalRefusal::ExternalFork => {
             "Un fork esterno o la sua cronologia fa riferimento all’albero. La rimozione è bloccata."
         }
+        RemovalRefusal::AmbiguousNativeLookup => {
+            "La ricerca nativa potrebbe selezionare un rollout estraneo. Rimozione bloccata prima del comando."
+        }
         RemovalRefusal::AttachedThread => {
             "Una sessione agganciata fa riferimento all’albero. La rimozione è bloccata."
         }
         RemovalRefusal::UnsafeMember => {
-            "L’albero include una sessione attiva, una sessione in uso o un transcript in un formato o percorso di rimozione non supportato."
+            "L’albero include una sessione in uso, uno stato di spawn non verificabile o un percorso di rollout incompatibile."
         }
         RemovalRefusal::Changed => CHANGED,
     })
@@ -42,7 +45,7 @@ const CHANGED: &str =
     "L’archivio o l’eseguibile è cambiato. Aggiorna l’inventario e richiedi una nuova anteprima.";
 pub(super) const PROTECTED: &str =
     "Una sessione nell’albero è protetta dalla configurazione di avvio.";
-const NOT_ARCHIVED: &str = "La rimozione è disponibile solo per le sessioni archiviate.";
+const UNKNOWN_STATE: &str = "Lo stato di archiviazione della sessione non è verificato.";
 
 pub(super) fn native_reason(
     native: &Result<NativeRemoval, NativeUnavailable>,
@@ -58,6 +61,12 @@ pub(super) fn native_reason(
                 "Eseguibile Codex regolare e avviabile non disponibile."
             }
             NativeUnavailable::Root => "Directory dell’archivio Codex non verificabile all’avvio.",
+            NativeUnavailable::OverlappingExports => {
+                "Una root di export esterna si sovrappone all’archivio delle sessioni."
+            }
+            NativeUnavailable::SplitStorage => {
+                "Il database risiede in una root separata. Il contratto nativo locale richiede la stessa root."
+            }
             NativeUnavailable::VersionProbe => {
                 "Impossibile verificare la versione di Codex nel processo confinato."
             }
@@ -74,8 +83,8 @@ pub(super) fn native_reason(
 pub(super) fn refusal(session: &Session, protected: &[String]) -> Option<&'static str> {
     if protected.contains(&session.identity.native_id) {
         Some(PROTECTED)
-    } else if session.state != SessionState::Archived {
-        Some(NOT_ARCHIVED)
+    } else if session.state == SessionState::Unknown {
+        Some(UNKNOWN_STATE)
     } else {
         None
     }

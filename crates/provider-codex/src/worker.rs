@@ -124,7 +124,7 @@ pub(super) struct ProjectEvidence {
 #[serde(deny_unknown_fields)]
 pub(super) struct ReviewedMember {
     pub id: String,
-    pub rollout: Option<PathBuf>,
+    pub rollouts: Vec<PathBuf>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]

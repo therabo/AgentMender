@@ -2,6 +2,7 @@
 mod browser;
 mod inventory;
 mod removal;
+mod storage;
 mod transcript;
 
 use std::{
@@ -12,7 +13,9 @@ use std::{
 
 use agentmender_domain::ProviderKind;
 use agentmender_provider_claude::ClaudeAdapter;
-use agentmender_provider_codex::{CodexAdapter, NativeRemoval, NativeUnavailable};
+use agentmender_provider_codex::{
+    CodexAdapter, NativeRemoval, NativeUnavailable, discovery::Discovery,
+};
 use axum::{
     Json, Router,
     extract::{DefaultBodyLimit, Path, Query, Request, State},
@@ -49,6 +52,8 @@ struct App {
     protected: Vec<String>,
     native: Result<NativeRemoval, NativeUnavailable>,
     inventory: Inventories,
+    discovery: Discovery,
+    exports: Mutex<Option<storage::CachedInventory>>,
     operations: Mutex<Operations>,
     cursors: Mutex<TranscriptCursors>,
     reads: Arc<Semaphore>,
@@ -419,6 +424,14 @@ fn router(app: Arc<App>) -> Router {
         )
         .route("/favicon.ico", get(|| async { StatusCode::NO_CONTENT }))
         .route("/api/authorize", post(authorize))
+        .route("/api/storage/codex", get(storage::discover))
+        .route("/api/storage/exports", get(storage::list))
+        .route("/api/storage/exports/refresh", post(storage::refresh))
+        .route("/api/storage/exports/preview", post(storage::preview))
+        .route(
+            "/api/storage/exports/operations/{key}/confirm",
+            post(storage::confirm),
+        )
         .route("/api/{provider}/projects", get(projects))
         .route("/api/{provider}/projects/{key}", get(project_detail))
         .route(
@@ -452,6 +465,7 @@ pub(super) struct Configuration {
     pub codex_root: PathBuf,
     pub claude_root: PathBuf,
     pub codex: CodexAdapter,
+    pub discovery: Discovery,
     pub claude: ClaudeAdapter,
     pub native: Result<NativeRemoval, NativeUnavailable>,
     pub limit: usize,
@@ -489,6 +503,8 @@ pub(super) fn run(config: Configuration) -> Result<(), String> {
             codex_root: config.codex_root,
             claude_root: config.claude_root,
             codex: config.codex,
+            discovery: config.discovery,
+            exports: Mutex::default(),
             claude: config.claude,
             native: config.native,
             limit: config.limit,

@@ -19,7 +19,7 @@ contracts.
   provider observations and inspect the full Codex graph for removal.
 - Admit native removal through a confined version probe, a write-denied
   command probe and an exercised release and storage contract. Pin the actual
-  executable and root identities. Review the complete archived subtree,
+  executable and root identities. Review the complete persisted subtree across both rollout trees,
   including edge-only descendants, and check configured protections, writer
   ownership, rollout identity and external references.
 - Rebuild the bound scope immediately before each native request and
@@ -34,6 +34,10 @@ contracts.
   workspace paths, Desktop preferences and unrelated artifacts outside that
   scope. Keep the guarded Desktop marker and distinguish verified session
   evidence from other provider artifacts or physical storage reclaim.
+- Keep export discovery, inventory and authorization separate from session
+  removal. Preserve user-selected paths, independent backups, links and unknown
+  groups. Require a verified exporter lifecycle and platform write boundary
+  before admitting an export receipt.
 - Use temporary, isolated provider fixtures. Leave real provider session data,
   credentials and installed provider configuration untouched during development.
 

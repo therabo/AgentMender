@@ -3,9 +3,8 @@
 AgentMender is a local browser session manager for **Codex** and **Claude Code**.
 Expand registered projects to browse their main conversations. Codex shows
 independent conversations in Recenti. Search projects, workspaces, titles and
-session IDs. Supported Codex releases allow removal of one archived
-conversation or all verified session trees explicitly assigned to a native
-project.
+session IDs. Supported Codex releases can remove a verified conversation tree, including
+unarchived sessions without a writer, or the trees assigned to a native project.
 
 ## Run locally
 
@@ -24,8 +23,14 @@ without model services, MCP or external credentials.
 
 | Provider | Available workflow |
 |---|---|
-| Codex | Registered projects, Recenti, partial main-conversation inventory and bounded transcript pages on macOS. Native cascade removal under the [verified release, command and storage contract](docs/provider-compatibility.md). |
+| Codex | Storage discovery and export inventory for macOS, Linux and Windows. Registered projects, Recenti, partial main-conversation inventory and bounded transcript pages on macOS. Native cascade removal under the [verified release, command and storage contract](docs/provider-compatibility.md). |
 | Claude Code | Namespace groups and partial read-only inventory of verified main conversations in project JSONL, including Desktop-origin Code records. |
+
+Open **Storage → Export e backup** to measure export groups, inspect why they
+are protected and review a multi-selection. An export location or manifest
+does not authorize mutation. Installed exporters have no verified removal
+contract in this release. **Installazioni e archivi** shows the discovered
+roots separately, including the root selected for the Session Manager.
 
 A project review lists the main conversations, descendants and exclusions.
 Codex removes each reviewed session tree in sequence. The project

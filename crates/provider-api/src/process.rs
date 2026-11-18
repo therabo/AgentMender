@@ -4,7 +4,7 @@ use crate::evidence::EvidenceSandbox;
 use agentmender_domain::ProviderKind;
 use std::{path::Path, process::Child, time::Duration};
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
 use std::{
     io::Read,
     process::{Command, Stdio},
@@ -72,10 +72,15 @@ pub fn run_confined_codex_delete(
         };
         let mut approved = String::new();
         for path in rollouts {
-            if !path.starts_with(&archived)
-                || path
-                    .components()
-                    .any(|part| part == std::path::Component::ParentDir)
+            if !path
+                .strip_prefix(&sessions)
+                .or_else(|_| path.strip_prefix(&archived))
+                .is_ok_and(|relative| {
+                    !relative.as_os_str().is_empty()
+                        && relative
+                            .components()
+                            .all(|part| matches!(part, std::path::Component::Normal(_)))
+                })
             {
                 return NativeExit::Refused;
             }
@@ -97,6 +102,19 @@ pub fn run_confined_codex_delete(
             policy.push_str(&format!(
                 "(deny file-write* (require-all (require-any (subpath {sessions_scope}) (subpath {archived_scope})) (require-not (require-any{approved}))))"
             ));
+        }
+        for name in [
+            "exports",
+            "attachments",
+            "generated_images",
+            "worktrees",
+            "visualizations",
+            "sqlite",
+        ] {
+            let Ok(protected) = policy_literal(&root.join(name)) else {
+                return NativeExit::Refused;
+            };
+            policy.push_str(&format!("(deny file-write* (subpath {protected}))"));
         }
         let mut command = Command::new("/usr/bin/sandbox-exec");
         command
@@ -152,7 +170,7 @@ pub struct BundleMetadata {
     pub executable: String,
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
 fn small_output(mut command: Command) -> Result<Vec<u8>, ProviderError> {
     let mut child = command.spawn().map_err(|_| {
         ProviderError::CapabilityUnavailable("write-denied metadata process could not start".into())
@@ -203,11 +221,59 @@ fn small_output(mut command: Command) -> Result<Vec<u8>, ProviderError> {
     Ok(bytes)
 }
 
+#[cfg(target_os = "linux")]
+fn linux_version_command(executable: &Path) -> Result<Command, ProviderError> {
+    if !executable.is_absolute() {
+        return Err(ProviderError::InvalidScope(
+            "provider probe requires an absolute path".into(),
+        ));
+    }
+    let mut process = Command::new("/usr/bin/bwrap");
+    process.args([
+        "--unshare-all",
+        "--die-with-parent",
+        "--new-session",
+        "--clearenv",
+        "--setenv",
+        "HOME",
+        "/nonexistent",
+        "--setenv",
+        "PATH",
+        "/usr/bin",
+        "--ro-bind",
+        "/usr",
+        "/usr",
+        "--dev",
+        "/dev",
+        "--proc",
+        "/proc",
+        "--chdir",
+        "/",
+    ]);
+    for system in ["/lib", "/lib64", "/bin"] {
+        if Path::new(system).exists() {
+            process.args(["--ro-bind", system, system]);
+        }
+    }
+    process
+        .arg("--ro-bind")
+        .arg(executable)
+        .args(["/provider", "--", "/provider"])
+        .env_clear()
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    Ok(process)
+}
+
 /// Probe an executable version without a shell or unsandboxed retry.
 pub fn probe_version(kind: ProviderKind, executable: &Path) -> Result<String, ProviderError> {
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     {
+        #[cfg(target_os = "macos")]
         let mut process = command(executable)?;
+        #[cfg(target_os = "linux")]
+        let mut process = linux_version_command(executable)?;
         process.arg("--version");
         let bytes = small_output(process)?;
         let text = std::str::from_utf8(&bytes).map_err(|_| {
@@ -217,7 +283,7 @@ pub fn probe_version(kind: ProviderKind, executable: &Path) -> Result<String, Pr
             "unrecognized provider version banner".into(),
         ))
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     {
         let _ = (kind, executable);
         Err(ProviderError::CapabilityUnavailable(
@@ -307,7 +373,7 @@ pub fn read_bundle_metadata(bundle: &Path) -> Result<BundleMetadata, ProviderErr
 }
 
 /// Strictly recognize official version banners; proximity never proves compatibility.
-#[cfg(any(target_os = "macos", test))]
+#[cfg(any(target_os = "macos", target_os = "linux", test))]
 fn parse_version(kind: ProviderKind, banner: &str) -> Option<String> {
     let line = banner.trim();
     let value = match kind {
@@ -423,49 +489,55 @@ pub fn verify_source_write_denial(root: &Path) -> Result<(), ProviderError> {
 
 /// Resolve executable paths without invoking the shell or probing unrelated commands.
 pub fn find_executable(kind: ProviderKind) -> Option<std::path::PathBuf> {
+    find_executables(kind).into_iter().next()
+}
+
+pub fn find_executables(kind: ProviderKind) -> Vec<std::path::PathBuf> {
     let name = match kind {
         ProviderKind::Codex => "codex",
         ProviderKind::Claude => "claude",
     };
-    for directory in std::env::var_os("PATH")
-        .into_iter()
-        .flat_map(|p| std::env::split_paths(&p).collect::<Vec<_>>())
-    {
-        if !directory.is_absolute() {
-            continue;
-        }
-        let candidate = directory.join(name);
-        #[cfg(windows)]
-        let candidate = candidate.with_extension("exe");
-        if candidate.is_file() {
-            return Some(candidate);
-        }
-    }
-
-    None
+    std::env::var_os("PATH")
+        .iter()
+        .flat_map(|p| std::env::split_paths(p))
+        .take(128)
+        .filter(|directory| {
+            #[cfg(windows)]
+            {
+                use std::path::{Component, Prefix};
+                directory.is_absolute()
+                    && matches!(directory.components().next(), Some(Component::Prefix(prefix))
+                    if matches!(prefix.kind(), Prefix::Disk(_) | Prefix::VerbatimDisk(_)))
+            }
+            #[cfg(not(windows))]
+            directory.is_absolute()
+        })
+        .map(|directory| {
+            directory.join(if cfg!(windows) {
+                format!("{name}.exe")
+            } else {
+                name.into()
+            })
+        })
+        .filter(|candidate| candidate.is_file())
+        .collect()
 }
 
-/// Explicit real-session read-mode fallback; isolated legacy scans do not consult
-/// system applications merely because their test PATH is empty.
-pub fn find_codex_desktop_executable() -> Option<std::path::PathBuf> {
-    #[cfg(target_os = "macos")]
-    {
-        let suffix = "ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex";
-        let mut roots = vec![std::path::PathBuf::from("/Applications")];
-        if let Some(home) = std::env::var_os("HOME")
-            .map(std::path::PathBuf::from)
-            .filter(|h| h.is_absolute())
-        {
-            roots.push(home.join("Applications"));
-        }
-        for root in roots {
-            let candidate = root.join(suffix);
-            if candidate.is_file() {
-                return Some(candidate);
-            }
-        }
-    }
-    None
+/// Read Microsoft's registered package metadata. Only the OS-supplied
+/// PowerShell executable and a fixed, parameter-free query are used.
+#[cfg(windows)]
+pub fn codex_windows_packages() -> Result<Vec<u8>, ProviderError> {
+    let root = std::env::var_os("SystemRoot")
+        .map(std::path::PathBuf::from)
+        .filter(|root| root.is_absolute())
+        .ok_or_else(|| {
+            ProviderError::CapabilityUnavailable("Windows system root unavailable".into())
+        })?;
+    let mut command = Command::new(root.join("System32/WindowsPowerShell/v1.0/powershell.exe"));
+    command.args(["-NoLogo", "-NoProfile", "-NonInteractive", "-Command",
+        "$env:PSModulePath=Join-Path $PSHOME Modules; [Console]::OutputEncoding=[Text.Encoding]::UTF8; Get-AppxPackage -Name OpenAI.Codex* | Select-Object Name,PublisherId,InstallLocation,PackageFamilyName,@{n='Architecture';e={$_.Architecture.ToString()}},@{n='Version';e={$_.Version.ToString()}} | ConvertTo-Json -Compress"])
+        .stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null());
+    small_output(command)
 }
 
 #[cfg(test)]

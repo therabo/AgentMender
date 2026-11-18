@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import selectors
+import shutil
 import sqlite3
 import subprocess
 import sys
@@ -19,7 +20,9 @@ def session_id(n):
     return f"ab000000-1111-4111-8111-{n:012d}"
 
 
-R, C, G, S, F, M, GRANDCHILD, SIBLING, ORPHAN, ONE, ONLY_CHILD, PROTECTED_PARENT, MISSING_PARENT, SURVIVING_CHILD, REPLACEMENT = map(session_id, range(1, 16))
+R, C, G, S, F, M, GRANDCHILD, SIBLING, ORPHAN, ONE, ONLY_CHILD, PROTECTED_PARENT, MISSING_PARENT, SURVIVING_CHILD, REPLACEMENT, F_CHILD = map(session_id, range(1, 17))
+F = "ffeeddcc-aabb-4abc-8abc-abcdefabcdef"
+F_CHILD = "deedface-ccdd-4dad-8cad-dadebadeface"
 
 
 def digest(path):
@@ -218,6 +221,7 @@ def native_fixture(base, binary, workspaces=None):
         PROTECTED_PARENT: rollout(PROTECTED_PARENT, archived=True),
         S: rollout(S, parent=PROTECTED_PARENT, archived=True),
         F: rollout(F),
+        F_CHILD: rollout(F_CHILD, parent=F),
         M: rollout(M, archived=True),
         REPLACEMENT: rollout(REPLACEMENT, archived=True),
         G: rollout(G, archived=True),
@@ -252,5 +256,24 @@ def native_fixture(base, binary, workspaces=None):
                 (C, ORPHAN), (C, session_id(99)), (PROTECTED_PARENT, S),
                 (MISSING_PARENT, SURVIVING_CHILD),
             ])
+            db.execute("INSERT OR REPLACE INTO thread_spawn_edges VALUES(?,?,'open')", (F, F_CHILD))
+        base_rollout = rollouts[F]
+        original = base_rollout.read_bytes()
+        header, rest = original.split(b"\n", 1)
+        member_meta = json.loads(header)
+        if zstd := shutil.which("zstd"):
+            subprocess.run([zstd, "-q", "--", str(base_rollout)], check=True, timeout=10)
+            compressed = base_rollout.with_name(base_rollout.name + ".zst")
+            base_rollout.unlink()
+            rollouts[F] = compressed
+        first_variant = "eeddadaa-eeee-4eed-8dad-deadeedeaded"
+        second_variant = "ffefdeed-aaaa-4fee-8ddd-dddaadbadbad"
+        for ident, base_ident in [(first_variant, F), (second_variant, first_variant)]:
+            variant = base_rollout.with_name(base_rollout.stem + "_" + ident + ".jsonl")
+            member_meta["payload"]["history_mode"] = "paginated"
+            member_meta["payload"]["history_base"] = {
+                "thread_id": base_ident, "end_ordinal_exclusive": 1, "end_byte_offset": len(header) + 1,
+            }
+            variant.write_bytes(json.dumps(member_meta).encode() + b"\n" + rest)
         assert (root / "state_5.sqlite-wal").is_file() and (root / "state_5.sqlite-shm").is_file()
         yield root, rollouts

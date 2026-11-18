@@ -132,7 +132,7 @@ class Client:
 
 
 @contextmanager
-def ui(binary, base, codex_root, claude_root, codex=None, max_entries=None):
+def ui(binary, base, codex_root, claude_root, codex=None, max_entries=None, env_overrides=None):
     other = base / "empty-path"
     other.mkdir(exist_ok=True)
     home = base / "home"
@@ -140,7 +140,10 @@ def ui(binary, base, codex_root, claude_root, codex=None, max_entries=None):
     environment = {"HOME": str(home), "USERPROFILE": str(home), "PATH": str(other)}
     if os.name == "nt":
         environment["SystemRoot"] = os.environ["SystemRoot"]
-    command = [str(binary), "--codex-root", str(codex_root), "--claude-root", str(claude_root), "ui", "--no-open"]
+    environment.update(env_overrides or {})
+    command = [str(binary), "--claude-root", str(claude_root), "ui", "--no-open"]
+    if codex_root is not None:
+        command += ["--codex-root", str(codex_root)]
     if max_entries is not None:
         command += ["--max-entries", str(max_entries)]
     if codex:
@@ -262,7 +265,14 @@ def codex_acceptance(client, root, rollouts, binary):
         client.call("POST", "/api/codex/refresh")
 
     refuse(probe.PROTECTED_PARENT, "protetta")
-    refuse(probe.F, "archiviate")
+    candidate = probe.seed(root.parent, probe.session_id(5))
+    fuzzy_collision = candidate.with_name(candidate.stem + "_" + probe.session_id(17) + ".jsonl")
+    fuzzy_collision.write_bytes(candidate.read_bytes())
+    try:
+        refuse(probe.R, "rollout estraneo")
+    finally:
+        fuzzy_collision.unlink()
+        candidate.unlink()
     target = session(probe.R)
     client.call("POST", target + "/removal-preview", code=401, Authorization=None)
     client.call("POST", target + "/removal-preview", code=403, Origin="null")
@@ -291,6 +301,10 @@ def codex_acceptance(client, root, rollouts, binary):
     fork = probe.seed(root.parent, ref, archived=True, forked_from_id=probe.C)
     refuse(probe.G, "fork esterno")
     fork.unlink()
+    shared_history = probe.seed(root.parent, ref, archived=True, history_mode="paginated",
+                                history_base={"thread_id": probe.C, "end_ordinal_exclusive": 1, "end_byte_offset": 10})
+    refuse(probe.G, "fork esterno")
+    shared_history.unlink()
     attached = probe.seed(root.parent, ref, archived=True, forked_from_id=probe.C, attached_thread=True)
     refuse(probe.G, "sessione agganciata")
     attached.unlink()
@@ -308,12 +322,12 @@ def codex_acceptance(client, root, rollouts, binary):
     database("DELETE FROM thread_spawn_edges WHERE child_thread_id=?", (probe.G,))
     refresh()
 
+    database("UPDATE thread_spawn_edges SET status='unrecognized' WHERE child_thread_id=?", (probe.C,))
+    refuse(probe.G, "in uso")
     database("UPDATE thread_spawn_edges SET status='open' WHERE child_thread_id=?", (probe.C,))
-    refuse(probe.G, "attiva")
-    database("UPDATE thread_spawn_edges SET status='closed' WHERE child_thread_id=?", (probe.C,))
 
     database("UPDATE threads SET archived=0 WHERE id=?", (probe.C,))
-    refuse(probe.G, "attiva")
+    refuse(probe.G, "in uso")
     database("UPDATE threads SET archived=1 WHERE id=?", (probe.C,))
 
     locks = root / "thread-writer-locks"
@@ -321,6 +335,9 @@ def codex_acceptance(client, root, rollouts, binary):
     with (locks / f"{probe.C}.lock").open("w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         refuse(probe.G, "in uso")
+    with (locks / f"{probe.F_CHILD}.lock").open("w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        refuse(probe.F, "in uso")
 
     review = preview(probe.G, 5)
     database("INSERT INTO thread_spawn_edges VALUES(?,?,'closed')", (probe.C, ref))
@@ -333,9 +350,14 @@ def codex_acceptance(client, root, rollouts, binary):
     refuse(probe.G, "formato")
     database("DELETE FROM _sqlx_migrations WHERE version=63")
 
-    # Each successful operation preserves the full canonical rows and exact bytes
-    # of unrelated fixtures. This includes hidden workers and the active main.
-    for ident, descendants in [(probe.R, set()), (probe.ONE, {probe.ONLY_CHILD}),
+    # Each successful operation preserves unrelated fixtures and exports.
+    exports = root / "exports"
+    exports.mkdir(exist_ok=True)
+    independent = exports / "separate-backup.zip"
+    independent.write_bytes(b"independent export fixture")
+    variants = tuple(rollouts[probe.F].parent.glob(f"*{probe.F}_*.jsonl"))
+    assert len(variants) == 2
+    for ident, descendants in [(probe.R, set()), (probe.ONE, {probe.ONLY_CHILD}), (probe.F, {probe.F_CHILD}),
             (probe.G, {probe.C, probe.GRANDCHILD, probe.SIBLING, probe.ORPHAN, probe.session_id(99)})]:
         affected = {ident} | descendants
         untouched = {key: path.read_bytes() for key, path in rollouts.items()
@@ -344,6 +366,9 @@ def codex_acceptance(client, root, rollouts, binary):
         review = preview(ident, len(descendants))
         confirm(review, "verified", concurrent=(ident == probe.G))
         assert all(not path.exists() for key, path in rollouts.items() if key in affected)
+        if ident == probe.F:
+            assert not any(path.exists() for path in variants)
+        assert independent.read_bytes() == b"independent export fixture"
         assert all(rollouts[key].read_bytes() == original for key, original in untouched.items())
         assert database("SELECT * FROM threads ORDER BY id") == before
         assert all(parent not in affected and child not in affected
@@ -523,13 +548,13 @@ def codex_projects(agentmender, base, claude, executable):
             observed_recent = client.call("GET", RECENTS + f"?search={recent}")["rows"][0]
             assert observed_recent["project"] is None and observed_recent["workspace"] == str(target)
             client.call("POST", f"{PROJECTS}/{probe.G}/removal-preview", code=404)
-            for key, reason in [(probe.F, "archiviate"), (probe.PROTECTED_PARENT, "protetta")]:
-                blocked = project_path(client, cwd / workspaces[key])
-                result = client.call("POST", blocked + "/removal-preview", code=409)
-                assert reason in result["error"], result
+            active = project_path(client, cwd / workspaces[probe.F])
+            assert client.call("POST", active + "/removal-preview")["descendants"] == 1
+            blocked = project_path(client, cwd / workspaces[probe.PROTECTED_PARENT])
+            assert "protetta" in client.call("POST", blocked + "/removal-preview", code=409)["error"]
 
             database("UPDATE threads SET archived=0 WHERE id=?", (probe.C,))
-            assert "attiva" in client.call("POST", path + "/removal-preview", code=409)["error"]
+            assert "percorso di rollout" in client.call("POST", path + "/removal-preview", code=409)["error"]
             database("UPDATE threads SET archived=1 WHERE id=?", (probe.C,))
             locks = root / "thread-writer-locks"
             locks.mkdir(exist_ok=True)
@@ -743,6 +768,92 @@ def rejects_unconfined_reader(binary, source):
         assert result.returncode != 0 and not result.stdout and not Path(probe).exists()
 
 
+def storage_acceptance(binary, base, claude):
+    base.mkdir()
+    archive = base / "árchivio"
+    archive.mkdir()
+    alternate = base / "external-sqlite"
+    alternate.mkdir()
+    # A catalog signature is enough for discovery, not for a worker or writer.
+    (alternate / "state_5.sqlite").write_bytes(b"SQLite format 3\0")
+    worktree = base / "linked-work"
+    worktree.mkdir()
+    (archive / "config.toml").write_text(
+        "sqlite_home = " + json.dumps(str(alternate), ensure_ascii=False) +
+        "\n[desktop]\ngit-worktree-root = " + json.dumps(str(worktree), ensure_ascii=False), encoding="utf-8")
+    exports = archive / "exports"
+    exports.mkdir()
+    default_archive = base / "home" / ".codex"
+    default_archive.mkdir(parents=True)
+    (default_archive / "state_5.sqlite").write_bytes(b"SQLite format 3\0")
+    user_output = base / "home" / "Documents" / "Codex"
+    user_output.mkdir(parents=True)
+    workspace_file = user_output / "keep.txt"
+    workspace_file.write_bytes(b"user workspace")
+    other = base / "fake-xdg"
+    (other / "codex" / "exports").mkdir(parents=True)
+    environment = {"CODEX_HOME": str(archive), "XDG_DATA_HOME": str(other)}
+    with ui(binary, base, None, claude, env_overrides=environment) as (client, ticket):
+        client.call("GET", "/api/storage/codex", code=401)
+        authorize(client, ticket)
+        roots = client.call("GET", "/api/storage/codex")
+        assert Path(roots["selected_root"]) == archive
+        kinds = roots["storage"]
+        assert any(row["kind"] == "state_database" and Path(row["path"]).parent == alternate
+                   for row in kinds), kinds
+        assert any(row["kind"] == "worktrees" and Path(row["path"]) == worktree for row in kinds)
+        assert any(row["kind"] == "home" and Path(row["path"]) == default_archive for row in kinds)
+        assert not any(other in Path(row["path"]).parents for row in kinds)
+        assert any(row["kind"] == "user_output" and not row["removal_available"] for row in kinds)
+        empty = client.call("GET", "/api/storage/exports")
+        assert empty["total"] == 0 and empty["complete"]
+        backup = exports / "Backup Café"
+        backup.mkdir()
+        (backup / "file.zip").write_bytes(b"data")
+        (backup / "manifest.json").write_text('{"type":"backup","producer":"Fixture"}')
+        (exports / "unknown").mkdir()
+        (exports / "unknown" / "manifest.json").write_bytes(b"not JSON")
+        for index in range(45):
+            (exports / f"data-{index:02}.zip").write_bytes(bytes(index))
+        huge = exports / "sparse-fixture.zip"
+        with huge.open("wb") as stream:
+            stream.truncate(1_000_000)
+        if os.name != "nt":
+            os.link(workspace_file, exports / "hardlink-fixture")
+            (exports / "outside").symlink_to(user_output, target_is_directory=True)
+        else:
+            # Directory junctions do not require symlink privileges.
+            junction = exports / "outside"
+            subprocess.run(["cmd.exe", "/d", "/c", "mklink", "/J", str(junction), str(user_output)],
+                           check=True, capture_output=True)
+        client.call("POST", "/api/storage/exports/refresh", code=403, Origin=None)
+        client.call("POST", "/api/storage/exports/refresh", code=204)
+        first = client.call("GET", "/api/storage/exports?limit=4")
+        second = client.call("GET", "/api/storage/exports?limit=4&offset=4")
+        assert first["rows"][0]["name"] == huge.name and first["total"] > 45
+        assert not {row["key"] for row in first["rows"]} & {row["key"] for row in second["rows"]}
+        assert not first["removal_available"]
+        entry = client.call("GET", "/api/storage/exports?search=Caf%C3%A9")["rows"][0]
+        assert entry["protection"] == "independent_backup" and entry["manifest"] == "manifest.json"
+        links = client.call("GET", "/api/storage/exports?search=outside")["rows"][0]
+        assert links["size"]["files"] == 0 and links["protection"] == "shared"
+        if os.name != "nt":
+            linked = client.call("GET", "/api/storage/exports?search=hardlink")["rows"][0]
+            assert linked["shared_entries"] == 1 and not linked["removal_available"]
+        preview = client.call("POST", "/api/storage/exports/preview", {"keys": [entry["key"]]})
+        assert preview["removable"] == 0 and preview["protected"] == 1 and preview["receipt"] is None
+        client.call("POST", "/api/storage/exports/preview", {"paths": [str(backup)]}, code=422)
+        client.call("POST", "/api/storage/exports/operations/forged/confirm", code=409)
+        client.call("POST", "/api/storage/exports/operations/forged/confirm", code=409)
+        old = exports / "different"
+        backup.rename(old)
+        backup.mkdir()
+        (backup / "file.zip").write_bytes(b"replacement")
+        client.call("POST", "/api/storage/exports/preview", {"keys": [entry["key"]]}, code=409)
+        assert workspace_file.read_bytes() == b"user workspace"
+        assert (backup / "file.zip").read_bytes() == b"replacement"
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--agentmender", required=True, type=Path)
@@ -790,6 +901,7 @@ def main():
             print("Native Codex projects: full preflight, serial verification, partial completion and fresh review after restart.")
             print(f"Native Codex UI ({probe.digest(binary)[:12]}): verified singleton and subtree removal, hidden descendants, refusal and one-shot guards, unchanged unrelated rows and rollouts.")
         else:
+            storage_acceptance(agentmender, base / "storage-suite", claude)
             root = base / "codex"
             with ui(agentmender, base, root, claude) as (client, ticket):
                 authorize(client, ticket)

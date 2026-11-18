@@ -6,6 +6,19 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 
+/// Detect Windows junctions and other reparse points as well as Unix symlinks.
+pub fn is_link(metadata: &fs::Metadata) -> bool {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        metadata.file_attributes() & 0x400 != 0
+    }
+    #[cfg(not(windows))]
+    {
+        metadata.file_type().is_symlink()
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct ObservedFile {
     pub path: PathBuf,
@@ -30,7 +43,7 @@ pub fn inventory(root: &Path, max_entries: usize) -> Result<Inventory, ProviderE
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(result),
         Err(e) => return Err(io_error(root, e)),
     };
-    if metadata.file_type().is_symlink() {
+    if is_link(&metadata) {
         result.incomplete = true;
         return Ok(result);
     }
@@ -52,7 +65,7 @@ pub fn inventory(root: &Path, max_entries: usize) -> Result<Inventory, ProviderE
                 continue;
             }
         };
-        if directory_meta.file_type().is_symlink() || !directory_meta.is_dir() {
+        if is_link(&directory_meta) || !directory_meta.is_dir() {
             result.incomplete = true;
             continue;
         }
@@ -94,7 +107,7 @@ pub fn inventory(root: &Path, max_entries: usize) -> Result<Inventory, ProviderE
                     continue;
                 }
             };
-            if metadata.file_type().is_symlink() {
+            if is_link(&metadata) {
                 result.incomplete = true;
                 continue;
             }
@@ -147,7 +160,7 @@ fn open_regular(root: &Path, path: &Path) -> Result<fs::File, ProviderError> {
             current.push(component);
         }
         let meta = fs::symlink_metadata(&current).map_err(|e| io_error(&current, e))?;
-        if meta.file_type().is_symlink() {
+        if is_link(&meta) {
             return Err(ProviderError::InvalidScope(
                 "linked read path rejected".into(),
             ));
@@ -183,7 +196,7 @@ fn open_regular(root: &Path, path: &Path) -> Result<fs::File, ProviderError> {
     }
     let file = options.open(path).map_err(|e| io_error(path, e))?;
     let before = file.metadata().map_err(|e| io_error(path, e))?;
-    if !before.is_file() {
+    if !before.is_file() || is_link(&before) {
         return Err(ProviderError::InvalidScope(
             "nonregular read rejected".into(),
         ));

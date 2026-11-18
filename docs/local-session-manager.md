@@ -13,7 +13,9 @@ cargo build --locked --workspace
 URL for manual opening. Restart to obtain a new ticket. Stop the foreground
 server with Ctrl+C.
 
-Codex defaults to `CODEX_HOME` or `~/.codex`. Claude Code defaults to
+Codex prefers `--codex-root`, then `CODEX_HOME`, then the provider default.
+With the default absent, discovery can select a single corroborated alternate.
+Claude Code defaults to
 `CLAUDE_CONFIG_DIR` or `~/.claude`. Supply absolute `--codex-root`,
 `--claude-root`, `--codex-executable` or `--claude-executable` overrides at
 launch. `--protect-codex-session <UUID>` protects a UUID in the configured Codex root, including when it
@@ -42,6 +44,22 @@ and request a fresh review to inspect the remaining provider records.
 AgentMender never resumes removal automatically. SQLite storage reuse,
 snapshots, backups and provider artifacts can affect physical bytes reclaimed.
 
+## Storage and export previews
+
+Choose **Storage → Export e backup**. The list supports search, size/date
+sorting, pagination and up to 32 groups in a diagnostic selection. Expand a
+row to see its format, manifest, timestamps, observed links and protection.
+The first-level file or directory remains a filesystem group unless the
+known exporter format identifies a publication.
+
+Preview re-enumerates within the inventory budget. A changed group invalidates
+its key. The preview shows total file count, logical size, observed allocation
+when available and the protection of each selected group. With no verified
+export writer contract the preview issues no receipt. Export inspection never
+joins a session or project removal plan. **Installazioni e archivi** shows
+the launch-time discovery separately. Restart after a change to root or
+executable overrides.
+
 ## Local API
 
 The server chooses an IPv4 loopback port. `POST /api/authorize` consumes the
@@ -51,6 +69,11 @@ require exact Origin. All requests require the exact local Host.
 
 | Route | Role |
 |---|---|
+| `GET /api/storage/codex` | Read separate installation and storage observations |
+| `GET /api/storage/exports` | Search, sort and page bounded export metadata |
+| `POST /api/storage/exports/preview` | Recompute a diagnostic selection from opaque keys |
+| `POST /api/storage/exports/refresh` | Invalidate the export measurement |
+| `POST /api/storage/exports/operations/{key}/confirm` | Reject while no export writer contract is admitted |
 | `GET /api/{provider}/projects` | Search, filter, sort and page provider project groups |
 | `GET /api/{provider}/projects/{key}` | Read an observed group and its coverage and capability |
 | `GET /api/{provider}/projects/{key}/sessions` | Page verified main conversations within a group |
@@ -93,4 +116,7 @@ python3 scripts/test_local_ui.py --agentmender target/debug/agentmender --native
 
 The suite initializes disposable archives, checks the release and command
 contract, and exercises the same confined command boundary as the browser.
-Run it once per binary when validating a release.
+The fixture covers unarchived and archived trees, open and closed edges,
+plain and compressed variants, internal and external history references,
+and a byte-for-byte unchanged independent export. Install `zstd` to exercise
+the compressed base. Run it once per binary when validating a release.

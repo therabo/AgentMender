@@ -7,7 +7,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, macos-15-intel, windows-latest, windows-11-arm]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -31,3 +31,14 @@ jobs:
       - if: runner.os != 'Windows'
         run: python3 scripts/test_local_ui.py --agentmender target/debug/agentmender
       - run: python3 scripts/check_architecture.py
+
+      - if: runner.os == 'macOS' && runner.arch == 'ARM64'
+        shell: bash
+        run: |
+          command -v zstd || brew install zstd
+          fixture_dir="$(mktemp -d "$RUNNER_TEMP/codex-native.XXXXXX")"
+          curl -fsSL -o "$fixture_dir/codex.zst" https://github.com/openai/codex/releases/download/rust-v0.169.0/codex-aarch64-apple-darwin.zst
+          (cd "$fixture_dir" && printf '%s\n' '0fcd047383b9be970883153020d7ad3fe2a4c07e65f88f8d7185e0d2b126c604  codex.zst' | shasum -a 256 -c -)
+          zstd -q -d "$fixture_dir/codex.zst" -o "$fixture_dir/codex"
+          chmod u+x "$fixture_dir/codex"
+          python3 scripts/test_local_ui.py --agentmender target/debug/agentmender --native-codex "$fixture_dir/codex"
