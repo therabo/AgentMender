@@ -543,6 +543,26 @@ def claude_cleanup_acceptance(binary, base):
         assert (legacy / "keep").read_bytes() == b"existing copy"
 
 
+@contextmanager
+def codex_desktop_catalog(root):
+    directory = root / "sqlite"
+    directory.mkdir()
+    database = directory / "codex.db"
+    schema = Path(__file__).resolve().parents[1] / "crates/provider-codex/test_data/desktop-reconciliation.sql"
+    with closing(sqlite3.connect(database)) as db:
+        db.execute("PRAGMA journal_mode=WAL").fetchone()
+        db.executescript(schema.read_text())
+        with db:
+            db.execute("INSERT INTO local_thread_catalog_sync_state VALUES ('local',1,1,7,123), ('remote',2,1,8,456)")
+            db.executemany("""
+                INSERT INTO local_thread_catalog
+                    (host_id, thread_id, display_title, source_created_at, source_updated_at, source_kind, observation_sequence)
+                VALUES (?, ?, 'Disposable', 1, 1, 'cli', 7)
+                """, [("local", probe.R), ("local", probe.REPLACEMENT), ("remote", probe.R)])
+        yield db
+    database.unlink()
+
+
 def codex_acceptance(client, root, rollouts):
     query = "/api/codex/sessions"
     page = client.call("GET", query)
@@ -863,23 +883,32 @@ def main():
                 executable_copy.parent.mkdir()
                 shutil.copy2(binary, executable_copy)
             with probe.native_fixture(base, executable_copy) as (root, rollouts):
-                with ui(agentmender, base, root, claude, executable_copy) as (client, ticket):
-                    authorize(client, ticket)
-                    inventory_acceptance(client, claude)
-                    codex_acceptance(client, root, rollouts)
                 failing = base / "codex-failing"
                 failing.write_text("#!/bin/sh\nif [ \"$1\" = --version ]; then printf 'codex-cli 99.0.0\\n'; exit; fi\nprintf 'native fixture refusal\\n' >&2\nexit 1\n")
                 failing.chmod(0o700)
-                with ui(agentmender, base, root, claude, failing) as (client, ticket):
-                    authorize(client, ticket)
-                    page = client.call("GET", "/api/codex/sessions")
-                    assert page["provider"]["removal_available"]
-                    row = next(row for row in page["rows"] if row["native_id"] == probe.REPLACEMENT)
-                    result = client.call("POST", f"/api/codex/sessions/{row['key']}/delete", {"confirm": True})
-                    assert result["status"] == "failed" and result["errors"] == ["native fixture refusal"], result
-                    assert rollouts[probe.REPLACEMENT].is_file()
+                with codex_desktop_catalog(root) as desktop:
+                    sync = "SELECT * FROM local_thread_catalog_sync_state ORDER BY host_id"
+                    catalog = "SELECT * FROM local_thread_catalog ORDER BY host_id, thread_id"
+                    entries = desktop.execute(catalog).fetchall()
+                    with ui(agentmender, base, root, claude, failing) as (client, ticket):
+                        authorize(client, ticket)
+                        page = client.call("GET", "/api/codex/sessions")
+                        assert page["provider"]["removal_available"]
+                        row = next(row for row in page["rows"] if row["native_id"] == probe.REPLACEMENT)
+                        result = client.call("POST", f"/api/codex/sessions/{row['key']}/delete", {"confirm": True})
+                        assert result["status"] == "failed" and result["errors"] == ["native fixture refusal"], result
+                        assert rollouts[probe.REPLACEMENT].is_file()
+                    assert desktop.execute(sync).fetchall() == [("local", 1, 1, 7, 123), ("remote", 2, 1, 8, 456)]
+                    assert desktop.execute(catalog).fetchall() == entries
+                    with ui(agentmender, base, root, claude, executable_copy) as (client, ticket):
+                        authorize(client, ticket)
+                        inventory_acceptance(client, claude)
+                        codex_acceptance(client, root, rollouts)
+                    assert desktop.execute(sync).fetchall() == [("local", 1, 1, 7, None), ("remote", 2, 1, 8, 456)]
+                    assert desktop.execute(catalog).fetchall() == entries
+                assert not (root / "sqlite/codex.db").exists()
                 codex_project_deletion(agentmender, base, root, claude, executable_copy, rollouts)
-            print("Native Codex fixture: command result, archive scope, refresh and provider failure.")
+            print("Native Codex fixture: command result, success-only Desktop reconciliation, and deletion without a Desktop catalog.")
         else:
             storage_acceptance(agentmender, base / "storage-suite", claude)
             root = base / "codex"

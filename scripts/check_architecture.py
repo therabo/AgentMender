@@ -43,6 +43,7 @@ def boundaries(path, contents):
             "crates/provider-codex/src/worker.rs",
             "crates/provider-codex/src/worker/inventory.rs",
             "crates/provider-codex/src/worker/projects.rs",
+            "crates/provider-codex/src/desktop_reconciliation.rs",
         }, path
     assert not re.search(r"\b(session_find|SessionSearchReadPort|run_codex_delete|CREATE\s+VIRTUAL\s+TABLE)\b", contents), path
     if path.startswith("crates/provider-claude/"):
@@ -67,6 +68,8 @@ require("crates/provider-codex/src/worker.rs", "Operation::ProjectCatalog", "pro
 require("crates/provider-codex/src/worker/projects.rs", "FROM projects", "FROM project_roots",
         ".codex-global-state.json", "filesystem::open_source_read", "MAX_DESKTOP_BYTES")
 require("crates/provider-codex/src/lib.rs", "identity.state_root != root", "Uuid::parse_str", "process::codex_delete")
+require("crates/provider-codex/src/lib.rs", '#[cfg(target_os = "macos")] mod desktop_reconciliation;',
+        'if result.is_ok() { desktop_reconciliation::schedule_desktop_catalog_reconciliation(&root, id); }')
 require("crates/provider-api/src/process.rs", '.args(["-c", sqlite_override, "delete"])',
         '.arg("--force")', '.env("CODEX_HOME", root)', "output.status.success()")
 require("crates/cli/src/ui/browser.rs", "Ipv4Addr::LOCALHOST", "byte.is_ascii_hexdigit()")

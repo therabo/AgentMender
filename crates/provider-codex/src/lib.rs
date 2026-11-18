@@ -1,4 +1,6 @@
 //! Codex inventory, bounded transcript previews and exact native removal.
+#[cfg(target_os = "macos")]
+mod desktop_reconciliation;
 pub mod discovery;
 pub mod exports;
 #[cfg(any(target_os = "macos", all(test, unix)))]
@@ -55,7 +57,12 @@ impl CodexAdapter {
             .to_str()
             .ok_or("Percorso dell’archivio Codex non rappresentabile.")?;
         let setting = format!("sqlite_home={}", toml::Value::String(path.to_owned()));
-        process::codex_delete(executable, &root, &setting, id)
+        let result = process::codex_delete(executable, &root, &setting, id);
+        #[cfg(target_os = "macos")]
+        if result.is_ok() {
+            desktop_reconciliation::schedule_desktop_catalog_reconciliation(&root, id);
+        }
+        result
     }
 
     pub fn detect(&self) -> Result<Installation, ProviderError> {
