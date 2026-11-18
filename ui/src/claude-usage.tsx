@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { RefreshCw } from 'lucide-react'
 import { request, type ClaudeUsage } from './api'
 import { Empty, Notice } from './components'
-import { SessionDetail } from './detail'
+import { ClaudeBackupPanel, SessionDetail } from './detail'
 import { claudeCategories, claudeOwnership, claudeWriter, dateLabel, numberLabel, pathLabel, sizeLabel } from './format'
 
 const rootLabels: Record<string, string> = {
@@ -53,7 +53,7 @@ export function ClaudeUsageView() {
       <div className="summary">
         <div className="summary-item"><div><span>Dimensione logica osservata</span><strong>{sizeLabel(report.size.logical_bytes)}</strong></div></div>
         <div className="summary-item"><div><span>Allocazione osservata</span><strong>{sizeLabel(report.size.allocated_bytes)}</strong></div></div>
-        <div className="summary-item"><div><span>Recupero autorizzato</span><strong>{sizeLabel(report.reclaimable_logical_bytes)}</strong></div></div>
+        <div className="summary-item"><div><span>Recupero autorizzato</span><strong>{report.offline_cleanup_supported ? 'Da verificare per sessione' : sizeLabel(report.reclaimable_logical_bytes)}</strong></div></div>
       </div>
       <Notice tone={report.complete && report.catalog_complete ? 'info' : 'warning'}>
         <p>{report.complete && report.catalog_complete ? 'Scansione completata nelle root osservate.' : 'Copertura parziale. I totali riguardano gli elementi osservati.'} {numberLabel(report.entries_examined)} elementi esaminati.</p>
@@ -96,7 +96,8 @@ export function ClaudeUsageView() {
         </ul>}
       </section>
       <p>{report.removal_reason}</p>
+      {report.offline_cleanup_supported && <ClaudeBackupPanel revision={revision} onChange={() => setRevision(value => value + 1)} />}
     </>}
-    {selected && <SessionDetail key={selected} rowKey={selected} provider="claude" onClose={() => setSelected(undefined)} onConfirm={() => {}} />}
+    {selected && <SessionDetail key={selected} rowKey={selected} provider="claude" onClose={() => setSelected(undefined)} onClaudeChange={() => setRevision(value => value + 1)} onConfirm={() => {}} />}
   </div>
 }

@@ -24,7 +24,7 @@ without model services, MCP or external credentials.
 | Provider | Available workflow |
 |---|---|
 | Codex | Storage discovery and export inventory for macOS, Linux and Windows. Registered projects, Recenti, partial main-conversation inventory and bounded transcript pages on macOS. Native cascade removal under the [verified release, command and storage contract](docs/provider-compatibility.md). |
-| Claude Code | Namespace groups and partial read-only inventory of verified main conversations in project JSONL, including Desktop-origin Code records. |
+| Claude Code | Namespace groups and bounded inventory of verified local project JSONL, including Desktop-origin Code. Offline cleanup and recovery for admitted macOS sessions. |
 
 Open **Storage → Export e backup** to measure export groups, inspect why they
 are protected and review a multi-selection. An export location or manifest

@@ -8,8 +8,11 @@ import json
 from pathlib import Path
 import platform
 import subprocess
+import sys
 from tempfile import TemporaryDirectory
 from threading import Thread
+
+sys.dont_write_bytecode = True
 
 
 SESSION = "eb000000-1111-4111-8111-000000000001"
@@ -52,18 +55,18 @@ def sandbox_string(path):
     return json.dumps(str(path), ensure_ascii=False)
 
 
-def experiment(engine):
+def experiment(engine, agentmender=None):
     real_home = Path.home().resolve()
     with TemporaryDirectory(prefix="agentmender-claude-probe-") as directory:
         with ThreadingHTTPServer(("127.0.0.1", 0), LoopbackModel) as model:
             Thread(target=model.serve_forever, daemon=True).start()
             try:
-                probe(engine, real_home, Path(directory).resolve(), model.server_port)
+                probe(engine, real_home, Path(directory).resolve(), model.server_port, agentmender)
             finally:
                 model.shutdown()
 
 
-def probe(engine, real_home, root, port):
+def probe(engine, real_home, root, port, agentmender=None):
     home = root / "home"
     config = home / ".claude"
     workspace = root / "workspace"
@@ -114,11 +117,30 @@ def probe(engine, real_home, root, port):
     print(f"Claude 2.1.222 appended to its open transcript while flock was held ({len(before)} → {len(after)} B).")
     print("Fixture produced no history.jsonl." if not (config / "history.jsonl").exists()
           else "Fixture produced history.jsonl. The behavior needs separate inspection.")
+    if agentmender:
+        from test_local_ui import authorize, claude_remove, ui
+        server = root / "agentmender"
+        server.mkdir()
+        with ui(agentmender, server, None, config) as (client, ticket):
+            authorize(client, ticket)
+            rows = client.call("GET", "/api/claude/sessions")["rows"]
+            row, = [row for row in rows if row["native_id"] == SESSION]
+            review = client.call("POST", f"/api/claude/sessions/{row['key']}/removal-preview", {"mode": "standard"})
+            result = claude_remove(client, review)
+            assert result["status"] in {"verified", "partial"}, result
+            assert not transcript.exists()
+            backup = f"/api/claude/backups/{result['backup_id']}/preview"
+            recovery = claude_remove(client, client.call("POST", backup, {"action": "restore"}))
+            assert recovery["status"] == "restored", recovery
+            assert transcript.read_bytes() == after
+            assert claude_remove(client, client.call("POST", backup, {"action": "discard"}))["status"] == "discarded"
+        print("AgentMender removed and restored the engine-generated transcript byte-for-byte.")
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--claude", required=True, type=Path)
+    parser.add_argument("--agentmender", type=Path)
     options = parser.parse_args()
     assert platform.system() == "Darwin", "This fixture requires macOS Seatbelt."
-    experiment(options.claude.resolve(strict=True))
+    experiment(options.claude.resolve(strict=True), options.agentmender.resolve(strict=True) if options.agentmender else None)

@@ -3,7 +3,7 @@
 use crate::{
     Access, ClaudeAdapter, SessionEvidence,
     read::verify,
-    storage::{ArtifactLocation, Budget, EntryKind, REMOVAL_BLOCKER, history_stats},
+    storage::{ArtifactLocation, Budget, EntryKind, REMOVAL_NOTICE, history_stats},
     usage::{ArtifactKind, ArtifactMeter, Measurement, Ownership, RootKind},
 };
 use agentmender_domain::SessionIdentity;
@@ -320,14 +320,18 @@ fn sum_allocation<'a>(mut items: impl Iterator<Item = &'a Artifact>) -> Option<u
     })
 }
 
-fn plan(mode: Scope, artifacts: &[Artifact]) -> Plan {
+fn plan(mode: Scope, artifacts: &[Artifact], can_review: bool) -> Plan {
     let selected = |artifact: &&Artifact| {
         artifact.scope == Scope::Standard || (mode == Scope::Deep && artifact.scope == Scope::Deep)
     };
     let included = || artifacts.iter().filter(selected);
     Plan {
         mode,
-        status: "blocked",
+        status: if can_review {
+            "requires_preflight"
+        } else {
+            "blocked"
+        },
         candidate_files: included().map(|row| row.size.files).sum(),
         associated_logical_bytes: included().map(|row| row.size.logical_bytes).sum(),
         exclusive_logical_bytes: included()
@@ -581,9 +585,18 @@ impl ClaudeAdapter {
             .iter()
             .map(|&key| summarize(key, &review.artifacts, diagnostic_complete))
             .collect();
+        let can_review = cfg!(target_os = "macos")
+            && !evidence.sidechain
+            && evidence.versions.as_slice() == ["2.1.222"]
+            && exclusive
+            && evidence.metadata_complete;
         let plans = [
-            plan(Scope::Standard, &review.artifacts),
-            plan(Scope::Deep, &review.artifacts),
+            plan(Scope::Standard, &review.artifacts, can_review),
+            plan(
+                Scope::Deep,
+                &review.artifacts,
+                can_review && checkpoint_present,
+            ),
         ];
         Ok(StorageDetail {
             transcript_files: 1,
@@ -602,7 +615,7 @@ impl ClaudeAdapter {
             deep_available: false,
             backup_status: "not_created",
             available_volume_bytes: available_volume(root),
-            removal_reason: REMOVAL_BLOCKER,
+            removal_reason: REMOVAL_NOTICE,
             writer_observation: process::claude_writer_observation().status,
             fork_references: evidence.fork_references.clone(),
             engine_versions: evidence.versions.clone(),

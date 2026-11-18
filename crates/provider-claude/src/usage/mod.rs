@@ -1,7 +1,7 @@
 //! Claude-specific storage roots and measurements. No content reads or writes.
 mod walk;
 
-use crate::{Access, ClaudeAdapter, RootSource, storage::REMOVAL_BLOCKER};
+use crate::{Access, ClaudeAdapter, RootSource, storage::REMOVAL_NOTICE};
 use serde::Serialize;
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -187,6 +187,7 @@ pub struct StorageInventory {
     pub entries_examined: usize,
     pub writer_observation: &'static str,
     pub reclaimable_logical_bytes: u64,
+    pub offline_cleanup_supported: bool,
     pub removal_reason: &'static str,
 }
 
@@ -515,7 +516,8 @@ impl ClaudeAdapter {
             entries_examined: MAX_ENTRIES - budget.remaining,
             writer_observation: writers.status,
             reclaimable_logical_bytes: 0,
-            removal_reason: REMOVAL_BLOCKER,
+            offline_cleanup_supported: cfg!(target_os = "macos"),
+            removal_reason: REMOVAL_NOTICE,
         }
     }
 

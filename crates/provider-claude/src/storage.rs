@@ -16,7 +16,10 @@ use std::{
     time::{Duration, Instant},
 };
 
-pub const REMOVAL_BLOCKER: &str = "Rimozione disabilitata. Il formato locale non dispone di un contratto verificato per escludere i writer Claude durante backup e rimozione.";
+#[cfg(target_os = "macos")]
+pub const REMOVAL_NOTICE: &str = "Apri l’anteprima della sessione per verificare formato, proprietà dei file, spazio di backup e stato dei writer Claude.";
+#[cfg(not(target_os = "macos"))]
+pub const REMOVAL_NOTICE: &str = "Rimozione Claude in sola lettura su questa piattaforma. Il controllo dei writer e il percorso di ripristino richiedono una verifica nativa.";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -270,7 +273,7 @@ fn desktop_record(root: &Path, path: &Path) -> Option<(DesktopRecord, ArtifactLo
 #[derive(Default)]
 pub(crate) struct DesktopRegistry {
     pub(crate) states: BTreeMap<String, DesktopState>,
-    by_cli_id: BTreeMap<String, usize>,
+    pub(crate) by_cli_id: BTreeMap<String, usize>,
     report: DesktopReport,
 }
 

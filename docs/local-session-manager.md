@@ -46,9 +46,7 @@ between Desktop Code registrations and local transcripts.
 
 For Claude Code, open a session to read a bounded conversation preview and
 inspect its namespace, file modification time, metadata coverage and storage
-dependencies. Filter by metadata, activity date and transcript size. Standard
-and deep cleanup are disabled until the writer and ownership contracts can
-be verified. The Storage and dependencies section explains the blocker.
+dependencies. Filter by metadata, activity date and transcript size.
 
 On partial completion, inspect the verified, undispatched and uncertain
 subtree IDs. A restart discards receipts and live operation results. Refresh
@@ -60,11 +58,25 @@ snapshots, backups and provider artifacts can affect physical bytes reclaimed.
 
 Open **Export e backup → Storage Claude Code** to inspect the recognized
 Claude roots, directory measurements and transcript-heavy sessions.
-Open a session's **Storage e dipendenze → Risorse osservate** to see
-Standard and Approfondita as read-only plans with associated, exclusive
-and authorized logical bytes. Allocated bytes describe observed blocks.
-The installed writer does not honor an advisory transcript flock, so both
-plans refuse cleanup without issuing a receipt.
+Open **Storage e dipendenze → Risorse osservate** for diagnostic sizes and
+relationships. On macOS, close Claude Desktop and Claude Code and open
+**Rimozione Claude Code → Anteprima rimozione** for an exact plan. Choose
+Standard for verified transcript files and their recognized dependencies.
+Approfondita adds eligible rewind files explicitly referenced by the
+transcript. Type the confirmation phrase before the receipt expires.
+
+Keep Claude and its background processes closed until verification finishes.
+A writer can reopen after a process check. AgentMender verifies copies
+in `~/.agentmender/claude-backups` before moving individual files. The
+result lists residual resources when exclusive files were removed while
+shared history or other data were retained. The displayed logical bytes
+do not account for the retained backup and APFS shared blocks.
+
+Use **Storage Claude Code → Backup di rimozione** to recover a session
+after closing Claude or explicitly discard a completed backup. Review and
+confirm each operation. Restore checks every destination and stops if a
+different file already occupies it. An interrupted operation retains its
+manifest and recovery data across application restarts.
 [Storage audit](audits/claude-code-complete-storage.md).
 
 ## Storage and export previews

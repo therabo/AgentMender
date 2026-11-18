@@ -201,6 +201,8 @@ pub struct Catalog {
     pub evidence: BTreeMap<SessionIdentity, SessionEvidence>,
     pub roots: Vec<RootView>,
     pub reconciliation: Reconciliation,
+    #[cfg(target_os = "macos")]
+    pub(crate) desktop_links: BTreeMap<String, usize>,
 }
 
 #[derive(Default)]
@@ -689,6 +691,8 @@ impl ClaudeAdapter {
             .filter(|(_, meta)| meta.desktop_record)
             .map(|(id, _)| id.native_id.as_str())
             .collect();
+        #[cfg(target_os = "macos")]
+        let desktop_links = desktop.by_cli_id.clone();
         let desktop_report = desktop.reconcile(&uuid_counts, &associated, !projects_incomplete);
         inventory.incomplete = budget.issues > 0;
         inventory.projects_incomplete = projects_incomplete;
@@ -699,6 +703,8 @@ impl ClaudeAdapter {
             inventory,
             evidence,
             roots,
+            #[cfg(target_os = "macos")]
+            desktop_links,
             reconciliation: Reconciliation {
                 transcripts: report,
                 desktop: desktop_report,

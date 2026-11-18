@@ -49,6 +49,9 @@ def boundaries(path, contents):
     assert not re.search(r"\b(session_find|SessionSearchReadPort|run_codex_delete|CREATE\s+VIRTUAL\s+TABLE)\b", contents), path
     if path.startswith("crates/provider-claude/"):
         assert not re.search(r"\b(?:(?:remove_file|remove_dir|remove_dir_all|rename)\s*\(|OpenOptions\b|run_confined_codex_delete\b)", contents), path
+        if re.search(r"\b(renameat_with|unlinkat|mkdirat)\b", contents):
+            assert path in {"crates/provider-claude/src/cleanup/files.rs", "crates/provider-claude/src/cleanup/backup.rs",
+                            "crates/provider-claude/src/cleanup/directories.rs"}, path
 
 for path in ROOT.glob("crates/*/src/**/*.rs"):
     production = path.read_text().split("#[cfg(test)]" + chr(10) + "mod tests", 1)[0]
@@ -88,7 +91,7 @@ require("crates/provider-claude/src/read.rs", "MAX_RECORD", "Revision::read", "f
 require("crates/provider-claude/src/local.rs", "desktop_workspace", "verify(root,&path,revision)",
         "saved.identity", "scan.foreign_rows")
 require("crates/cli/src/ui/mod.rs", "/api/claude/sessions/{key}/storage",
-        "return Err(ApiError::conflict(agentmender_provider_claude::REMOVAL_BLOCKER,))")
+        "return Err(ApiError::conflict(agentmender_provider_claude::REMOVAL_NOTICE,))")
 
 require("crates/provider-claude/src/local.rs", 'path.join("projects")', "desktop.reconcile",
         "Exclusion::UnknownEntrypoint")
@@ -99,6 +102,10 @@ require("crates/provider-claude/src/usage/walk.rs", "OFlags::NOFOLLOW",
         "AtFlags::SYMLINK_NOFOLLOW", "MAX_DEPTH", "self.budget.take()")
 require("crates/provider-claude/src/artifacts.rs", "verify(&file.root, &file.path, &file.revision)",
         "authorized_logical_bytes: 0", "operations: []")
+require("crates/provider-claude/src/cleanup/files.rs", "OFlags::NOFOLLOW", "meta.nlink() != 1", "Sha256::new()", "fstatvfs")
+require("crates/provider-claude/src/cleanup/backup.rs", "write_backup(&backup, &mut manifest)",
+        "RenameFlags::NOREPLACE", "writers::closed", "restore_preflight", "manifest.pending_restore")
+require("crates/cli/src/ui/claude_cleanup.rs", ".receipts.remove(&key)", "receipt.created.elapsed() < VALID", "receipt.text == request.confirmation")
 require("crates/cli/src/ui/mod.rs", "/api/storage/claude", "/api/storage/claude/refresh")
 assert "operations" not in source("crates/cli/src/ui/claude_usage.rs")
 

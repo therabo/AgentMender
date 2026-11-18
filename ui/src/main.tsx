@@ -167,7 +167,7 @@ function Inventory({ provider, revision, onConfirm }: {
     </section>}
     {projectToRemove && <ProjectRemoval project={projectToRemove} onClose={() => setProjectToRemove(undefined)}
       onConfirm={(id, phrase) => { setProjectToRemove(undefined); onConfirm(id, phrase) }} />}
-    {selected && <SessionDetail key={selected} rowKey={selected} provider={provider} onClose={() => setSelected(undefined)} onConfirm={(id, phrase) => {
+    {selected && <SessionDetail key={selected} rowKey={selected} provider={provider} onClose={() => setSelected(undefined)} onClaudeChange={() => invalidate(value => value + 1)} onConfirm={(id, phrase) => {
       setSelected(undefined)
       onConfirm(id, phrase)
     }} />}

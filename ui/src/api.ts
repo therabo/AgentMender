@@ -141,7 +141,7 @@ export type ClaudeStorage = {
   }[]
   plans: {
     mode: 'standard' | 'deep'
-    status: 'blocked'
+    status: 'blocked' | 'requires_preflight'
     candidate_files: number
     associated_logical_bytes: number
     exclusive_logical_bytes: number
@@ -173,6 +173,7 @@ export type ClaudeUsage = {
   entries_examined: number
   writer_observation: string
   reclaimable_logical_bytes: number
+  offline_cleanup_supported: boolean
   removal_reason: string
   largest_sessions: {
     key: string
@@ -211,6 +212,39 @@ export type Detail = {
   session: Session
   version: string | null
   conversation_preview: boolean
+  claude_cleanup_supported?: boolean
+}
+
+export type ClaudeMode = 'standard' | 'deep'
+export type ClaudeReceipt = Pick<Preview, 'id' | 'confirmation' | 'valid_seconds'>
+export type ClaudeReview = ClaudeReceipt & {
+  review: {
+    session: { native_id: string; namespace: string; state_root: NativePath }
+    mode: ClaudeMode
+    operations: { root: NativePath; relative_path: NativePath; role: string; bytes: number; allocated_bytes: number }[]
+    empty_directories: { root: NativePath; relative_path: NativePath }[]
+    logical_bytes: number
+    backup_required_bytes: number
+    history_matches: number | null
+    history_state: string
+    excluded: string[]
+    residual_risk: string
+  }
+}
+export type ClaudeOutcome = {
+  status: string
+  backup_id?: string | null
+  logical_bytes?: number
+  reason?: string | null
+}
+export type ClaudeBackup = {
+  id: string
+  native_id: string
+  mode: ClaudeMode
+  phase: string
+  logical_bytes: number
+  can_restore: boolean
+  can_discard: boolean
 }
 export type Preview = {
   id: string

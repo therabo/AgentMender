@@ -1,5 +1,7 @@
 //! Read-only inventory and conversation pages for local Claude Code.
 mod artifacts;
+#[cfg(target_os = "macos")]
+pub mod cleanup;
 mod diagnostics;
 mod local;
 mod read;
@@ -10,7 +12,7 @@ pub use artifacts::StorageDetail;
 pub use diagnostics::{Access, Exclusion, Reconciliation, ScanIssue};
 pub use local::{Catalog, Cursor, SessionEvidence};
 pub use read::Revision;
-pub use storage::{REMOVAL_BLOCKER, RootSource, RootView};
+pub use storage::{REMOVAL_NOTICE, RootSource, RootView};
 pub use usage::StorageInventory;
 
 use agentmender_domain::{ProviderKind, SessionIdentity, uuid_shape};

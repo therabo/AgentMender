@@ -1,5 +1,7 @@
 //! Loopback-only transport and browser authorization for the local UI.
 mod browser;
+#[cfg(target_os = "macos")]
+mod claude_cleanup;
 mod claude_usage;
 mod inventory;
 mod removal;
@@ -55,6 +57,8 @@ struct App {
     discovery: Discovery,
     exports: Mutex<Option<storage::CachedInventory>>,
     claude_usage: Mutex<Option<claude_usage::CachedUsage>>,
+    #[cfg(target_os = "macos")]
+    claude_cleanup: Mutex<claude_cleanup::Operations>,
     operations: Mutex<Operations>,
     cursors: Mutex<TranscriptCursors>,
     reads: Arc<Semaphore>,
@@ -310,7 +314,7 @@ async fn preview(
         let session = app.inventory.selected(app, provider, &key)?;
         if provider == ProviderKind::Claude {
             return Err(ApiError::conflict(
-                agentmender_provider_claude::REMOVAL_BLOCKER,
+                agentmender_provider_claude::REMOVAL_NOTICE,
             ));
         }
         if let Some(reason) = removal::refusal(&session, &app.protected) {
@@ -430,7 +434,27 @@ fn asset(content_type: &'static str, bytes: &'static str) -> impl IntoResponse {
 }
 
 fn router(app: Arc<App>) -> Router {
-    Router::new()
+    let routes = Router::new();
+    #[cfg(target_os = "macos")]
+    let routes = routes
+        .route(
+            "/api/claude/sessions/{key}/removal-preview",
+            post(claude_cleanup::preview),
+        )
+        .route(
+            "/api/claude/operations/{key}",
+            get(claude_cleanup::operation),
+        )
+        .route(
+            "/api/claude/operations/{key}/confirm",
+            post(claude_cleanup::confirm),
+        )
+        .route("/api/claude/backups", get(claude_cleanup::backups))
+        .route(
+            "/api/claude/backups/{id}/preview",
+            post(claude_cleanup::backup_preview),
+        );
+    routes
         .route(
             "/",
             get(|| async { asset("text/html; charset=utf-8", INDEX) }),
@@ -528,6 +552,8 @@ pub(super) fn run(config: Configuration) -> Result<(), String> {
             discovery: config.discovery,
             exports: Mutex::default(),
             claude_usage: Mutex::default(),
+            #[cfg(target_os = "macos")]
+            claude_cleanup: Mutex::default(),
             claude: config.claude,
             native: config.native,
             limit: config.limit,

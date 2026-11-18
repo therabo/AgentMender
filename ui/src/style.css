@@ -287,6 +287,10 @@ h3 { font-size: 15px; font-weight: 650; }
 .storage-search { display: flex; align-items: center; gap: 8px; flex: 1 1 220px; min-height: 40px; padding: 0 10px; color: var(--muted); background: var(--input); border: 1px solid var(--line); border-radius: 8px; }
 .storage-search input { width: 100%; min-width: 0; background: transparent; border: 0; padding: 8px 0; }
 .storage-tools select { background: var(--input); border: 1px solid var(--line); border-radius: 8px; padding: 8px; min-height: 40px; }
+.claude-cleanup-actions label { display: flex; align-items: center; gap: 8px; }
+.claude-cleanup-actions select { background: var(--input); border: 1px solid var(--line); border-radius: 8px; padding: 8px; min-height: 40px; }
+.claude-backup-body { padding: 0 16px 16px; }
+.claude-backup-body > p:first-child { margin-top: 0; color: var(--muted); }
 .storage-preview { margin: 0 17px 15px; padding: 12px 15px; border: 1px solid var(--line); border-radius: 8px; background: var(--input); color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
 .storage-preview h3 { color: var(--text); margin-bottom: 4px; }
 .export-list, .storage-locations { list-style: none; padding: 0; margin: 0; }
@@ -323,7 +327,7 @@ h3 { font-size: 15px; font-weight: 650; }
 .claude-discovery summary, .removal-section summary { cursor: pointer; font-weight: 600; }
 .claude-artifacts { list-style: none; padding: 0; margin: 10px 0; }
 .claude-artifacts li { display: grid; gap: 3px; padding: 7px 0; border-bottom: 1px solid var(--line-soft); }
-.claude-artifacts code { overflow-wrap: anywhere; }
+.claude-artifacts code, .claude-artifacts span { overflow-wrap: anywhere; }
 .date-controls input[type="number"] { width: 8ch; }
 
 .claude-discovery section { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line-soft); }

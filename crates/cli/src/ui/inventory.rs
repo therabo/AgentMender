@@ -11,7 +11,7 @@ use agentmender_application::{
 use agentmender_domain::*;
 use agentmender_provider_api::ProviderError;
 use agentmender_provider_claude::{
-    InstallationView, REMOVAL_BLOCKER, Reconciliation, RootView, SessionEvidence,
+    InstallationView, REMOVAL_NOTICE, Reconciliation, RootView, SessionEvidence,
 };
 use chrono::NaiveDate;
 use serde::{Deserialize, Serialize};
@@ -223,7 +223,7 @@ impl Snapshot {
         let observation = observed.inventory;
         let can_read = matches!(observed.coverage, Coverage::Partial);
         let removal_reason = match provider {
-            ProviderKind::Claude => Some(REMOVAL_BLOCKER),
+            ProviderKind::Claude => Some(REMOVAL_NOTICE),
             ProviderKind::Codex if !can_read => Some("L'archivio Codex è indisponibile."),
             ProviderKind::Codex => removal::native_reason(&app.native),
         };
@@ -397,6 +397,8 @@ impl Inventories {
                 version: snapshot.version.clone(),
                 conversation_preview: snapshot.conversation_preview
                     && session.transcript_bytes.is_some(),
+                claude_cleanup_supported: provider == ProviderKind::Claude
+                    && cfg!(target_os = "macos"),
             })
         })
     }
@@ -567,6 +569,8 @@ pub(super) struct DetailView {
     session: SessionView,
     version: Option<String>,
     conversation_preview: bool,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    claude_cleanup_supported: bool,
 }
 
 #[derive(Serialize)]

@@ -2,6 +2,9 @@
 
 18 novembre 2026 · macOS arm64 · APFS · baseline `45e2b80` su `main`.
 
+Questo rapporto documenta lo snapshot precedente all'introduzione della
+rimozione offline. Il contratto operativo aggiornato è nell'[ADR 0046](../adr/claude-session-cleanup.md).
+
 **Risultato.** L'inventario ha misurato **1.606.523.548 byte logici** e
 **1.625.485.312 byte allocati osservati** in 7.997 file. I transcript delle
 conversazioni principali, compresi i loro subagent, rappresentano

@@ -533,6 +533,21 @@ pub struct ClaudeProcessObservation {
     pub executables: Vec<std::path::PathBuf>,
 }
 
+#[cfg(target_os = "macos")]
+pub fn claude_process_table() -> Result<String, ProviderError> {
+    let mut command = Command::new("/bin/ps");
+    command
+        .env_clear()
+        .env("LC_ALL", "C")
+        .env("TZ", "UTC")
+        .args(["-axww", "-o", "pid=,lstart=,comm="])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    String::from_utf8(bounded_output(command, 512 * 1024)?)
+        .map_err(|_| ProviderError::CapabilityUnavailable("invalid process table".into()))
+}
+
 /// A process-name observation has no authority over provider writers.
 pub fn claude_writer_observation() -> ClaudeProcessObservation {
     let unavailable = ClaudeProcessObservation {

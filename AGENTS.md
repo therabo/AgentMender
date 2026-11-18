@@ -28,7 +28,9 @@ contracts.
   change or uncertainty. Keep one-use receipts and the
   single in-flight guard. Verify rows, edges and rollouts through the read-only
   worker. Ambiguous outcomes stay uncertain and are never retried automatically.
-- Keep Claude Code read-only. Resolve Codex membership from explicit native or
+- Keep Claude cleanup in the provider and admit only verified local targets
+  under ADR 0046. Require closed writers, a reviewed one-use receipt, a verified
+  backup, descriptor-relative mutations and no-clobber recovery. Resolve Codex membership from explicit native or
   recognized Desktop assignments. Authorize bulk session removal only through
   a verified native project ID and complete membership. Keep registrations,
   workspace paths, Desktop preferences and unrelated artifacts outside that

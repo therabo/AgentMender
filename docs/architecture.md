@@ -19,7 +19,7 @@ agentmender CLI -> application -> domain
 | `application` | Verified main-conversation filtering, project grouping, normalized metadata queries and stable paging. |
 | `provider-api` | Bounded filesystem reads, fixed version probes, isolated worker and native command launch, kernel write-denial attestation. |
 | `provider-codex` | Fixed SQLite and rollout observations, bounded compressed transcript parsing, platform discovery, bounded export observations, native release and storage admission, and the guarded success marker. |
-| `provider-claude` | Bounded read-only project transcript inventory and installation detection. |
+| `provider-claude` | Bounded project transcript inventory, installation detection and offline session cleanup on admitted macOS layouts. |
 | `cli` | Launch configuration, embedded Vite assets, browser authorization, provider routing, one-use confirmation and operation results. |
 
 ## Read path
@@ -59,10 +59,19 @@ revision-keyed metadata and revalidated conversation windows. Root, namespace,
 entrypoint and embedded IDs govern observation. Desktop registrations supply
 metadata when they corroborate an unambiguous transcript identity. Nested
 agents, sidechains and recognized forks stay outside the main index. Storage
-diagnostics report candidate dependencies and a removal blocker without issuing
-receipts. [ADR 0046](adr/claude-session-cleanup.md).
+diagnostics report candidate dependencies without issuing receipts.
+[ADR 0046](adr/claude-session-cleanup.md).
 
 ## Removal path
+
+Claude uses a separate macOS review and mutation namespace. The provider
+binds the plan to archive, namespace, session ID, target identities and
+hashes. It verifies copies in its private same-volume backup store and
+rebuilds the plan immediately before mutation. The loopback API holds the
+plan server-side and accepts a single-use, expiring confirmation. Restore
+uses a new receipt and verifies both the backup and destination identities.
+The process table and recognized session markers are checked at review and
+throughout mutation. A future restart can still race a process check.
 
 The browser can review one verified persisted main UUID or the session trees explicitly
 assigned to a verified native Codex project.

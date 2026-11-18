@@ -155,8 +155,10 @@ removal entry point or proves exclusive ownership.
 | Discovery | CLI, Desktop bundle and bundled Code engine, default and explicit roots | CLI and configuration roots. The version probe requires Bubblewrap | CLI and Win32 candidates, recognized Store/MSIX AppX registration, native and explicit roots |
 | Inventory and preview | Bounded local project JSONL | Bounded local project JSONL | Read-only project JSONL with reparse point, volume and link checks. Native Windows runners are in the CI matrix |
 | Storage metadata and preview | Descriptor-relative inventory with observed file blocks | Descriptor-relative inventory with observed file blocks | Reparse-point checks and logical sizes. Allocation is unavailable |
-| Standard and deep cleanup | Blocked, read-only plans | Blocked, read-only plans | Blocked, read-only plans |
-| History rewrite, backup, restore | No admitted writer contract | No admitted writer contract | No admitted writer contract |
+| Standard cleanup | Offline Claude Code 2.1.222, exact verified transcripts and subagents. Recognized individual registration for Desktop 5.11492.5 | Read-only pending native mutation and writer tests | Read-only pending native mutation and writer tests |
+| Approfondita | Standard plus a fully enumerated set of transcript-referenced rewind files | Read-only | Read-only |
+| Backup and restore | Private same-volume store with SHA-256 and no-clobber restore | Read-only | Read-only |
+| Shared history | Read-only | Read-only | Read-only |
 
 Project identity includes the archive root and namespace. Equal UUIDs in
 different namespaces remain distinct. Corroborated Desktop records supply
@@ -169,8 +171,9 @@ location and record evidence support the format.
 Session storage diagnostics distinguish protected shared data and candidate
 dependencies from session-scoped transcript evidence. A UUID match does not
 establish exclusive ownership. A missing marker does not establish writer
-exclusion. The observed local formats lack a verified selective-removal
-contract. [Storage audit](audits/claude-code-storage.md) ·
+exclusion. On macOS, process and marker checks are repeated during the
+offline workflow. A writer can still reopen between checks.
+[Storage audit](audits/claude-code-storage.md) ·
 [ADR 0046](adr/claude-session-cleanup.md).
 
 [Complete storage audit and native writer probe](audits/claude-code-complete-storage.md).

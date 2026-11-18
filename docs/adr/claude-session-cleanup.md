@@ -13,8 +13,9 @@ before AgentMender can issue a one-use mutation receipt.
 Keep Claude inspection in the Rust provider. Group by effective root and project namespace.
 Bind every conversation page to the observed transcript identity and revision. Use the existing
 loopback authorization and browser-side pagination. Expose a diagnosis of storage dependencies
-in the session detail and refuse to issue a removal receipt while writer exclusion, complete
-ownership and recovery contracts remain unverified.
+in the session detail. Admit a narrowly scoped offline removal workflow for the
+verified macOS layout. Require an exact per-session plan, closed Claude
+processes, validated markers, a single-use receipt and verified backup.
 
 | Session Steward idea | Decision |
 |---|---|
@@ -29,10 +30,59 @@ ownership and recovery contracts remain unverified.
 
 ## Consequences
 
-The live Mac and unknown installations remain read-only. A cleanup contract needs a documented
-provider operation or an enforced exclusion mechanism that covers writer startup, backup and
-mutation. Process polling, marker age, file suffixes and version labels alone supply insufficient
-evidence. The [audit](../audits/claude-code-storage.md) records the inspected formats and tests.
+The offline workflow adopts Session Steward's bounded concurrency model.
+Process checks run at review, after preparing the backup and immediately
+before mutation. A writer can start after a check. Descriptor-relative identity
+checks and exclusive renames protect individual targets, and verification stops
+on unexpected state. The archive can change between individual file operations.
+The operation retains its backup on partial or uncertain outcomes. Platforms and
+formats without an exercised write contract remain read-only. The
+[audit](../audits/claude-code-storage.md) records the inspected formats and tests.
+
+## Admitted layout and recovery
+
+Standard admission on macOS covers fully enumerated engine 2.1.222
+transcripts and attributable subagents. It includes a separately reconciled
+Desktop registration when the observed Desktop bundle is 5.11492.5.
+The shared scheduler remains preserved. Duplicate UUIDs, fork references,
+unreadable markers and incomplete catalog evidence block the review.
+An exact checkpoint basename must be referenced by a rewind snapshot in
+the transcript for Approfondita to include it. Other sidecars, attached
+data, unknown descendants and shared state are protected.
+
+The per-backup manifest records every target and its SHA-256, original
+filesystem identity and revision. AgentMender persists the phase before
+moving files. Renames first move the named objects to the private backup
+directory on the same volume for identity verification. Only planned
+directories found empty are moved. They retain their identities for
+recovery. Restored file publication uses an exclusive rename and journals
+the intended new identity before publishing. The backup survives process
+exit and remains available after a partial or uncertain operation.
+
+Shared history remains byte-preserved. Session Steward coordinates
+`proper-lockfile` on the canonical path and keeps the lease through its
+rewrite. Engine 2.1.222 has a second append path whose cooperation has
+not been established. AgentMender observes history revision and lock
+presence and admits a limited cleanup of exclusive data with history
+residues reported. The offline model is exercised in native temporary
+archives and can race a process that starts after an observation.
+
+[Session Steward reference at ac80fc3](https://github.com/mallikcheripally/session-steward/tree/ac80fc31f7977a00c80f5be22841a6049bb0bcf1).
+
+## Validation
+
+On macOS arm64, an isolated Claude Code 2.1.222 process produced a new
+transcript. AgentMender verified its backup, removed the transcript and
+restored its contents byte for byte. The HTTP fixtures covered the Desktop
+5.11492.5 registration layout, preserved the scheduler and history, and
+exercised Approfondita with a recognized rewind reference. The crash fixtures
+recovered interrupted removal and restore. The Codex native regression and
+desktop and narrow browser checks passed on disposable archives.
+
+In a preview-only pass over the ten observed local main Claude sessions,
+one was eligible for Standard, eight had unsupported transcript versions,
+and one failed the exclusive ownership check. The Claude read-only crate
+passed cross-target compilation for Linux and Windows arm64.
 
 ## Inventory reconciliation
 

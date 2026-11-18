@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path
 import platform
+import plistlib
 import selectors
 import shlex
 import shutil
@@ -210,7 +211,7 @@ def inventory_acceptance(client, claude_root):
     assert detail["conversation_preview"] and detail["session"]["removal_reason"]
     path = f"/api/claude/sessions/{row['key']}"
     refused = client.call("POST", path + "/removal-preview", code=409)
-    assert "writer" in refused["error"] and "id" not in refused
+    assert refused["error"] and "id" not in refused
     page = client.call("GET", path + "/conversation")
     assert len(page["messages"]) == 20 and not page["complete"]
     assert page["messages"][0] == {"role": "user", "text": "First visible Claude request."}
@@ -434,7 +435,7 @@ def claude_storage_acceptance(binary, base):
             assert result["size"]["logical_bytes"] == len(files[archive / "tool-results/result.txt"])
             assert categories["images"]["allocated_bytes"] is None
         refused = client.call("POST", detail_path + "/removal-preview", {"mode": "deep"}, code=409)
-        assert "writer" in refused["error"] and "id" not in refused
+        assert refused["error"] and "id" not in refused
         archived = client.call("GET", f"/api/claude/sessions/{keys[CLAUDE_DESKTOP_ID]}/storage")
         registration = next(row for row in archived["observed"] if row["category"] == "desktop_record")
         assert registration["format"] == "desktop_local_registration"
@@ -451,6 +452,186 @@ def claude_storage_acceptance(binary, base):
         replacement.replace(source)
         client.call("GET", detail_path + "/storage", code=409)
         assert files[source] == source.read_bytes() and files[history] == history.read_bytes()
+
+
+
+def claude_remove(client, preview, *, confirm=True):
+    operation = f"/api/claude/operations/{preview['id']}"
+    client.call("POST", operation + "/confirm", {"confirmation": preview["confirmation"]},
+                code=202 if confirm else 409)
+    if not confirm:
+        return None
+    deadline = time.monotonic() + 35
+    while time.monotonic() < deadline:
+        result = client.call("GET", operation)
+        if result["status"] != "running":
+            return result
+        time.sleep(0.1)
+    raise AssertionError("Claude operation did not finish")
+
+
+def claude_cleanup_acceptance(binary, base):
+    root = base / "claude-offline-cleanup"
+    bucket = root / "projects" / "offline"
+    bucket.mkdir(parents=True)
+    main = bucket / f"{CLAUDE_ID}.jsonl"
+    unrelated = bucket / f"{CLAUDE_DESKTOP_ID}.jsonl"
+    agent = bucket / CLAUDE_ID / "subagents" / f"agent-{CLAUDE_AGENT_ID}.jsonl"
+    agent.parent.mkdir(parents=True)
+    unknown = agent.parent / "user-output.txt"
+    sidecar = bucket / f"{CLAUDE_ID}.precompact.json"
+    history = root / "history.jsonl"
+    locked = root / "history.jsonl.lock"
+    locked.mkdir()
+    (locked / "sentinel").write_bytes(b"lock owned by another writer")
+    checkpoint = root / "file-history" / CLAUDE_ID / "9c20185f9234a1ee@v1"
+    checkpoint.parent.mkdir(parents=True)
+    session_env = root / "session-env" / CLAUDE_ID
+    session_env.mkdir(parents=True)
+    env_inode = session_env.stat().st_ino
+    marker = root / "sessions" / f"{os.getpid()}.json"
+    marker.parent.mkdir()
+    rows = {
+        main: [
+            {"type": "user", "sessionId": CLAUDE_ID, "entrypoint": "cli", "version": "2.1.222",
+             "message": {"content": "Disposable standard cleanup"}},
+            {"type": "file-history-snapshot", "snapshot": {"trackedFileBackups": {
+                "fixture.txt": {"backupFileName": checkpoint.name, "version": 1}}}},
+        ],
+        unrelated: [{"type": "user", "sessionId": CLAUDE_DESKTOP_ID, "entrypoint": "claude-desktop",
+                     "version": "2.1.222", "cwd": "/fixture/Other", "message": {"content": "Preserve this session"}}],
+        agent: [{"type": "user", "sessionId": CLAUDE_ID, "agentId": CLAUDE_AGENT_ID,
+                 "isSidechain": True, "version": "2.1.222"}],
+    }
+    for path, records in rows.items():
+        path.write_text("".join(json.dumps(row) + "\n" for row in records))
+    unknown.write_bytes(b"unclassified file in UUID directory")
+    sidecar.write_bytes(b'{"unknown":true}')
+    history.write_bytes((json.dumps({"sessionId": CLAUDE_ID}) + "\r\ninvalid\r\n" +
+                         json.dumps({"sessionId": CLAUDE_DESKTOP_ID}) + "\n").encode())
+    checkpoint.write_bytes(b"first file rewind data")
+    scope = base / "offline-server"
+    scope.mkdir()
+    backup_home = scope / "home" / ".agentmender" / "claude-backups"
+    desktop = base / "offline-desktop"
+    registration = desktop / "claude-code-sessions" / CLAUDE_ID / CLAUDE_DESKTOP_ID / f"local_{CLAUDE_DESKTOP_ID}.json"
+    registration.parent.mkdir(parents=True)
+    registration.write_text(json.dumps({"sessionId": f"local_{CLAUDE_DESKTOP_ID}",
+                                        "cliSessionId": CLAUDE_DESKTOP_ID, "cwd": "/fixture/Other"}))
+    scheduler = registration.with_name("scheduled-sessions.json")
+    scheduler.write_bytes(b'{"fixture":"preserve shared scheduler"}')
+    bundle = base / "Claude.app"
+    (bundle / "Contents/MacOS").mkdir(parents=True)
+    (bundle / "Contents/Info.plist").write_bytes(plistlib.dumps({
+        "CFBundleIdentifier": "com.anthropic.claudefordesktop", "CFBundleExecutable": "Claude",
+        "CFBundleShortVersionString": "5.11492.5",
+    }))
+    desktop_args = ("--claude-desktop-root", str(desktop), "--claude-app-bundle", str(bundle))
+    initial = {path: path.read_bytes() for path in (main, agent, unrelated, sidecar, unknown, history, checkpoint)}
+    with ui(binary, scope, None, root, extra_args=desktop_args) as (client, ticket):
+        authorize(client, ticket)
+        key = scoped_key("claude", root, CLAUDE_ID, "offline")
+        path = f"/api/claude/sessions/{key}/removal-preview"
+        marker.write_text(json.dumps({"sessionId": CLAUDE_ID, "pid": os.getpid()}))
+        assert client.call("POST", path, {"mode": "standard"}, code=409)["status"] == "active_writer"
+        marker.write_text(json.dumps({"sessionId": CLAUDE_ID, "pid": os.getpid(),
+                                      "pidDomain": "darwin", "procStart": "Sun Jan 2 00:00:00 2000"}))
+        assert client.call("POST", path, {"mode": "standard"})["review"]["admission"] == "eligible"
+        marker.unlink()
+
+        app = bundle / "Contents/MacOS/Claude"
+        shutil.copyfile("/bin/sleep", app)
+        app.chmod(0o700)
+        with subprocess.Popen([str(app), "20"]) as other:
+            try:
+                assert client.call("POST", path, {"mode": "standard"}, code=409)["status"] == "active_writer"
+            finally:
+                other.terminate()
+        client.call("POST", path, {"mode": "standard", "path": str(main)}, code=422)
+        stale = client.call("POST", path, {"mode": "standard"})
+        main.write_bytes(initial[main] + b"\n")
+        assert claude_remove(client, stale)["status"] == "changed"
+        assert main.exists() and not backup_home.exists()
+        main.write_bytes(initial[main])
+        stale_lock = client.call("POST", path, {"mode": "standard"})
+        parked_lock = locked.with_name("fixture-lock-parked")
+        locked.rename(parked_lock)
+        assert claude_remove(client, stale_lock)["status"] == "changed"
+        parked_lock.rename(locked)
+        stale_directory = client.call("POST", path, {"mode": "standard"})
+        new_file = session_env / "new-from-writer.txt"
+        new_file.write_bytes(b"must preserve files created after the review")
+        assert claude_remove(client, stale_directory)["status"] == "changed"
+        assert new_file.read_bytes() == b"must preserve files created after the review"
+        new_file.unlink()
+        namespace = bucket.with_name("other-namespace")
+        namespace.mkdir()
+        duplicate = namespace / main.name
+        duplicate.write_bytes(initial[main])
+        assert client.call("POST", path, {"mode": "standard"}, code=409)["status"] == "ownership_unverified"
+        duplicate.unlink()
+        fork = namespace / f"{CLAUDE_SIDECHAIN_ID}.jsonl"
+        fork.write_text(json.dumps({"type": "user", "sessionId": CLAUDE_SIDECHAIN_ID, "version": "2.1.222",
+                                    "entrypoint": "cli", "forkedFromSessionId": CLAUDE_ID}) + "\n")
+        assert client.call("POST", path, {"mode": "standard"}, code=409)["status"] == "ownership_unverified"
+        assert fork.exists()
+        fork.unlink()
+
+        review = client.call("POST", path, {"mode": "standard"})
+        targets = review["review"]["operations"]
+        assert {target["role"] for target in targets} == {"transcript", "subagent"}, targets
+        assert [folder["relative_path"] for folder in review["review"]["empty_directories"]] == [f"session-env/{CLAUDE_ID}"]
+        assert review["review"]["history_matches"] == 1
+        assert review["review"]["backup_required_bytes"] > len(initial[main]) + len(initial[agent])
+        client.call("POST", f"/api/claude/operations/{review['id']}/confirm",
+                    {"confirmation": review["confirmation"]}, code=403, Origin=None)
+        result = claude_remove(client, review)
+        assert result["status"] == "partial", result
+        assert not main.exists() and not agent.exists() and not session_env.exists()
+        claude_remove(client, review, confirm=False)
+        assert all(path.read_bytes() == initial[path] for path in (unrelated, sidecar, unknown, history, checkpoint))
+        assert (locked / "sentinel").read_bytes() == b"lock owned by another writer"
+        backup = result["backup_id"]
+        manifest = json.loads((backup_home / backup / "manifest.json").read_text())
+        assert manifest["version"] == 1
+        for i, target in enumerate(manifest["targets"]):
+            assert hashlib.sha256((backup_home / backup / f"file-{i}").read_bytes()).hexdigest() == target["sha256"]
+        assert next(row for row in client.call("GET", "/api/claude/backups") if row["id"] == backup)["can_restore"]
+
+    # The backup survives a server restart and recovery refuses recreated content.
+    with ui(binary, scope, None, root, extra_args=desktop_args) as (client, ticket):
+        authorize(client, ticket)
+        restore = f"/api/claude/backups/{backup}/preview"
+        main.write_bytes(b"recreated conversation")
+        assert claude_remove(client, client.call("POST", restore, {"action": "restore"}))["status"] == "changed"
+        assert main.read_bytes() == b"recreated conversation" and not agent.exists()
+        main.unlink()
+        assert claude_remove(client, client.call("POST", restore, {"action": "restore"}))["status"] == "restored"
+        assert all(item.read_bytes() == data for item, data in initial.items())
+        assert session_env.stat().st_ino == env_inode
+        assert claude_remove(client, client.call("POST", restore, {"action": "discard"}))["status"] == "discarded"
+        assert not (backup_home / backup).exists()
+
+        key = scoped_key("claude", root, CLAUDE_ID, "offline")
+        path = f"/api/claude/sessions/{key}/removal-preview"
+        unexpected = checkpoint.with_name("unverified")
+        unexpected.write_text("protected")
+        assert client.call("POST", path, {"mode": "deep"}, code=409)["status"] == "ownership_unverified"
+        unexpected.unlink()
+        deep = client.call("POST", path, {"mode": "deep"})
+        assert {item["role"] for item in deep["review"]["operations"]} == {"transcript", "subagent", "checkpoint"}
+        deep_result = claude_remove(client, deep)
+        assert deep_result["status"] == "partial", deep_result
+        assert not main.exists() and not checkpoint.parent.exists() and unknown.exists()
+        assert all(item.read_bytes() == initial[item] for item in (unrelated, sidecar, unknown, history))
+        deep_backup = f"/api/claude/backups/{deep_result['backup_id']}/preview"
+        assert claude_remove(client, client.call("POST", deep_backup, {"action": "restore"}))["status"] == "restored"
+        assert checkpoint.read_bytes() == initial[checkpoint]
+        registered = scoped_key("claude", root, CLAUDE_DESKTOP_ID, "offline")
+        review = client.call("POST", f"/api/claude/sessions/{registered}/removal-preview", {"mode": "standard"})
+        assert {item["role"] for item in review["review"]["operations"]} == {"transcript", "desktop_record"}, review["review"]
+        assert claude_remove(client, review)["status"] == "partial"
+        assert not registration.exists() and scheduler.read_bytes() == b'{"fixture":"preserve shared scheduler"}'
 
 
 def codex_acceptance(client, root, rollouts, binary):
@@ -1108,6 +1289,8 @@ def main():
         claude_multiple_roots(agentmender, base, claude)
         claude_reconciliation(agentmender, base)
         claude_storage_acceptance(agentmender, base)
+        if platform.system() == "Darwin":
+            claude_cleanup_acceptance(agentmender, base)
         if args.native_codex:
             binary = args.native_codex.resolve(strict=True)
             assert platform.system() == "Darwin" and platform.machine() == "arm64"
