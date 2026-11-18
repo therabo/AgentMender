@@ -49,7 +49,7 @@ struct App {
     protected: Vec<String>,
     inventory: Inventories,
     discovery: Discovery,
-    exports: Mutex<Option<storage::CachedInventory>>,
+    exports: Mutex<storage::ExportState>,
     claude_usage: Mutex<Option<claude_usage::CachedUsage>>,
     #[cfg(target_os = "macos")]
     claude_review: Mutex<Option<removal::ClaudeReview>>,

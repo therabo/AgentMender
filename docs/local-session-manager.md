@@ -60,21 +60,26 @@ confirming to reduce concurrent writes. Errors can leave some files or
 history rows in place. AgentMender displays the result and refreshes the
 inventory. Physical disk space reclaimed can differ from the logical size.
 
-## Storage and export previews
+## Storage and export deletion
 
 Choose **Storage → Export e backup**. The list supports search, size/date
-sorting, pagination and up to 32 groups in a diagnostic selection. Expand a
+sorting, pagination and selection of up to 32 groups. Expand a
 row to see its format, manifest, timestamps, observed links and protection.
 The first-level file or directory remains a filesystem group unless the
 known exporter format identifies a publication.
 
-Preview re-enumerates within the inventory budget. A changed group invalidates
-its key. The preview shows total file count, logical size, observed allocation
-when available and the protection of each selected group. With no verified
-export writer contract the preview issues no receipt. Export inspection never
-joins a session or project removal plan. **Installazioni e archivi** shows
-the launch-time discovery separately. Restart after a change to root or
-executable overrides.
+**Anteprima selezione** refreshes the inventory within its scan budget and shows
+file and directory counts, logical size, observed allocation when available,
+and eligibility for each selected group. On macOS and Linux, **Elimina
+selezionati** opens one confirmation listing the eligible groups, including any
+explicitly selected independent backups or user outputs. Confirming removes
+those groups permanently without creating backups. Export roots, links, shared
+references, active leases and groups with incomplete observations are preserved.
+Groups that changed after preview are reported individually, as are filesystem
+errors. An error can leave some contents of a selected directory in place. The
+inventory refreshes and the selection clears after the attempt. Windows supports
+inventory and preview. **Installazioni e archivi** shows the launch-time
+discovery separately. Restart after a change to root or executable overrides.
 
 ## Local API
 
@@ -87,9 +92,9 @@ require exact Origin. All requests require the exact local Host.
 |---|---|
 | `GET /api/storage/codex` | Read separate installation and storage observations |
 | `GET /api/storage/exports` | Search, sort and page bounded export metadata |
-| `POST /api/storage/exports/preview` | Recompute a diagnostic selection from opaque keys |
-| `POST /api/storage/exports/refresh` | Invalidate the export measurement |
-| `POST /api/storage/exports/operations/{key}/confirm` | Reject while no export writer contract is admitted |
+| `POST /api/storage/exports/preview` | Resolve opaque group keys and issue a single-use receipt when some groups are eligible |
+| `POST /api/storage/exports/refresh` | Invalidate the export inventory and pending receipt |
+| `POST /api/storage/exports/operations/{key}/confirm` | Delete eligible groups bound to the receipt and return the result for each selected group |
 | `GET /api/{provider}/projects` | Search, filter, sort and page provider project groups |
 | `GET /api/{provider}/projects/{key}` | Read an observed group and its coverage and capability |
 | `GET /api/{provider}/projects/{key}/sessions` | Page verified main conversations within a group |

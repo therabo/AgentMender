@@ -1,12 +1,13 @@
-//! Read-only export inventory. Provider publication metadata does not grant
-//! authority over publisher locks, leases, shared outputs or filesystem paths.
+//! Bounded export inventory and removal of explicitly selected export groups.
 use crate::discovery::{Access, Storage, StorageKind, access, identity};
 use agentmender_domain::canonical_uuid;
 use agentmender_provider_api::filesystem;
+#[cfg(unix)]
+use rustix::fs::{self as scoped, AtFlags, FileType, Mode, OFlags};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 #[cfg(unix)]
-use std::collections::HashMap;
+use std::{collections::HashMap, os::unix::fs::MetadataExt, path::Component, sync::Arc};
 use std::{
     collections::HashSet,
     fs, io,
@@ -19,7 +20,9 @@ const MAX_GROUPS: usize = 4_096;
 const MAX_MANIFEST_BYTES: usize = 8_192;
 const MARKER: &str = ".artifact-session-publication.json";
 const LEASE: &str = ".artifact-session-publication-lease.json";
-const MISSING_CONTRACT: &str = "La rimozione richiede un contratto verificato dell’esportatore per proprietà, riferimenti e writer.";
+const CHANGED: &str = "Il gruppo o la sua root è cambiato dopo l’anteprima.";
+#[cfg(unix)]
+const OVERLAP: &str = "Il gruppo si sovrappone a un’altra area di storage rilevata.";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -60,6 +63,9 @@ pub struct Group {
     pub reason: &'static str,
     pub removal_available: bool,
     pub complete: bool,
+    #[cfg(unix)]
+    #[serde(skip)]
+    target: Option<(Arc<(Storage, fs::Metadata)>, PathBuf)>,
 }
 
 impl Group {
@@ -97,6 +103,7 @@ struct Scan {
     shared: u64,
     links: u64,
     incomplete: bool,
+    in_use: bool,
     revision: [u8; 32],
     #[cfg(unix)]
     linked_inodes: HashSet<(u64, u64)>,
@@ -115,6 +122,13 @@ struct Budget {
 }
 
 impl Budget {
+    fn new() -> Self {
+        Self {
+            entries: MAX_ENTRIES,
+            deadline: Instant::now() + Duration::from_secs(7),
+        }
+    }
+
     fn take(&mut self) -> bool {
         if self.entries == 0 || Instant::now() >= self.deadline {
             return false;
@@ -187,31 +201,26 @@ fn publication(group: &Path, value: &Manifest) -> bool {
 
 fn status(protection: Protection) -> &'static str {
     match protection {
-        Protection::ProviderManaged => {
-            "Pubblicazione Artifact Session protetta dal protocollo di quote e lease del servizio."
-        }
-        Protection::IndependentBackup => "Backup indipendente da preservare.",
-        Protection::UserOutput => {
-            "Output dell’utente. La pubblicazione può avere riferimenti esterni."
-        }
-        Protection::UnknownOwner => MISSING_CONTRACT,
-        Protection::Shared => {
-            "Sono presenti hardlink o collegamenti. Gli altri riferimenti restano protetti."
-        }
-        Protection::InUse => {
-            "Il servizio ha registrato un lease o un riferimento di pubblicazione attivo."
-        }
+        Protection::ProviderManaged => "Pubblicazione Artifact Session.",
+        Protection::IndependentBackup => "Backup indipendente.",
+        Protection::UserOutput => "Output dell’utente.",
+        Protection::UnknownOwner => "Gruppo di una root export con proprietà sconosciuta.",
+        Protection::Shared => "Il gruppo contiene collegamenti o riferimenti condivisi.",
+        Protection::InUse => "Il gruppo contiene un lease di pubblicazione attivo.",
         Protection::Incomplete => {
             "Inventario parziale per accesso, budget o modifica del contenuto."
         }
     }
 }
 
+type ObservedEntries = Vec<(PathBuf, fs::Metadata)>;
+
 fn collect(
     path: &Path,
     meta: &fs::Metadata,
     budget: &mut Budget,
     allocation: &mut Allocation,
+    mut observed: Option<&mut ObservedEntries>,
 ) -> Scan {
     #[cfg(not(unix))]
     let _ = &allocation;
@@ -219,11 +228,14 @@ fn collect(
     let mut queue = vec![(path.to_owned(), 0usize, meta.clone())];
     let mut revision = Sha256::new();
     let root_device = device(meta);
-    while let Some((path, depth, metadata)) = queue.pop() {
-        let encoded = path.as_os_str().as_encoded_bytes();
+    while let Some((entry, depth, metadata)) = queue.pop() {
+        let encoded = entry.as_os_str().as_encoded_bytes();
         revision.update(encoded.len().to_le_bytes());
         revision.update(encoded);
         revision.update(format!("{:?}", fingerprint(&metadata)));
+        if let Some(entries) = observed.as_deref_mut() {
+            entries.push((entry.clone(), metadata.clone()));
+        }
         if filesystem::is_link(&metadata) {
             result.links += 1;
             continue;
@@ -233,11 +245,24 @@ fn collect(
             continue;
         }
         if metadata.is_file() {
+            if entry.file_name().is_some_and(|name| name == LEASE) {
+                match manifest(path, &entry) {
+                    Some(lease) if lease.publication_id.is_some() => {
+                        let now = unix_time(Ok(SystemTime::now())).unwrap_or(0);
+                        result.in_use |= lease
+                            .minimum_retain_until_ms
+                            .is_some_and(|until| until / 1000 > now)
+                            || lease
+                                .renewed_at_ms
+                                .is_some_and(|time| time / 1000 + 25 * 3600 > now);
+                    }
+                    _ => result.incomplete = true,
+                }
+            }
             result.size.files += 1;
             result.size.logical_bytes = result.size.logical_bytes.saturating_add(metadata.len());
             #[cfg(unix)]
             {
-                use std::os::unix::fs::MetadataExt;
                 let blocks = metadata.blocks().saturating_mul(512);
                 let total = result.size.allocated_bytes.get_or_insert(0);
                 if metadata.nlink() > 1 {
@@ -258,15 +283,15 @@ fn collect(
             result.incomplete = true;
             continue;
         }
-        result.size.directories += u64::from(depth > 0);
+        result.size.directories += 1;
         let before = fingerprint(&metadata);
-        if !fs::symlink_metadata(&path).is_ok_and(|current| fingerprint(&current) == before)
-            || access(&path) != Access::Accessible
+        if !fs::symlink_metadata(&entry).is_ok_and(|current| fingerprint(&current) == before)
+            || access(&entry) != Access::Accessible
         {
             result.incomplete = true;
             continue;
         }
-        let Ok(entries) = fs::read_dir(&path) else {
+        let Ok(entries) = fs::read_dir(&entry) else {
             result.incomplete = true;
             continue;
         };
@@ -287,7 +312,7 @@ fn collect(
         }
         children.sort_unstable_by(|a, b| b.0.cmp(&a.0));
         queue.extend(children);
-        if !fs::symlink_metadata(&path).is_ok_and(|current| fingerprint(&current) == before) {
+        if !fs::symlink_metadata(&entry).is_ok_and(|current| fingerprint(&current) == before) {
             result.incomplete = true;
         }
     }
@@ -298,7 +323,6 @@ fn collect(
 fn device(meta: &fs::Metadata) -> Option<u64> {
     #[cfg(unix)]
     {
-        use std::os::unix::fs::MetadataExt;
         Some(meta.dev())
     }
     #[cfg(not(unix))]
@@ -310,10 +334,7 @@ fn device(meta: &fs::Metadata) -> Option<u64> {
 
 fn fingerprint(meta: &fs::Metadata) -> (bool, bool, u64, Option<SystemTime>, Option<(u64, u64)>) {
     #[cfg(unix)]
-    let identity = {
-        use std::os::unix::fs::MetadataExt;
-        Some((meta.dev(), meta.ino()))
-    };
+    let identity = Some((meta.dev(), meta.ino()));
     #[cfg(not(unix))]
     let identity = None;
     (
@@ -327,19 +348,20 @@ fn fingerprint(meta: &fs::Metadata) -> (bool, bool, u64, Option<SystemTime>, Opt
 
 fn group(
     storage: &Storage,
-    path: PathBuf,
+    path: &Path,
     budget: &mut Budget,
     allocation: &mut Allocation,
+    observed: Option<&mut ObservedEntries>,
 ) -> Group {
     let name = path
         .file_name()
         .map(Path::new)
         .map(display)
         .unwrap_or_default();
-    let metadata = fs::symlink_metadata(&path).ok();
+    let metadata = fs::symlink_metadata(path).ok();
     let mut scan = metadata
         .as_ref()
-        .map(|meta| collect(&path, meta, budget, allocation))
+        .map(|meta| collect(path, meta, budget, allocation, observed))
         .unwrap_or(Scan {
             incomplete: true,
             ..Scan::default()
@@ -354,40 +376,26 @@ fn group(
             .and_then(|e| safe_label(e.to_string_lossy().into_owned()))
             .unwrap_or_else(|| "File".into())
     };
-    let mut protection = Protection::UnknownOwner;
+    let mut protection = if storage.kind == StorageKind::ExternalExports {
+        Protection::UserOutput
+    } else {
+        Protection::UnknownOwner
+    };
     let mut producer = None;
     let mut seen_manifest = None;
     let mut session_id = None;
     let mut created_at = metadata.as_ref().and_then(|meta| unix_time(meta.created()));
-    if storage.kind == StorageKind::ExternalExports {
-        protection = Protection::UserOutput;
-    } else if dir && !scan.incomplete && scan.links == 0 && scan.shared == 0 {
-        if storage.kind == StorageKind::ArtifactSessionExports && storage.owned {
-            if name == "latest" {
-                protection = Protection::Shared;
-            }
-            if let Some(marker) = manifest(&storage.path, &path.join(MARKER))
-                .filter(|value| publication(&path, value))
-            {
-                format = "Pubblicazione Artifact Session".into();
-                producer = Some("Codex Desktop Artifact Session".into());
-                seen_manifest = Some(MARKER);
-                protection = Protection::ProviderManaged;
-                created_at = marker.created_at_ms.map(|time| time / 1000).or(created_at);
-                let active = manifest(&storage.path, &path.join(LEASE)).is_some_and(|lease| {
-                    let now = unix_time(Ok(SystemTime::now())).unwrap_or(0);
-                    lease.publication_id == marker.publication_id
-                        && (lease
-                            .minimum_retain_until_ms
-                            .is_some_and(|until| until / 1000 > now)
-                            || lease
-                                .renewed_at_ms
-                                .is_some_and(|time| time / 1000 + 25 * 3600 > now))
-                });
-                if active {
-                    protection = Protection::InUse;
-                }
-            }
+    if dir && !scan.incomplete && scan.links == 0 && scan.shared == 0 {
+        if storage.kind == StorageKind::ArtifactSessionExports
+            && storage.owned
+            && let Some(marker) =
+                manifest(&storage.path, &path.join(MARKER)).filter(|value| publication(path, value))
+        {
+            format = "Pubblicazione Artifact Session".into();
+            producer = Some("Codex Desktop Artifact Session".into());
+            seen_manifest = Some(MARKER);
+            protection = Protection::ProviderManaged;
+            created_at = marker.created_at_ms.map(|time| time / 1000).or(created_at);
         }
         if seen_manifest.is_none()
             && let Some(declared) = manifest(&storage.path, &path.join("manifest.json"))
@@ -400,10 +408,17 @@ fn group(
             }
         }
     }
-    if scan.links > 0 || scan.shared > 0 {
+    if scan.in_use {
+        protection = Protection::InUse;
+    }
+    if scan.links > 0
+        || scan.shared > 0
+        || storage.kind == StorageKind::ArtifactSessionExports
+            && name.eq_ignore_ascii_case("latest")
+    {
         protection = Protection::Shared;
     }
-    if !fs::symlink_metadata(&path)
+    if !fs::symlink_metadata(path)
         .ok()
         .zip(metadata.as_ref())
         .is_some_and(|(current, before)| fingerprint(&current) == fingerprint(before))
@@ -417,7 +432,7 @@ fn group(
     hash.update(storage.identity.as_deref().unwrap_or_default());
     hash.update(path.as_os_str().as_encoded_bytes());
     hash.update(scan.revision);
-    hash.update(identity(&path).unwrap_or_default());
+    hash.update(identity(path).unwrap_or_default());
     let root = display(&storage.path);
     Group {
         key: hash
@@ -426,7 +441,7 @@ fn group(
             .map(|byte| format!("{byte:02x}"))
             .collect(),
         name,
-        path: display(&path),
+        path: display(path),
         root,
         size: scan.size,
         created_at,
@@ -441,36 +456,41 @@ fn group(
         linked_entries: scan.links,
         protection,
         reason: status(protection),
-        removal_available: false,
+        removal_available: !matches!(
+            protection,
+            Protection::Shared | Protection::InUse | Protection::Incomplete
+        ),
         complete: !scan.incomplete,
+        #[cfg(unix)]
+        target: None,
     }
 }
 
 impl Inventory {
     pub(crate) fn scan(storage: &[Storage]) -> io::Result<Self> {
-        let mut budget = Budget {
-            entries: MAX_ENTRIES,
-            deadline: Instant::now() + Duration::from_secs(7),
-        };
+        let mut budget = Budget::new();
         let mut groups = Vec::new();
         let mut size = Size::default();
         let mut complete = true;
         let mut seen = HashSet::new();
         let mut allocation = Allocation::default();
-        for root in storage.iter().filter(|item| {
-            matches!(
-                item.kind,
-                StorageKind::ExportCandidate
-                    | StorageKind::ArtifactSessionExports
-                    | StorageKind::ExternalExports
-            )
-        }) {
+        for root in storage.iter().filter(|item| export_kind(item.kind)) {
             let Some(id) = &root.identity else {
                 complete &= !root.observed;
                 continue;
             };
             if !root.inventory_available {
                 complete = false;
+                continue;
+            }
+            if root.kind == StorageKind::ExternalExports
+                && storage.iter().any(|other| {
+                    other.kind != StorageKind::ExternalExports
+                        && export_kind(other.kind)
+                        && other.inventory_available
+                        && other.identity.as_ref() == Some(id)
+                })
+            {
                 continue;
             }
             if !seen.insert(id) {
@@ -489,6 +509,11 @@ impl Inventory {
                 complete = false;
                 continue;
             };
+            let first = groups.len();
+            #[cfg(unix)]
+            let source = Arc::new((root.clone(), meta));
+            #[cfg(unix)]
+            let scope = removal_scope(storage, root);
             for item in entries {
                 if groups.len() >= MAX_GROUPS || !budget.take() {
                     complete = false;
@@ -498,15 +523,57 @@ impl Inventory {
                     complete = false;
                     continue;
                 };
-                let row = group(root, item.path(), &mut budget, &mut allocation);
+                let path = item.path();
+                let mut row = group(root, &path, &mut budget, &mut allocation, None);
+                if row.removal_available {
+                    #[cfg(unix)]
+                    {
+                        let reason = match &scope {
+                            Err(reason) => Some(*reason),
+                            Ok(protected)
+                                if !protected.is_empty()
+                                    && identity(&path)
+                                        .is_some_and(|id| protected.contains(&id)) =>
+                            {
+                                Some(OVERLAP)
+                            }
+                            Ok(_)
+                                if !fs::symlink_metadata(&path)
+                                    .is_ok_and(|entry| entry.dev() == source.1.dev()) =>
+                            {
+                                Some("Il gruppo è inaccessibile o su un altro volume.")
+                            }
+                            Ok(_) => None,
+                        };
+                        if let Some(reason) = reason {
+                            row.removal_available = false;
+                            row.reason = reason;
+                        } else {
+                            row.target = Some((source.clone(), path));
+                        }
+                    }
+                    #[cfg(not(unix))]
+                    {
+                        row.removal_available = false;
+                        row.reason = "Eliminazione export non disponibile su questa piattaforma.";
+                    }
+                }
                 size.files = size.files.saturating_add(row.size.files);
                 size.directories = size.directories.saturating_add(row.size.directories);
                 size.logical_bytes = size.logical_bytes.saturating_add(row.size.logical_bytes);
                 complete &= row.complete;
                 groups.push(row);
             }
-            complete &= identity(&root.path).as_ref() == Some(id)
-                && fs::symlink_metadata(&root.path).is_ok_and(|meta| fingerprint(&meta) == before);
+            if identity(&root.path).as_ref() != Some(id)
+                || !fs::symlink_metadata(&root.path).is_ok_and(|meta| fingerprint(&meta) == before)
+            {
+                complete = false;
+                for row in &mut groups[first..] {
+                    row.complete = false;
+                    row.removal_available = false;
+                    row.reason = CHANGED;
+                }
+            }
         }
         #[cfg(unix)]
         {
@@ -528,13 +595,185 @@ impl Inventory {
     }
 }
 
+fn export_kind(kind: StorageKind) -> bool {
+    matches!(
+        kind,
+        StorageKind::ExportCandidate
+            | StorageKind::ArtifactSessionExports
+            | StorageKind::ExternalExports
+    )
+}
+
+#[cfg(unix)]
+fn removal_scope(storage: &[Storage], root: &Storage) -> Result<HashSet<String>, &'static str> {
+    if root.kind == StorageKind::ArtifactSessionExports && !root.recognized {
+        return Err("La root Artifact Session non è verificata.");
+    }
+    let others = storage
+        .iter()
+        .filter(|other| other.observed && !std::ptr::eq(*other, root));
+    if root.kind == StorageKind::ExternalExports {
+        let ancestors: HashSet<_> = root.path.ancestors().filter_map(identity).collect();
+        if others.clone().any(|other| match other.kind {
+            StorageKind::Home => root.identity == other.identity,
+            StorageKind::UserOutput => false,
+            _ => other
+                .identity
+                .as_ref()
+                .is_some_and(|id| ancestors.contains(id)),
+        }) {
+            return Err(OVERLAP);
+        }
+    }
+
+    // Find first-level groups containing another storage root by identity,
+    // including aliases with different casing on case-insensitive volumes.
+    let child_depth = root.path.components().count() + 1;
+    Ok(others
+        .filter_map(|other| {
+            let skip = other.path.components().count().checked_sub(child_depth)?;
+            let mut paths = other.path.ancestors().skip(skip);
+            let group = paths.next()?;
+            if identity(paths.next()?) != root.identity {
+                return None;
+            }
+            identity(group)
+        })
+        .collect())
+}
+
+impl Group {
+    /// Re-observe only this group and remove only the observed entries.
+    pub fn remove(&self) -> Result<(), &'static str> {
+        if !self.removal_available {
+            return Err(self.reason);
+        }
+        #[cfg(unix)]
+        {
+            let (source, path) = self.target.as_ref().ok_or(CHANGED)?;
+            let (root, expected) = source.as_ref();
+            let dir = open_root(&root.path).map_err(removal_error)?;
+            let current = dir.metadata().map_err(removal_error)?;
+            if (current.dev(), current.ino()) != (expected.dev(), expected.ino()) {
+                return Err(CHANGED);
+            }
+            let mut entries = Vec::new();
+            let current = group(
+                root,
+                path,
+                &mut Budget::new(),
+                &mut Allocation::default(),
+                Some(&mut entries),
+            );
+            if current.key != self.key || identity(&root.path) != root.identity {
+                return Err(CHANGED);
+            }
+            if !current.removal_available {
+                return Err(current.reason);
+            }
+            remove_observed(&dir, &mut entries.into_iter().peekable()).map_err(removal_error)
+        }
+        #[cfg(not(unix))]
+        Err(self.reason)
+    }
+}
+
+#[cfg(unix)]
+const DIRECTORY: OFlags = OFlags::RDONLY
+    .union(OFlags::DIRECTORY)
+    .union(OFlags::NOFOLLOW)
+    .union(OFlags::CLOEXEC);
+
+#[cfg(unix)]
+fn open_root(path: &Path) -> io::Result<fs::File> {
+    let mut parts = path.components();
+    if parts.next() != Some(Component::RootDir) {
+        return Err(io::ErrorKind::InvalidInput.into());
+    }
+    let mut dir = scoped::open("/", DIRECTORY, Mode::empty())?;
+    for part in parts {
+        let Component::Normal(name) = part else {
+            return Err(io::ErrorKind::InvalidInput.into());
+        };
+        dir = scoped::openat(dir, name, DIRECTORY, Mode::empty())?;
+    }
+    Ok(dir.into())
+}
+
+#[cfg(unix)]
+fn same_object(current: &scoped::Stat, expected: &fs::Metadata) -> bool {
+    i128::from(current.st_dev) == i128::from(expected.dev()) && current.st_ino == expected.ino()
+}
+
+#[cfg(unix)]
+fn remove_observed(
+    parent: &fs::File,
+    entries: &mut std::iter::Peekable<std::vec::IntoIter<(PathBuf, fs::Metadata)>>,
+) -> io::Result<()> {
+    let (path, expected) = entries.next().ok_or(io::ErrorKind::InvalidData)?;
+    let name = path.file_name().ok_or(io::ErrorKind::InvalidData)?;
+    let changed = io::ErrorKind::InvalidData;
+    if expected.is_dir() {
+        // Reject bind mounts as well as symlinks when descending on Linux.
+        #[cfg(target_os = "linux")]
+        let fd = scoped::openat2(
+            parent,
+            name,
+            DIRECTORY,
+            Mode::empty(),
+            scoped::ResolveFlags::NO_XDEV,
+        )?;
+        #[cfg(not(target_os = "linux"))]
+        let fd = scoped::openat(parent, name, DIRECTORY, Mode::empty())?;
+        let dir = fs::File::from(fd);
+        if fingerprint(&dir.metadata()?) != fingerprint(&expected) {
+            return Err(changed.into());
+        }
+        while entries
+            .peek()
+            .is_some_and(|(child, _)| child.parent() == Some(&path))
+        {
+            remove_observed(&dir, entries)?;
+        }
+        let current = scoped::statat(parent, name, AtFlags::SYMLINK_NOFOLLOW)?;
+        if !same_object(&current, &expected) {
+            return Err(changed.into());
+        }
+        scoped::unlinkat(parent, name, AtFlags::REMOVEDIR)?;
+    } else {
+        let current = scoped::statat(parent, name, AtFlags::SYMLINK_NOFOLLOW)?;
+        if FileType::from_raw_mode(current.st_mode) != FileType::RegularFile
+            || current.st_nlink != 1
+            || !same_object(&current, &expected)
+            || i128::from(current.st_size) != i128::from(expected.len())
+            || i128::from(current.st_mtime) != i128::from(expected.mtime())
+            || i128::from(current.st_mtime_nsec) != i128::from(expected.mtime_nsec())
+        {
+            return Err(changed.into());
+        }
+        scoped::unlinkat(parent, name, AtFlags::empty())?;
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn removal_error(error: io::Error) -> &'static str {
+    match error.kind() {
+        io::ErrorKind::PermissionDenied => "Permesso negato durante l’eliminazione.",
+        io::ErrorKind::NotFound | io::ErrorKind::InvalidData | io::ErrorKind::DirectoryNotEmpty => {
+            CHANGED
+        }
+        _ => "Il filesystem ha impedito l’eliminazione.",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::discovery::access;
 
     #[test]
-    fn recognizes_a_publication_and_lease_without_authorizing_removal() {
+    fn preserves_an_active_publication_lease() {
         let parent = tempfile::tempdir().unwrap();
         let root = parent.path().canonicalize().unwrap();
         let publication_id = "a".repeat(64);
@@ -572,7 +811,7 @@ mod tests {
         assert!(first.complete);
         assert_eq!(first.groups[0].protection, Protection::ProviderManaged);
         assert_eq!(first.groups[0].created_at, Some(1_500_000_000));
-        assert!(!first.groups[0].removal_available);
+        assert_eq!(first.groups[0].removal_available, cfg!(unix));
         let lease = serde_json::json!({
             "schema": "openai.artifact-session.filesystem-publication-lease/v2",
             "publicationId": publication_id,
@@ -582,10 +821,11 @@ mod tests {
         let second = Inventory::scan(&[source]).unwrap();
         assert_eq!(second.groups[0].protection, Protection::InUse);
         assert_ne!(first.groups[0].key, second.groups[0].key);
+        assert!(!second.groups[0].removal_available);
+        assert!(first.groups[0].remove().is_err());
+        assert!(second.groups[0].remove().is_err());
+        assert_eq!(fs::read(bundle.join("report.pdf")).unwrap(), b"example");
         let unverified_root = Inventory::scan(&[storage(false)]).unwrap();
-        assert_eq!(
-            unverified_root.groups[0].protection,
-            Protection::UnknownOwner
-        );
+        assert!(!unverified_root.groups[0].removal_available);
     }
 }

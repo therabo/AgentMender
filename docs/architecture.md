@@ -90,8 +90,10 @@ budgets and projects only recognized manifest fields. The CLI caches the
 inventory for pagination and produces a new observation before a selection
 preview. Export keys bind the observed root, group path and metadata revision.
 The router applies the existing loopback browser and Origin boundaries.
-Export confirmation has an independent namespace and is unavailable until
-there is an exercised exporter write contract. [ADR 0045](adr/0045-codex-storage-capabilities.md)
+Export confirmation consumes a single-use receipt in its independent namespace.
+The provider re-observes each eligible group and unlinks the observed entries
+relative to the verified export-root descriptor. A completed attempt invalidates
+the export inventory. [ADR 0045](adr/0045-codex-storage-capabilities.md)
 
 
 Claude's storage view builds bounded measurements under declared provider

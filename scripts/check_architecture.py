@@ -99,7 +99,10 @@ assert "operations" not in source("crates/cli/src/ui/claude_usage.rs")
 for path in ["crates/provider-codex/src/exports.rs", "crates/cli/src/ui/storage.rs"]:
     assert not re.search(r"\b(remove_file|remove_dir_all|run_confined_codex_delete|ReviewedRemoval)\b", source(path)), path
 require("crates/cli/src/ui/mod.rs", "/api/storage/exports/preview", "/api/storage/exports/operations/{key}/confirm")
-require("crates/cli/src/ui/storage.rs", "receipt: None", "snapshot(app, true)")
+require("crates/cli/src/ui/storage.rs", "snapshot(app, &mut exports, true)", "if !request.confirm",
+        "exports.review.take_if", "group.remove()", "exports.inventory = None")
+require("crates/provider-codex/src/exports.rs", "OFlags::NOFOLLOW", "AtFlags::SYMLINK_NOFOLLOW",
+        "current.key != self.key", "scoped::unlinkat", "current.st_nlink != 1")
 
 require(".cargo/config.toml", "-USQLITE_ENABLE_FTS5")
 print("Workspace dependencies, confined provider reads, browser authorization and native boundary passed.")

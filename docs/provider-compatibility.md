@@ -79,8 +79,8 @@ remain separate from the session action.
 | Discovery | Verified bundle metadata, native image architecture, fixed version probe, home and Library candidates | CLI paths and XDG candidates with Codex evidence. Version probe requires system Bubblewrap. | CLI paths and Windows AppX registration. Package version and executable headers are available when readable. |
 | Verified session inventory | Seatbelt read-only worker on macOS, including Intel when its reader is available | Unsupported until an isolated catalog reader is verified | Unsupported until an isolated catalog reader is verified |
 | Native session removal | Installed executable with `delete` and readable session inventory | Browsing requires a supported inventory reader | Browsing requires a supported inventory reader |
-| Export inventory and diagnostic selection | Metadata-only, with Unix block counts | Metadata-only, with Unix block counts | Metadata-only. Reparse points are protected and allocated bytes are unavailable. |
-| Export removal | Unsupported | Unsupported | Unsupported |
+| Export inventory and selection preview | With Unix block counts | With Unix block counts | Logical sizes. Reparse points are protected. |
+| Export removal | Permanent after explicit confirmation | Permanent after explicit confirmation. Directory removal requires `openat2` support. | Unsupported |
 
 The usable default is `CODEX_HOME` or the provider home. The platform adapter
 can select a single corroborated alternate when the default is absent.
@@ -90,12 +90,13 @@ roots are reported even when the current session worker cannot read them.
 Network paths on Windows are displayed as protected. WSL is a separate
 environment and the Windows manager does not auto-traverse it.
 
-The `exports` directory is a candidate based on location. File groups without
-a recognized producer remain protected. Desktop Artifact Session publications
-have a versioned marker and lease, a shared `latest` area and an exporter-owned
-quota protocol. AgentMender recognizes that structure for inspection.
-Neither its presence nor an expired lease establishes a supported manual
-removal entry point or proves exclusive ownership.
+The `exports` directory is discovered from the Codex archive layout. A group
+without producer metadata can be eligible through its export root and explicit
+selection. Desktop Artifact Session publications have a versioned marker and
+lease, a shared `latest` area and an exporter-owned quota protocol. AgentMender
+preserves the shared area and groups with active leases. Externally configured
+export groups are identified as user output when their metadata does not indicate
+an independent backup.
 [Windows AppX registration](https://learn.microsoft.com/en-us/powershell/module/appx/get-appxpackage) ·
 [Codex config reference](https://github.com/openai/codex/blob/rust-v0.169.0/codex-rs/config/src/config_toml.rs).
 

@@ -74,6 +74,7 @@ dependencies = [
  "agentmender-provider-api",
  "chrono",
  "rusqlite",
+ "rustix",
  "same-file",
  "serde",
  "serde_json",

@@ -19,11 +19,13 @@ platform must pass the disposable native fixture.
 Storage export inventory has a distinct browser surface. It lists filesystem
 groups and uses bounded metadata reads. Roots confirmed through an installation
 or explicit configuration are tracked separately from name-based candidates.
-An exporter contract must establish ownership, resource use and a confined
-removal primitive before a group can obtain deletion authorization. Independent
-backups, unknown groups and user output have protected states. Preview receipts
-belong to their own operation namespace and remain bound to server-side scope.
-No database or session deletion path authorizes an export operation.
+An explicit selection and confirmation authorize eligible first-level groups of
+the discovered export roots. The confirmation identifies independent backups
+and user output. Active leases, shared references, links, incomplete groups and
+overlapping storage stay protected. Preview receipts belong to the export
+operation namespace and are bound to the selected server-side group revisions.
+Removal reuses the inventory revision and performs no-follow writes relative to
+the verified root. Database and session deletion keep separate authorization.
 
 Validation uses isolated fixtures for platform candidates, linked and modified
 entries, provider layout and rollout variants, writer locks, shared references,

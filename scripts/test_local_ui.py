@@ -793,7 +793,10 @@ def storage_acceptance(binary, base, claude):
     workspace_file.write_bytes(b"user workspace")
     other = base / "fake-xdg"
     (other / "codex" / "exports").mkdir(parents=True)
-    environment = {"CODEX_HOME": str(archive), "XDG_DATA_HOME": str(other)}
+    external = base / "explicit-outputs"
+    external.mkdir()
+    environment = {"CODEX_HOME": str(archive), "XDG_DATA_HOME": str(other),
+                   "ARTIFACT_SESSION_HOST_EXPORT_ROOT": str(external)}
     with ui(binary, base, None, claude, env_overrides=environment) as (client, ticket):
         client.call("GET", "/api/storage/codex", code=401)
         authorize(client, ticket)
@@ -813,7 +816,18 @@ def storage_acceptance(binary, base, claude):
         (backup / "file.zip").write_bytes(b"data")
         (backup / "manifest.json").write_text('{"type":"backup","producer":"Fixture"}')
         (exports / "unknown").mkdir()
-        (exports / "unknown" / "manifest.json").write_bytes(b"not JSON")
+        (exports / "unknown" / "nested").mkdir()
+        (exports / "unknown" / "nested" / "data.txt").write_bytes(b"nested")
+        output = external / "explicit-report.txt"
+        output.write_bytes(b"report")
+        replaced = exports / "replace.zip"
+        replaced.write_bytes(b"old")
+        denied = exports / "denied-bundle"
+        denied.mkdir()
+        (denied / "report.zip").write_bytes(b"denied")
+        incomplete = exports / "incomplete-bundle"
+        incomplete.mkdir()
+        (incomplete / ".artifact-session-publication-lease.json").write_bytes(b"invalid lease")
         for index in range(45):
             (exports / f"data-{index:02}.zip").write_bytes(bytes(index))
         huge = exports / "sparse-fixture.zip"
@@ -833,26 +847,116 @@ def storage_acceptance(binary, base, claude):
         second = client.call("GET", "/api/storage/exports?limit=4&offset=4")
         assert first["rows"][0]["name"] == huge.name and first["total"] > 45
         assert not {row["key"] for row in first["rows"]} & {row["key"] for row in second["rows"]}
-        assert not first["removal_available"]
+        rows = {row["name"]: row for row in client.call("GET", "/api/storage/exports?limit=100")["rows"]}
+        assert first["removal_available"] == (os.name != "nt")
         entry = client.call("GET", "/api/storage/exports?search=Caf%C3%A9")["rows"][0]
         assert entry["protection"] == "independent_backup" and entry["manifest"] == "manifest.json"
-        links = client.call("GET", "/api/storage/exports?search=outside")["rows"][0]
+        assert rows[output.name]["protection"] == "user_output"
+        links = rows["outside"]
         assert links["size"]["files"] == 0 and links["protection"] == "shared"
+        assert not links["removal_available"]
+        assert rows[incomplete.name]["protection"] == "incomplete"
+        assert not rows[incomplete.name]["removal_available"]
         if os.name != "nt":
-            linked = client.call("GET", "/api/storage/exports?search=hardlink")["rows"][0]
+            linked = rows["hardlink-fixture"]
             assert linked["shared_entries"] == 1 and not linked["removal_available"]
-        preview = client.call("POST", "/api/storage/exports/preview", {"keys": [entry["key"]]})
-        assert preview["removable"] == 0 and preview["protected"] == 1 and preview["receipt"] is None
-        client.call("POST", "/api/storage/exports/preview", {"paths": [str(backup)]}, code=422)
-        client.call("POST", "/api/storage/exports/operations/forged/confirm", code=409)
-        client.call("POST", "/api/storage/exports/operations/forged/confirm", code=409)
-        old = exports / "different"
-        backup.rename(old)
-        backup.mkdir()
-        (backup / "file.zip").write_bytes(b"replacement")
-        client.call("POST", "/api/storage/exports/preview", {"keys": [entry["key"]]}, code=409)
+
+        def review(*names):
+            return client.call("POST", "/api/storage/exports/preview", {"keys": [rows[name]["key"] for name in names]})
+
+        def confirmation(receipt):
+            return f"/api/storage/exports/operations/{receipt}/confirm"
+
+        preview_route = "/api/storage/exports/preview"
+        client.call("POST", preview_route, {"paths": [str(backup)]}, code=422)
+        client.call("POST", preview_route, {"keys": ["f" * 64]}, code=409)
+        client.call("POST", preview_route, {"keys": [str(backup)]}, code=400)
+        client.call("POST", preview_route, {"keys": [entry["key"]] * 2}, code=400)
+        client.call("POST", preview_route, {"keys": [row["key"] for row in list(rows.values())[:33]]}, code=400)
+        client.call("POST", confirmation("forged"), {"confirm": True}, code=409)
+        protected = review("outside", incomplete.name)
+        assert protected["removable"] == 0 and protected["protected"] == 2 and protected["receipt"] is None
+        if os.name == "nt":
+            assert review(backup.name)["receipt"] is None
+            return
+
+        before = set(exports.iterdir())
+        single = review(huge.name)
+        assert single["removable"] == 1 and single["protected"] == 0
+        assert single["size"]["logical_bytes"] == 1_000_000 and single["size"]["allocated_bytes"] is not None
+        confirm = confirmation(single["receipt"])
+        client.call("POST", confirm, {"confirm": False}, code=400)
+        client.call("POST", confirm, {"confirm": True, "keys": [entry["key"]]}, code=422)
+        client.call("POST", confirm, {"confirm": True}, code=403, Origin=None)
+        client.call("POST", confirm, {"confirm": True}, code=401, Authorization=None)
+        assert huge.exists()
+        outcome = client.call("POST", confirm, {"confirm": True})
+        assert [row["name"] for row in outcome["deleted"]] == [huge.name] and not outcome["not_deleted"]
+        client.call("POST", confirm, {"confirm": True}, code=409)
+        assert not huge.exists() and set(exports.iterdir()) == before - {huge}
+        assert client.call("GET", "/api/storage/exports?search=sparse-fixture")["total"] == 0
+
+        superseded = review(backup.name)
+        selected = [replaced.name, backup.name, "outside", "unknown", incomplete.name]
+        permission_test = os.geteuid() != 0
+        if permission_test:
+            selected.append(denied.name)
+        selected.append(output.name)
+        preview = review(*selected)
+        assert preview["removable"] == len(selected) - 2 and preview["protected"] == 2
+        assert preview["size"]["files"] >= 6 and preview["size"]["directories"] >= 4
+        client.call("POST", confirmation(superseded["receipt"]), {"confirm": True}, code=409)
+        old = base / "original.zip"
+        replaced.rename(old)
+        replaced.symlink_to(workspace_file)
+        if permission_test:
+            denied.chmod(0o555)
+        try:
+            outcome = client.call("POST", confirmation(preview["receipt"]), {"confirm": True})
+        finally:
+            denied.chmod(0o755)
+        assert [row["name"] for row in outcome["deleted"]] == [backup.name, "unknown", output.name]
+        preserved = {row["name"]: row for row in outcome["not_deleted"]}
+        assert set(preserved) == set(selected) - {backup.name, "unknown", output.name}
+        assert preserved[replaced.name]["error"] and not preserved["outside"]["error"]
+        assert preserved[incomplete.name]["reason"]
+        if permission_test:
+            assert preserved[denied.name]["error"] and "Permesso negato" in preserved[denied.name]["reason"]
+        client.call("POST", preview_route, {"keys": [rows[replaced.name]["key"]]}, code=409)
+        remaining = {row["name"] for row in client.call("GET", "/api/storage/exports?limit=100")["rows"]}
+        assert remaining == set(rows) - {huge.name, backup.name, "unknown", output.name}
+        assert set(exports.iterdir()) == before - {huge, backup, exports / "unknown"} and not list(external.iterdir())
+        assert not (exports / "unknown").exists() and not backup.exists() and not output.exists()
+        assert replaced.is_symlink() and old.read_bytes() == b"old"
+        assert (denied / "report.zip").read_bytes() == b"denied"
+        assert (exports / "data-01.zip").read_bytes() == b"\x00"
         assert workspace_file.read_bytes() == b"user workspace"
-        assert (backup / "file.zip").read_bytes() == b"replacement"
+
+        (external / workspace_file.name).write_bytes(b"export")
+        client.call("POST", "/api/storage/exports/refresh", code=204)
+        external_row = client.call("GET", "/api/storage/exports?search=keep.txt")["rows"][0]
+        root_review = client.call("POST", preview_route, {"keys": [external_row["key"]]})
+        moved = base / "moved-exports"
+        external.rename(moved)
+        external.symlink_to(user_output, target_is_directory=True)
+        outcome = client.call("POST", confirmation(root_review["receipt"]), {"confirm": True})
+        assert not outcome["deleted"] and outcome["not_deleted"][0]["error"]
+        assert (moved / workspace_file.name).read_bytes() == b"export"
+        assert workspace_file.read_bytes() == b"user workspace"
+
+    sessions = archive / "sessions"
+    sessions.mkdir()
+    rollout = sessions / "rollout-canary.jsonl"
+    rollout.write_bytes(b"fixture session")
+    alias = archive / "SESSIONS"
+    environment["ARTIFACT_SESSION_HOST_EXPORT_ROOT"] = str(alias if alias.is_dir() else sessions)
+    with ui(binary, base, None, claude, env_overrides=environment) as (client, ticket):
+        authorize(client, ticket)
+        row = client.call("GET", "/api/storage/exports?search=rollout-canary")["rows"][0]
+        assert not row["removal_available"] and "si sovrappone" in row["reason"]
+        assert client.call("POST", preview_route, {"keys": [row["key"]]})["receipt"] is None
+    assert rollout.read_bytes() == b"fixture session"
+    print("Codex exports: permanent selective deletion, stale selections, protected groups, partial results and inventory refresh.")
 
 
 def main():
@@ -868,6 +972,7 @@ def main():
         claude_multiple_roots(agentmender, base, claude)
         claude_reconciliation(agentmender, base)
         claude_storage_acceptance(agentmender, base)
+        storage_acceptance(agentmender, base / "storage-suite", claude)
         if platform.system() == "Darwin":
             claude_cleanup_acceptance(agentmender, base)
         if args.native_codex:
@@ -910,7 +1015,6 @@ def main():
                 codex_project_deletion(agentmender, base, root, claude, executable_copy, rollouts)
             print("Native Codex fixture: command result, success-only Desktop reconciliation, and deletion without a Desktop catalog.")
         else:
-            storage_acceptance(agentmender, base / "storage-suite", claude)
             root = base / "codex"
             with ui(agentmender, base, root, claude) as (client, ticket):
                 authorize(client, ticket)

@@ -1,5 +1,5 @@
-//! Export inventory and diagnostic preview in a separate authorization namespace.
-use super::{ApiError, App, read};
+//! Export inventory and permanent removal in a separate authorization namespace.
+use super::{ApiError, App, read, token};
 use agentmender_provider_codex::exports::{Group, Inventory, Size};
 use axum::{
     Json,
@@ -9,28 +9,42 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeSet,
-    sync::{Arc, TryLockError},
+    sync::{Arc, MutexGuard, TryLockError},
     time::{Duration, Instant},
 };
 
 const CACHE_AGE: Duration = Duration::from_secs(20);
 const MAX_SELECTION: usize = 32;
-const PROTECTED: &str = "La rimozione export richiede un contratto verificato dell’esportatore e un’autorizzazione dedicata.";
 
-pub(super) struct CachedInventory {
+struct CachedInventory {
     snapshot: Arc<Inventory>,
     measured: Instant,
 }
 
-fn snapshot(app: &App, fresh: bool) -> Result<Arc<Inventory>, ApiError> {
-    let mut cache = app.exports.try_lock().map_err(|error| match error {
+#[derive(Default)]
+pub(super) struct ExportState {
+    inventory: Option<CachedInventory>,
+    review: Option<Review>,
+}
+
+struct Review {
+    receipt: String,
+    groups: Vec<Group>,
+}
+
+fn state(app: &App) -> Result<MutexGuard<'_, ExportState>, ApiError> {
+    app.exports.try_lock().map_err(|error| match error {
         TryLockError::WouldBlock => ApiError(
             StatusCode::SERVICE_UNAVAILABLE,
-            "Inventario export in aggiornamento.",
+            "Inventario export occupato. Riprova tra poco.",
         ),
         TryLockError::Poisoned(_) => ApiError::internal(),
-    })?;
-    if let Some(value) = cache
+    })
+}
+
+fn snapshot(app: &App, state: &mut ExportState, fresh: bool) -> Result<Arc<Inventory>, ApiError> {
+    if let Some(value) = state
+        .inventory
         .as_ref()
         .filter(|item| !fresh && item.measured.elapsed() < CACHE_AGE)
     {
@@ -41,7 +55,7 @@ fn snapshot(app: &App, fresh: bool) -> Result<Arc<Inventory>, ApiError> {
             .inspect_exports()
             .map_err(|_| ApiError::internal())?,
     );
-    *cache = Some(CachedInventory {
+    state.inventory = Some(CachedInventory {
         snapshot: inventory.clone(),
         measured: Instant::now(),
     });
@@ -92,7 +106,6 @@ pub(super) struct Page {
     size: Size,
     complete: bool,
     removal_available: bool,
-    removal_reason: &'static str,
 }
 
 pub(super) async fn list(
@@ -103,7 +116,8 @@ pub(super) async fn list(
         return Err(ApiError::bad("Filtri export fuori limite."));
     }
     read(app, move |app| {
-        let inventory = snapshot(app, false)?;
+        let mut exports = state(app)?;
+        let inventory = snapshot(app, &mut exports, false)?;
         let query = filter.search.trim().to_lowercase();
         let mut groups: Vec<_> = inventory
             .groups
@@ -132,21 +146,14 @@ pub(super) async fn list(
             size: inventory.size.clone(),
             group_count: inventory.groups.len(),
             complete: inventory.complete,
-            removal_available: false,
-            removal_reason: PROTECTED,
+            removal_available: inventory.groups.iter().any(|group| group.removal_available),
         })
     })
     .await
 }
 
 pub(super) async fn refresh(State(app): State<Arc<App>>) -> Result<StatusCode, ApiError> {
-    let mut cache = app.exports.try_lock().map_err(|_| {
-        ApiError(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "Inventario export in aggiornamento.",
-        )
-    })?;
-    *cache = None;
+    *state(&app)? = ExportState::default();
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -164,7 +171,6 @@ pub(super) struct Preview {
     protected: usize,
     complete: bool,
     receipt: Option<String>,
-    reason: &'static str,
 }
 
 pub(super) async fn preview(
@@ -184,9 +190,9 @@ pub(super) async fn preview(
         ));
     }
     read(app, move |app| {
-        // Diagnostics recompute all metadata before resolving opaque keys, so
-        // a replaced group cannot silently substitute a stale selection.
-        let inventory = snapshot(app, true)?;
+        let mut exports = state(app)?;
+        exports.review = None;
+        let inventory = snapshot(app, &mut exports, true)?;
         let mut groups = Vec::with_capacity(selection.keys.len());
         let mut size = Size {
             allocated_bytes: Some(0),
@@ -212,21 +218,94 @@ pub(super) async fn preview(
             complete &= group.complete;
             groups.push(group.clone());
         }
+        let removable = groups
+            .iter()
+            .filter(|group| group.removal_available)
+            .count();
+        let receipt = if removable > 0 {
+            let receipt = token()?;
+            exports.review = Some(Review {
+                receipt: receipt.clone(),
+                groups: groups.clone(),
+            });
+            Some(receipt)
+        } else {
+            None
+        };
         Ok(Preview {
-            protected: groups.len(),
+            protected: groups.len() - removable,
             groups,
             size,
             complete,
-            removable: 0,
-            receipt: None,
-            reason: PROTECTED,
+            removable,
+            receipt,
         })
     })
     .await
 }
 
-pub(super) async fn confirm(Path(_key): Path<String>) -> ApiError {
-    // No release currently has an export writer contract. A session receipt or
-    // a user-provided confirmation never grants this capability.
-    ApiError::conflict(PROTECTED)
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct Confirmation {
+    confirm: bool,
+}
+
+#[derive(Serialize)]
+struct Removed {
+    key: String,
+    name: String,
+    root: String,
+}
+
+#[derive(Serialize)]
+struct Preserved {
+    #[serde(flatten)]
+    item: Removed,
+    reason: &'static str,
+    error: bool,
+}
+
+#[derive(Default, Serialize)]
+pub(super) struct Outcome {
+    deleted: Vec<Removed>,
+    not_deleted: Vec<Preserved>,
+}
+
+pub(super) async fn confirm(
+    State(app): State<Arc<App>>,
+    Path(receipt): Path<String>,
+    Json(request): Json<Confirmation>,
+) -> Result<Json<Outcome>, ApiError> {
+    if !request.confirm {
+        return Err(ApiError::bad(
+            "Conferma l’eliminazione definitiva degli export.",
+        ));
+    }
+    read(app, move |app| {
+        let mut exports = state(app)?;
+        let review = exports
+            .review
+            .take_if(|review| review.receipt == receipt)
+            .ok_or_else(|| ApiError::conflict("Apri una nuova anteprima export."))?;
+        let mut outcome = Outcome::default();
+        for group in review.groups {
+            let result = group.remove();
+            let item = Removed {
+                key: group.key,
+                name: group.name,
+                root: group.root,
+            };
+            match result {
+                Ok(()) => outcome.deleted.push(item),
+                Err(reason) => outcome.not_deleted.push(Preserved {
+                    item,
+                    reason,
+                    error: group.removal_available,
+                }),
+            }
+        }
+        exports.inventory = None;
+        Ok(outcome)
+    })
+    .await
 }

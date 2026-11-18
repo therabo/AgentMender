@@ -274,7 +274,7 @@ h3 { font-size: 15px; font-weight: 650; }
 }
 
 .storage-tabs { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 18px; }
-.storage-message { margin-top: 10px; }
+.storage-message { margin-top: 10px; overflow-wrap: anywhere; }
 .storage-tools, .storage-selection { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; padding: 0 17px 14px; }
 .storage-selection { color: var(--muted); font-size: 13px; }
 .storage-search { display: flex; align-items: center; gap: 8px; flex: 1 1 220px; min-height: 40px; padding: 0 10px; color: var(--muted); background: var(--input); border: 1px solid var(--line); border-radius: 8px; }
@@ -284,6 +284,10 @@ h3 { font-size: 15px; font-weight: 650; }
 .claude-cleanup-actions select { background: var(--input); border: 1px solid var(--line); border-radius: 8px; padding: 8px; min-height: 40px; }
 .storage-preview { margin: 0 17px 15px; padding: 12px 15px; border: 1px solid var(--line); border-radius: 8px; background: var(--input); color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
 .storage-preview h3 { color: var(--text); margin-bottom: 4px; }
+.storage-confirmation { margin: auto; width: min(480px, calc(100% - 32px)); max-height: calc(100dvh - 32px); padding: 20px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--text); overflow-wrap: anywhere; }
+.storage-confirmation::backdrop { background: #080b139c; }
+.storage-confirmation h2 { margin-bottom: 12px; }
+.storage-confirmation ul { max-height: 34dvh; overflow: auto; padding-inline-start: 22px; font-size: 13px; }
 .export-list, .storage-locations { list-style: none; padding: 0; margin: 0; }
 .export-row { display: grid; grid-template-columns: 25px minmax(0, 1fr); align-items: start; gap: 10px; padding: 0 17px; border-top: 1px solid var(--line-soft); }
 .export-row > input { margin: 19px 0 0 2px; accent-color: var(--accent); width: 17px; height: 17px; }

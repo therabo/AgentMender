@@ -1,7 +1,7 @@
 import { ClaudeUsageView } from './claude-usage'
 import { useEffect, useState } from 'react'
-import { Archive, ChevronRight, Database, HardDrive, RefreshCw, Search, ShieldCheck } from 'lucide-react'
-import { Empty, Notice, Pagination } from './components'
+import { Archive, ChevronRight, Database, HardDrive, RefreshCw, Search, ShieldCheck, Trash2 } from 'lucide-react'
+import { Dialog, Empty, Notice, Pagination } from './components'
 import { dateLabel, numberLabel, sizeLabel } from './format'
 import { request } from './api'
 
@@ -11,10 +11,12 @@ type Group = {
   created_at: number | null; modified_at: number | null; format: string
   manifest: string | null; producer: string | null; session_id: string | null
   shared_entries: number; linked_entries: number
-  protection: keyof typeof protection; reason: string; complete: boolean
+  protection: keyof typeof protection; reason: string; removal_available: boolean
 }
 type Page = { rows: Group[]; total: number; group_count: number; size: Size; complete: boolean }
-type Preview = { groups: Group[]; size: Size; protected: number; removable: number; complete: boolean; reason: string }
+type Preview = { groups: Group[]; size: Size; protected: number; removable: number; complete: boolean; receipt: string | null }
+type Removed = { key: string; name: string; root: string }
+type Outcome = { deleted: Removed[]; not_deleted: (Removed & { reason: string; error: boolean })[] }
 type Location = {
   path: string; root: string; kind: string; source: string
   recognized: boolean; owned: boolean; access: string; reason: string
@@ -46,7 +48,7 @@ function ExportDetails({ group }: { group: Group }) {
     <code>{group.path}</code>
     <dl>
       <div><dt>Formato</dt><dd>{group.format}</dd></div>
-      <div><dt>File e directory</dt><dd>{numberLabel(group.size.files)} file · {numberLabel(group.size.directories)} directory interne</dd></div>
+      <div><dt>File e directory</dt><dd>{numberLabel(group.size.files)} file · {numberLabel(group.size.directories)} directory</dd></div>
       <div><dt>Allocazione osservata</dt><dd>{sizeLabel(group.size.allocated_bytes)}</dd></div>
       <div><dt>Creazione (UTC)</dt><dd>{dateLabel(group.created_at)}</dd></div>
       {group.manifest && <div><dt>Manifest</dt><dd>{group.manifest}</dd></div>}
@@ -113,6 +115,8 @@ function Exports() {
   const [sort, setSort] = useState('size')
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [preview, setPreview] = useState<Preview>()
+  const [confirming, setConfirming] = useState(false)
+  const [outcome, setOutcome] = useState<Outcome>()
   const [revision, setRevision] = useState(0)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
@@ -148,11 +152,32 @@ function Exports() {
   async function review() {
     setBusy(true)
     setError('')
+    setPreview(undefined)
     try {
       setPreview(await request<Preview>('/api/storage/exports/preview', {
         method: 'POST', body: JSON.stringify({ keys: [...selected] }),
       }))
     } catch (e) { setError(errorText(e)) } finally { setBusy(false) }
+  }
+  async function remove(receipt: string) {
+    setConfirming(false)
+    setBusy(true)
+    setError('')
+    setOutcome(undefined)
+    try {
+      setOutcome(await request<Outcome>(`/api/storage/exports/operations/${receipt}/confirm`, {
+        method: 'POST', body: JSON.stringify({ confirm: true }),
+      }))
+    } catch (e) {
+      setError(errorText(e))
+    } finally {
+      setBusy(false)
+      setSelected(new Set())
+      setPreview(undefined)
+      setLoading(true)
+      setOffset(0)
+      setRevision(value => value + 1)
+    }
   }
 
   return <>
@@ -161,32 +186,40 @@ function Exports() {
       <div className="summary-item"><span className="summary-icon"><Database size={20} aria-hidden /></span><div><span>Allocazione osservata</span><strong>{sizeLabel(page.size.allocated_bytes)}</strong></div></div>
       <div className="summary-item"><span className="summary-icon"><Archive size={20} aria-hidden /></span><div><span>Gruppi e file di primo livello</span><strong>{numberLabel(page.group_count)}</strong></div></div>
     </div>}
-    <Notice tone="info">I gruppi osservati sono protetti. La rimozione richiede un contratto verificato dell’esportatore.</Notice>
     {page && !page.complete && <div className="storage-message"><Notice tone="warning">L’inventario è parziale. Le dimensioni coprono gli elementi osservati.</Notice></div>}
     {error && <div className="storage-message"><Notice tone="error">{error}</Notice></div>}
+    {outcome && <div className="storage-message"><Notice tone={outcome.not_deleted.length ? 'warning' : 'success'}>
+      <strong>{numberLabel(outcome.deleted.length)} {outcome.deleted.length === 1 ? 'eliminato' : 'eliminati'} · {numberLabel(outcome.not_deleted.length)} {outcome.not_deleted.length === 1 ? 'non eliminato' : 'non eliminati'}</strong>
+      <ul>
+        {outcome.deleted.map(item => <li key={item.key}><strong>{item.name}</strong> ({item.root}) · Eliminato</li>)}
+        {outcome.not_deleted.map(item => <li key={item.key}><strong>{item.name}</strong> ({item.root}) · {item.error ? 'Errore' : 'Preservato'} · {item.reason}</li>)}
+      </ul>
+    </Notice></div>}
     <section className="inventory">
       <div className="inventory-heading"><h2>Inventario export</h2><button className="button quiet" disabled={busy || loading} onClick={() => void refresh()}><RefreshCw size={15} aria-hidden /> Aggiorna</button></div>
       <div className="storage-tools">
-        <label className="storage-search"><Search size={17} aria-hidden /><span className="sr-only">Cerca export</span><input value={search} placeholder="Cerca per nome o root" maxLength={64} onChange={event => { setSearch(event.target.value); load() }} /></label>
-        <label><span className="sr-only">Ordina per</span><select value={sort} onChange={event => { setSort(event.target.value); load() }}><option value="size">Dimensione</option><option value="modified">Ultima modifica</option></select></label>
+        <label className="storage-search"><Search size={17} aria-hidden /><span className="sr-only">Cerca export</span><input value={search} placeholder="Cerca per nome o root" maxLength={64} disabled={busy} onChange={event => { setSearch(event.target.value); load() }} /></label>
+        <label><span className="sr-only">Ordina per</span><select value={sort} disabled={busy} onChange={event => { setSort(event.target.value); load() }}><option value="size">Dimensione</option><option value="modified">Ultima modifica</option></select></label>
       </div>
       {selected.size > 0 && <div className="storage-selection">
-        <span>{numberLabel(selected.size)}{selected.size === 1 ? ' gruppo selezionato' : ' gruppi selezionati'} per la verifica</span>
+        <span>{numberLabel(selected.size)}{selected.size === 1 ? ' gruppo selezionato' : ' gruppi selezionati'}</span>
         <button className="button" disabled={busy || loading} onClick={() => void review()}>Anteprima selezione</button>
         <button className="button quiet" disabled={busy} onClick={() => { setSelected(new Set()); setPreview(undefined) }}>Azzera</button>
       </div>}
       {preview && <div className="storage-preview" aria-live="polite">
         <h3>Anteprima export</h3>
-        <p>{numberLabel(preview.size.files)} file · {sizeLabel(preview.size.logical_bytes)} logici · {sizeLabel(preview.size.allocated_bytes)} allocati</p>
-        <p>{preview.protected} protetti · {preview.removable} eliminabili{preview.complete ? '' : ' · inventario parziale'}</p>
-        <ul>{preview.groups.map(item => <li key={item.key}><strong>{item.name}</strong> · {item.reason}</li>)}</ul>
-        <p>{preview.reason}</p>
+        <p>{numberLabel(preview.size.files)} file · {numberLabel(preview.size.directories)} directory · {sizeLabel(preview.size.logical_bytes)} logici{preview.size.allocated_bytes === null ? '' : ` · ${sizeLabel(preview.size.allocated_bytes)} allocati`}</p>
+        <p>{numberLabel(preview.protected)} {preview.protected === 1 ? 'protetto' : 'protetti'} · {numberLabel(preview.removable)} {preview.removable === 1 ? 'eliminabile' : 'eliminabili'}{preview.complete ? '' : ' · inventario parziale'}</p>
+        <ul>{preview.groups.map(item => <li key={item.key}><strong>{item.name}</strong> ({item.root}) · {item.removal_available ? `Eliminabile · ${protection[item.protection]}` : item.reason}</li>)}</ul>
+        <button className="button danger-outline" type="button" disabled={!preview.receipt || busy} onClick={() => setConfirming(true)}>
+          <Trash2 size={16} aria-hidden />{busy ? 'Eliminazione…' : 'Elimina selezionati'}
+        </button>
       </div>}
       {loading ? <Empty title="Lettura inventario export" busy /> : page?.rows.length ? <>
         <div className="storage-table-head" aria-hidden><span>Nome e protezione</span><span>Dimensione logica</span><span>Ultima modifica (UTC)</span></div>
         <ul className="export-list">
           {page.rows.map(group => <li key={group.key} className="export-row">
-            <input type="checkbox" aria-label={'Includi ' + group.name + ' nella verifica'} disabled={busy || !group.complete || selected.size === 32 && !selected.has(group.key)}
+            <input type="checkbox" aria-label={'Seleziona ' + group.name} disabled={busy || selected.size === 32 && !selected.has(group.key)}
               checked={selected.has(group.key)} onChange={() => {
                 setSelected(previous => { const next = new Set(previous); if (!next.delete(group.key)) next.add(group.key); return next })
                 setPreview(undefined)
@@ -200,5 +233,18 @@ function Exports() {
         {page.total > pageSize && <Pagination page={offset / pageSize} total={page.total} pageSize={pageSize} onPage={page => load(page * pageSize)} />}
       </> : <Empty title={search ? 'Nessun risultato' : 'Nessun gruppo export osservato'} />}
     </section>
+    {confirming && preview?.receipt && <Dialog label="export-removal-title" className="storage-confirmation" onClose={() => setConfirming(false)}>
+      <h2 id="export-removal-title">Eliminazione definitiva</h2>
+      <Notice tone="warning">L’eliminazione dei gruppi elencati è irreversibile.</Notice>
+      <ul>{preview.groups.filter(item => item.removal_available).map(item => <li key={item.key}>
+        <strong>{item.name}</strong> · {protection[item.protection]}<br /><code>{item.root}</code>
+      </li>)}</ul>
+      <div className="detail-actions">
+        <button className="button" type="button" autoFocus onClick={() => setConfirming(false)}>Annulla</button>
+        <button className="button danger" type="button" onClick={() => { if (preview.receipt) void remove(preview.receipt) }}>
+          <Trash2 size={16} aria-hidden /> Elimina definitivamente
+        </button>
+      </div>
+    </Dialog>}
   </>
 }
