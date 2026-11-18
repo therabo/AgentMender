@@ -1,8 +1,9 @@
 //! Metadata and display text derived from scoped Claude Code JSONL files.
 use super::{ClaudeAdapter, TranscriptShape, strict_version, transcript_shape};
 use crate::{
+    diagnostics::{Access, Exclusion, Reconciliation, ScanIssue, TranscriptReport},
     read::{Lines, Revision, verify},
-    storage::{self, Budget, DesktopState, EntryKind, RootView},
+    storage::{self, Budget, DesktopState, Entry, EntryKind, RootView},
 };
 use agentmender_domain::*;
 use agentmender_provider_api::{ProviderError, filesystem, io_error};
@@ -151,6 +152,8 @@ pub enum TitleSource {
 #[derive(Clone, Debug, Serialize)]
 pub struct SessionEvidence {
     pub metadata_complete: bool,
+    #[serde(skip)]
+    pub(crate) scan_issues: BTreeSet<ScanIssue>,
     pub modified_at: Option<i64>,
     pub surface: Option<Surface>,
     pub title_source: TitleSource,
@@ -175,14 +178,15 @@ pub struct Catalog {
     pub inventory: InventoryObservation,
     pub evidence: BTreeMap<SessionIdentity, SessionEvidence>,
     pub roots: Vec<RootView>,
+    pub reconciliation: Reconciliation,
 }
 
 #[derive(Default)]
 struct Scan {
     found: bool,
     sidechain: bool,
-    conflict: bool,
-    incomplete: bool,
+    exclusion: Option<Exclusion>,
+    issues: BTreeSet<ScanIssue>,
     custom: Option<String>,
     generated: Option<String>,
     first: Option<String>,
@@ -262,7 +266,9 @@ impl Scan {
         };
         if sid != shape.session_id {
             self.foreign_rows = true;
-            self.conflict |= desktop.and_then(|state| state.parent_cli_id.as_deref()) != Some(sid);
+            if desktop.and_then(|state| state.parent_cli_id.as_deref()) != Some(sid) {
+                self.exclusion.get_or_insert(Exclusion::IdentityConflict);
+            }
             return;
         }
         if shape.agent_id.is_none() && record.is_sidechain == Some(true) {
@@ -274,12 +280,12 @@ impl Scan {
             .as_ref()
             .is_some_and(|agent| Some(agent) != shape.agent_id.as_ref())
         {
-            self.conflict = true;
+            self.exclusion.get_or_insert(Exclusion::IdentityConflict);
             return;
         }
         if let Some(entrypoint) = record.entrypoint.as_deref() {
             let Some(surface) = Surface::parse(entrypoint) else {
-                self.conflict = true;
+                self.exclusion.get_or_insert(Exclusion::UnknownEntrypoint);
                 return;
             };
             self.surface = Some(match self.surface {
@@ -298,7 +304,7 @@ impl Scan {
                 || fork == sid
                 || self.fork.as_deref().is_some_and(|prior| prior != fork)
             {
-                self.conflict = true;
+                self.exclusion.get_or_insert(Exclusion::UnverifiedFork);
             } else {
                 self.fork = Some(fork.into());
             }
@@ -325,7 +331,7 @@ impl Scan {
             if self.versions.len() < 16 {
                 self.versions.insert(version.clone());
             } else if !self.versions.contains(version) {
-                self.incomplete = true;
+                self.issues.insert(ScanIssue::MetadataLimit);
             }
         }
         if let Some(created) = timestamp(record.created_at.as_deref()) {
@@ -371,10 +377,10 @@ fn scan_file(
     let available = budget.bytes.min(HEAD + TAIL);
     let bytes_to_scan = available.min(bytes);
     budget.bytes -= bytes_to_scan;
-    let mut scan = Scan {
-        incomplete: bytes_to_scan < bytes,
-        ..Default::default()
-    };
+    let mut scan = Scan::default();
+    if bytes_to_scan < bytes {
+        scan.issues.insert(ScanIssue::ByteLimit);
+    }
     if bytes_to_scan == 0 {
         return Ok(scan);
     }
@@ -396,8 +402,12 @@ fn scan_file(
             lines.next().map_err(|e| io_error(path, e))?;
         }
         for index in 0..limit {
-            if index % 64 == 0 && Instant::now() >= cutoff {
+            if lines.offset == end {
                 break;
+            }
+            if index % 64 == 0 && Instant::now() >= cutoff {
+                scan.issues.insert(ScanIssue::TimeLimit);
+                return Ok(lines.offset);
             }
             let Some(line) = lines.next().map_err(|e| io_error(path, e))? else {
                 break;
@@ -406,12 +416,22 @@ fn scan_file(
                 Some(line) if line.iter().all(u8::is_ascii_whitespace) => {}
                 Some(line) => match serde_json::from_slice(line) {
                     Ok(record) => scan.record(record, shape, desktop),
-                    Err(_) => scan.incomplete = true,
+                    Err(_) => {
+                        scan.issues.insert(ScanIssue::MalformedRecord);
+                    }
                 },
-                None => scan.incomplete = true,
+                None => {
+                    if line.terminated {
+                        scan.issues.insert(ScanIssue::RecordSize);
+                    } else if end == bytes {
+                        scan.issues.insert(ScanIssue::UnterminatedRecord);
+                    }
+                }
             }
         }
-        scan.incomplete |= lines.offset < lines.end;
+        if lines.offset < lines.end {
+            scan.issues.insert(ScanIssue::LineLimit);
+        }
         Ok::<_, ProviderError>(lines.offset)
     };
     let reserve = MAX_LINES / 4;
@@ -428,12 +448,21 @@ fn scan_file(
     Ok(scan)
 }
 
+fn is_transcript_candidate(entry: &Entry) -> bool {
+    entry.kind != EntryKind::Directory
+        && entry
+            .path
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("jsonl"))
+}
+
 impl ClaudeAdapter {
     pub fn local_catalog(&self, limit: usize) -> Catalog {
         let mut budget = Budget::new(limit);
         let mut candidates = Vec::new();
         let mut inventory = InventoryObservation::default();
         let mut roots = Vec::new();
+        let mut report = TranscriptReport::default();
         let mut folders = BTreeSet::new();
         let mut physical_roots = BTreeSet::new();
         for (path, source) in &self.roots {
@@ -448,7 +477,7 @@ impl ClaudeAdapter {
             }
             let read_at_start = budget.issues;
             let count = candidates.len();
-            if view.readable {
+            if view.projects_access == Access::Available {
                 let projects = path.join("projects");
                 let namespaces = budget.list(&projects);
                 for namespace in namespaces
@@ -472,6 +501,7 @@ impl ClaudeAdapter {
                     if !folders.insert(identity.clone()) {
                         continue;
                     }
+                    view.namespaces += 1;
                     inventory.projects.push(RegisteredProject {
                         identity,
                         name: None,
@@ -479,14 +509,8 @@ impl ClaudeAdapter {
                         desktop_backed: false,
                     });
                     for entry in budget.list(&namespace.path) {
-                        if entry.kind == EntryKind::File {
-                            if transcript_shape(
-                                entry.path.strip_prefix(path).expect("enumerated root"),
-                            )
-                            .is_some()
-                            {
-                                candidates.push((path.clone(), entry.path));
-                            }
+                        if is_transcript_candidate(&entry) {
+                            candidates.push((roots.len(), entry));
                         } else if entry.kind == EntryKind::Directory
                             && entry
                                 .path
@@ -494,20 +518,17 @@ impl ClaudeAdapter {
                                 .and_then(|name| name.to_str())
                                 .is_some_and(uuid_shape)
                         {
-                            for child in budget.list(&entry.path.join("subagents")) {
-                                if child.kind == EntryKind::File
-                                    && transcript_shape(
-                                        child.path.strip_prefix(path).expect("enumerated root"),
-                                    )
-                                    .is_some()
-                                {
-                                    candidates.push((path.clone(), child.path));
-                                }
-                            }
+                            candidates.extend(
+                                budget
+                                    .list(&entry.path.join("subagents"))
+                                    .into_iter()
+                                    .filter(is_transcript_candidate)
+                                    .map(|entry| (roots.len(), entry)),
+                            );
                         }
                     }
                 }
-            } else if view.present {
+            } else if view.projects_access == Access::Unavailable {
                 budget.mark();
             }
             roots.push(RootView {
@@ -517,34 +538,50 @@ impl ClaudeAdapter {
             });
         }
         let mut uuid_counts = BTreeMap::new();
-        for (_, path) in &candidates {
-            if let Some(id) = path
-                .file_stem()
-                .and_then(|name| name.to_str())
-                .filter(|id| uuid_shape(id))
+        for (index, entry) in &candidates {
+            let relative = entry
+                .path
+                .strip_prefix(&roots[*index].path)
+                .expect("enumerated root");
+            if relative.components().count() == 3
+                && let Some(id) = entry
+                    .path
+                    .file_stem()
+                    .and_then(|name| name.to_str())
+                    .filter(|id| uuid_shape(id))
             {
-                *uuid_counts.entry(id.to_string()).or_insert(0usize) += 1;
+                *uuid_counts.entry(id.to_owned()).or_insert(0usize) += 1;
             }
         }
-        let desktop = if roots.iter().any(|root| root.enumeration_incomplete) {
-            BTreeMap::new()
-        } else {
-            storage::desktop_states(&self.desktop, &mut budget)
-        };
+        let projects_incomplete = roots.iter().any(|root| root.enumeration_incomplete);
+        let desktop = storage::desktop_states(&self.desktop, &mut budget);
         let mut evidence = BTreeMap::new();
         let mut cache = self.cache.lock().expect("Claude metadata cache");
         let mut next_cache = BTreeMap::new();
-        for (root, path) in candidates {
-            if budget.expired() {
-                break;
+        for (index, entry) in candidates {
+            let root = &roots[index].path;
+            let path = &entry.path;
+            let relative = path.strip_prefix(root).expect("enumerated root");
+            let Some(shape) = transcript_shape(relative) else {
+                report.exclude(Exclusion::UnrecognizedLocator);
+                budget.mark();
+                continue;
+            };
+            if entry.kind != EntryKind::File {
+                report.exclude(Exclusion::ProtectedOrUnreadable);
+                budget.mark();
+                continue;
             }
-            let relative = path.strip_prefix(&root).expect("enumerated root");
-            let shape = transcript_shape(relative).expect("filtered locator");
+            if budget.expired() {
+                report.exclude(Exclusion::ScanLimit);
+                continue;
+            }
             let native_id = shape.agent_id.as_ref().map_or_else(
                 || shape.session_id.clone(),
                 |agent| format!("{}/agent:{agent}", shape.session_id),
             );
             if shape.bucket.len() + native_id.len() > 1000 {
+                report.exclude(Exclusion::UnrecognizedLocator);
                 budget.mark();
                 continue;
             }
@@ -555,10 +592,10 @@ impl ClaudeAdapter {
                 native_id,
             };
             let duplicates = uuid_counts.get(&shape.session_id).copied().unwrap_or(0);
-            let linked = (shape.agent_id.is_none() && duplicates == 1)
-                .then(|| desktop.get(&shape.session_id))
+            let linked = (!projects_incomplete && shape.agent_id.is_none() && duplicates == 1)
+                .then(|| desktop.states.get(&shape.session_id))
                 .flatten();
-            match observe(&path, &shape, identity, linked, &cache, &mut budget) {
+            match observe(path, &shape, identity, linked, &cache, &mut budget) {
                 Ok(mut row) => {
                     row.evidence.same_uuid_elsewhere = duplicates.saturating_sub(1);
                     if next_cache.len() < CACHE_SIZE && row.evidence.metadata_complete {
@@ -567,10 +604,14 @@ impl ClaudeAdapter {
                     if !row.evidence.metadata_complete {
                         budget.mark();
                     }
+                    report.record(&row.session, &row.evidence);
                     evidence.insert(row.session.identity.clone(), row.evidence);
                     inventory.sessions.push(row.session);
                 }
-                Err(_) => budget.mark(),
+                Err(reason) => {
+                    report.exclude(reason);
+                    budget.mark();
+                }
             }
         }
         *cache = next_cache;
@@ -608,13 +649,25 @@ impl ClaudeAdapter {
         for project in &mut inventory.projects {
             project.desktop_backed = desktop_projects.contains(&project.identity);
         }
+        let associated: BTreeSet<_> = evidence
+            .iter()
+            .filter(|(_, meta)| meta.desktop_record)
+            .map(|(id, _)| id.native_id.as_str())
+            .collect();
+        let desktop_report = desktop.reconcile(&uuid_counts, &associated, !projects_incomplete);
         inventory.incomplete = budget.issues > 0;
-        inventory.projects_incomplete =
-            roots.iter().any(|root| root.enumeration_incomplete) || budget.expired();
+        inventory.projects_incomplete = projects_incomplete;
         Catalog {
             inventory,
             evidence,
             roots,
+            reconciliation: Reconciliation {
+                transcripts: report,
+                desktop: desktop_report,
+                projects_incomplete,
+                entry_limit_reached: budget.entry_limit_reached,
+                out_of_scope: ["chat", "cowork", "code_cloud", "ssh", "wsl"],
+            },
         }
     }
 }
@@ -626,23 +679,40 @@ fn observe(
     desktop: Option<&DesktopState>,
     cache: &BTreeMap<SessionIdentity, Cached>,
     budget: &mut Budget,
-) -> Result<Cached, ProviderError> {
+) -> Result<Cached, Exclusion> {
     let root = &identity.state_root;
-    let mut file = filesystem::open_observed_read(root, path)?;
-    let revision = Revision::read(&file, path)?;
+    let unreadable = |_| Exclusion::ProtectedOrUnreadable;
+    let changed = |_| Exclusion::ChangedDuringScan;
+    let mut file = filesystem::open_observed_read(root, path).map_err(unreadable)?;
+    let revision = Revision::read(&file, path).map_err(unreadable)?;
     if let Some(prior) = cache
         .get(&identity)
         .filter(|entry| entry.evidence.revision == revision && entry.desktop.as_ref() == desktop)
     {
-        verify(root, path, &revision)?;
+        verify(root, path, &revision).map_err(changed)?;
         return Ok(prior.clone());
     }
-    let scan = scan_file(&mut file, path, revision.bytes, shape, desktop, budget)?;
-    verify(root, path, &revision)?;
-    if (!scan.found && !scan.sidechain) || scan.conflict {
-        return Err(ProviderError::InvalidScope(
-            "unverified Claude transcript".into(),
-        ));
+    let scan =
+        scan_file(&mut file, path, revision.bytes, shape, desktop, budget).map_err(unreadable)?;
+    verify(root, path, &revision).map_err(changed)?;
+    if let Some(reason) = scan.exclusion {
+        return Err(reason);
+    }
+    if !scan.found && !scan.sidechain {
+        return Err(
+            if scan.issues.iter().any(|issue| {
+                matches!(
+                    issue,
+                    ScanIssue::MalformedRecord | ScanIssue::UnterminatedRecord
+                )
+            }) {
+                Exclusion::InvalidRecords
+            } else if scan.issues.is_empty() {
+                Exclusion::MissingIdentity
+            } else {
+                Exclusion::ScanLimit
+            },
+        );
     }
     let desktop_workspace = desktop
         .filter(|_| scan.surface == Some(Surface::Desktop))
@@ -650,9 +720,7 @@ fn observe(
         .and_then(|(state, index)| state.workspaces.get(index));
     let desktop = desktop.filter(|_| desktop_workspace.is_some());
     if scan.foreign_rows && desktop.is_none() {
-        return Err(ProviderError::InvalidScope(
-            "unverified Claude fork relationship".into(),
-        ));
+        return Err(Exclusion::UnverifiedFork);
     }
     let workspace = desktop_workspace.cloned().or_else(|| {
         (!scan.workspace_ambiguous)
@@ -712,7 +780,8 @@ fn observe(
             parent,
         },
         evidence: SessionEvidence {
-            metadata_complete: !scan.incomplete,
+            metadata_complete: scan.issues.is_empty(),
+            scan_issues: scan.issues,
             modified_at: revision
                 .modified
                 .map(|time| chrono::DateTime::<chrono::Utc>::from(time).timestamp()),

@@ -90,6 +90,11 @@ require("crates/provider-claude/src/local.rs", "desktop_workspace", "verify(root
 require("crates/cli/src/ui/mod.rs", "/api/claude/sessions/{key}/storage",
         "return Err(ApiError::conflict(agentmender_provider_claude::REMOVAL_BLOCKER,))")
 
+require("crates/provider-claude/src/local.rs", 'path.join("projects")', "desktop.reconcile",
+        "Exclusion::UnknownEntrypoint")
+require("crates/provider-claude/src/storage.rs", 'root.join("claude-code-sessions")',
+        "projects_complete && !candidates.contains_key(&id)")
+
 for path in ["crates/provider-codex/src/exports.rs", "crates/cli/src/ui/storage.rs"]:
     assert not re.search(r"\b(remove_file|remove_dir_all|run_confined_codex_delete|ReviewedRemoval)\b", source(path)), path
 require("crates/cli/src/ui/mod.rs", "/api/storage/exports/preview", "/api/storage/exports/operations/{key}/confirm")

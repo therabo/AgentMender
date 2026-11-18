@@ -325,3 +325,8 @@ h3 { font-size: 15px; font-weight: 650; }
 .claude-artifacts li { display: grid; gap: 3px; padding: 7px 0; border-bottom: 1px solid var(--line-soft); }
 .claude-artifacts code { overflow-wrap: anywhere; }
 .date-controls input[type="number"] { width: 8ch; }
+
+.claude-discovery section { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line-soft); }
+.claude-discovery h3, .claude-discovery h4 { margin: 0 0 8px; color: var(--text); }
+.claude-discovery .diagnostic-counts { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); margin: 8px 0 12px; }
+.claude-discovery .diagnostic-counts dd { color: var(--text); font-variant-numeric: tabular-nums; }

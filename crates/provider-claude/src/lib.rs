@@ -1,8 +1,10 @@
 //! Read-only inventory and conversation pages for local Claude Code.
+mod diagnostics;
 mod local;
 mod read;
 mod storage;
 
+pub use diagnostics::{Access, Exclusion, Reconciliation, ScanIssue};
 pub use local::{Catalog, Cursor, SessionEvidence};
 pub use read::Revision;
 pub use storage::{REMOVAL_BLOCKER, RootSource, RootView, StorageDetail};

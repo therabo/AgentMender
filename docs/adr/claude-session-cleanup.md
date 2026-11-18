@@ -33,3 +33,13 @@ The live Mac and unknown installations remain read-only. A cleanup contract need
 provider operation or an enforced exclusion mechanism that covers writer startup, backup and
 mutation. Process polling, marker age, file suffixes and version labels alone supply insufficient
 evidence. The [audit](../audits/claude-code-storage.md) records the inspected formats and tests.
+
+## Inventory reconciliation
+
+Reconcile the bounded local transcript scan with the recognized Desktop Code
+registration scan in the provider. Count malformed, ambiguous and out-of-budget
+observations separately from verified conversations. Report absent transcript
+candidates only when project enumeration covered the configured roots. A
+registration with unresolved ownership remains diagnostic evidence. The UI
+shows the same snapshot as the inventory before any list filtering.
+[Reconciliation report](../audits/claude-desktop-code-reconciliation.md).

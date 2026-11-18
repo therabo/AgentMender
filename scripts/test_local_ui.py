@@ -263,6 +263,90 @@ def claude_multiple_roots(binary, base, primary):
         finally:
             source.write_bytes(original)
 
+
+def claude_reconciliation(binary, base):
+    root = base / "claude-reconciliation"
+    extra = base / "claude-reconciliation-extra"
+    desktop = base / "claude-reconciliation-desktop"
+    profile = desktop / "claude-code-sessions" / CLAUDE_ID / CLAUDE_DESKTOP_ID
+    profile.mkdir(parents=True)
+    title = "Titolo identico Chat e Code"
+    orphan_id = "eb000000-1111-4111-8111-000000000010"
+    unknown_id = "eb000000-1111-4111-8111-000000000011"
+    cloud_id = "eb000000-1111-4111-8111-000000000012"
+    no_uuid_id = "eb000000-1111-4111-8111-000000000013"
+    invalid_id = "eb000000-1111-4111-8111-000000000014"
+
+    def write_transcript(project, ident, source):
+        project.mkdir(parents=True, exist_ok=True)
+        file = project / f"{ident}.jsonl"
+        rows = [
+            {"type": "user", "sessionId": ident, "entrypoint": source, "cwd": "/fixture/Atlas",
+             "message": {"content": "Fixture message"}},
+            {"type": "custom-title", "sessionId": ident, "customTitle": title},
+        ]
+        file.write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
+
+    write_transcript(root / "projects/atlas", CLAUDE_DESKTOP_ID, "claude-desktop")
+    write_transcript(extra / "projects/another", CLAUDE_ID, "cli")
+    write_transcript(extra / "projects/another", unknown_id, "unknown-surface")
+    (extra / "projects/another" / f"{invalid_id}.jsonl").write_bytes(b"{malformed}\n")
+    (extra / "projects/another" / "unsupported.jsonl").write_bytes(b"{}\n")
+    # A Chat cache can have a similar title or shape. Its path is outside Code.
+    write_transcript(desktop / "IndexedDB", cloud_id, "claude-desktop")
+    for record_id, cli_id, archived in [
+        (f"local_{CLAUDE_DESKTOP_ID}", CLAUDE_DESKTOP_ID, True),
+        (f"local_{orphan_id}", orphan_id, False),
+        (f"local_{no_uuid_id}", None, False),
+        (f"cloud_{cloud_id}", cloud_id, False),
+    ]:
+        (profile / f"{record_id}.json").write_text(json.dumps({
+            "sessionId": record_id, "cliSessionId": cli_id,
+            "isArchived": archived, "cwd": "/fixture/Atlas", "title": title,
+        }), encoding="utf-8")
+
+    roots = ("--claude-additional-root", str(extra), "--claude-desktop-root", str(desktop))
+    with ui(binary, base, None, root, extra_args=roots) as (client, ticket):
+        authorize(client, ticket)
+        path = "/api/claude/sessions"
+        page = client.call("GET", path + "?search=Titolo%20identico")
+        assert page["total"] == 2
+        assert {row["native_id"] for row in page["rows"]} == {CLAUDE_ID, CLAUDE_DESKTOP_ID}
+        assert page["provider"]["inventory_incomplete"]
+        storage = page["provider"]["claude_storage"]
+        assert [s["namespaces"] for s in storage["roots"]] == [1, 1]
+        diagnostic = storage["reconciliation"]
+        assert diagnostic["transcripts"]["main"] == 2
+        assert diagnostic["transcripts"]["desktop_main"] == diagnostic["transcripts"]["cli_main"] == 1
+        assert diagnostic["transcripts"]["archived_main"] == 1
+        assert diagnostic["transcripts"]["unclassified"] == 3
+        assert diagnostic["transcripts"]["exclusions"] == {
+            "unrecognized_locator": 1, "unknown_entrypoint": 1, "invalid_records": 1,
+        }
+        assert not diagnostic["projects_incomplete"]
+        registry = diagnostic["desktop"]
+        assert registry["registrations"] == 3 and registry["associated"] == 1
+        assert registry["without_transcript"] == registry["unresolved"] == registry["without_cli_uuid"] == 1
+        assert not registry["incomplete"] and registry["unreadable_records"] == 0
+        assert set(diagnostic["out_of_scope"]) == {"chat", "cowork", "code_cloud", "ssh", "wsl"}
+        archived = client.call("GET", path + "?state=archived")
+        assert archived["total"] == 1 and archived["rows"][0]["native_id"] == CLAUDE_DESKTOP_ID
+        assert archived["provider"]["claude_storage"]["reconciliation"] == diagnostic
+        excluded = client.call("GET", path + f"?search={unknown_id}")
+        assert excluded["total"] == 0
+
+    blocked = base / "claude-not-a-directory"
+    blocked.write_bytes(b"fixture only")
+    with ui(binary, base, None, root, extra_args=(*roots, "--claude-additional-root", str(blocked))) as (client, ticket):
+        authorize(client, ticket)
+        storage = client.call("GET", path)["provider"]["claude_storage"]
+        assert storage["roots"][-1]["projects_access"] == "unavailable"
+        assert storage["reconciliation"]["projects_incomplete"]
+        registry = storage["reconciliation"]["desktop"]
+        assert registry["registrations"] == registry["unresolved"] == 3
+        assert registry["associated"] == registry["without_transcript"] == 0
+
+
 def codex_acceptance(client, root, rollouts, binary):
     import fcntl
 
@@ -916,6 +1000,7 @@ def main():
         claude = base / "claude"
         claude_fixture(claude)
         claude_multiple_roots(agentmender, base, claude)
+        claude_reconciliation(agentmender, base)
         if args.native_codex:
             binary = args.native_codex.resolve(strict=True)
             assert platform.system() == "Darwin" and platform.machine() == "arm64"

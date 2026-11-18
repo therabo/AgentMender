@@ -19,6 +19,8 @@ export type ProviderInfo = {
   claude_storage?: ClaudeDiscovery
 }
 
+type SourceAccess = 'available' | 'missing' | 'unavailable'
+
 type NativePath = string | { encoding: string; hex: string }
 
 export type ClaudeDiscovery = {
@@ -26,6 +28,8 @@ export type ClaudeDiscovery = {
     path: NativePath
     source: 'default' | 'environment' | 'explicit' | 'additional'
     readable: boolean
+    projects_access: SourceAccess
+    namespaces: number
     same_filesystem_root: boolean
     present: boolean
     transcript_candidates: number
@@ -37,6 +41,38 @@ export type ClaudeDiscovery = {
   forks: number
   sidechains: number
   desktop_metadata_roots: string[]
+  reconciliation: {
+    transcripts: {
+      main: number
+      desktop_main: number
+      cli_main: number
+      mixed_main: number
+      unknown_surface_main: number
+      archived_main: number
+      not_archived_main: number
+      unknown_archive_state_main: number
+      subagents: number
+      forks: number
+      sidechains: number
+      unclassified: number
+      partial: number
+      exclusions: Record<string, number>
+      partial_reasons: Record<string, number>
+    }
+    desktop: {
+      roots: { path: NativePath; access: SourceAccess; incomplete: boolean; registrations: number }[]
+      registrations: number
+      associated: number
+      without_transcript: number
+      unresolved: number
+      without_cli_uuid: number
+      unreadable_records: number
+      incomplete: boolean
+    }
+    projects_incomplete: boolean
+    entry_limit_reached: boolean
+    out_of_scope: string[]
+  }
 }
 
 export type ClaudeSession = {

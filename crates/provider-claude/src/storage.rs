@@ -1,6 +1,7 @@
 //! Recognized storage locations, association evidence and read-only diagnostics.
 use crate::{
     ClaudeAdapter,
+    diagnostics::{Access, DesktopReport, RegistryRoot},
     local::{self, SessionEvidence},
     read::{Lines, Revision, verify},
     safe_path,
@@ -36,6 +37,8 @@ pub struct RootView {
     pub source: RootSource,
     pub present: bool,
     pub readable: bool,
+    pub projects_access: Access,
+    pub namespaces: usize,
     pub same_filesystem_root: bool,
     pub removal_available: bool,
     pub filesystem_identity: Option<String>,
@@ -47,13 +50,21 @@ pub struct RootView {
 }
 
 pub(crate) fn root_view(path: &Path, source: RootSource) -> RootView {
-    let info = fs::symlink_metadata(path).ok();
-    let readable = info.as_ref().is_some_and(fs::Metadata::is_dir) && safe_path(path);
+    let access = directory_access(path);
+    let readable = access == Access::Available;
+    let projects_access = if readable {
+        directory_access(&path.join("projects"))
+    } else {
+        access
+    };
     #[cfg(unix)]
-    let filesystem_identity = info.as_ref().filter(|_| readable).map(|info| {
-        use std::os::unix::fs::MetadataExt;
-        format!("{}:{}", info.dev(), info.ino())
-    });
+    let filesystem_identity = fs::symlink_metadata(path)
+        .ok()
+        .filter(|_| readable)
+        .map(|info| {
+            use std::os::unix::fs::MetadataExt;
+            format!("{}:{}", info.dev(), info.ino())
+        });
     #[cfg(windows)]
     let filesystem_identity = readable
         .then(|| filesystem::windows_directory_identity(path).ok())
@@ -67,8 +78,10 @@ pub(crate) fn root_view(path: &Path, source: RootSource) -> RootView {
         platform: std::env::consts::OS,
         kind: "project_jsonl",
         source,
-        present: info.is_some(),
+        present: access != Access::Missing,
         readable,
+        projects_access,
+        namespaces: 0,
         same_filesystem_root: false,
         removal_available: false,
         filesystem_identity,
@@ -88,11 +101,22 @@ pub(crate) fn root_view(path: &Path, source: RootSource) -> RootView {
     }
 }
 
+fn directory_access(path: &Path) -> Access {
+    match fs::symlink_metadata(path) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Access::Missing,
+        Ok(info) if info.is_dir() && safe_path(path) && fs::read_dir(path).is_ok() => {
+            Access::Available
+        }
+        _ => Access::Unavailable,
+    }
+}
+
 pub(crate) struct Budget {
     pub(crate) bytes: u64,
     pub(crate) issues: usize,
     pub(crate) deadline: Instant,
     entries: usize,
+    pub(crate) entry_limit_reached: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -115,6 +139,7 @@ impl Budget {
             issues: 0,
             deadline: Instant::now() + Duration::from_secs(10),
             entries,
+            entry_limit_reached: false,
         }
     }
 
@@ -148,8 +173,12 @@ impl Budget {
         };
         let mut result = Vec::new();
         for entry in entries {
-            if self.entries == 0 || self.expired() {
+            if self.entries == 0 {
+                self.entry_limit_reached = true;
                 self.mark();
+                break;
+            }
+            if self.expired() {
                 break;
             }
             self.entries -= 1;
@@ -198,7 +227,7 @@ pub(crate) struct DesktopState {
 #[serde(rename_all = "camelCase")]
 struct DesktopRecord {
     session_id: String,
-    cli_session_id: String,
+    cli_session_id: Option<String>,
     is_archived: Option<bool>,
     created_at: Option<u64>,
     forked_from_session_id: Option<String>,
@@ -224,39 +253,83 @@ fn desktop_record(root: &Path, path: &Path) -> Option<DesktopRecord> {
     verify(root, path, &revision).ok()?;
     let record: DesktopRecord = serde_json::from_slice(&data).ok()?;
     (valid_desktop_id(&record.session_id)
-        && uuid_shape(&record.cli_session_id)
+        && record.cli_session_id.as_deref().is_none_or(uuid_shape)
         && path.file_stem().and_then(|s| s.to_str()) == Some(record.session_id.as_str()))
     .then_some(record)
+}
+
+#[derive(Default)]
+pub(crate) struct DesktopRegistry {
+    pub(crate) states: BTreeMap<String, DesktopState>,
+    by_cli_id: BTreeMap<String, usize>,
+    report: DesktopReport,
+}
+
+impl DesktopRegistry {
+    pub(crate) fn reconcile(
+        mut self,
+        candidates: &BTreeMap<String, usize>,
+        associated: &BTreeSet<&str>,
+        projects_complete: bool,
+    ) -> DesktopReport {
+        for (id, count) in self.by_cli_id {
+            if associated.contains(id.as_str()) {
+                self.report.associated += count;
+            } else if projects_complete && !candidates.contains_key(&id) {
+                self.report.without_transcript += count;
+            } else {
+                self.report.unresolved += count;
+            }
+        }
+        self.report
+    }
 }
 
 pub(crate) fn desktop_states(
     desktop_roots: &[super::DesktopContext],
     budget: &mut Budget,
-) -> BTreeMap<String, DesktopState> {
+) -> DesktopRegistry {
+    let mut observed = DesktopRegistry::default();
     let mut records = BTreeMap::new();
-    let mut seen = BTreeSet::new();
-    let mut duplicates = BTreeSet::new();
-    let original_issues = budget.issues;
     for desktop in desktop_roots {
         let root = &desktop.data_root;
         let registry = root.join("claude-code-sessions");
-        for profile in budget.list(&registry).into_iter().filter(uuid_dir) {
+        let access = match directory_access(root) {
+            Access::Available => directory_access(&registry),
+            access => access,
+        };
+        let original_issues = budget.issues;
+        let original_registrations = observed.report.registrations;
+        let profiles = match access {
+            Access::Available => budget.list(&registry),
+            Access::Missing => Vec::new(),
+            Access::Unavailable => {
+                budget.mark();
+                Vec::new()
+            }
+        };
+        for profile in profiles.into_iter().filter(uuid_dir) {
             for account in budget.list(&profile.path).into_iter().filter(uuid_dir) {
                 for item in budget.list(&account.path) {
-                    if item.kind == EntryKind::File
-                        && item
-                            .path
-                            .extension()
-                            .is_some_and(|extension| extension == "json")
+                    if item
+                        .path
+                        .extension()
+                        .is_some_and(|extension| extension == "json")
                         && item
                             .path
                             .file_stem()
                             .and_then(|stem| stem.to_str())
                             .is_some_and(valid_desktop_id)
                     {
-                        if let Some(record) = desktop_record(root, &item.path) {
-                            if !seen.insert(record.cli_session_id.clone()) {
-                                duplicates.insert(record.cli_session_id.clone());
+                        if item.kind == EntryKind::File
+                            && let Some(record) = desktop_record(root, &item.path)
+                        {
+                            observed.report.registrations += 1;
+                            if let Some(id) = &record.cli_session_id {
+                                *observed.by_cli_id.entry(id.clone()).or_default() += 1;
+                            } else {
+                                observed.report.without_cli_uuid += 1;
+                                observed.report.unresolved += 1;
                             }
                             let account = account.path.clone();
                             if records
@@ -266,30 +339,39 @@ pub(crate) fn desktop_states(
                                 budget.mark();
                             }
                         } else {
+                            observed.report.unreadable_records += 1;
                             budget.mark();
                         }
                     }
                 }
             }
         }
+        let incomplete = access == Access::Unavailable || original_issues != budget.issues;
+        observed.report.incomplete |= incomplete;
+        observed.report.roots.push(RegistryRoot {
+            path: registry,
+            access,
+            incomplete,
+            registrations: observed.report.registrations - original_registrations,
+        });
     }
-    if original_issues != budget.issues {
+    if observed.report.incomplete {
         // Missing records could hide ambiguity. Do not enrich by UUID.
-        return BTreeMap::new();
+        return observed;
     }
-    records
+    let unique = |id: &str| observed.by_cli_id.get(id) == Some(&1);
+    observed.states = records
         .values()
-        .filter(|(record, _)| !duplicates.contains(&record.cli_session_id))
-        .map(|(record, account)| {
+        .filter_map(|(record, account)| {
+            let id = record.cli_session_id.as_ref().filter(|id| unique(id))?;
             let parent = record.forked_from_session_id.as_ref();
             let parent_cli_id = parent
                 .and_then(|id| records.get(id))
-                .filter(|(record, parent_account)| {
-                    parent_account == account && !duplicates.contains(&record.cli_session_id)
-                })
-                .map(|(record, _)| record.cli_session_id.clone());
-            (
-                record.cli_session_id.clone(),
+                .filter(|(_, parent_account)| parent_account == account)
+                .and_then(|(record, _)| record.cli_session_id.as_ref().filter(|id| unique(id)))
+                .cloned();
+            Some((
+                id.clone(),
                 DesktopState {
                     archived: record.is_archived,
                     created: record
@@ -309,9 +391,10 @@ pub(crate) fn desktop_states(
                         .cloned()
                         .collect(),
                 },
-            )
+            ))
         })
-        .collect()
+        .collect();
+    observed
 }
 
 fn uuid_dir(entry: &Entry) -> bool {

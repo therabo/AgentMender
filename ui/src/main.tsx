@@ -4,7 +4,8 @@ import { Archive, Braces, ChevronRight, Circle, HardDrive, Layers3, RefreshCw, S
 import { authorize, projectPath, request, type Operation, type Project, type ProjectPage, type Provider, type State } from './api'
 import { Empty, Notice, Pagination, ProjectAccordion, SessionList } from './components'
 import { ProjectRemoval, SessionDetail } from './detail'
-import { numberLabel, pathLabel, providerLabel } from './format'
+import { numberLabel, providerLabel } from './format'
+import { ClaudeDiagnostics } from './claude-diagnostics'
 import { Storage } from './storage'
 import './style.css'
 
@@ -104,24 +105,9 @@ function Inventory({ provider, revision, onConfirm }: {
         <div className="summary-item"><span className="summary-icon"><ShieldCheck size={19} aria-hidden /></span><div><span>Accesso</span><strong>{info ? 'Sola lettura' : '—'}</strong></div></div>
       </>}
     </div>
-    {info && <Notice tone="warning"><strong>{info.coverage === 'partial' ? 'Copertura parziale.' : info.coverage === 'not_detected' ? 'Provider non rilevato.' : 'Archivio indisponibile.'}</strong> {info.coverage_description}{info.id === 'codex' && info.coverage === 'partial' && info.removal_reason && <p>{info.removal_reason}</p>}</Notice>}
+    {info && <Notice tone={info.id === 'claude' && info.coverage === 'partial' && !info.inventory_incomplete ? 'info' : 'warning'}><strong>{info.coverage === 'partial' ? (info.id === 'claude' && !info.inventory_incomplete ? 'Archivio locale.' : 'Copertura parziale.') : info.coverage === 'not_detected' ? 'Provider non rilevato.' : 'Archivio indisponibile.'}</strong> {info.coverage_description}{info.id === 'codex' && info.coverage === 'partial' && info.removal_reason && <p>{info.removal_reason}</p>}</Notice>}
 
-    {info?.claude_storage && <details className="claude-discovery">
-      <summary>Archivi e installazioni Claude Code</summary>
-      <ul className="claude-artifacts">
-        {info.claude_storage.roots.map(root => <li key={pathLabel(root.path)}>
-          <code>{pathLabel(root.path)}</code><span>{root.same_filesystem_root ? 'Stesso archivio di un’altra root rilevata' : root.readable ? `${numberLabel(root.transcript_candidates)} transcript candidati${root.enumeration_incomplete ? ' · copertura parziale' : ''}` : root.present ? 'Accesso bloccato' : 'Non osservato'}</span>
-          {root.project_override && <span>Namespace configurato · {root.project_override}</span>}
-        </li>)}
-        {info.claude_storage.desktop_metadata_roots.map(root => <li key={root}>
-          <code>{root}</code><span>Root candidata per metadati Desktop</span>
-        </li>)}
-        {info.claude_storage.installations.map(install => <li key={pathLabel(install.path)}>
-          <code>{pathLabel(install.path)}</code><span>{install.confirmed ? 'Installazione rilevata' : 'Installazione candidata'}{install.version && ` · ${install.version}`}</span>
-        </li>)}
-      </ul>
-      <p>{numberLabel(info.claude_storage.subagents)} subagent · {numberLabel(info.claude_storage.forks)} fork{info.claude_storage.sidechains > 0 && ` · ${numberLabel(info.claude_storage.sidechains)} sidechain`}</p>
-    </details>}
+    {info?.claude_storage && <ClaudeDiagnostics discovery={info.claude_storage} incomplete={info.inventory_incomplete} />}
 
     <section className="inventory" aria-label="Inventario dei progetti">
       <div className="inventory-heading"><h2>Progetti</h2><span>{page ? `${numberLabel(page.total)} ${page.total === 1 ? 'progetto' : 'progetti'}${info?.projects_incomplete || info?.inventory_incomplete ? ' osservati' : ''}` : '—'}</span></div>

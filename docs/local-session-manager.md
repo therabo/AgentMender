@@ -40,6 +40,10 @@ The operation processes the reviewed trees in sequence. The native registration,
 workspace and software repository are outside the scope. Desktop-backed projects
 support individual session reviews.
 
+Open **Diagnostica inventario Claude Code** to see the unfiltered local
+counts, exclusions, scan limits, source availability and the matches
+between Desktop Code registrations and local transcripts.
+
 For Claude Code, open a session to read a bounded conversation preview and
 inspect its namespace, file modification time, metadata coverage and storage
 dependencies. Filter by metadata, activity date and transcript size. Standard

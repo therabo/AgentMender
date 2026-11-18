@@ -10,7 +10,9 @@ use agentmender_application::{
 };
 use agentmender_domain::*;
 use agentmender_provider_api::ProviderError;
-use agentmender_provider_claude::{InstallationView, REMOVAL_BLOCKER, RootView, SessionEvidence};
+use agentmender_provider_claude::{
+    InstallationView, REMOVAL_BLOCKER, Reconciliation, RootView, SessionEvidence,
+};
 use chrono::NaiveDate;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -51,6 +53,7 @@ pub(super) struct ClaudeStorage {
     subagents: usize,
     forks: usize,
     sidechains: usize,
+    reconciliation: Reconciliation,
 }
 
 struct Observation {
@@ -187,23 +190,6 @@ impl Observation {
                 "Nessun archivio di progetto accessibile.",
             )
         };
-        let subagents = catalog
-            .inventory
-            .sessions
-            .iter()
-            .filter(|row| row.kind == SessionKind::Subagent)
-            .count();
-        let forks = catalog
-            .inventory
-            .sessions
-            .iter()
-            .filter(|row| row.kind == SessionKind::Fork)
-            .count();
-        let sidechains = catalog
-            .evidence
-            .values()
-            .filter(|row| row.sidechain)
-            .count();
         Self {
             presence,
             coverage,
@@ -218,9 +204,10 @@ impl Observation {
                     .desktop_roots()
                     .map(|path| path.to_string_lossy().into_owned())
                     .collect(),
-                subagents,
-                forks,
-                sidechains,
+                subagents: catalog.reconciliation.transcripts.subagents,
+                forks: catalog.reconciliation.transcripts.forks,
+                sidechains: catalog.reconciliation.transcripts.sidechains,
+                reconciliation: catalog.reconciliation,
             }),
             claude_evidence: catalog.evidence,
         }

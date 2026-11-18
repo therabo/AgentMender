@@ -1,5 +1,5 @@
 use agentmender_domain::SessionKind;
-use agentmender_provider_claude::{ClaudeAdapter, DesktopContext, RootSource};
+use agentmender_provider_claude::{ClaudeAdapter, DesktopContext, RootSource, ScanIssue};
 use serde_json::{Value, json};
 use std::{
     fs::{self, File, OpenOptions},
@@ -106,6 +106,15 @@ fn late_titles_dates_and_opaque_pages_ignore_sensitive_and_non_conversational_pa
     assert_eq!(session.last_active_at, Some(1794945840));
     assert!(evidence.modified_at.is_some());
     assert!(!evidence.metadata_complete && catalog.inventory.incomplete);
+    assert_eq!(catalog.reconciliation.transcripts.partial, 1);
+    assert_eq!(
+        catalog
+            .reconciliation
+            .transcripts
+            .partial_reasons
+            .get(&ScanIssue::UnterminatedRecord),
+        Some(&1)
+    );
     let mut cursor = None;
     let mut bodies = Vec::new();
     let mut finished = false;
@@ -159,6 +168,14 @@ fn sparse_oversized_line_retains_a_bounded_tail_and_resumable_preview() {
     let evidence = &catalog.evidence[&session.identity];
     assert_eq!(session.title.as_deref(), Some("Tail title"));
     assert!(!evidence.metadata_complete);
+    assert_eq!(
+        catalog
+            .reconciliation
+            .transcripts
+            .partial_reasons
+            .get(&ScanIssue::ByteLimit),
+        Some(&1)
+    );
     let mut cursor = None;
     let mut bodies = Vec::new();
     for _ in 0..10 {
@@ -328,4 +345,24 @@ fn links_and_hardlinks_are_never_admitted_as_transcripts() {
     let observation = reader.local_catalog(100).inventory;
     assert!(observation.sessions.is_empty());
     assert!(observation.incomplete);
+}
+
+#[test]
+fn line_and_entry_limits_are_reported_without_inventing_sessions() {
+    let (_fixture, root) = fixture();
+    let path = transcript(&root, "atlas", MAIN);
+    let mut file = File::create(path).unwrap();
+    write(&file, &user(MAIN, json!("A real conversation")));
+    file.write_all(&vec![b'\n'; 100_050]).unwrap();
+    drop(file);
+    let reader = adapter(&root);
+    let catalog = reader.local_catalog(100);
+    let report = &catalog.reconciliation.transcripts;
+    assert_eq!(report.main, 1);
+    assert_eq!(report.unclassified, 0);
+    assert_eq!(report.partial_reasons.get(&ScanIssue::LineLimit), Some(&1));
+    let limited = reader.local_catalog(1);
+    assert!(limited.reconciliation.projects_incomplete);
+    assert!(limited.reconciliation.entry_limit_reached);
+    assert!(limited.inventory.sessions.is_empty());
 }
