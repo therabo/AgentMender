@@ -21,9 +21,10 @@ groups and uses bounded metadata reads. Roots confirmed through an installation
 or explicit configuration are tracked separately from name-based candidates.
 An explicit selection and confirmation authorize eligible first-level groups of
 the discovered export roots. The confirmation identifies independent backups
-and user output. Active leases, shared references, links, incomplete groups and
-overlapping storage stay protected. Preview receipts belong to the export
-operation namespace and are bound to the selected server-side group revisions.
+and user output. Active leases, shared references and partial coverage are
+reported for review. Overlapping storage stays protected. Preview receipts
+belong to the export operation namespace and are bound to the selected
+server-side group revisions.
 Removal reuses the inventory revision and performs no-follow writes relative to
 the verified root. Database and session deletion keep separate authorization.
 

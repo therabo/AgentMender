@@ -3,7 +3,7 @@ use crate::discovery::{Access, Storage, StorageKind, access, identity};
 use agentmender_domain::canonical_uuid;
 use agentmender_provider_api::filesystem;
 #[cfg(unix)]
-use rustix::fs::{self as scoped, AtFlags, FileType, Mode, OFlags};
+use rustix::fs::{self as scoped, AtFlags, Mode, OFlags};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 #[cfg(unix)]
@@ -12,7 +12,7 @@ use std::{
     collections::HashSet,
     fs, io,
     path::{Path, PathBuf},
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 const MAX_ENTRIES: usize = 350_000;
@@ -65,7 +65,15 @@ pub struct Group {
     pub complete: bool,
     #[cfg(unix)]
     #[serde(skip)]
-    target: Option<(Arc<(Storage, fs::Metadata)>, PathBuf)>,
+    target: Option<RemovalTarget>,
+}
+
+#[cfg(unix)]
+#[derive(Clone)]
+struct RemovalTarget {
+    source: Arc<(Storage, fs::Metadata)>,
+    path: PathBuf,
+    budget: Budget,
 }
 
 impl Group {
@@ -116,21 +124,20 @@ struct Allocation {
     direct: u64,
 }
 
+#[derive(Clone, Copy)]
 struct Budget {
     entries: usize,
-    deadline: Instant,
 }
 
 impl Budget {
     fn new() -> Self {
         Self {
             entries: MAX_ENTRIES,
-            deadline: Instant::now() + Duration::from_secs(7),
         }
     }
 
     fn take(&mut self) -> bool {
-        if self.entries == 0 || Instant::now() >= self.deadline {
+        if self.entries == 0 {
             return false;
         }
         self.entries -= 1;
@@ -456,10 +463,7 @@ fn group(
         linked_entries: scan.links,
         protection,
         reason: status(protection),
-        removal_available: !matches!(
-            protection,
-            Protection::Shared | Protection::InUse | Protection::Incomplete
-        ),
+        removal_available: cfg!(unix),
         complete: !scan.incomplete,
         #[cfg(unix)]
         target: None,
@@ -524,39 +528,41 @@ impl Inventory {
                     continue;
                 };
                 let path = item.path();
+                #[cfg(unix)]
+                let group_budget = budget;
                 let mut row = group(root, &path, &mut budget, &mut allocation, None);
-                if row.removal_available {
-                    #[cfg(unix)]
-                    {
-                        let reason = match &scope {
-                            Err(reason) => Some(*reason),
-                            Ok(protected)
-                                if !protected.is_empty()
-                                    && identity(&path)
-                                        .is_some_and(|id| protected.contains(&id)) =>
-                            {
-                                Some(OVERLAP)
-                            }
-                            Ok(_)
-                                if !fs::symlink_metadata(&path)
-                                    .is_ok_and(|entry| entry.dev() == source.1.dev()) =>
-                            {
-                                Some("Il gruppo è inaccessibile o su un altro volume.")
-                            }
-                            Ok(_) => None,
-                        };
-                        if let Some(reason) = reason {
-                            row.removal_available = false;
-                            row.reason = reason;
-                        } else {
-                            row.target = Some((source.clone(), path));
+                #[cfg(unix)]
+                {
+                    let reason = match &scope {
+                        Err(reason) => Some(*reason),
+                        Ok(protected)
+                            if !protected.is_empty()
+                                && identity(&path).is_some_and(|id| protected.contains(&id)) =>
+                        {
+                            Some(OVERLAP)
                         }
-                    }
-                    #[cfg(not(unix))]
-                    {
+                        Ok(_)
+                            if !fs::symlink_metadata(&path)
+                                .is_ok_and(|entry| entry.dev() == source.1.dev()) =>
+                        {
+                            Some("Il gruppo è inaccessibile o su un altro volume.")
+                        }
+                        Ok(_) => None,
+                    };
+                    if let Some(reason) = reason {
                         row.removal_available = false;
-                        row.reason = "Eliminazione export non disponibile su questa piattaforma.";
+                        row.reason = reason;
+                    } else {
+                        row.target = Some(RemovalTarget {
+                            source: source.clone(),
+                            path,
+                            budget: group_budget,
+                        });
                     }
+                }
+                #[cfg(not(unix))]
+                {
+                    row.reason = "Eliminazione export non disponibile su questa piattaforma.";
                 }
                 size.files = size.files.saturating_add(row.size.files);
                 size.directories = size.directories.saturating_add(row.size.directories);
@@ -650,26 +656,25 @@ impl Group {
         }
         #[cfg(unix)]
         {
-            let (source, path) = self.target.as_ref().ok_or(CHANGED)?;
-            let (root, expected) = source.as_ref();
+            let target = self.target.as_ref().ok_or(CHANGED)?;
+            let (root, expected) = target.source.as_ref();
             let dir = open_root(&root.path).map_err(removal_error)?;
             let current = dir.metadata().map_err(removal_error)?;
             if (current.dev(), current.ino()) != (expected.dev(), expected.ino()) {
                 return Err(CHANGED);
             }
             let mut entries = Vec::new();
+            // Reuse the preview's remaining entries so a truncated scan has the same scope.
+            let mut budget = target.budget;
             let current = group(
                 root,
-                path,
-                &mut Budget::new(),
+                &target.path,
+                &mut budget,
                 &mut Allocation::default(),
                 Some(&mut entries),
             );
             if current.key != self.key || identity(&root.path) != root.identity {
                 return Err(CHANGED);
-            }
-            if !current.removal_available {
-                return Err(current.reason);
             }
             remove_observed(&dir, &mut entries.into_iter().peekable()).map_err(removal_error)
         }
@@ -742,15 +747,14 @@ fn remove_observed(
         scoped::unlinkat(parent, name, AtFlags::REMOVEDIR)?;
     } else {
         let current = scoped::statat(parent, name, AtFlags::SYMLINK_NOFOLLOW)?;
-        if FileType::from_raw_mode(current.st_mode) != FileType::RegularFile
-            || current.st_nlink != 1
-            || !same_object(&current, &expected)
+        if !same_object(&current, &expected)
             || i128::from(current.st_size) != i128::from(expected.len())
             || i128::from(current.st_mtime) != i128::from(expected.mtime())
             || i128::from(current.st_mtime_nsec) != i128::from(expected.mtime_nsec())
         {
             return Err(changed.into());
         }
+        // Unlink the directory entry itself, including a symlink or a hardlink name.
         scoped::unlinkat(parent, name, AtFlags::empty())?;
     }
     Ok(())
@@ -773,7 +777,7 @@ mod tests {
     use crate::discovery::access;
 
     #[test]
-    fn preserves_an_active_publication_lease() {
+    fn an_active_publication_lease_is_informational_for_removal() {
         let parent = tempfile::tempdir().unwrap();
         let root = parent.path().canonicalize().unwrap();
         let publication_id = "a".repeat(64);
@@ -821,11 +825,16 @@ mod tests {
         let second = Inventory::scan(&[source]).unwrap();
         assert_eq!(second.groups[0].protection, Protection::InUse);
         assert_ne!(first.groups[0].key, second.groups[0].key);
-        assert!(!second.groups[0].removal_available);
+        assert_eq!(second.groups[0].removal_available, cfg!(unix));
         assert!(first.groups[0].remove().is_err());
-        assert!(second.groups[0].remove().is_err());
         assert_eq!(fs::read(bundle.join("report.pdf")).unwrap(), b"example");
         let unverified_root = Inventory::scan(&[storage(false)]).unwrap();
         assert!(!unverified_root.groups[0].removal_available);
+        #[cfg(unix)]
+        {
+            second.groups[0].remove().unwrap();
+            assert!(!bundle.exists());
+            assert!(root.is_dir());
+        }
     }
 }

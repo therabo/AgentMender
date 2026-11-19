@@ -68,15 +68,16 @@ row to see its format, manifest, timestamps, observed links and protection.
 The first-level file or directory remains a filesystem group unless the
 known exporter format identifies a publication.
 
-**Anteprima selezione** refreshes the inventory within its scan budget and shows
-file and directory counts, logical size, observed allocation when available,
-and eligibility for each selected group. On macOS and Linux, **Elimina
+**Anteprima selezione** refreshes the inventory within its entry and depth
+limits. It shows file and directory counts, logical size, observed allocation
+when available, and eligibility for each selected group. On macOS and Linux, **Elimina
 selezionati** opens one confirmation listing the eligible groups, including any
 explicitly selected independent backups or user outputs. Confirming removes
-those groups permanently without creating backups. Export roots, links, shared
-references, active leases and groups with incomplete observations are preserved.
-Groups that changed after preview are reported individually, as are filesystem
-errors. An error can leave some contents of a selected directory in place. The
+those groups permanently without creating backups. Shared references, active
+leases and partial coverage are shown for review. AgentMender preserves export
+roots and unlinks selected links without following their targets. Groups that
+changed after preview are reported individually, as are filesystem errors.
+An error or a scan limit can leave part of a selected directory in place. The
 inventory refreshes and the selection clears after the attempt. Windows supports
 inventory and preview. **Installazioni e archivi** shows the launch-time
 discovery separately. Restart after a change to root or executable overrides.

@@ -24,10 +24,11 @@ contracts.
   directory lock for shared history. Session deletion is permanent and creates
   no backup.
 - Keep export discovery, inventory and authorization separate from session
-  removal. Bind each receipt to explicitly reviewed groups. Preserve export
-  roots, links, shared references, active leases and incomplete groups. Identify
-  independent backups and user outputs in the confirmation. Perform writes
-  relative to the verified export root without following links.
+  removal. Bind each receipt to explicitly reviewed groups and preserve export
+  roots. Use shared references, active leases and partial coverage as inventory
+  information. Identify independent backups and user outputs in the
+  confirmation. Perform writes relative to the verified export root without
+  following links.
 - Use temporary, isolated provider fixtures. Leave real provider session data,
   credentials and installed provider configuration untouched during development.
 

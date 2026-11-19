@@ -94,7 +94,7 @@ The `exports` directory is discovered from the Codex archive layout. A group
 without producer metadata can be eligible through its export root and explicit
 selection. Desktop Artifact Session publications have a versioned marker and
 lease, a shared `latest` area and an exporter-owned quota protocol. AgentMender
-preserves the shared area and groups with active leases. Externally configured
+reports the shared area and active leases in the inventory. Externally configured
 export groups are identified as user output when their metadata does not indicate
 an independent backup.
 [Windows AppX registration](https://learn.microsoft.com/en-us/powershell/module/appx/get-appxpackage) ·

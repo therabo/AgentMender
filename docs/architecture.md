@@ -85,8 +85,8 @@ inspect other roots independently. Discovery never grants a native writer
 capability. Storage records differentiate presence, format evidence, ownership
 and supported operations.
 
-`provider-codex/exports.rs` enumerates metadata within entry, depth and time
-budgets and projects only recognized manifest fields. The CLI caches the
+`provider-codex/exports.rs` enumerates metadata within entry and depth limits
+and projects only recognized manifest fields. The CLI caches the
 inventory for pagination and produces a new observation before a selection
 preview. Export keys bind the observed root, group path and metadata revision.
 The router applies the existing loopback browser and Origin boundaries.

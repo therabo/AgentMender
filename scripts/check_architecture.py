@@ -102,7 +102,7 @@ require("crates/cli/src/ui/mod.rs", "/api/storage/exports/preview", "/api/storag
 require("crates/cli/src/ui/storage.rs", "snapshot(app, &mut exports, true)", "if !request.confirm",
         "exports.review.take_if", "group.remove()", "exports.inventory = None")
 require("crates/provider-codex/src/exports.rs", "OFlags::NOFOLLOW", "AtFlags::SYMLINK_NOFOLLOW",
-        "current.key != self.key", "scoped::unlinkat", "current.st_nlink != 1")
+        "current.key != self.key", "scoped::unlinkat")
 
 require(".cargo/config.toml", "-USQLITE_ENABLE_FTS5")
 print("Workspace dependencies, confined provider reads, browser authorization and native boundary passed.")

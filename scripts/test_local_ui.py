@@ -815,9 +815,9 @@ def storage_acceptance(binary, base, claude):
         backup.mkdir()
         (backup / "file.zip").write_bytes(b"data")
         (backup / "manifest.json").write_text('{"type":"backup","producer":"Fixture"}')
-        (exports / "unknown").mkdir()
-        (exports / "unknown" / "nested").mkdir()
-        (exports / "unknown" / "nested" / "data.txt").write_bytes(b"nested")
+        unknown = exports / "unknown"
+        (unknown / "nested").mkdir(parents=True)
+        (unknown / "nested" / "data.txt").write_bytes(b"nested")
         output = external / "explicit-report.txt"
         output.write_bytes(b"report")
         replaced = exports / "replace.zip"
@@ -828,18 +828,27 @@ def storage_acceptance(binary, base, claude):
         incomplete = exports / "incomplete-bundle"
         incomplete.mkdir()
         (incomplete / ".artifact-session-publication-lease.json").write_bytes(b"invalid lease")
+        leased = exports / "active-lease"
+        leased.mkdir()
+        (leased / ".artifact-session-publication-lease.json").write_text(json.dumps({
+            "publicationId": "a" * 64, "minimumRetainUntilMs": 9_000_000_000_000,
+        }))
         for index in range(45):
             (exports / f"data-{index:02}.zip").write_bytes(bytes(index))
         huge = exports / "sparse-fixture.zip"
         with huge.open("wb") as stream:
             stream.truncate(1_000_000)
-        if os.name != "nt":
-            os.link(workspace_file, exports / "hardlink-fixture")
-            (exports / "outside").symlink_to(user_output, target_is_directory=True)
+        outside = exports / "outside"
+        hardlink = exports / "hardlink-fixture"
+        can_delete = os.name != "nt"
+        if can_delete:
+            os.link(workspace_file, hardlink)
+            outside.symlink_to(user_output, target_is_directory=True)
+            (unknown / "nested" / "linked-directory").symlink_to(user_output, target_is_directory=True)
+            os.mkfifo(incomplete / "pipe")
         else:
             # Directory junctions do not require symlink privileges.
-            junction = exports / "outside"
-            subprocess.run(["cmd.exe", "/d", "/c", "mklink", "/J", str(junction), str(user_output)],
+            subprocess.run(["cmd.exe", "/d", "/c", "mklink", "/J", str(outside), str(user_output)],
                            check=True, capture_output=True)
         client.call("POST", "/api/storage/exports/refresh", code=403, Origin=None)
         client.call("POST", "/api/storage/exports/refresh", code=204)
@@ -848,18 +857,20 @@ def storage_acceptance(binary, base, claude):
         assert first["rows"][0]["name"] == huge.name and first["total"] > 45
         assert not {row["key"] for row in first["rows"]} & {row["key"] for row in second["rows"]}
         rows = {row["name"]: row for row in client.call("GET", "/api/storage/exports?limit=100")["rows"]}
-        assert first["removal_available"] == (os.name != "nt")
+        assert first["removal_available"] == can_delete
         entry = client.call("GET", "/api/storage/exports?search=Caf%C3%A9")["rows"][0]
         assert entry["protection"] == "independent_backup" and entry["manifest"] == "manifest.json"
         assert rows[output.name]["protection"] == "user_output"
-        links = rows["outside"]
+        links = rows[outside.name]
         assert links["size"]["files"] == 0 and links["protection"] == "shared"
-        assert not links["removal_available"]
+        assert links["removal_available"] == can_delete
         assert rows[incomplete.name]["protection"] == "incomplete"
-        assert not rows[incomplete.name]["removal_available"]
-        if os.name != "nt":
-            linked = rows["hardlink-fixture"]
-            assert linked["shared_entries"] == 1 and not linked["removal_available"]
+        assert rows[incomplete.name]["removal_available"] == can_delete
+        assert rows[leased.name]["protection"] == "in_use"
+        assert rows[leased.name]["removal_available"] == can_delete
+        if can_delete:
+            linked = rows[hardlink.name]
+            assert linked["shared_entries"] == 1 and linked["removal_available"]
 
         def review(*names):
             return client.call("POST", "/api/storage/exports/preview", {"keys": [rows[name]["key"] for name in names]})
@@ -874,10 +885,9 @@ def storage_acceptance(binary, base, claude):
         client.call("POST", preview_route, {"keys": [entry["key"]] * 2}, code=400)
         client.call("POST", preview_route, {"keys": [row["key"] for row in list(rows.values())[:33]]}, code=400)
         client.call("POST", confirmation("forged"), {"confirm": True}, code=409)
-        protected = review("outside", incomplete.name)
-        assert protected["removable"] == 0 and protected["protected"] == 2 and protected["receipt"] is None
-        if os.name == "nt":
-            assert review(backup.name)["receipt"] is None
+        if not can_delete:
+            read_only = review(outside.name, incomplete.name, leased.name, backup.name)
+            assert read_only["removable"] == 0 and read_only["protected"] == 4 and read_only["receipt"] is None
             return
 
         before = set(exports.iterdir())
@@ -897,13 +907,15 @@ def storage_acceptance(binary, base, claude):
         assert client.call("GET", "/api/storage/exports?search=sparse-fixture")["total"] == 0
 
         superseded = review(backup.name)
-        selected = [replaced.name, backup.name, "outside", "unknown", incomplete.name]
+        deleted_exports = [backup, outside, hardlink, unknown, incomplete, leased]
+        deleted_names = [path.name for path in deleted_exports] + [output.name]
+        selected = [replaced.name, *deleted_names[:-1]]
         permission_test = os.geteuid() != 0
         if permission_test:
             selected.append(denied.name)
         selected.append(output.name)
         preview = review(*selected)
-        assert preview["removable"] == len(selected) - 2 and preview["protected"] == 2
+        assert preview["removable"] == len(selected) and preview["protected"] == 0 and not preview["complete"]
         assert preview["size"]["files"] >= 6 and preview["size"]["directories"] >= 4
         client.call("POST", confirmation(superseded["receipt"]), {"confirm": True}, code=409)
         old = base / "original.zip"
@@ -915,18 +927,16 @@ def storage_acceptance(binary, base, claude):
             outcome = client.call("POST", confirmation(preview["receipt"]), {"confirm": True})
         finally:
             denied.chmod(0o755)
-        assert [row["name"] for row in outcome["deleted"]] == [backup.name, "unknown", output.name]
+        assert [row["name"] for row in outcome["deleted"]] == deleted_names
         preserved = {row["name"]: row for row in outcome["not_deleted"]}
-        assert set(preserved) == set(selected) - {backup.name, "unknown", output.name}
-        assert preserved[replaced.name]["error"] and not preserved["outside"]["error"]
-        assert preserved[incomplete.name]["reason"]
+        assert set(preserved) == set(selected) - set(deleted_names)
+        assert preserved[replaced.name]["error"]
         if permission_test:
             assert preserved[denied.name]["error"] and "Permesso negato" in preserved[denied.name]["reason"]
         client.call("POST", preview_route, {"keys": [rows[replaced.name]["key"]]}, code=409)
         remaining = {row["name"] for row in client.call("GET", "/api/storage/exports?limit=100")["rows"]}
-        assert remaining == set(rows) - {huge.name, backup.name, "unknown", output.name}
-        assert set(exports.iterdir()) == before - {huge, backup, exports / "unknown"} and not list(external.iterdir())
-        assert not (exports / "unknown").exists() and not backup.exists() and not output.exists()
+        assert remaining == set(rows) - {huge.name} - set(deleted_names)
+        assert set(exports.iterdir()) == before - {huge, *deleted_exports} and not list(external.iterdir())
         assert replaced.is_symlink() and old.read_bytes() == b"old"
         assert (denied / "report.zip").read_bytes() == b"denied"
         assert (exports / "data-01.zip").read_bytes() == b"\x00"
@@ -956,7 +966,7 @@ def storage_acceptance(binary, base, claude):
         assert not row["removal_available"] and "si sovrappone" in row["reason"]
         assert client.call("POST", preview_route, {"keys": [row["key"]]})["receipt"] is None
     assert rollout.read_bytes() == b"fixture session"
-    print("Codex exports: permanent selective deletion, stale selections, protected groups, partial results and inventory refresh.")
+    print("Codex exports: permanent scoped deletion across classifications, stale selections, partial results and inventory refresh.")
 
 
 def main():
