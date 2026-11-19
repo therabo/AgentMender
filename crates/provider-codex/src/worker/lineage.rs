@@ -11,7 +11,7 @@ use std::{
     io,
     os::unix::ffi::OsStrExt,
     path::{Path, PathBuf},
-    time::{Duration, Instant},
+    time::Instant,
 };
 use uuid::Uuid;
 
@@ -19,13 +19,18 @@ fn native_id(id: &str) -> Option<Uuid> {
     canonical_uuid(id).then(|| Uuid::parse_str(id).expect("canonical UUID"))
 }
 
-pub(super) fn read(db: &Connection, root: &Path) -> Result<Vec<LineageFact>, ProviderError> {
+pub(super) fn read(
+    db: &Connection,
+    root: &Path,
+    end: Instant,
+) -> Result<Vec<LineageFact>, ProviderError> {
     let layout = super::inventory::layout(db)?;
     let mut facts = Vec::new();
     let mut visited = BTreeSet::new();
     let mut table = db.prepare(&layout.projection).map_err(|_| unavailable())?;
     let mut rows = table.query([]).map_err(|_| unavailable())?;
     while let Some(row) = rows.next().map_err(|_| unavailable())? {
+        check_deadline(end).map_err(|_| unavailable())?;
         let Some(id) = row.get::<_, String>(0).ok().and_then(|id| native_id(&id)) else {
             continue;
         };
@@ -48,11 +53,12 @@ pub(super) fn read(db: &Connection, root: &Path) -> Result<Vec<LineageFact>, Pro
                     visited.insert(path.clone());
                     record_header(
                         &mut facts,
-                        &file,
-                        &path,
                         Some(id),
                         path.starts_with(root.join("archived_sessions")),
-                    );
+                        end,
+                        |id, end| reader::relationship_header(&file, &path, id, end),
+                    )
+                    .map_err(|_| unavailable())?;
                 }
                 Err(ProviderError::CapabilityUnavailable(reason))
                     if reason == "source file missing" => {}
@@ -69,6 +75,7 @@ pub(super) fn read(db: &Connection, root: &Path) -> Result<Vec<LineageFact>, Pro
             .map_err(|_| unavailable())?;
         let mut rows = table.query([]).map_err(|_| unavailable())?;
         while let Some(row) = rows.next().map_err(|_| unavailable())? {
+            check_deadline(end).map_err(|_| unavailable())?;
             if let Some(child) = row.get::<_, String>(1).ok().and_then(|id| native_id(&id)) {
                 if let Ok(parent) = row.get::<_, String>(0) {
                     edge(&mut facts, &parent, child);
@@ -82,9 +89,10 @@ pub(super) fn read(db: &Connection, root: &Path) -> Result<Vec<LineageFact>, Pro
     }
 
     for (folder, archived) in [("sessions", false), ("archived_sessions", true)] {
-        scan_rollouts(root, root.join(folder), archived, &visited, &mut facts)
+        scan_rollouts(root, root.join(folder), archived, &visited, &mut facts, end)
             .map_err(|_| unavailable())?;
     }
+    check_deadline(end).map_err(|_| unavailable())?;
     Ok(facts)
 }
 
@@ -95,20 +103,29 @@ fn edge(facts: &mut Vec<LineageFact>, parent: &str, child: Uuid) {
     });
 }
 
+fn check_deadline(end: Instant) -> io::Result<()> {
+    if Instant::now() >= end {
+        return Err(io::ErrorKind::TimedOut.into());
+    }
+    Ok(())
+}
+
 fn record_header(
     facts: &mut Vec<LineageFact>,
-    file: &std::fs::File,
-    path: &Path,
     expected: Option<Uuid>,
     archived: bool,
-) {
-    let end = Instant::now() + Duration::from_secs(2);
+    end: Instant,
+    read: impl FnOnce(Option<&str>, Instant) -> Result<reader::RelationshipMeta, ProviderError>,
+) -> io::Result<()> {
+    check_deadline(end)?;
     let id_text = expected.map(|id| id.to_string());
-    let Ok(meta) = reader::relationship_header(file, path, id_text.as_deref(), end) else {
+    let meta = read(id_text.as_deref(), end);
+    check_deadline(end)?;
+    let Ok(meta) = meta else {
         if let Some(id) = expected {
             facts.push(LineageFact::Uncertain(id));
         }
-        return;
+        return Ok(());
     };
     let id = native_id(&meta.id).expect("verified rollout UUID");
     facts.push(LineageFact::Present { id, archived });
@@ -125,6 +142,7 @@ fn record_header(
     {
         edge(facts, &parent, id);
     }
+    Ok(())
 }
 
 fn rollout_id(name: &OsStr) -> Option<Uuid> {
@@ -146,10 +164,12 @@ fn scan_rollouts(
     archived: bool,
     visited: &BTreeSet<PathBuf>,
     facts: &mut Vec<LineageFact>,
+    end: Instant,
 ) -> io::Result<()> {
     let device = fs::fstat(directory(root)?)?.st_dev;
     let mut pending = vec![folder];
     while let Some(path) = pending.pop() {
+        check_deadline(end)?;
         let handle = match directory(&path) {
             Ok(dir) => dir,
             Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
@@ -159,6 +179,7 @@ fn scan_rollouts(
             continue;
         }
         for entry in Dir::read_from(&handle)? {
+            check_deadline(end)?;
             let entry = entry?;
             let name = OsStr::from_bytes(entry.file_name().to_bytes());
             if name == "." || name == ".." {
@@ -180,7 +201,9 @@ fn scan_rollouts(
             {
                 let expected = rollout_id(name);
                 match filesystem::open_source_read(root, &child) {
-                    Ok(file) => record_header(facts, &file, &child, expected, archived),
+                    Ok(file) => record_header(facts, expected, archived, end, |id, end| {
+                        reader::relationship_header(&file, &child, id, end)
+                    })?,
                     Err(_) => {
                         if let Some(id) = expected {
                             facts.push(LineageFact::Uncertain(id));
@@ -191,4 +214,41 @@ fn scan_rollouts(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{fs::File, time::Duration};
+
+    #[test]
+    fn slow_header_uses_the_shared_lineage_deadline() {
+        let fixture = tempfile::tempdir().unwrap();
+        let path = fixture.path().join("rollout.jsonl.zst");
+        let id = Uuid::parse_str("ab000000-1111-4111-8111-000000000001").unwrap();
+        let row = serde_json::json!({
+            "type": "session_meta", "payload": {"id": id, "cli_version": "fixture", "source": "cli"}
+        });
+        let compressed = zstd::encode_all(format!("{row}\n").as_bytes(), 1).unwrap();
+        std::fs::write(&path, compressed).unwrap();
+        let file = File::open(&path).unwrap();
+
+        let end = Instant::now() + super::super::LINEAGE_TIMEOUT;
+        let mut facts = Vec::new();
+        record_header(&mut facts, Some(id), true, end, |expected, shared_end| {
+            std::thread::sleep(Duration::from_millis(2100));
+            assert_eq!(shared_end, end);
+            reader::relationship_header(&file, &path, expected, shared_end)
+        })
+        .unwrap();
+        assert!(
+            matches!(facts.as_slice(), [LineageFact::Present { id: found, archived: true }] if *found == id)
+        );
+
+        let elapsed = record_header(&mut facts, Some(id), true, Instant::now(), |_, _| {
+            panic!("expired graph budget must not start another header");
+        })
+        .unwrap_err();
+        assert_eq!(elapsed.kind(), io::ErrorKind::TimedOut);
+    }
 }

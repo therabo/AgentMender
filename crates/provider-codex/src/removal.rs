@@ -9,20 +9,20 @@ use std::{
 };
 use uuid::Uuid;
 
-#[derive(Debug, PartialEq, Eq, Serialize)]
+#[derive(Debug, Serialize)]
 pub struct DeletionPlan {
     #[serde(skip)]
     root: PathBuf,
     trees: Vec<Tree>,
 }
 
-#[derive(Debug, PartialEq, Eq, Serialize)]
+#[derive(Debug, Serialize)]
 struct Tree {
     id: Uuid,
     descendants: Vec<Descendant>,
 }
 
-#[derive(Debug, PartialEq, Eq, Serialize)]
+#[derive(Debug, Serialize)]
 struct Descendant {
     id: Uuid,
     parent: Uuid,
@@ -33,7 +33,8 @@ struct Descendant {
 
 #[derive(Default)]
 pub struct Deletion {
-    pub removed: usize,
+    pub native_succeeded: usize,
+    pub verified_absent: usize,
     pub messages: Vec<String>,
     pub errors: Vec<String>,
 }
@@ -123,28 +124,52 @@ impl Archive {
         Ok(Tree { id, descendants })
     }
 
-    fn matches_reviewed_edges(&self, tree: &Tree) -> bool {
-        let reviewed: BTreeMap<_, _> = tree
-            .descendants
-            .iter()
-            .map(|target| (target.id, target.parent))
-            .collect();
-        std::iter::once((tree.id, None))
+    // A reviewed node can still be addressed if native deletion already erased
+    // its inbound edge. A new parent or unreviewed child makes another native
+    // call unsafe because the command may operate on descendants as well.
+    fn blocked_writes(&self, tree: &Tree, changes: &mut BTreeSet<String>) -> BTreeSet<Uuid> {
+        let reviewed: BTreeMap<_, _> = std::iter::once((tree.id, (None, true)))
             .chain(
                 tree.descendants
                     .iter()
-                    .map(|target| (target.id, Some(target.parent))),
+                    .map(|child| (child.id, (Some(child.parent), child.present))),
             )
-            .all(|(id, parent)| {
-                self.nodes.get(&id).is_none_or(|node| {
-                    !node.uncertain && node.parents.iter().all(|found| Some(*found) == parent)
-                }) && self
+            .collect();
+        let mut blocked = BTreeSet::new();
+        for (&id, &(parent, was_present)) in &reviewed {
+            if self.nodes.get(&id).is_some_and(|node| {
+                node.uncertain
+                    || (!was_present && node.present)
+                    || node.parents.iter().any(|found| Some(*found) != parent)
+            }) {
+                blocked.insert(id);
+                changes.insert(format!(
+                    "{id}: relazione o presenza cambiata dopo l’anteprima."
+                ));
+            }
+
+            for &child in self.children.get(&id).into_iter().flatten() {
+                if reviewed.get(&child).is_none_or(|&(expected, was_present)| {
+                    expected != Some(id) || (!was_present && self.present(child))
+                }) {
+                    blocked.insert(id);
+                    changes.insert(format!(
+                        "{id}: discendente {child} fuori dal piano confermato."
+                    ));
+                }
+            }
+        }
+        for child in tree.descendants.iter().rev() {
+            if blocked.contains(&child.id)
+                && self
                     .children
-                    .get(&id)
-                    .into_iter()
-                    .flatten()
-                    .all(|child| reviewed.get(child) == Some(&id))
-            })
+                    .get(&child.parent)
+                    .is_some_and(|ids| ids.contains(&child.id))
+            {
+                blocked.insert(child.parent);
+            }
+        }
+        blocked
     }
 }
 
@@ -184,41 +209,20 @@ impl CodexAdapter {
         if ids.is_empty() {
             return Err("Nessuna sessione Codex da eliminare.".into());
         }
-        self.plan(root, &ids, protected)
-    }
-
-    fn plan(
-        &self,
-        root: PathBuf,
-        ids: &[Uuid],
-        protected: &[String],
-    ) -> Result<DeletionPlan, String> {
         let archive = self.archive()?;
         let protected = protected
             .iter()
             .filter_map(|id| Uuid::parse_str(id).ok())
             .collect();
         let trees = ids
-            .iter()
-            .map(|id| archive.tree(*id, &protected))
+            .into_iter()
+            .map(|id| archive.tree(id, &protected))
             .collect::<Result<_, _>>()?;
         Ok(DeletionPlan { root, trees })
     }
 
-    pub fn delete_reviewed(
-        &self,
-        plan: DeletionPlan,
-        protected: &[String],
-    ) -> Result<Deletion, String> {
+    pub fn delete_reviewed(&self, plan: DeletionPlan) -> Result<Deletion, String> {
         let _deletion = self.deletion.lock().expect("Codex deletion");
-        let root = self.selected_root()?;
-        let ids: Vec<_> = plan.trees.iter().map(|tree| tree.id).collect();
-        if self.plan(root, &ids, protected)? != plan {
-            return Err(
-                "Il grafo delle sessioni è cambiato. Apri una nuova anteprima Codex.".into(),
-            );
-        }
-
         let executable = self
             .location
             .executable
@@ -230,7 +234,14 @@ impl CodexAdapter {
             .ok_or("Percorso dell’archivio Codex non rappresentabile.")?;
         let setting = format!("sqlite_home={}", toml::Value::String(path.to_owned()));
         let native = |id| process::codex_delete(executable, &plan.root, &setting, id);
-        Ok(delete(&plan, native, || self.archive()))
+        Ok(delete(&plan, native, || {
+            if self.selected_root()? != plan.root {
+                return Err(
+                    "L’archivio Codex è cambiato. Impossibile verificare l’eliminazione.".into(),
+                );
+            }
+            self.archive()
+        }))
     }
 }
 
@@ -249,13 +260,15 @@ fn delete(
 ) -> Deletion {
     let mut outcome = Deletion::default();
     let mut attempted = Vec::new();
-    let mut messages = BTreeMap::new();
+    let mut native_successes = BTreeMap::new();
+    let mut run_native = |id| {
+        let message = native(id)?;
+        native_successes.insert(id, message);
+        Ok::<_, String>(())
+    };
     for tree in &plan.trees {
-        match native(tree.id) {
-            Ok(message) => {
-                messages.insert(tree.id, message);
-                attempted.push((tree, None));
-            }
+        match run_native(tree.id) {
+            Ok(()) => attempted.push((tree, None)),
             Err(error)
                 if tree.descendants.iter().any(|child| child.present)
                     && waiting_for_children(&error) =>
@@ -272,97 +285,110 @@ fn delete(
         return outcome;
     }
 
-    let mut archive = match observe() {
-        Ok(archive) => archive,
+    let targets: BTreeSet<_> = attempted
+        .iter()
+        .flat_map(|(tree, _)| {
+            std::iter::once(tree.id).chain(
+                tree.descendants
+                    .iter()
+                    .filter(|child| child.present)
+                    .map(|child| child.id),
+            )
+        })
+        .collect();
+    let mut verified_absent = BTreeSet::new();
+    let mut changes = BTreeSet::new();
+    let mut verify = |errors: &mut Vec<String>| match observe() {
+        Ok(archive) => {
+            verified_absent = targets
+                .iter()
+                .copied()
+                .filter(|id| !archive.present(*id))
+                .collect();
+            Some(archive)
+        }
         Err(error) => {
-            outcome.errors.push(error);
-            return outcome;
+            errors.push(error);
+            None
         }
     };
-    let mut residuals_attempted = false;
-    let mut retry = Vec::new();
-    for (tree, refusal) in &attempted {
-        if !archive.matches_reviewed_edges(tree) {
-            outcome.errors.push(format!(
-                "{}: relazioni cambiate durante l’eliminazione.",
-                tree.id
-            ));
-            continue;
-        }
-        for child in tree.descendants.iter().rev() {
-            if child.present && archive.present(child.id) {
-                residuals_attempted = true;
-                if let Err(error) = native(child.id) {
-                    outcome.errors.push(format!("{}: {error}", child.id));
+
+    let mut archive = verify(&mut outcome.errors);
+    if let Some(observed) = &archive {
+        let mut residuals_attempted = false;
+        for (tree, _) in &attempted {
+            let blocked = observed.blocked_writes(tree, &mut changes);
+            for child in tree.descendants.iter().rev() {
+                if child.present && observed.present(child.id) && !blocked.contains(&child.id) {
+                    residuals_attempted = true;
+                    if let Err(error) = run_native(child.id) {
+                        outcome.errors.push(format!("{}: {error}", child.id));
+                    }
                 }
             }
         }
-        if let Some(error) = refusal {
-            retry.push((*tree, error));
+        if residuals_attempted {
+            archive = verify(&mut outcome.errors);
         }
-    }
-    if residuals_attempted {
-        archive = match observe() {
-            Ok(archive) => archive,
-            Err(error) => {
-                outcome.errors.push(error);
-                retry.clear();
-                archive
-            }
-        };
     }
 
-    let mut retried = false;
-    for (tree, initial_error) in retry {
-        if !archive.matches_reviewed_edges(tree)
-            || tree
-                .descendants
-                .iter()
-                .any(|child| archive.present(child.id))
-        {
-            outcome.errors.push(format!("{}: {initial_error}", tree.id));
-            continue;
-        }
-        if archive.present(tree.id) {
-            retried = true;
-            match native(tree.id) {
-                Ok(message) => {
-                    messages.insert(tree.id, message);
+    if let Some(observed) = &archive {
+        let mut retried = false;
+        for (tree, refusal) in &attempted {
+            let Some(error) = refusal else { continue };
+            let blocked = observed.blocked_writes(tree, &mut changes);
+            if blocked.contains(&tree.id)
+                || tree
+                    .descendants
+                    .iter()
+                    .any(|child| observed.present(child.id))
+            {
+                outcome.errors.push(format!("{}: {error}", tree.id));
+            } else if observed.present(tree.id) {
+                retried = true;
+                if let Err(error) = run_native(tree.id) {
+                    outcome.errors.push(format!("{}: {error}", tree.id));
                 }
-                Err(error) => outcome.errors.push(format!("{}: {error}", tree.id)),
+            }
+        }
+        if retried {
+            archive = verify(&mut outcome.errors);
+        }
+    } else {
+        for (tree, refusal) in &attempted {
+            if let Some(error) = refusal {
+                outcome.errors.push(format!("{}: {error}", tree.id));
             }
         }
     }
-    if retried {
-        archive = match observe() {
-            Ok(archive) => archive,
-            Err(error) => {
-                outcome.errors.push(error);
-                archive
-            }
-        };
-    }
 
-    for (tree, _) in attempted {
-        let ids = std::iter::once(tree.id).chain(
-            tree.descendants
-                .iter()
-                .filter(|child| child.present)
-                .map(|child| child.id),
-        );
-        for id in ids {
-            if archive.present(id) {
-                outcome.errors.push(format!(
-                    "{id}: sessione ancora presente nell’archivio Codex."
-                ));
+    if let Some(observed) = &archive {
+        for (tree, _) in &attempted {
+            observed.blocked_writes(tree, &mut changes);
+        }
+        for id in targets.difference(&verified_absent) {
+            let reason = if observed.nodes.get(id).is_some_and(|node| node.uncertain) {
+                "presenza della sessione non verificabile"
             } else {
-                if let Some(message) = messages.remove(&id) {
-                    outcome.messages.push(message);
-                }
-                outcome.removed += 1;
-                cleanup(&plan.root, id, &mut outcome);
-            }
+                "sessione ancora presente nell’archivio Codex"
+            };
+            outcome.errors.push(format!("{id}: {reason}."));
         }
+    }
+    outcome.errors.extend(changes);
+    outcome.native_succeeded = native_successes.len();
+    outcome.verified_absent = verified_absent.len();
+    outcome.messages = attempted
+        .iter()
+        .filter(|(tree, _)| verified_absent.contains(&tree.id))
+        .filter_map(|(tree, _)| native_successes.get(&tree.id).cloned())
+        .collect();
+
+    // Native success and verified cascades can name the same UUID. Clean the
+    // union once, even when an observation needed for residuals failed.
+    verified_absent.extend(native_successes.into_keys());
+    for id in verified_absent {
+        cleanup(&plan.root, id, &mut outcome);
     }
     outcome
 }

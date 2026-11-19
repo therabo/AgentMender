@@ -12,13 +12,16 @@ and session identity.
 
 - Codex builds the graph in the read-only worker from native spawn and
   attachment relations and verified rollout headers. A single receipt binds
-  the reviewed roots and descendants. After rechecking the graph, the
-  provider runs native deletion on the selected roots. It verifies the
-  remaining descendants and runs the same command deepest first. A root
-  refused because of linked children is retried after those children are
-  gone. Each verified deletion applies the scoped JSONL, Desktop SQLite and
-  Desktop JSON cleanup. Unverified or remaining UUIDs are reported.
-  Projects use the same workflow for the verified main conversations.
+  the reviewed roots and descendants. Confirmation starts native deletion
+  on the selected roots directly. Subsequent observations identify reviewed
+  descendants still eligible for deletion and report changed or unreviewed
+  branches. Eligible descendants are deleted deepest first. A root refused
+  because of linked children is retried after those children are verified
+  absent. The result counts successful native UUIDs and verified absences
+  separately. The provider cleans their union once, even if a later
+  observation fails. Projects use the same workflow for verified main
+  conversations. The graph operation shares one 60-second budget across
+  snapshot acquisition and rollout header reads.
 - Claude previews the main transcript, every entry in its session directory,
   recognized sidecars, and associated Desktop and UUID-only artifacts. The
   latter include checkpoints. The preview walks the scoped trees iteratively

@@ -660,6 +660,8 @@ with sqlite3.connect(root / "state_5.sqlite") as db:
         db.execute("DELETE FROM thread_spawn_edges WHERE parent_thread_id=? OR child_thread_id=?", (target, target))
         if target in files:
             (root / files[target]).unlink(missing_ok=True)
+if ident == rules.get("observation_failure_after"):
+    (root / "state_5.sqlite").rename(root / "state_after_delete.sqlite")
 print("Native deletion fixture succeeded")
 ''')
     return executable
@@ -733,10 +735,13 @@ def codex_graph_acceptance(binary, base, claude):
             if name == "refusal":
                 expected += [parent]
             assert [json.loads(line) for line in (root / "native-calls.jsonl").read_text().splitlines()] == expected
-            retained = [d, fork] if name == "still-present" else [fork]
             assert outcome["status"] == ("partial" if name == "still-present" else "deleted"), outcome
+            assert outcome["native_succeeded"] == len(set(expected)), outcome
+            assert outcome["verified_absent"] == (4 if name == "still-present" else 5), outcome
             if name == "still-present":
                 assert any(d in error and "ancora presente" in error for error in outcome["errors"]), outcome
+                assert (root / json.loads((root / "fixture-rules.json").read_text())["rollouts"][d]).is_file()
+            retained = [fork]
             for filename, field in [("history.jsonl", "session_id"), ("session_index.jsonl", "id")]:
                 assert [json.loads(line)[field] for line in (root / filename).read_text().splitlines()] == retained
             assert json.loads(state_path.read_text())["projectless-thread-ids"] == retained
@@ -751,22 +756,72 @@ def codex_graph_acceptance(binary, base, claude):
                 assert not db.execute("SELECT 1 FROM threads WHERE id=?", (parent,)).fetchone()
             assert not list(root.glob("*.agentmender-*.tmp"))
 
-    root, parent, (a, _b, c, d), fork, executable = codex_graph_fixture(base, "unreviewed")
+    root, parent, (a, b, c, d), fork, executable = codex_graph_fixture(base, "unreviewed")
     path = f"/api/codex/sessions/{scoped_key('codex', root, parent)}"
+    database = root / "state_5.sqlite"
     with ui(binary, base, root, claude, executable, extra_args=("--protect-codex-session", d)) as (client, ticket):
         authorize(client, ticket)
         client.call("POST", path + "/removal-preview", code=409)
     with ui(binary, base, root, claude, executable) as (client, ticket):
         authorize(client, ticket)
-        review = client.call("POST", path + "/removal-preview")
-        with closing(sqlite3.connect(root / "state_5.sqlite")) as db, db:
-            db.execute("INSERT INTO thread_spawn_edges VALUES (?,?)", (c, fork))
-        client.call("POST", path + "/delete", {"confirm": True, "review": review["review"]}, code=409)
-        with closing(sqlite3.connect(root / "state_5.sqlite")) as db, db:
+        with closing(sqlite3.connect(database)) as db, db:
             db.execute("INSERT INTO thread_spawn_edges VALUES (?,?)", (c, a))
         client.call("POST", path + "/removal-preview", code=409)
-    assert not (root / "native-calls.jsonl").exists()
-    print("Codex graph: verified spawn, attachment and rollout relations, native order, stale reviews and residuals.")
+        assert not (root / "native-calls.jsonl").exists()
+        with closing(sqlite3.connect(database)) as db, db:
+            db.execute("DELETE FROM thread_spawn_edges WHERE parent_thread_id=? AND child_thread_id=?", (c, a))
+        review = client.call("POST", path + "/removal-preview")
+        with closing(sqlite3.connect(database)) as db, db:
+            db.execute("INSERT INTO thread_spawn_edges VALUES (?,?)", (c, fork))
+        outcome = codex_reviewed_delete(client, path, review["review"])
+        assert outcome["status"] == "partial", outcome
+        assert outcome["native_succeeded"] == outcome["verified_absent"] == 3, outcome
+        assert any(fork in error and "fuori dal piano" in error for error in outcome["errors"]), outcome
+    calls = [json.loads(line) for line in (root / "native-calls.jsonl").read_text().splitlines()]
+    assert calls == [parent, d, b], calls
+    with closing(sqlite3.connect(database)) as db:
+        remaining = {row[0] for row in db.execute("SELECT id FROM threads")}
+        assert {a, c, fork} <= remaining and parent not in remaining
+    print("Codex graph: verified lineage, native order, protected UUIDs and changed relationships.")
+
+
+def codex_observation_failure(binary, base, claude):
+    for name, after_children in [("first-observation", False), ("final-observation", True)]:
+        root, parent, (a, b, c, d), fork, executable = codex_graph_fixture(base, name)
+        ids = [parent, a, b, c, d, fork]
+        rules_path = root / "fixture-rules.json"
+        rules = json.loads(rules_path.read_text())
+        rules["observation_failure_after"] = a if after_children else parent
+        rules_path.write_text(json.dumps(rules))
+        for filename, field in [("history.jsonl", "session_id"), ("session_index.jsonl", "id")]:
+            (root / filename).write_text("".join(json.dumps({field: ident}) + "\n" for ident in ids))
+        state = root / ".codex-global-state.json"
+        state_backup = state.with_suffix(".json.bak")
+        for path in (state, state_backup):
+            path.write_text(json.dumps({"projectless-thread-ids": ids}))
+        with codex_desktop_catalog(root) as desktop, ui(binary, base, root, claude, executable) as (client, ticket):
+            with desktop:
+                desktop.execute("""INSERT INTO local_thread_catalog
+                    (host_id, thread_id, display_title, source_created_at, source_updated_at, source_kind, observation_sequence)
+                    VALUES ('local', ?, 'Fixture', 1, 1, 'cli', 7)""", (parent,))
+            authorize(client, ticket)
+            path = f"/api/codex/sessions/{scoped_key('codex', root, parent)}"
+            outcome = codex_reviewed_delete(client, path)
+            assert outcome["status"] == "partial", outcome
+            expected = [parent, d, c, b, a] if after_children else [parent]
+            assert outcome["native_succeeded"] == len(expected), outcome
+            assert outcome["verified_absent"] == int(after_children), outcome
+            assert any("verificare il grafo" in error for error in outcome["errors"]), outcome
+            assert all("ancora presente" not in error for error in outcome["errors"]), outcome
+            calls = [json.loads(line) for line in (root / "native-calls.jsonl").read_text().splitlines()]
+            assert calls == expected, calls
+            retained = [ident for ident in ids if ident not in expected]
+            for filename, field in [("history.jsonl", "session_id"), ("session_index.jsonl", "id")]:
+                assert [json.loads(line)[field] for line in (root / filename).read_text().splitlines()] == retained
+            assert all(json.loads(path.read_text())["projectless-thread-ids"] == retained for path in (state, state_backup))
+            assert desktop.execute("SELECT removed FROM local_thread_catalog_scan_entries WHERE host_id='local' AND thread_id=?", (parent,)).fetchone() == (1,)
+            assert desktop.execute("SELECT last_full_reconciled_at FROM local_thread_catalog_sync_state WHERE host_id='local'").fetchone() == (None,)
+    print("Codex partial results: native counts and auxiliary cleanup survive failed observations.")
 
 
 def codex_partial_cleanup(binary, base, claude):
@@ -785,6 +840,7 @@ def codex_partial_cleanup(binary, base, claude):
                    if row["native_id"] == ident)
         outcome = codex_reviewed_delete(client, f"/api/codex/sessions/{row['key']}")
         assert outcome["status"] == "partial", outcome
+        assert outcome["native_succeeded"] == outcome["verified_absent"] == 1, outcome
         assert "Native deletion fixture succeeded" in outcome["message"] and "incompleta" in outcome["message"]
         assert len(outcome["errors"]) == 1 and state.name in outcome["errors"][0]
         assert index.read_bytes() == kept and state.read_bytes() == b"malformed JSON"
@@ -1220,6 +1276,7 @@ def main():
             claude_shared_uuid_cleanup(agentmender, base)
             codex_partial_cleanup(agentmender, base, claude)
             codex_graph_acceptance(agentmender, base, claude)
+            codex_observation_failure(agentmender, base, claude)
         if args.native_codex:
             binary = args.native_codex.resolve(strict=True)
             assert platform.system() == "Darwin" and platform.machine() == "arm64"

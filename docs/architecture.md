@@ -66,12 +66,14 @@ diagnostics report candidate dependencies.
 
 The authenticated browser confirms permanent deletion by opaque session key.
 Codex builds a lineage observation in the confined worker and pages its facts
-over the fixed worker protocol independently of the browsing inventory. The
-server binds the reviewed graph to one confirmation and rechecks it before
-dispatch. The adapter runs native deletion for the selected roots and the
-remaining verified descendants. It verifies absence before cleaning indexes,
-Desktop catalogs and Desktop JSON state for each removed UUID. The project
-action uses the same plan and refreshes the inventory once.
+over the fixed worker protocol independently of the browsing inventory. One
+60-second deadline covers the graph operation, including the SQLite snapshot
+and rollout headers. The server's receipt binds the reviewed graph to one
+confirmation. The adapter uses the receipt to run native deletion on the
+selected roots immediately. Later observations guide the remaining native
+calls within the reviewed graph. Cleanup covers each native success and
+verified cascade once. The project action uses the same plan and refreshes
+the inventory once.
 
 On macOS, Claude builds a complete plan for the verified transcript, its
 namespace-scoped directory and associated artifacts, including checkpoints.

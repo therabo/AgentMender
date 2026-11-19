@@ -38,12 +38,17 @@ impl Revision {
             edges: {
                 use sha2::{Digest, Sha256};
                 use std::os::windows::fs::FileExt;
+                // Windows seek_read changes the shared cursor. Preserve the
+                // position for callers that stream the observed file next.
+                let mut handle = _file;
+                let position = handle.stream_position()?;
                 let mut hash = Sha256::new();
                 let mut edge = [0; 4096];
                 for offset in [0, meta.len().saturating_sub(edge.len() as u64)] {
-                    let size = _file.seek_read(&mut edge, offset)?;
+                    let size = handle.seek_read(&mut edge, offset)?;
                     hash.update(&edge[..size]);
                 }
+                handle.seek(SeekFrom::Start(position))?;
                 hash.finalize().into()
             },
         })
@@ -127,5 +132,27 @@ impl<'a> Lines<'a> {
                 }));
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reading_a_revision_preserves_the_file_cursor() {
+        use std::io::Write;
+
+        let fixture = tempfile::NamedTempFile::new().unwrap();
+        let mut writer = fixture.as_file();
+        writer.write_all(b"abcdef").unwrap();
+
+        let mut input = File::open(fixture.path()).unwrap();
+        input.seek(SeekFrom::Start(2)).unwrap();
+        Revision::read(&input, fixture.path()).unwrap();
+        assert_eq!(input.stream_position().unwrap(), 2);
+        let mut remaining = String::new();
+        input.read_to_string(&mut remaining).unwrap();
+        assert_eq!(remaining, "cdef");
     }
 }

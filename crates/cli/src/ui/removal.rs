@@ -115,27 +115,29 @@ fn confirm_codex(
         })
         .ok_or_else(|| ApiError::conflict("Apri una nuova anteprima Codex."))?;
     let Deletion {
-        removed,
+        native_succeeded,
+        verified_absent,
         messages,
         errors,
-    } = app
-        .codex
-        .delete_reviewed(review.plan, &app.protected)
-        .map_err(|_| {
-            ApiError::conflict("Grafo Codex cambiato o non verificabile. Apri una nuova anteprima.")
-        })?;
-    let mut message = match (removed, errors.is_empty()) {
-        (0, _) => "Codex non ha confermato alcuna eliminazione.".to_owned(),
-        (1, true) => "1 sessione Codex eliminata.".to_owned(),
-        (_, true) => format!("{removed} sessioni Codex eliminate."),
-        (1, false) => "1 sessione Codex eliminata. Operazione incompleta.".to_owned(),
-        (_, false) => format!("{removed} sessioni Codex eliminate. Operazione incompleta."),
-    };
+    } = app.codex.delete_reviewed(review.plan).map_err(|_| {
+        ApiError::conflict("Comando nativo Codex non disponibile per l’archivio selezionato.")
+    })?;
+    let mut message = format!(
+        "Comandi nativi riusciti · {native_succeeded}. UUID verificati assenti · {verified_absent}."
+    );
+    if !errors.is_empty() && (native_succeeded > 0 || verified_absent > 0) {
+        message.push_str(" Operazione incompleta.");
+    }
     if !project && let Some(detail) = messages.first() {
         message.push(' ');
         message.push_str(detail);
     }
-    Ok(result(removed, message, errors))
+    let mut view = result(native_succeeded.max(verified_absent), message, errors);
+    view.codex_counts = Some(CodexCounts {
+        native_succeeded,
+        verified_absent,
+    });
+    Ok(view)
 }
 
 #[cfg(target_os = "macos")]
@@ -180,6 +182,14 @@ pub(super) struct ResultView {
     status: &'static str,
     message: String,
     errors: Vec<String>,
+    #[serde(flatten)]
+    codex_counts: Option<CodexCounts>,
+}
+
+#[derive(Serialize)]
+struct CodexCounts {
+    native_succeeded: usize,
+    verified_absent: usize,
 }
 
 fn result(removed: usize, message: String, errors: Vec<String>) -> ResultView {
@@ -193,6 +203,7 @@ fn result(removed: usize, message: String, errors: Vec<String>) -> ResultView {
         },
         message,
         errors,
+        codex_counts: None,
     }
 }
 

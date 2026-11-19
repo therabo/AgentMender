@@ -68,11 +68,12 @@ require("crates/provider-codex/src/worker/inventory.rs", "thread_spawn_edges",
 require("crates/provider-codex/src/worker.rs", "Operation::ProjectCatalog", "projects::read")
 require("crates/provider-codex/src/worker/projects.rs", "FROM projects", "FROM project_roots",
         ".codex-global-state.json", "filesystem::open_source_read", "MAX_DESKTOP_BYTES")
-require("crates/provider-codex/src/worker.rs", "Operation::Lineage", "lineage_page")
+require("crates/provider-codex/src/worker.rs", "Operation::Lineage", "LINEAGE_TIMEOUT", "lineage_page")
 require("crates/provider-codex/src/worker/lineage.rs", "thread_spawn_edges", "AtFlags::SYMLINK_NOFOLLOW",
-        "reader::relationship_header", "relations.attached")
+        "reader::relationship_header", "relations.attached", "check_deadline(end)")
 require("crates/provider-codex/src/removal.rs", "identity.state_root != root", "Uuid::parse_str",
-        "process::codex_delete", "descendants.iter().rev()", "child.present", "cleanup::after_native_delete(root, id)")
+        "process::codex_delete", "descendants.iter().rev()", "child.present",
+        "verified_absent.extend(native_successes.into_keys())", "cleanup::after_native_delete(root, id)")
 require("crates/provider-codex/src/cleanup.rs", "rewrite::filter_jsonl", "remove_local_thread",
         "schedule_desktop_catalog_reconciliation")
 require("crates/provider-codex/src/desktop_reconciliation.rs", "host_id COLLATE BINARY = 'local'",

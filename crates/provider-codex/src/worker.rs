@@ -22,13 +22,14 @@ use std::{
     io::{BufRead, BufReader, Read, Write},
     path::PathBuf,
     sync::mpsc,
-    time::Duration,
+    time::{Duration, Instant},
 };
 use uuid::Uuid;
 
 const MAX_REQUEST: usize = 64 * 1024;
 const MAX_OUTPUT: usize = 128 * 1024;
 const PAGE_ROWS: usize = 128;
+const LINEAGE_TIMEOUT: Duration = Duration::from_secs(60);
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -171,7 +172,6 @@ fn observe(
     lineage: &mut Vec<LineageFact>,
 ) -> Result<Response, ProviderError> {
     use crate::{reader, snapshot};
-    use std::time::Instant;
 
     if let Operation::Lineage { offset } = request.operation
         && offset != 0
@@ -179,12 +179,20 @@ fn observe(
         return lineage_page(lineage, offset);
     }
 
-    let end = Instant::now() + Duration::from_secs(8);
+    let lineage_operation = matches!(request.operation, Operation::Lineage { .. });
+    let end = Instant::now()
+        + if lineage_operation {
+            LINEAGE_TIMEOUT
+        } else {
+            Duration::from_secs(8)
+        };
     let root = &request.source_root;
+    let backup_timeout = (!lineage_operation).then_some(Duration::from_secs(3));
+    let load_snapshot = || snapshot::read_snapshot(root, end, backup_timeout);
     let before = snapshot::fingerprints(root)?;
     let db = match resident.take() {
         Some(snapshot) if !snapshot::fingerprints_changed(&snapshot.files, &before) => snapshot.db,
-        _ => snapshot::read_snapshot(root, end)?,
+        _ => load_snapshot()?,
     };
     let mut transcript = None;
     let response = match &request.operation {
@@ -202,7 +210,7 @@ fn observe(
             ))
         }
         Operation::Lineage { .. } => {
-            *lineage = lineage::read(&db, root)?;
+            *lineage = lineage::read(&db, root, end)?;
             lineage_page(lineage, 0)?
         }
         Operation::Transcript { identity, cursor } => {
@@ -233,7 +241,7 @@ fn observe(
         return Err(stale());
     }
     drop(db);
-    let db = snapshot::read_snapshot(root, end)?;
+    let db = load_snapshot()?;
     let current = inventory::exact(&db, root, &identity.native_id, end)?;
     if &current.session.identity != identity
         || !current.session.is_main()
@@ -361,7 +369,11 @@ impl Connection {
         })
     }
 
-    fn call(&mut self, operation: Operation) -> Result<Response, ProviderError> {
+    fn call(
+        &mut self,
+        operation: Operation,
+        deadline: Option<Instant>,
+    ) -> Result<Response, ProviderError> {
         self.sandbox.validate()?;
         if self
             .child
@@ -372,11 +384,6 @@ impl Connection {
         {
             return Err(unavailable());
         }
-        let timeout = if matches!(operation, Operation::Lineage { offset: 0 }) {
-            Duration::from_secs(60)
-        } else {
-            Duration::from_secs(12)
-        };
         let request = Request {
             source_root: self.sandbox.source_root().into(),
             private_root: self.sandbox.path().into(),
@@ -388,6 +395,12 @@ impl Connection {
         if bytes.len() > MAX_REQUEST {
             return Err(unavailable());
         }
+        let timeout = match deadline {
+            Some(end) => end
+                .checked_duration_since(Instant::now())
+                .ok_or_else(unavailable)?,
+            None => Duration::from_secs(12),
+        };
         self.input.try_send(bytes).map_err(|_| unavailable())?;
         let bytes = self
             .output
@@ -402,18 +415,22 @@ impl CodexAdapter {
     fn observe(&self, operation: Operation) -> Result<Response, ProviderError> {
         validate_location(&self.location)?;
         let mut slot = self.connection.lock().map_err(|_| unavailable())?;
-        self.call_worker(&mut slot, operation)
+        self.call_worker(&mut slot, operation, None)
     }
 
     fn call_worker(
         &self,
         slot: &mut Option<Connection>,
         operation: Operation,
+        deadline: Option<Instant>,
     ) -> Result<Response, ProviderError> {
         if slot.is_none() {
             *slot = Some(Connection::start(self)?);
         }
-        let result = slot.as_mut().expect("worker started").call(operation);
+        let result = slot
+            .as_mut()
+            .expect("worker started")
+            .call(operation, deadline);
         if result.is_err() {
             *slot = None;
         }
@@ -428,11 +445,12 @@ impl CodexAdapter {
         validate_location(&self.location)?;
         // Keep the read connection reserved until every page of the same observation is read.
         let mut slot = self.connection.lock().map_err(|_| unavailable())?;
+        let deadline = Instant::now() + LINEAGE_TIMEOUT;
         let mut facts = Vec::new();
         let mut offset = 0;
         loop {
             let Response::Lineage(page) =
-                self.call_worker(&mut slot, Operation::Lineage { offset })?
+                self.call_worker(&mut slot, Operation::Lineage { offset }, Some(deadline))?
             else {
                 return Err(unavailable());
             };

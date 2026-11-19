@@ -29,13 +29,18 @@ verified levels independently of the browsing inventory. Ordinary fork
 references alone do not establish ownership. Ambiguous relationships or
 protected UUIDs block execution.
 
-The installed `codex delete <UUID> --force` first targets the selected parent.
-AgentMender checks what remains, targets remaining descendants deepest first
-and retries a parent refused because of linked children after those children
-are verified absent. Results count only UUIDs verified absent from the local
-thread database and recognized rollouts.
+Confirmation starts the installed `codex delete <UUID> --force` for the
+selected parent. AgentMender checks what remains, targets eligible reviewed
+descendants deepest first and retries a parent refused because of linked
+children after those children are verified absent. Later calls remain
+within the reviewed UUIDs. The installed CLI controls any implicit cascade
+of the initial command. The graph operation uses a shared 60-second deadline
+for the snapshot and rollout headers.
 
-Each verified removal also triggers streaming cleanup of
+The result counts successful native UUIDs separately from IDs verified absent
+from the local database and recognized rollouts. A native success survives
+a later verification error as a partial result. Each UUID in either group
+triggers streaming cleanup of
 `history.jsonl` and `session_index.jsonl` in the selected archive. AgentMender
 removes the local UUID from recognized Desktop catalogs in `sqlite/codex.db`
 and `sqlite/codex-dev.db`, writes the scan tombstone, increments the observation

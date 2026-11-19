@@ -36,13 +36,14 @@ and supports normal session actions. Counts and sizes describe observed
 records and known transcript bytes.
 
 Use **Elimina sessione** to review the selected Codex conversation and its
-verified descendants. Confirm once with **Elimina**. Codex first tries the
-native command on the parent, then deletes remaining descendants deepest
-first. If the command refuses because of a linked child, AgentMender retries
-the parent after verifying the descendants are gone. Each verified removal
-includes both JSONL indexes, the local Desktop catalogs and Desktop state.
-The same preview and confirmation apply to the main conversations of eligible
-native projects. Ambiguous relationships or a protected UUID block confirmation.
+verified descendants. Confirm once with **Elimina** to start the native command
+on the parent. AgentMender then deletes eligible reviewed descendants deepest
+first. New or ambiguous links found afterward are reported. If the command
+refuses because of a linked child, AgentMender retries the parent after
+verifying the descendants are gone. The result shows native successes and
+verified absences separately. Cleanup of both JSONL indexes, the local
+Desktop catalogs and Desktop state still runs for successful commands when
+an observation fails. The same flow applies to eligible native projects.
 
 Open **Diagnostica inventario Claude Code** to see unfiltered local counts,
 exclusions, source availability and the matches between Desktop Code
@@ -119,7 +120,9 @@ require exact Origin. All requests require the exact local Host.
 | `POST /api/{provider}/sessions/{key}/delete` | Delete the selected session after explicit confirmation and return the result |
 
 Both providers accept `{"confirm":true,"review":"<receipt>"}` using the opaque
-receipt returned by the corresponding preview. Browser payloads carry no paths or commands.
+receipt returned by the corresponding preview. Codex results include
+`native_succeeded` and `verified_absent` counts. Browser payloads carry no paths
+or commands.
 
 ## Test with disposable archives
 

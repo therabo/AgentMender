@@ -288,15 +288,16 @@ fn open_provider_db(root: &Path) -> Result<Connection, ProviderError> {
 }
 
 #[cfg(target_os = "macos")]
-pub(super) fn read_snapshot(root: &Path, end: Instant) -> Result<Connection, ProviderError> {
+pub(super) fn read_snapshot(
+    root: &Path,
+    end: Instant,
+    backup_timeout: Option<Duration>,
+) -> Result<Connection, ProviderError> {
     let source = open_provider_db(root)?;
     let mut memory = Connection::open_in_memory().map_err(sqlite_error)?;
     configure(&memory)?;
-    bounded_backup(
-        &source,
-        &mut memory,
-        end.min(Instant::now() + Duration::from_secs(3)),
-    )?;
+    let deadline = backup_timeout.map_or(end, |timeout| end.min(Instant::now() + timeout));
+    bounded_backup(&source, &mut memory, deadline)?;
     Ok(memory)
 }
 
