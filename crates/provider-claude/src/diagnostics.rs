@@ -1,4 +1,4 @@
-//! Counts from the same bounded snapshot as the Claude Code inventory.
+//! Counts from the same observation as the Claude Code inventory.
 use crate::local::{SessionEvidence, Surface};
 use agentmender_domain::{Session, SessionKind, SessionState};
 use serde::Serialize;
@@ -15,7 +15,6 @@ pub enum Exclusion {
     UnverifiedFork,
     MissingIdentity,
     InvalidRecords,
-    ScanLimit,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize)]
@@ -23,11 +22,6 @@ pub enum Exclusion {
 pub enum ScanIssue {
     MalformedRecord,
     UnterminatedRecord,
-    RecordSize,
-    ByteLimit,
-    LineLimit,
-    TimeLimit,
-    MetadataLimit,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -120,6 +114,5 @@ pub struct Reconciliation {
     pub transcripts: TranscriptReport,
     pub desktop: DesktopReport,
     pub projects_incomplete: bool,
-    pub entry_limit_reached: bool,
     pub out_of_scope: [&'static str; 5],
 }

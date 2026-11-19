@@ -240,7 +240,7 @@ pub(super) fn row(
     {
         match transcript.as_ref() {
             Some((file, path))
-                if reader::relationship_header(file, path, &id, end)
+                if reader::relationship_header(file, path, Some(&id), end)
                     .is_ok_and(|meta| meta.is_main(&id)) =>
             {
                 SessionKind::Main

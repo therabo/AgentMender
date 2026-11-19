@@ -3,7 +3,7 @@
 use crate::{
     Access, ClaudeAdapter, SessionEvidence,
     read::verify,
-    storage::{ArtifactLocation, Budget, EntryKind, history_stats},
+    storage::{ArtifactLocation, DirectoryScan, EntryKind, history_stats},
     usage::{ArtifactKind, ArtifactMeter, Measurement, Ownership, RootKind},
 };
 use agentmender_domain::SessionIdentity;
@@ -330,8 +330,8 @@ impl ClaudeAdapter {
             verified_agents.insert(&agent.path);
         }
 
-        let mut budget = Budget::new(4096);
-        budget.deadline = Instant::now() + Duration::from_secs(2);
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let mut budget = DirectoryScan::bounded(4096, deadline);
         let mut sidecar_candidates = 0;
         for entry in budget.list(immediate) {
             let Some(suffix) = entry
@@ -487,7 +487,7 @@ impl ClaudeAdapter {
             );
         }
 
-        let (history_matches, history_observation) = history_stats(root, id, budget.deadline);
+        let (history_matches, history_observation) = history_stats(root, id, deadline);
         let registry = root.join("sessions");
         let process_registry = if crate::safe_path(&registry) && registry.is_dir() {
             "present_unverified"

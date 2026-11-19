@@ -162,7 +162,7 @@ impl Observation {
     }
 
     fn claude(app: &App) -> Self {
-        let catalog = app.claude.local_catalog(app.limit);
+        let catalog = app.claude.local_catalog();
         let installations = app.claude.installations().to_vec();
         let present = catalog.roots.iter().any(|root| root.present);
         let presence = if installations.iter().any(|item| item.confirmed) {

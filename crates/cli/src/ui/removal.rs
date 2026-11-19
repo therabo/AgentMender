@@ -1,6 +1,7 @@
 //! Explicit session deletion through the existing loopback authorization.
 use super::{ApiError, App, inventory::ProjectView, provider, read};
-use agentmender_domain::{ProviderKind, Session};
+use agentmender_domain::{ProviderKind, Session, SessionIdentity};
+use agentmender_provider_codex::{Deletion, DeletionPlan};
 use axum::{
     Json,
     extract::{Path, State},
@@ -28,6 +29,113 @@ pub(super) fn refusal(session: &Session, protected: &[String]) -> Option<&'stati
     (session.identity.provider == ProviderKind::Codex
         && protected.contains(&session.identity.native_id))
     .then_some(PROTECTED)
+}
+
+pub(super) struct CodexReview {
+    id: String,
+    key: String,
+    project: bool,
+    plan: DeletionPlan,
+}
+
+fn codex_review(
+    app: &App,
+    key: String,
+    project: bool,
+    sessions: &[SessionIdentity],
+) -> Result<serde_json::Value, ApiError> {
+    if let Some(reason) = native_reason(app) {
+        return Err(ApiError::conflict(reason));
+    }
+    let plan = app
+        .codex
+        .deletion_plan(sessions, &app.protected)
+        .map_err(|_| {
+            ApiError::conflict("Grafo Codex non verificabile o contenente una sessione protetta.")
+        })?;
+    let id = super::token()?;
+    let view = serde_json::json!({ "review": id, "plan": &plan });
+    *app.codex_review.lock().expect("Codex review") = Some(CodexReview {
+        id,
+        key,
+        project,
+        plan,
+    });
+    Ok(view)
+}
+
+pub(super) async fn codex_session_preview(
+    State(app): State<Arc<App>>,
+    Path(key): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    read(app, move |app| {
+        let session = app.inventory.selected(app, ProviderKind::Codex, &key)?;
+        if let Some(reason) = refusal(&session, &app.protected) {
+            return Err(ApiError::conflict(reason));
+        }
+        codex_review(app, key, false, &[session.identity])
+    })
+    .await
+}
+
+pub(super) async fn codex_project_preview(
+    State(app): State<Arc<App>>,
+    Path(key): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    read(app, move |app| {
+        let sessions =
+            app.inventory
+                .project(app, ProviderKind::Codex, &key, |app, _, project| {
+                    if let Some(reason) = ProjectView::new(app, project).removal_reason {
+                        return Err(ApiError::conflict(reason));
+                    }
+                    Ok(project
+                        .sessions
+                        .sessions()
+                        .map(|row| row.identity.clone())
+                        .collect::<Vec<_>>())
+                })??;
+        codex_review(app, key, true, &sessions)
+    })
+    .await
+}
+
+fn confirm_codex(
+    app: &App,
+    key: String,
+    project: bool,
+    review: Option<String>,
+) -> Result<ResultView, ApiError> {
+    let review = app
+        .codex_review
+        .lock()
+        .expect("Codex review")
+        .take_if(|plan| {
+            plan.key == key && plan.project == project && Some(&plan.id) == review.as_ref()
+        })
+        .ok_or_else(|| ApiError::conflict("Apri una nuova anteprima Codex."))?;
+    let Deletion {
+        removed,
+        messages,
+        errors,
+    } = app
+        .codex
+        .delete_reviewed(review.plan, &app.protected)
+        .map_err(|_| {
+            ApiError::conflict("Grafo Codex cambiato o non verificabile. Apri una nuova anteprima.")
+        })?;
+    let mut message = match (removed, errors.is_empty()) {
+        (0, _) => "Codex non ha confermato alcuna eliminazione.".to_owned(),
+        (1, true) => "1 sessione Codex eliminata.".to_owned(),
+        (_, true) => format!("{removed} sessioni Codex eliminate."),
+        (1, false) => "1 sessione Codex eliminata. Operazione incompleta.".to_owned(),
+        (_, false) => format!("{removed} sessioni Codex eliminate. Operazione incompleta."),
+    };
+    if !project && let Some(detail) = messages.first() {
+        message.push(' ');
+        message.push_str(detail);
+    }
+    Ok(result(removed, message, errors))
 }
 
 #[cfg(target_os = "macos")]
@@ -99,33 +207,7 @@ pub(super) async fn session(
     let provider = provider(&name)?;
     read(app, move |app| {
         let outcome = match provider {
-            ProviderKind::Codex => {
-                if request.review.is_some() {
-                    return Err(ApiError::bad("Conferma Codex non valida."));
-                }
-                let session = app.inventory.selected(app, provider, &key)?;
-                if let Some(reason) = refusal(&session, &app.protected) {
-                    return Err(ApiError::conflict(reason));
-                }
-                match app.codex.delete_session(&session.identity) {
-                    Ok(outcome) => {
-                        let message = if outcome.errors.is_empty() {
-                            outcome.message
-                        } else {
-                            format!(
-                                "Codex ha eliminato la sessione. Pulizia aggiuntiva incompleta. {}",
-                                outcome.message,
-                            )
-                        };
-                        result(1, message, outcome.errors)
-                    }
-                    Err(error) => result(
-                        0,
-                        "Codex non ha completato l’eliminazione.".into(),
-                        vec![error],
-                    ),
-                }
-            }
+            ProviderKind::Codex => confirm_codex(app, key, false, request.review)?,
             ProviderKind::Claude => {
                 #[cfg(target_os = "macos")]
                 {
@@ -164,51 +246,13 @@ pub(super) async fn project(
     Path(key): Path<String>,
     Json(request): Json<Confirmation>,
 ) -> Result<Json<ResultView>, ApiError> {
-    if !request.confirm || request.review.is_some() {
+    if !request.confirm {
         return Err(ApiError::bad("Conferma l’eliminazione definitiva."));
     }
     read(app, move |app| {
-        let sessions =
-            app.inventory
-                .project(app, ProviderKind::Codex, &key, |app, _, project| {
-                    if let Some(reason) = ProjectView::new(app, project).removal_reason {
-                        return Err(ApiError::conflict(reason));
-                    }
-                    Ok(project
-                        .sessions
-                        .sessions()
-                        .map(|row| row.identity.clone())
-                        .collect::<Vec<_>>())
-                })??;
-        let mut removed = 0;
-        let mut errors = Vec::new();
-        for session in &sessions {
-            match app.codex.delete_session(session) {
-                Ok(outcome) => {
-                    removed += 1;
-                    errors.extend(outcome.errors.into_iter().map(|error| {
-                        format!(
-                            "{}: pulizia aggiuntiva incompleta. {error}",
-                            session.native_id
-                        )
-                    }));
-                }
-                Err(error) => {
-                    errors.push(format!("{}: {error}", session.native_id));
-                    break;
-                }
-            }
-        }
+        let outcome = confirm_codex(app, key, true, request.review)?;
         app.inventory.invalidate(ProviderKind::Codex);
-        Ok(result(
-            removed,
-            format!(
-                "Codex ha confermato {} operazioni su {}.",
-                removed,
-                sessions.len()
-            ),
-            errors,
-        ))
+        Ok(outcome)
     })
     .await
 }

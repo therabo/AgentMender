@@ -335,7 +335,7 @@ struct RelationshipHeader {
 #[cfg(target_os = "macos")]
 #[derive(serde::Deserialize)]
 pub(super) struct RelationshipMeta {
-    id: String,
+    pub id: String,
     cli_version: String,
     source: Option<SourceValue>,
     pub session_id: Option<String>,
@@ -383,7 +383,7 @@ impl RelationshipMeta {
 pub(super) fn relationship_header(
     file: &fs::File,
     path: &Path,
-    id: &str,
+    id: Option<&str>,
     end: Instant,
 ) -> Result<RelationshipMeta, ProviderError> {
     let header: RelationshipHeader =
@@ -391,7 +391,8 @@ pub(super) fn relationship_header(
             .map_err(|_| unavailable())?;
     let meta = header.payload;
     if header.kind != "session_meta"
-        || meta.id != id
+        || !agentmender_domain::canonical_uuid(&meta.id)
+        || id.is_some_and(|id| meta.id != id)
         || meta.cli_version.is_empty()
         || meta.cli_version.len() > 128
         || [

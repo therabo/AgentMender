@@ -10,14 +10,8 @@ const reasons: Record<string, string> = {
   unverified_fork: 'Relazione con la sessione di origine non verificata',
   missing_identity: 'Identità della sessione non verificata',
   invalid_records: 'Record malformati o incompleti',
-  scan_limit: 'Limiti di scansione',
   malformed_record: 'Record malformati',
   unterminated_record: 'Riga finale incompleta',
-  record_size: 'Dimensione massima del record',
-  byte_limit: 'Limite di byte',
-  line_limit: 'Limite di righe',
-  time_limit: 'Limite di tempo',
-  metadata_limit: 'Limite dei metadati',
 }
 
 const surfaces: Record<string, string> = {
@@ -31,7 +25,7 @@ function Counts({ rows }: { rows: [string, number][] }) {
 }
 
 export function ClaudeDiagnostics({ discovery, incomplete }: { discovery: ClaudeDiscovery; incomplete: boolean }) {
-  const { transcripts, desktop, projects_incomplete, entry_limit_reached, out_of_scope } = discovery.reconciliation
+  const { transcripts, desktop, projects_incomplete, out_of_scope } = discovery.reconciliation
   const localStatus = incomplete
     ? 'Inventario locale parziale.'
     : discovery.roots.some(root => root.projects_access === 'available')
@@ -80,7 +74,6 @@ export function ClaudeDiagnostics({ discovery, incomplete }: { discovery: Claude
     <section aria-label="Fonti locali">
       <h3>Root e installazioni</h3>
       {projects_incomplete && <p>Enumerazione delle root dei progetti parziale.</p>}
-      {entry_limit_reached && <p>Raggiunto il limite di elementi della scansione.</p>}
       <ul className="claude-artifacts">
         {discovery.roots.map((root, index) => <li key={index}>
           <code>{pathLabel(root.path)}</code>

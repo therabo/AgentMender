@@ -112,6 +112,19 @@ it('pages and opens Recenti with the current archive filters', async () => {
   }
 })
 
+function mockModal() {
+  const prototype = HTMLDialogElement.prototype
+  const original = Object.getOwnPropertyDescriptor(prototype, 'showModal')
+  Object.defineProperty(prototype, 'showModal', {
+    configurable: true,
+    value(this: HTMLDialogElement) { this.open = true },
+  })
+  return () => {
+    if (original) Object.defineProperty(prototype, 'showModal', original)
+    else Reflect.deleteProperty(prototype, 'showModal')
+  }
+}
+
 it('previews all Claude artifacts and submits one reviewed confirmation', async () => {
   const session: Session = {
     key: 'session', native_id: 'selected-uuid', title: 'Pulizia Claude', provider: 'claude',
@@ -127,12 +140,7 @@ it('previews all Claude artifacts and submits one reviewed confirmation', async 
       logical_bytes: 512, history_matches: 2, notes: [],
     } }))
     .mockResolvedValueOnce(Response.json({ status: 'deleted', message: 'Eliminazione completata.', errors: [] }))
-  const prototype = HTMLDialogElement.prototype
-  const original = Object.getOwnPropertyDescriptor(prototype, 'showModal')
-  Object.defineProperty(prototype, 'showModal', {
-    configurable: true,
-    value(this: HTMLDialogElement) { this.open = true },
-  })
+  const restoreModal = mockModal()
   const onChange = vi.fn()
   try {
     render(<SessionDetail provider="claude" rowKey="session" onClose={vi.fn()} onChange={onChange} />)
@@ -149,8 +157,39 @@ it('previews all Claude artifacts and submits one reviewed confirmation', async 
     expect(fetch.mock.calls[2][1]?.body).toBe(JSON.stringify({ confirm: true, review: 'review-ticket' }))
     expect(onChange).toHaveBeenCalledOnce()
   } finally {
-    if (original) Object.defineProperty(prototype, 'showModal', original)
-    else Reflect.deleteProperty(prototype, 'showModal')
+    restoreModal()
+    fetch.mockRestore()
+  }
+})
+
+it('shows Codex descendants and binds one confirmation to the reviewed tree', async () => {
+  const session: Session = {
+    key: 'codex-root', native_id: 'root-id', title: 'Sessione padre', provider: 'codex',
+    project: null, workspace: null, created_at: null, last_active_at: null, transcript_bytes: 512,
+    state: 'active', kind: 'main', protected: false, removal_reason: null,
+  }
+  const fetch = vi.spyOn(globalThis, 'fetch')
+    .mockResolvedValueOnce(Response.json({ session, conversation_preview: false }))
+    .mockResolvedValueOnce(Response.json({ review: 'tree-review', plan: { trees: [{ id: 'root-id', descendants: [
+      { id: 'child-id', parent: 'root-id', archived: true, present: true, depth: 1 },
+      { id: 'grandchild-id', parent: 'child-id', archived: false, present: true, depth: 2 },
+    ] }] } }))
+    .mockResolvedValueOnce(Response.json({ status: 'partial', message: '2 sessioni eliminate.', errors: ['grandchild-id: ancora presente'] }))
+  const restoreModal = mockModal()
+  const onChange = vi.fn()
+  try {
+    render(<SessionDetail provider="codex" rowKey="codex-root" onClose={vi.fn()} onChange={onChange} />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Elimina sessione' }))
+    expect(await screen.findByText('2 discendenti verificati')).toBeTruthy()
+    expect(screen.getByRole('list', { name: 'Discendenti delle sessioni Codex' }).textContent).toContain('Archiviata')
+    expect(screen.getByText('grandchild-id')).toBeTruthy()
+    expect(fetch.mock.calls[1][0]).toBe('/api/codex/sessions/codex-root/removal-preview')
+    fireEvent.click(screen.getByRole('button', { name: /^Elimina$/ }))
+    expect(await screen.findByText('grandchild-id: ancora presente')).toBeTruthy()
+    expect(fetch.mock.calls[2][1]?.body).toBe(JSON.stringify({ confirm: true, review: 'tree-review' }))
+    expect(onChange).toHaveBeenCalledOnce()
+  } finally {
+    restoreModal()
     fetch.mockRestore()
   }
 })

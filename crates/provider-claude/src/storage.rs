@@ -13,7 +13,7 @@ use std::{
     fs,
     io::Read,
     path::{Path, PathBuf},
-    time::{Duration, Instant},
+    time::Instant,
 };
 
 #[cfg(target_os = "macos")]
@@ -114,12 +114,10 @@ fn directory_access(path: &Path) -> Access {
     }
 }
 
-pub(crate) struct Budget {
-    pub(crate) bytes: u64,
+#[derive(Default)]
+pub(crate) struct DirectoryScan {
     pub(crate) issues: usize,
-    pub(crate) deadline: Instant,
-    entries: usize,
-    pub(crate) entry_limit_reached: bool,
+    limit: Option<(usize, Instant)>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -134,14 +132,11 @@ pub(crate) struct Entry {
     pub(crate) kind: EntryKind,
 }
 
-impl Budget {
-    pub(crate) fn new(entries: usize) -> Self {
+impl DirectoryScan {
+    pub(crate) fn bounded(entries: usize, deadline: Instant) -> Self {
         Self {
-            bytes: 256 * 1024 * 1024,
             issues: 0,
-            deadline: Instant::now() + Duration::from_secs(10),
-            entries,
-            entry_limit_reached: false,
+            limit: Some((entries, deadline)),
         }
     }
 
@@ -149,16 +144,12 @@ impl Budget {
         self.issues += 1;
     }
 
-    pub(crate) fn expired(&mut self) -> bool {
-        let expired = Instant::now() >= self.deadline;
-        if expired {
-            self.mark();
-        }
-        expired
-    }
-
     pub(crate) fn list(&mut self, path: &Path) -> Vec<Entry> {
-        if self.expired() {
+        if self
+            .limit
+            .is_some_and(|(_, deadline)| Instant::now() >= deadline)
+        {
+            self.mark();
             return Vec::new();
         }
         match fs::symlink_metadata(path) {
@@ -175,15 +166,13 @@ impl Budget {
         };
         let mut result = Vec::new();
         for entry in entries {
-            if self.entries == 0 {
-                self.entry_limit_reached = true;
-                self.mark();
-                break;
+            if let Some((remaining, deadline)) = &mut self.limit {
+                if *remaining == 0 || Instant::now() >= *deadline {
+                    self.mark();
+                    break;
+                }
+                *remaining -= 1;
             }
-            if self.expired() {
-                break;
-            }
-            self.entries -= 1;
             let Ok(entry) = entry else {
                 self.mark();
                 continue;
@@ -246,18 +235,11 @@ fn valid_desktop_id(id: &str) -> bool {
 }
 
 fn desktop_record(root: &Path, path: &Path) -> Option<(DesktopRecord, ArtifactLocation)> {
-    let mut file = filesystem::open_observed_read(root, path).ok()?;
+    let file = filesystem::open_observed_read(root, path).ok()?;
     let revision = Revision::read(&file, path).ok()?;
-    if revision.bytes > 256 * 1024 {
-        return None;
-    }
-    let mut data = Vec::new();
-    (&mut file)
-        .take(revision.bytes.saturating_add(1))
-        .read_to_end(&mut data)
-        .ok()?;
+    let record: DesktopRecord =
+        serde_json::from_reader(std::io::BufReader::new(file.take(revision.bytes))).ok()?;
     verify(root, path, &revision).ok()?;
-    let record: DesktopRecord = serde_json::from_slice(&data).ok()?;
     (valid_desktop_id(&record.session_id)
         && record.cli_session_id.as_deref().is_none_or(uuid_shape)
         && path.file_stem().and_then(|s| s.to_str()) == Some(record.session_id.as_str()))
@@ -300,7 +282,7 @@ impl DesktopRegistry {
 
 pub(crate) fn desktop_states(
     desktop_roots: &[super::DesktopContext],
-    budget: &mut Budget,
+    scan: &mut DirectoryScan,
 ) -> DesktopRegistry {
     let mut observed = DesktopRegistry::default();
     let mut records = BTreeMap::new();
@@ -311,19 +293,19 @@ pub(crate) fn desktop_states(
             Access::Available => directory_access(&registry),
             access => access,
         };
-        let original_issues = budget.issues;
+        let original_issues = scan.issues;
         let original_registrations = observed.report.registrations;
         let profiles = match access {
-            Access::Available => budget.list(&registry),
+            Access::Available => scan.list(&registry),
             Access::Missing => Vec::new(),
             Access::Unavailable => {
-                budget.mark();
+                scan.mark();
                 Vec::new()
             }
         };
         for profile in profiles.into_iter().filter(uuid_dir) {
-            for account in budget.list(&profile.path).into_iter().filter(uuid_dir) {
-                for item in budget.list(&account.path) {
+            for account in scan.list(&profile.path).into_iter().filter(uuid_dir) {
+                for item in scan.list(&account.path) {
                     if item
                         .path
                         .extension()
@@ -349,17 +331,17 @@ pub(crate) fn desktop_states(
                                 .insert(record.session_id.clone(), (record, account, artifact))
                                 .is_some()
                             {
-                                budget.mark();
+                                scan.mark();
                             }
                         } else {
                             observed.report.unreadable_records += 1;
-                            budget.mark();
+                            scan.mark();
                         }
                     }
                 }
             }
         }
-        let incomplete = access == Access::Unavailable || original_issues != budget.issues;
+        let incomplete = access == Access::Unavailable || original_issues != scan.issues;
         observed.report.incomplete |= incomplete;
         observed.report.roots.push(RegistryRoot {
             path: registry,

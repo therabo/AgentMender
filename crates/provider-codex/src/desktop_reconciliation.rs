@@ -124,7 +124,7 @@ const OPEN_FLAGS: OpenFlags =
 
 fn open_writer(path: &Path) -> rusqlite::Result<Connection> {
     let db = Connection::open_with_flags(path, OPEN_FLAGS | OpenFlags::SQLITE_OPEN_READ_WRITE)?;
-    db.busy_timeout(Duration::ZERO)?;
+    db.busy_timeout(Duration::from_secs(5))?;
     db.set_db_config(DbConfig::SQLITE_DBCONFIG_TRUSTED_SCHEMA, false)?;
     // Leave checkpointing and WAL/SHM cleanup to Desktop.
     db.set_db_config(DbConfig::SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE, true)?;
@@ -484,6 +484,30 @@ mod tests {
         }
         let db = Connection::open(path).unwrap();
         assert_eq!(local_state(&db), (42.5, 1, 7, Some(123)));
+    }
+
+    #[test]
+    fn waits_for_a_temporarily_busy_catalog() {
+        let root = root();
+        let (path, mut db) = catalog(root.path(), "codex.db");
+        insert_entry(&db, "local", ID);
+        let writer = db
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .unwrap();
+        std::thread::scope(|scope| {
+            let cleanup = scope.spawn(|| clean(root.path()));
+            std::thread::sleep(Duration::from_millis(200));
+            writer.commit().unwrap();
+            assert!(cleanup.join().unwrap().is_empty());
+        });
+        assert_eq!(local_state(&db), (42.5, 1, 8, None));
+        let connection = open_writer(&path).unwrap();
+        assert_eq!(
+            connection
+                .pragma_query_value(None, "busy_timeout", |row| row.get::<_, i64>(0))
+                .unwrap(),
+            5000
+        );
     }
 
     #[test]

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { FileText, ShieldCheck, Trash2 } from 'lucide-react'
-import { projectPath, request, sessionPath, type ClaudeReview, type ClaudeStorage, type DeletionResult, type Detail, type Project, type Provider, type Transcript } from './api'
+import { projectPath, request, sessionPath, type ClaudeReview, type CodexReview, type ClaudeStorage, type DeletionResult, type Detail, type Project, type Provider, type Transcript } from './api'
 import { CloseButton, Dialog, Empty, Notice, SessionStatus } from './components'
 import { claudeCategories, claudeOwnership, claudeWriter, dateLabel, kindLabel, numberLabel, pathLabel, providerLabel, sizeLabel } from './format'
 
@@ -151,23 +151,53 @@ function DeleteConfirmation({ busy, onCancel, onDelete }: { busy: boolean; onCan
   </>
 }
 
+function CodexTargets({ plan }: { plan: CodexReview['plan'] }) {
+  const count = plan.trees.reduce((total, tree) => total + tree.descendants.length, 0)
+  if (count === 0) return null
+  return <>
+    <p>{numberLabel(count)} {count === 1 ? 'discendente verificato' : 'discendenti verificati'}</p>
+    <ul className="claude-artifacts removal-targets" tabIndex={0} aria-label="Discendenti delle sessioni Codex">
+      {plan.trees.flatMap(tree => tree.descendants.map(child => <li key={child.id}>
+        <code>{child.id}</code>
+        <span>Livello {numberLabel(child.depth)} · Padre <code>{child.parent}</code>
+          {child.archived && ' · Archiviata'}{!child.present && ' · Nessun transcript o record presente'}</span>
+      </li>))}
+    </ul>
+  </>
+}
+
 export function ProjectRemoval({ project, onClose, onChange }: {
   project: Project; onClose: () => void; onChange: () => void
 }) {
-  const removal = useDeletion(projectPath(project.provider, project.key), onChange)
+  const path = projectPath(project.provider, project.key)
+  const [review, setReview] = useState<CodexReview>()
+  const [error, setError] = useState('')
+  const removal = useDeletion(path, onChange)
+  useEffect(() => {
+    const controller = new AbortController()
+    request<CodexReview>(`${path}/removal-preview`, { method: 'POST', signal: controller.signal })
+      .then(setReview).catch(failure => {
+        if (!controller.signal.aborted) setError(errorText(failure))
+      })
+    return () => controller.abort()
+  }, [path])
   return <Dialog onClose={onClose} label="project-removal-title">
     <header className="drawer-header"><span>Eliminazione delle sessioni del progetto</span><CloseButton onClose={onClose} /></header>
     <div className="detail-body">
       <h2 id="project-removal-title">{project.name}</h2>
-      <p>Codex eliminerà {numberLabel(project.main_conversations)} conversazioni principali del progetto.</p>
-      <RemovalResult {...removal} />
-      {!removal.result && <DeleteConfirmation busy={removal.busy} onCancel={onClose} onDelete={() => void removal.remove()} />}
+      <RemovalResult result={removal.result} error={error || removal.error} />
+      {!review && !error && <p role="status">Caricamento anteprima…</p>}
+      {review && !removal.result && <>
+        <p>Codex eliminerà {numberLabel(review.plan.trees.length)} conversazioni principali del progetto e i relativi discendenti verificati.</p>
+        <CodexTargets plan={review.plan} />
+        <DeleteConfirmation busy={removal.busy} onCancel={onClose} onDelete={() => void removal.remove(review.review)} />
+      </>}
     </div>
   </Dialog>
 }
 
 function SessionRemoval({ path, detail, onChange }: { path: string; detail: Detail; onChange: () => void }) {
-  const [review, setReview] = useState<ClaudeReview>()
+  const [review, setReview] = useState<ClaudeReview | CodexReview>()
   const [confirming, setConfirming] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -177,13 +207,9 @@ function SessionRemoval({ path, detail, onChange }: { path: string; detail: Deta
 
   async function prepare() {
     setError('')
-    if (!isClaude) {
-      setConfirming(true)
-      return
-    }
     setLoading(true)
     try {
-      setReview(await request<ClaudeReview>(`${path}/removal-preview`, {
+      setReview(await request<ClaudeReview | CodexReview>(`${path}/removal-preview`, {
         method: 'POST',
       }))
       setConfirming(true)
@@ -204,9 +230,10 @@ function SessionRemoval({ path, detail, onChange }: { path: string; detail: Deta
       </button>
     </div>}
     {confirming && !removal.result && <>
-      {review && <>
+      {review && 'trees' in review.plan && <CodexTargets plan={review.plan} />}
+      {review && 'files' in review.plan && <>
         <p>{numberLabel(review.plan.files.length)} file · {numberLabel(review.plan.directories.length)} directory · {sizeLabel(review.plan.logical_bytes)}</p>
-        <ul className="claude-artifacts claude-removal-targets" tabIndex={0} aria-label="File e directory da eliminare">
+        <ul className="claude-artifacts removal-targets" tabIndex={0} aria-label="File e directory da eliminare">
           {review.plan.directories.map(directory => <li key={JSON.stringify([directory.root, directory.relative_path])}>
             <code>{pathLabel(directory.relative_path)}/</code><span>{pathLabel(directory.root)}</span>
           </li>)}

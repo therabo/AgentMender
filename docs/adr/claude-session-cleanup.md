@@ -10,15 +10,15 @@ loopback UI. A single explicit confirmation identifies the selected session
 by its opaque catalog key. The provider resolves the paths from the archive
 and session identity.
 
-- Codex runs the installed `codex delete <UUID> --force` command in the selected
-  archive. After success it filters the exact UUID from `history.jsonl` and
-  `session_index.jsonl`, removes the local thread from recognized Desktop
-  catalogs, prunes thread references in both Desktop state files when present,
-  then requests sidebar reconciliation. A catalog write records the scan
-  tombstone and advances the observation sequence and catalog revision.
-  Native success with an auxiliary error is reported as partial. Project
-  deletion of conversations uses the same flow serially for each verified
-  member.
+- Codex builds the graph in the read-only worker from native spawn and
+  attachment relations and verified rollout headers. A single receipt binds
+  the reviewed roots and descendants. After rechecking the graph, the
+  provider runs native deletion on the selected roots. It verifies the
+  remaining descendants and runs the same command deepest first. A root
+  refused because of linked children is retried after those children are
+  gone. Each verified deletion applies the scoped JSONL, Desktop SQLite and
+  Desktop JSON cleanup. Unverified or remaining UUIDs are reported.
+  Projects use the same workflow for the verified main conversations.
 - Claude previews the main transcript, every entry in its session directory,
   recognized sidecars, and associated Desktop and UUID-only artifacts. The
   latter include checkpoints. The preview walks the scoped trees iteratively
@@ -38,7 +38,8 @@ groups use the existing export workflow and its own confirmation.
 ## Consequences
 
 Writers can recreate files or change history during an attempt. The UI reports
-partial results and refreshes inventory after each attempt. Bounded inventory
-and storage diagnostics remain independent of the Claude deletion preview.
+partial results and refreshes inventory after each attempt. Claude inventory
+walks recognized locations and reads complete transcripts. Conversation
+preview and storage diagnostics keep separate bounds.
 
 [Session Steward reference at ac80fc3](https://github.com/mallikcheripally/session-steward/tree/ac80fc31f7977a00c80f5be22841a6049bb0bcf1).

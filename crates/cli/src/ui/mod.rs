@@ -47,6 +47,7 @@ struct App {
     claude: ClaudeAdapter,
     limit: usize,
     protected: Vec<String>,
+    codex_review: Mutex<Option<removal::CodexReview>>,
     inventory: Inventories,
     discovery: Discovery,
     exports: Mutex<storage::ExportState>,
@@ -340,6 +341,14 @@ fn router(app: Arc<App>) -> Router {
             "/api/{provider}/projects/{key}/sessions",
             get(project_sessions),
         )
+        .route(
+            "/api/codex/projects/{key}/removal-preview",
+            post(removal::codex_project_preview),
+        )
+        .route(
+            "/api/codex/sessions/{key}/removal-preview",
+            post(removal::codex_session_preview),
+        )
         .route("/api/codex/projects/{key}/delete", post(removal::project))
         .route("/api/codex/recents", get(recents))
         .route("/api/{provider}/sessions", get(list))
@@ -406,6 +415,7 @@ pub(super) fn run(config: Configuration) -> Result<(), String> {
             claude: config.claude,
             limit: config.limit,
             protected: config.protected,
+            codex_review: Mutex::default(),
             inventory: Inventories::default(),
             cursors: Mutex::default(),
             reads: Arc::new(Semaphore::new(8)),

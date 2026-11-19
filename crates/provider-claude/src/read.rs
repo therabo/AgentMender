@@ -81,7 +81,6 @@ pub(crate) struct Lines<'a> {
     reader: BufReader<Take<&'a mut File>>,
     line: Vec<u8>,
     pub(crate) offset: u64,
-    pub(crate) end: u64,
 }
 
 impl<'a> Lines<'a> {
@@ -91,7 +90,6 @@ impl<'a> Lines<'a> {
             reader: BufReader::with_capacity(32 * 1024, file.take(end - start)),
             line: Vec::new(),
             offset: start,
-            end,
         })
     }
 

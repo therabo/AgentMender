@@ -2,6 +2,8 @@
 #[cfg(target_os = "macos")]
 mod inventory;
 #[cfg(target_os = "macos")]
+mod lineage;
+#[cfg(target_os = "macos")]
 mod projects;
 
 pub use agentmender_domain::TranscriptMessage;
@@ -22,6 +24,7 @@ use std::{
     sync::mpsc,
     time::Duration,
 };
+use uuid::Uuid;
 
 const MAX_REQUEST: usize = 64 * 1024;
 const MAX_OUTPUT: usize = 128 * 1024;
@@ -88,6 +91,29 @@ struct InventoryPage {
     incomplete: bool,
 }
 
+#[derive(Clone, Serialize, Deserialize)]
+pub(super) enum LineageFact {
+    Present { id: Uuid, archived: bool },
+    Edge { parent: Uuid, child: Uuid },
+    Uncertain(Uuid),
+}
+
+#[derive(Serialize, Deserialize)]
+struct LineagePage {
+    facts: Vec<LineageFact>,
+    next: Option<usize>,
+}
+
+#[cfg(target_os = "macos")]
+fn lineage_page(facts: &[LineageFact], offset: usize) -> Result<Response, ProviderError> {
+    let end = offset.saturating_add(PAGE_ROWS).min(facts.len());
+    let page = facts.get(offset..end).ok_or_else(stale)?.to_vec();
+    Ok(Response::Lineage(LineagePage {
+        facts: page,
+        next: (end < facts.len()).then_some(end),
+    }))
+}
+
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Request {
@@ -109,6 +135,9 @@ enum Operation {
         cursor: Option<Box<TranscriptCursor>>,
     },
     ProjectCatalog,
+    Lineage {
+        offset: usize,
+    },
 }
 
 #[derive(Serialize, Deserialize)]
@@ -118,6 +147,7 @@ enum Response {
     Inventory(InventoryPage),
     Transcript(TranscriptPage),
     ProjectCatalog(ProjectCatalog),
+    Lineage(LineagePage),
 }
 
 pub(super) fn unavailable() -> ProviderError {
@@ -135,9 +165,19 @@ struct Snapshot {
 }
 
 #[cfg(target_os = "macos")]
-fn observe(request: &Request, resident: &mut Option<Snapshot>) -> Result<Response, ProviderError> {
+fn observe(
+    request: &Request,
+    resident: &mut Option<Snapshot>,
+    lineage: &mut Vec<LineageFact>,
+) -> Result<Response, ProviderError> {
     use crate::{reader, snapshot};
     use std::time::Instant;
+
+    if let Operation::Lineage { offset } = request.operation
+        && offset != 0
+    {
+        return lineage_page(lineage, offset);
+    }
 
     let end = Instant::now() + Duration::from_secs(8);
     let root = &request.source_root;
@@ -160,6 +200,10 @@ fn observe(request: &Request, resident: &mut Option<Snapshot>) -> Result<Respons
                 &inventory::layout(&db)?,
                 revision,
             ))
+        }
+        Operation::Lineage { .. } => {
+            *lineage = lineage::read(&db, root)?;
+            lineage_page(lineage, 0)?
         }
         Operation::Transcript { identity, cursor } => {
             let candidate = inventory::exact(&db, root, &identity.native_id, end)?;
@@ -213,6 +257,7 @@ pub fn run_worker() -> Result<(), ProviderError> {
         let mut output = std::io::stdout().lock();
         let mut paths = None;
         let mut resident = None;
+        let mut lineage = Vec::new();
         loop {
             let mut bytes = Vec::new();
             if input
@@ -245,7 +290,7 @@ pub fn run_worker() -> Result<(), ProviderError> {
                 return Err(unavailable());
             }
             paths.get_or_insert_with(|| (current.0.clone(), current.1.clone(), current.2.clone()));
-            let response = match observe(&request, &mut resident) {
+            let response = match observe(&request, &mut resident, &mut lineage) {
                 Ok(response) => response,
                 Err(ProviderError::InvalidScope(reason)) if reason == "stale_codex_source" => {
                     Response::Stale
@@ -327,6 +372,11 @@ impl Connection {
         {
             return Err(unavailable());
         }
+        let timeout = if matches!(operation, Operation::Lineage { offset: 0 }) {
+            Duration::from_secs(60)
+        } else {
+            Duration::from_secs(12)
+        };
         let request = Request {
             source_root: self.sandbox.source_root().into(),
             private_root: self.sandbox.path().into(),
@@ -341,7 +391,7 @@ impl Connection {
         self.input.try_send(bytes).map_err(|_| unavailable())?;
         let bytes = self
             .output
-            .recv_timeout(Duration::from_secs(12))
+            .recv_timeout(timeout)
             .map_err(|_| unavailable())?
             .map_err(|_| unavailable())?;
         serde_json::from_slice(&bytes).map_err(|_| unavailable())
@@ -352,6 +402,14 @@ impl CodexAdapter {
     fn observe(&self, operation: Operation) -> Result<Response, ProviderError> {
         validate_location(&self.location)?;
         let mut slot = self.connection.lock().map_err(|_| unavailable())?;
+        self.call_worker(&mut slot, operation)
+    }
+
+    fn call_worker(
+        &self,
+        slot: &mut Option<Connection>,
+        operation: Operation,
+    ) -> Result<Response, ProviderError> {
         if slot.is_none() {
             *slot = Some(Connection::start(self)?);
         }
@@ -363,6 +421,30 @@ impl CodexAdapter {
             Response::Unavailable => Err(unavailable()),
             Response::Stale => Err(stale()),
             response => Ok(response),
+        }
+    }
+
+    pub(super) fn lineage(&self) -> Result<Vec<LineageFact>, ProviderError> {
+        validate_location(&self.location)?;
+        // Keep the read connection reserved until every page of the same observation is read.
+        let mut slot = self.connection.lock().map_err(|_| unavailable())?;
+        let mut facts = Vec::new();
+        let mut offset = 0;
+        loop {
+            let Response::Lineage(page) =
+                self.call_worker(&mut slot, Operation::Lineage { offset })?
+            else {
+                return Err(unavailable());
+            };
+            if page.facts.len() > PAGE_ROWS {
+                return Err(unavailable());
+            }
+            facts.extend(page.facts);
+            match page.next {
+                Some(next) if next == facts.len() && next > offset => offset = next,
+                Some(_) => return Err(unavailable()),
+                None => return Ok(facts),
+            }
         }
     }
 

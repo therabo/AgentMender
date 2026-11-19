@@ -97,7 +97,7 @@ fn late_titles_dates_and_opaque_pages_ignore_sensitive_and_non_conversational_pa
     drop(file);
 
     let reader = adapter(&root);
-    let catalog = reader.local_catalog(100);
+    let catalog = reader.local_catalog();
     assert_eq!(catalog.inventory.sessions.len(), 1);
     let session = &catalog.inventory.sessions[0];
     let evidence = &catalog.evidence[&session.identity];
@@ -149,7 +149,7 @@ fn late_titles_dates_and_opaque_pages_ignore_sensitive_and_non_conversational_pa
 }
 
 #[test]
-fn sparse_oversized_line_retains_a_bounded_tail_and_resumable_preview() {
+fn inventory_reads_large_transcripts_and_keeps_preview_bounded() {
     let (_fixture, root) = fixture();
     let path = transcript(&root, "atlas", MAIN);
     let mut file = File::create(path).unwrap();
@@ -163,7 +163,7 @@ fn sparse_oversized_line_retains_a_bounded_tail_and_resumable_preview() {
     write(&file, &user(MAIN, json!("Tail message")));
     drop(file);
     let reader = adapter(&root);
-    let catalog = reader.local_catalog(100);
+    let catalog = reader.local_catalog();
     let session = &catalog.inventory.sessions[0];
     let evidence = &catalog.evidence[&session.identity];
     assert_eq!(session.title.as_deref(), Some("Tail title"));
@@ -173,7 +173,7 @@ fn sparse_oversized_line_retains_a_bounded_tail_and_resumable_preview() {
             .reconciliation
             .transcripts
             .partial_reasons
-            .get(&ScanIssue::ByteLimit),
+            .get(&ScanIssue::MalformedRecord),
         Some(&1)
     );
     let mut cursor = None;
@@ -245,7 +245,7 @@ fn corroborated_desktop_fork_and_subagent_stay_outside_main_inventory() {
         vec![],
     )
     .unwrap();
-    let catalog = reader.local_catalog(100);
+    let catalog = reader.local_catalog();
     let main: Vec<_> = catalog
         .inventory
         .sessions
@@ -302,7 +302,7 @@ fn duplicate_uuid_uses_scoped_namespace_and_root_and_candidates_cannot_grant_rem
         vec![],
     )
     .unwrap();
-    let catalog = reader.local_catalog(100);
+    let catalog = reader.local_catalog();
     assert_eq!(catalog.inventory.sessions.len(), 3);
     assert_eq!(catalog.inventory.projects.len(), 3);
     let row = catalog
@@ -337,31 +337,43 @@ fn links_and_hardlinks_are_never_admitted_as_transcripts() {
     #[cfg(unix)]
     {
         std::os::unix::fs::symlink(&real, &alias).unwrap();
-        assert_eq!(reader.local_catalog(100).inventory.sessions.len(), 1);
+        assert_eq!(reader.local_catalog().inventory.sessions.len(), 1);
         fs::remove_file(&alias).unwrap();
     }
     fs::hard_link(&real, &alias).unwrap();
-    let observation = reader.local_catalog(100).inventory;
+    let observation = reader.local_catalog().inventory;
     assert!(observation.sessions.is_empty());
     assert!(observation.incomplete);
 }
 
 #[test]
-fn line_and_entry_limits_are_reported_without_inventing_sessions() {
+fn inventory_covers_large_namespaces_and_reads_identity_beyond_the_old_line_limit() {
     let (_fixture, root) = fixture();
     let path = transcript(&root, "atlas", MAIN);
     let mut file = File::create(path).unwrap();
-    write(&file, &user(MAIN, json!("A real conversation")));
     file.write_all(&vec![b'\n'; 100_050]).unwrap();
-    drop(file);
+    write(&file, &user(MAIN, json!("A real conversation")));
+    let namespace = root.join("projects/atlas");
+    for index in 0..8200 {
+        File::create(namespace.join(format!("auxiliary-{index}.meta"))).unwrap();
+    }
+    let extra = "12345678-1234-4123-8123-123456789999";
+    let last = transcript(&root, "z-last", extra);
+    write(
+        &File::create(last).unwrap(),
+        &user(extra, json!("Last conversation")),
+    );
     let reader = adapter(&root);
-    let catalog = reader.local_catalog(100);
-    let report = &catalog.reconciliation.transcripts;
-    assert_eq!(report.main, 1);
-    assert_eq!(report.unclassified, 0);
-    assert_eq!(report.partial_reasons.get(&ScanIssue::LineLimit), Some(&1));
-    let limited = reader.local_catalog(1);
-    assert!(limited.reconciliation.projects_incomplete);
-    assert!(limited.reconciliation.entry_limit_reached);
-    assert!(limited.inventory.sessions.is_empty());
+    let catalog = reader.local_catalog();
+    assert_eq!(catalog.reconciliation.transcripts.main, 2);
+    assert_eq!(catalog.reconciliation.transcripts.unclassified, 0);
+    assert!(
+        catalog
+            .reconciliation
+            .transcripts
+            .partial_reasons
+            .is_empty()
+    );
+    assert!(!catalog.reconciliation.projects_incomplete);
+    assert!(!catalog.inventory.incomplete);
 }

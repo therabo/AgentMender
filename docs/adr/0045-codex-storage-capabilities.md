@@ -14,6 +14,7 @@ databases. After success the Codex adapter cleans the selected UUID from the
 local JSONL indexes and supported Desktop stores. The Desktop writer uses
 fixed statements on the two recognized catalog paths. The local thread,
 scan tombstone and revision counters change atomically in each catalog.
+Catalog writes wait up to five seconds for contention.
 AgentMender requests sidebar reconciliation after cleaning Desktop JSON
 state. [ADR 0046](claude-session-cleanup.md) defines the complete session
 workflow. Validate the release with the disposable native fixture.

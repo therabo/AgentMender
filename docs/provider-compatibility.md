@@ -22,17 +22,26 @@ plays no part in classification.
 
 ## Codex native removal
 
-AgentMender invokes `codex delete <UUID> --force` for the selected local
-session and shows the executable's result. Available versions are determined
-by whether the installed command can execute successfully. Codex owns the
-native deletion of transcripts and provider-managed data.
+The deletion preview builds the verified descendant graph in the confined
+macOS worker. It combines spawn edges, attachment columns and supported
+relationship metadata in active and archived rollouts. It follows all
+verified levels independently of the browsing inventory. Ordinary fork
+references alone do not establish ownership. Ambiguous relationships or
+protected UUIDs block execution.
 
-On macOS, a successful native command also triggers streaming cleanup of
+The installed `codex delete <UUID> --force` first targets the selected parent.
+AgentMender checks what remains, targets remaining descendants deepest first
+and retries a parent refused because of linked children after those children
+are verified absent. Results count only UUIDs verified absent from the local
+thread database and recognized rollouts.
+
+Each verified removal also triggers streaming cleanup of
 `history.jsonl` and `session_index.jsonl` in the selected archive. AgentMender
 removes the local UUID from recognized Desktop catalogs in `sqlite/codex.db`
 and `sqlite/codex-dev.db`, writes the scan tombstone, increments the observation
 sequence and catalog revision, and requests sidebar reconciliation when the
-catalog has a full-reconciliation marker. It removes references in the five
+catalog has a full-reconciliation marker. Desktop writes wait up to five seconds
+for a busy database. It removes references in the five
 thread-scoped collections in `.codex-global-state.json` and in its existing
 `.bak` counterpart. Project registrations, other hosts and other conversations
 stay in storage. An auxiliary failure produces a partial result and the
@@ -115,10 +124,15 @@ an independent backup.
 | Capability | macOS | Linux | Windows |
 |---|---|---|---|
 | Discovery | CLI, Desktop bundle and bundled Code engine, default and explicit roots | CLI and configuration roots. The version probe requires Bubblewrap | CLI and Win32 candidates, recognized Store/MSIX AppX registration, native and explicit roots |
-| Inventory and preview | Bounded local project JSONL | Bounded local project JSONL | Read-only project JSONL with reparse point, volume and link checks. Native Windows runners are in the CI matrix |
+| Inventory and preview | Complete recognized local project scan with bounded conversation pages | Complete recognized local project scan with bounded conversation pages | Read-only project JSONL with reparse point, volume and link checks. Native Windows runners are in the CI matrix |
 | Storage metadata and preview | Descriptor-relative inventory with observed file blocks | Descriptor-relative inventory with observed file blocks | Reparse-point checks and logical sizes. Allocation is unavailable |
 | Complete deletion | Transcript, full namespace-scoped session directory, known sidecars, associated Desktop registration, `session-env`, `tasks`, `debug` and `file-history` | Read-only | Read-only |
 | Shared history | Streaming replacement under the canonical directory lock, with periodic renewal and exact UUID matching | Read-only | Read-only |
+
+The Claude inventory scans recognized directories and transcript records without
+entry, time, byte or line budgets. Unreadable, changed or invalid records are
+still reported. Conversation preview and storage measurements keep their own
+limits.
 
 Project identity includes the archive root and namespace. Equal UUIDs in
 different namespaces remain distinct. Corroborated Desktop records supply

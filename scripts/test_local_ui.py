@@ -139,7 +139,7 @@ def ui(binary, base, codex_root, claude_root, codex=None, max_entries=None, env_
     if os.name == "nt":
         environment["SystemRoot"] = os.environ["SystemRoot"]
     environment.update(env_overrides or {})
-    command = [str(binary), "--claude-root", str(claude_root), *extra_args, "ui", "--no-open"]
+    command = [str(binary), "--claude-root", str(claude_root), "ui", "--no-open"]
     if codex_root is not None:
         command += ["--codex-root", str(codex_root)]
     if max_entries is not None:
@@ -149,6 +149,7 @@ def ui(binary, base, codex_root, claude_root, codex=None, max_entries=None, env_
         command += ["--codex-executable", str(codex), "--protect-codex-session", probe.S]
     else:
         command += ["--codex-executable", str(base / "missing-codex")]
+    command.extend(extra_args)
     proc = subprocess.Popen(command, env=environment, stdout=subprocess.PIPE, text=True)
     try:
         if os.name != "nt":
@@ -614,18 +615,165 @@ def codex_desktop_catalog(root):
     database.unlink()
 
 
+def codex_reviewed_delete(client, path, review=None):
+    review = review or client.call("POST", path + "/removal-preview")["review"]
+    return client.call("POST", path + "/delete", {"confirm": True, "review": review})
+
+
+def codex_fixture_executable(root, rules=None):
+    """Native-command double that mutates only the isolated fixture archive."""
+    rules = rules or {}
+    (root / "fixture-rules.json").write_text(json.dumps(rules))
+    executable = root / "codex-fixture"
+    executable.write_text(f"""#!/bin/sh
+if [ "$1" = --version ]; then printf 'codex-cli 99.0.0\n'; exit; fi
+exec {shlex.quote(sys.executable)} {shlex.quote(str(root / "native-delete.py"))} "$@"
+""")
+    executable.chmod(0o700)
+    (root / "native-delete.py").write_text('''
+from pathlib import Path
+import json
+import os
+import sqlite3
+import sys
+
+_, option, override, command, ident, flag = sys.argv
+root = Path.cwd()
+assert (option, command, flag) == ("-c", "delete", "--force")
+assert Path(os.environ["CODEX_HOME"]) == root
+assert override == "sqlite_home=" + json.dumps(str(root))
+with (root / "native-calls.jsonl").open("a") as log:
+    print(json.dumps(ident), file=log)
+rules = json.loads((root / "fixture-rules.json").read_text())
+files = rules.get("rollouts", {})
+with sqlite3.connect(root / "state_5.sqlite") as db:
+    def present(id):
+        return db.execute("SELECT 1 FROM threads WHERE id=?", (id,)).fetchone() or (
+            id in files and (root / files[id]).is_file())
+    blocker = next((child for child in rules.get("blocks", {}).get(ident, []) if present(child)), None)
+    if blocker:
+        sys.exit(f"cannot delete thread while attached thread {blocker} exists; delete the attached thread first")
+    for target in [ident, *rules.get("cascade", {}).get(ident, [])]:
+        if target in rules.get("retain", []):
+            continue
+        db.execute("DELETE FROM threads WHERE id=?", (target,))
+        db.execute("DELETE FROM thread_spawn_edges WHERE parent_thread_id=? OR child_thread_id=?", (target, target))
+        if target in files:
+            (root / files[target]).unlink(missing_ok=True)
+print("Native deletion fixture succeeded")
+''')
+    return executable
+
+
+def codex_graph_fixture(base, name, *, cascade=False, refusal=False, retain=False):
+    root = base / name
+    codex_metadata_fixture(root, 180)
+    parent = probe.session_id(0)
+    a, b, c, d, fork = map(probe.session_id, range(1000, 1005))
+    files = {
+        a: Path("archived_sessions/relocated") / f"rollout-{a}.jsonl",
+        c: Path("sessions/2026/11/18") / f"rollout-{c}.jsonl",
+        d: Path("archived_sessions/deep/nested") / f"rollout-{d}.jsonl",
+    }
+    for child, related in [(a, parent), (c, a), (d, c)]:
+        path = root / files[child]
+        path.parent.mkdir(parents=True, exist_ok=True)
+        source = {"subagent": {"thread_spawn": {"parent_thread_id": related}}}
+        path.write_text(json.dumps({"type": "session_meta", "payload": {
+            "id": child, "cli_version": "fixture", "source": source}}) + "\n")
+    with closing(sqlite3.connect(root / "state_5.sqlite")) as db, db:
+        db.executemany("""INSERT INTO threads
+            (id, title, cwd, created_at, updated_at, archived, rollout_path, source, attached_thread_parent_id, forked_from_id)
+            VALUES (?, 'Generic fixture', '/fixture', 0, 1, ?, ?, ?, ?, ?)""", [
+            (a, 1, str(root / files[a]), "cli", None, None),
+            (b, 1, None, "cli", parent, None),
+            (c, 0, str(root / files[c]), json.dumps({"subagent": {"thread_spawn": {"parent_thread_id": a}}}), None, None),
+            (fork, 1, None, "cli", None, parent),
+        ])
+        db.executemany("INSERT INTO thread_spawn_edges VALUES (?,?)", [(parent, a), (a, c)])
+    rules = {"rollouts": {ident: str(path) for ident, path in files.items()}}
+    if cascade:
+        rules["cascade"] = {parent: [a, c, d]}
+    if refusal:
+        rules["blocks"] = {parent: [b]}
+    if retain:
+        rules["retain"] = [d]
+    executable = codex_fixture_executable(root, rules)
+    return root, parent, (a, b, c, d), fork, executable
+
+
+def codex_graph_acceptance(binary, base, claude):
+    for name, options in [
+        ("residuals", {}), ("cascade", {"cascade": True}), ("refusal", {"refusal": True}),
+        ("still-present", {"retain": True}),
+    ]:
+        root, parent, (a, b, c, d), fork, executable = codex_graph_fixture(base, name, **options)
+        ids = [parent, a, b, c, d, fork]
+        for filename, field in [("history.jsonl", "session_id"), ("session_index.jsonl", "id")]:
+            (root / filename).write_text("".join(json.dumps({field: ident}) + "\n" for ident in ids))
+        state_path = root / ".codex-global-state.json"
+        state_path.write_text(json.dumps({"projectless-thread-ids": ids}))
+        with codex_desktop_catalog(root) as desktop, ui(
+            binary, base, root, claude, executable, max_entries=12,
+        ) as (client, ticket):
+            with desktop:
+                desktop.executemany("""INSERT INTO local_thread_catalog
+                    (host_id, thread_id, display_title, source_created_at, source_updated_at, source_kind, observation_sequence)
+                    VALUES ('local', ?, 'Fixture', 1, 1, 'cli', 7)""", [(ident,) for ident in ids])
+            authorize(client, ticket)
+            path = f"/api/codex/sessions/{scoped_key('codex', root, parent)}"
+            client.call("POST", path + "/delete", {"confirm": True}, code=409)
+            review = client.call("POST", path + "/removal-preview")
+            tree, = review["plan"]["trees"]
+            assert tree["id"] == parent
+            assert [(node["id"], node["parent"], node["depth"], node["archived"]) for node in tree["descendants"]] == [
+                (a, parent, 1, True), (b, parent, 1, True), (c, a, 2, False), (d, c, 3, True)]
+            outcome = codex_reviewed_delete(client, path, review["review"])
+            expected = [parent, b] if name == "cascade" else [parent, d, c, b, a]
+            if name == "refusal":
+                expected += [parent]
+            assert [json.loads(line) for line in (root / "native-calls.jsonl").read_text().splitlines()] == expected
+            retained = [d, fork] if name == "still-present" else [fork]
+            assert outcome["status"] == ("partial" if name == "still-present" else "deleted"), outcome
+            if name == "still-present":
+                assert any(d in error and "ancora presente" in error for error in outcome["errors"]), outcome
+            for filename, field in [("history.jsonl", "session_id"), ("session_index.jsonl", "id")]:
+                assert [json.loads(line)[field] for line in (root / filename).read_text().splitlines()] == retained
+            assert json.loads(state_path.read_text())["projectless-thread-ids"] == retained
+            assert {row[0] for row in desktop.execute(
+                "SELECT thread_id FROM local_thread_catalog WHERE host_id='local'"
+            )} == {*retained, probe.R, probe.REPLACEMENT}
+            assert {row[0] for row in desktop.execute(
+                "SELECT thread_id FROM local_thread_catalog_scan_entries WHERE host_id='local' AND removed=1"
+            )} == set(ids) - set(retained)
+            with closing(sqlite3.connect(root / "state_5.sqlite")) as db:
+                assert db.execute("SELECT 1 FROM threads WHERE id=?", (fork,)).fetchone()
+                assert not db.execute("SELECT 1 FROM threads WHERE id=?", (parent,)).fetchone()
+            assert not list(root.glob("*.agentmender-*.tmp"))
+
+    root, parent, (a, _b, c, d), fork, executable = codex_graph_fixture(base, "unreviewed")
+    path = f"/api/codex/sessions/{scoped_key('codex', root, parent)}"
+    with ui(binary, base, root, claude, executable, extra_args=("--protect-codex-session", d)) as (client, ticket):
+        authorize(client, ticket)
+        client.call("POST", path + "/removal-preview", code=409)
+    with ui(binary, base, root, claude, executable) as (client, ticket):
+        authorize(client, ticket)
+        review = client.call("POST", path + "/removal-preview")
+        with closing(sqlite3.connect(root / "state_5.sqlite")) as db, db:
+            db.execute("INSERT INTO thread_spawn_edges VALUES (?,?)", (c, fork))
+        client.call("POST", path + "/delete", {"confirm": True, "review": review["review"]}, code=409)
+        with closing(sqlite3.connect(root / "state_5.sqlite")) as db, db:
+            db.execute("INSERT INTO thread_spawn_edges VALUES (?,?)", (c, a))
+        client.call("POST", path + "/removal-preview", code=409)
+    assert not (root / "native-calls.jsonl").exists()
+    print("Codex graph: verified spawn, attachment and rollout relations, native order, stale reviews and residuals.")
+
+
 def codex_partial_cleanup(binary, base, claude):
     root = base / "codex-partial"
     codex_metadata_fixture(root, 2)
     ident = probe.session_id(0)
-    executable = base / "codex-ok"
-    executable.write_text(f"""#!/bin/sh
-if [ "$1" = --version ]; then printf 'codex-cli 99.0.0\n'; exit; fi
-[ "$CODEX_HOME" = "$PWD" ] && [ "$3" = delete ] &&
-[ "$4" = "{ident}" ] && [ "$5" = --force ] || exit 2
-printf 'Native deletion fixture succeeded\n'
-""")
-    executable.chmod(0o700)
+    executable = codex_fixture_executable(root)
     index = root / "session_index.jsonl"
     kept = json.dumps({"id": probe.session_id(1)}).encode()
     index.write_bytes(json.dumps({"id": ident}).encode() + b"\r\n" + kept)
@@ -635,10 +783,10 @@ printf 'Native deletion fixture succeeded\n'
         authorize(client, ticket)
         row = next(row for row in client.call("GET", "/api/codex/sessions")["rows"]
                    if row["native_id"] == ident)
-        outcome = client.call("POST", f"/api/codex/sessions/{row['key']}/delete", {"confirm": True})
+        outcome = codex_reviewed_delete(client, f"/api/codex/sessions/{row['key']}")
         assert outcome["status"] == "partial", outcome
         assert "Native deletion fixture succeeded" in outcome["message"] and "incompleta" in outcome["message"]
-        assert len(outcome["errors"]) == 1 and outcome["errors"][0].startswith(state.name)
+        assert len(outcome["errors"]) == 1 and state.name in outcome["errors"][0]
         assert index.read_bytes() == kept and state.read_bytes() == b"malformed JSON"
         assert not state.with_suffix(".json.bak").exists()
 
@@ -666,14 +814,14 @@ def codex_acceptance(client, root, rollouts):
     client.call("POST", execute, {"confirm": True, "args": ["--other"]}, code=422)
     client.call("POST", f"{query}/{keys[probe.S]}/delete", {"confirm": True}, code=409)
     child = f"{query}/{scoped_key('codex', root, probe.C)}"
-    client.call("POST", child + "/delete", {"confirm": True}, code=404)
+    client.call("POST", child + "/removal-preview", code=404)
     unrelated = rollouts[probe.REPLACEMENT].read_bytes()
-    result = client.call("POST", execute, {"confirm": True})
+    result = codex_reviewed_delete(client, target)
     assert result["status"] == "deleted", result
     assert not rollouts[probe.R].exists()
     assert rollouts[probe.REPLACEMENT].read_bytes() == unrelated
     assert probe.R not in {row["native_id"] for row in client.call("GET", query)["rows"]}
-    client.call("POST", execute, {"confirm": True}, code=404)
+    client.call("POST", target + "/removal-preview", code=404)
 
 
 def codex_project_deletion(binary, base, root, claude, executable, rollouts):
@@ -684,20 +832,23 @@ def codex_project_deletion(binary, base, root, claude, executable, rollouts):
     with probe.FixtureServer(root.parent, executable, base / "private-canary") as server:
         response = server.call("project/import", {
             "name": "Bulk fixture", "roots": [{"path": str(workspace)}],
-            "threads": [probe.M, probe.REPLACEMENT], "idempotencyKey": "deletion-refactor",
+            "threads": [probe.M, probe.REPLACEMENT, probe.G], "idempotencyKey": "deletion-refactor",
         })
         assert "result" in response, response
-    unrelated = rollouts[probe.G].read_bytes()
+    unrelated = rollouts[probe.S].read_bytes()
     with ui(binary, base, root, claude, executable) as (client, ticket):
         authorize(client, ticket)
         path = project_path(client, workspace)
         before = client.call("GET", path)
-        assert before["main_conversations"] == 2 and before["removal_available"], before
-        result = client.call("POST", path + "/delete", {"confirm": True})
+        assert before["main_conversations"] == 3 and before["removal_available"], before
+        review = client.call("POST", path + "/removal-preview")
+        descendants = [child for tree in review["plan"]["trees"] for child in tree["descendants"]]
+        assert [(child["id"], child["parent"]) for child in descendants] == [(probe.C, probe.G)]
+        result = codex_reviewed_delete(client, path, review["review"])
         assert result["status"] == "deleted", result
         assert client.call("GET", path)["main_conversations"] == 0
-        assert all(not rollouts[ident].exists() for ident in (probe.M, probe.REPLACEMENT))
-        assert rollouts[probe.G].read_bytes() == unrelated
+        assert all(not rollouts[ident].exists() for ident in (probe.M, probe.REPLACEMENT, probe.G, probe.C))
+        assert rollouts[probe.S].read_bytes() == unrelated
         assert source.read_bytes() == b"project source is outside session deletion"
 
 
@@ -780,7 +931,7 @@ def codex_membership_acceptance(agentmender, base, claude):
         old_scope = dict(provider="codex", state_root=str(root),
                          locator={"kind": "workspace", "value": "/fixture/Atlas"})
         old_key = hashlib.sha256(json.dumps(old_scope, separators=(",", ":")).encode()).hexdigest()
-        client.call("POST", f"{PROJECTS}/{old_key}/delete", {"confirm": True}, code=404)
+        client.call("POST", f"{PROJECTS}/{old_key}/removal-preview", code=404)
         database("UPDATE threads SET project_id=? WHERE id=?", (empty, sid(10)))
         client.call("POST", "/api/codex/refresh")
         assert client.call("GET", empty_path + "/sessions")["rows"][0]["workspace"] == "/fixture/workspace-10"
@@ -1068,6 +1219,7 @@ def main():
             claude_cleanup_acceptance(agentmender, base)
             claude_shared_uuid_cleanup(agentmender, base)
             codex_partial_cleanup(agentmender, base, claude)
+            codex_graph_acceptance(agentmender, base, claude)
         if args.native_codex:
             binary = args.native_codex.resolve(strict=True)
             assert platform.system() == "Darwin" and platform.machine() == "arm64"
@@ -1113,8 +1265,8 @@ def main():
                         page = client.call("GET", "/api/codex/sessions")
                         assert page["provider"]["removal_available"]
                         row = next(row for row in page["rows"] if row["native_id"] == probe.REPLACEMENT)
-                        result = client.call("POST", f"/api/codex/sessions/{row['key']}/delete", {"confirm": True})
-                        assert result["status"] == "failed" and result["errors"] == ["native fixture refusal"], result
+                        result = codex_reviewed_delete(client, f"/api/codex/sessions/{row['key']}")
+                        assert result["status"] == "failed" and result["errors"] == [f"{probe.REPLACEMENT}: native fixture refusal"], result
                         assert rollouts[probe.REPLACEMENT].is_file()
                     assert desktop.execute(sync).fetchall() == [("local", 1, 1, 7, 123), ("remote", 2, 1, 8, 456)]
                     assert desktop.execute(catalog).fetchall() == entries
@@ -1164,7 +1316,7 @@ def main():
                     selected = client.call("GET", "/api/codex/sessions?search=CAFE%CC%81%20Atlas&state=archived&since=1970-01-02&until=1970-01-02&sort=created&ascending=true&limit=2")
                     assert selected["total"] == 1500 and selected["rows"][0]["created_at"] == 1
                     assert not first["provider"]["removal_available"]
-                    assert client.call("POST", f"/api/codex/sessions/{selected['rows'][0]['key']}/delete", {"confirm": True})["status"] == "failed"
+                    client.call("POST", f"/api/codex/sessions/{selected['rows'][0]['key']}/removal-preview", code=409)
                     missing_title = client.call("GET", "/api/codex/sessions?offset=2999")["rows"][0]
                     assert missing_title["title"] is None and missing_title["transcript_bytes"] is None
                     first_codex_key = missing_title["key"]

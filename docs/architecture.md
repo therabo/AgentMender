@@ -19,7 +19,7 @@ agentmender CLI -> application -> domain
 | `application` | Verified main-conversation filtering, project grouping, normalized metadata queries and stable paging. |
 | `provider-api` | Bounded filesystem reads, fixed version probes, isolated worker and native command launch, kernel write-denial attestation. |
 | `provider-codex` | Fixed SQLite and rollout observations, bounded compressed transcript parsing, platform discovery, bounded export observations, native release and storage admission, and the guarded success marker. |
-| `provider-claude` | Bounded project transcript inventory, installation detection and offline session cleanup on admitted macOS layouts. |
+| `provider-claude` | Complete recognized project transcript inventory, installation detection and offline session cleanup on admitted macOS layouts. |
 | `cli` | Launch configuration, embedded Vite assets, browser authorization, provider routing, one-use confirmation and operation results. |
 
 ## Read path
@@ -54,7 +54,7 @@ decoded in the worker. Replay state is bound to the source and finite. Message
 suppression, unknown records and external paginated history are reflected in
 partial coverage. Browser cursors hold neither a path nor provider internals.
 
-Claude observes bounded project JSONL across configured roots, with
+Claude scans all recognized project JSONL across configured roots, with
 revision-keyed metadata and revalidated conversation windows. Root, namespace,
 entrypoint and embedded IDs govern observation. Desktop registrations supply
 metadata when they corroborate an unambiguous transcript identity. Nested
@@ -65,12 +65,13 @@ diagnostics report candidate dependencies.
 ## Removal path
 
 The authenticated browser confirms permanent deletion by opaque session key.
-Codex dispatches its native command for the selected UUID. The CLI uses the
-same archive as the session inventory. After native success, the adapter
-rewrites the two JSONL indexes, prunes the Desktop catalog and state, and
-requests sidebar reconciliation. It reports auxiliary errors as partial
-success. The project action repeats the workflow serially for observed main
-conversations and stops on a native command failure.
+Codex builds a lineage observation in the confined worker and pages its facts
+over the fixed worker protocol independently of the browsing inventory. The
+server binds the reviewed graph to one confirmation and rechecks it before
+dispatch. The adapter runs native deletion for the selected roots and the
+remaining verified descendants. It verifies absence before cleaning indexes,
+Desktop catalogs and Desktop JSON state for each removed UUID. The project
+action uses the same plan and refreshes the inventory once.
 
 On macOS, Claude builds a complete plan for the verified transcript, its
 namespace-scoped directory and associated artifacts, including checkpoints.

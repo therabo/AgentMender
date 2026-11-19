@@ -369,6 +369,8 @@ fn usage_root(
 fn temporary_roots() -> Vec<Source> {
     #[cfg(unix)]
     let leaf = format!("claude-{}", rustix::process::getuid().as_raw());
+    #[cfg(unix)]
+    let leaf = leaf.as_str();
     #[cfg(not(unix))]
     let leaf = "claude";
     let mut bases = Vec::new();
@@ -406,7 +408,7 @@ fn temporary_roots() -> Vec<Source> {
             } else {
                 base
             };
-            let path = base.join(&leaf);
+            let path = base.join(leaf);
             seen.insert(path.clone()).then_some(Source {
                 path,
                 kind: RootKind::Temporary,

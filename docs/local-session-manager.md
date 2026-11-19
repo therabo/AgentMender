@@ -20,8 +20,10 @@ set. An absolute `--claude-root` selects the primary root explicitly.
 Repeat `--claude-additional-root` to include more local archives.
 `--claude-desktop-root` can point at a separate directory of Desktop metadata.
 Supply absolute `--codex-root`, `--codex-executable` or `--claude-executable`
-overrides at launch. `--protect-codex-session <UUID>` prevents AgentMender from directly selecting that Codex UUID for deletion. `--max-entries` bounds inventory acquisition and defaults to
-10,000. Use refresh to pick up external changes. Date filters use inclusive UTC
+overrides at launch. `--protect-codex-session <UUID>` blocks deletion of the
+UUID directly or through its parent. `--max-entries` bounds the Codex browsing
+inventory and defaults to 10,000. Claude Code discovery scans all recognized
+session locations and transcript records. Both inventories retain UI pagination. Use refresh to pick up external changes. Date filters use inclusive UTC
 calendar days over last activity.
 
 ## Browse and remove projects
@@ -33,17 +35,18 @@ Codex Recenti lists conversations without a verified project association
 and supports normal session actions. Counts and sizes describe observed
 records and known transcript bytes.
 
-Use **Elimina sessione** in a Codex conversation to confirm permanent
-deletion. After the native Codex command succeeds, AgentMender removes the
-selected UUID from both JSONL indexes, the local Desktop catalog and Desktop
-state, then requests a sidebar refresh. A failure in these steps is reported
-as partial success. The project action applies the same flow to the main
-conversations of eligible native projects. Project registrations and
-workspaces stay separate.
+Use **Elimina sessione** to review the selected Codex conversation and its
+verified descendants. Confirm once with **Elimina**. Codex first tries the
+native command on the parent, then deletes remaining descendants deepest
+first. If the command refuses because of a linked child, AgentMender retries
+the parent after verifying the descendants are gone. Each verified removal
+includes both JSONL indexes, the local Desktop catalogs and Desktop state.
+The same preview and confirmation apply to the main conversations of eligible
+native projects. Ambiguous relationships or a protected UUID block confirmation.
 
-Open **Diagnostica inventario Claude Code** to see the unfiltered local
-counts, exclusions, scan limits, source availability and the matches
-between Desktop Code registrations and local transcripts.
+Open **Diagnostica inventario Claude Code** to see unfiltered local counts,
+exclusions, source availability and the matches between Desktop Code
+registrations and local transcripts.
 
 For Claude Code, open a session to read a bounded conversation preview and
 inspect its namespace, file modification time, metadata coverage and storage
@@ -104,17 +107,19 @@ require exact Origin. All requests require the exact local Host.
 | `GET /api/{provider}/projects` | Search, filter, sort and page provider project groups |
 | `GET /api/{provider}/projects/{key}` | Read an observed group and its coverage and capability |
 | `GET /api/{provider}/projects/{key}/sessions` | Page verified main conversations within a group |
-| `POST /api/codex/projects/{key}/delete` | Confirm permanent deletion of sessions in an eligible Codex project |
+| `POST /api/codex/projects/{key}/removal-preview` | Preview eligible project conversations and their verified descendants. The request has no body |
+| `POST /api/codex/projects/{key}/delete` | Confirm permanent deletion of the reviewed project session graphs |
 | `GET /api/codex/recents` | Page verified main conversations without a verified project association |
 | `GET /api/{provider}/sessions` | Search, filter, sort and page over verified main conversations |
 | `GET /api/{provider}/sessions/{key}` | Details of a verified main conversation |
 | `GET /api/{provider}/sessions/{key}/conversation` | Bounded selected Codex transcript page with optional opaque cursor |
 | `POST /api/{provider}/refresh` | Reacquire the provider snapshot |
+| `POST /api/codex/sessions/{key}/removal-preview` | Return the verified session graph and review receipt. The request has no body |
 | `POST /api/claude/sessions/{key}/removal-preview` | Return the complete Claude deletion preview and review receipt on macOS. The request has no body |
 | `POST /api/{provider}/sessions/{key}/delete` | Delete the selected session after explicit confirmation and return the result |
 
-The JSON confirmation is `{"confirm":true}`. Claude also passes the opaque
-`review` returned by its preview. Browser payloads carry no paths or commands.
+Both providers accept `{"confirm":true,"review":"<receipt>"}` using the opaque
+receipt returned by the corresponding preview. Browser payloads carry no paths or commands.
 
 ## Test with disposable archives
 

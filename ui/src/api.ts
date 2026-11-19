@@ -70,7 +70,6 @@ export type ClaudeDiscovery = {
       incomplete: boolean
     }
     projects_incomplete: boolean
-    entry_limit_reached: boolean
     out_of_scope: string[]
   }
 }
@@ -201,6 +200,10 @@ export type Detail = {
   claude_cleanup_supported?: boolean
 }
 
+export type CodexReview = {
+  review: string
+  plan: { trees: { id: string; descendants: { id: string; parent: string; archived: boolean; present: boolean; depth: number }[] }[] }
+}
 export type ClaudeReview = {
   review: string
   plan: {

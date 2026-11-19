@@ -54,8 +54,6 @@ impl ClaudeAdapter {
         registered_desktop: Vec<InstallationView>,
     ) -> Result<Self, ProviderError> {
         if roots.is_empty()
-            || roots.len() > 16
-            || desktop.len() > 8
             || roots.iter().any(|(path, _)| !local_path(path))
             || desktop.iter().any(|item| !local_path(&item.data_root))
         {

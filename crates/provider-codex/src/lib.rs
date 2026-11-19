@@ -7,6 +7,7 @@ pub mod discovery;
 pub mod exports;
 #[cfg(any(target_os = "macos", all(test, unix)))]
 mod reader;
+mod removal;
 #[cfg(any(target_os = "macos", all(test, unix)))]
 mod rollout_reader;
 #[cfg(target_os = "macos")]
@@ -17,12 +18,8 @@ use agentmender_domain::{Installation, ProviderKind};
 use agentmender_provider_api::{ProviderError, ProviderLocation, process, validate_location};
 use std::{path::PathBuf, process::Child, sync::Mutex};
 
+pub use removal::{Deletion, DeletionPlan};
 pub use worker::{TranscriptCursor, TranscriptMessage, TranscriptPage, run_worker};
-
-pub struct Deletion {
-    pub message: String,
-    pub errors: Vec<String>,
-}
 
 pub struct CodexAdapter {
     location: ProviderLocation,
@@ -41,39 +38,6 @@ impl CodexAdapter {
             connection: Mutex::new(None),
             deletion: Mutex::new(()),
         }
-    }
-
-    pub fn delete_session(
-        &self,
-        identity: &agentmender_domain::SessionIdentity,
-    ) -> Result<Deletion, String> {
-        let root = self
-            .location
-            .state_root
-            .canonicalize()
-            .map_err(|error| format!("Archivio Codex non disponibile: {error}"))?;
-        if identity.provider != ProviderKind::Codex || identity.state_root != root {
-            return Err("Archivio Codex estraneo alla sessione selezionata.".into());
-        }
-        let id =
-            uuid::Uuid::parse_str(&identity.native_id).map_err(|_| "UUID Codex non valido.")?;
-        let executable = self
-            .location
-            .executable
-            .as_deref()
-            .ok_or("Eseguibile Codex non disponibile.")?;
-        let path = root
-            .to_str()
-            .ok_or("Percorso dell’archivio Codex non rappresentabile.")?;
-        let setting = format!("sqlite_home={}", toml::Value::String(path.to_owned()));
-        // Keep concurrent UI requests from replacing each other's JSONL updates.
-        let _deletion = self.deletion.lock().expect("Codex deletion");
-        let message = process::codex_delete(executable, &root, &setting, id)?;
-        #[cfg(target_os = "macos")]
-        let errors = cleanup::after_native_delete(&root, id);
-        #[cfg(not(target_os = "macos"))]
-        let errors = Vec::new();
-        Ok(Deletion { message, errors })
     }
 
     pub fn detect(&self) -> Result<Installation, ProviderError> {

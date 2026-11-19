@@ -3,21 +3,18 @@ use super::{ClaudeAdapter, TranscriptShape, strict_version, transcript_shape};
 use crate::{
     diagnostics::{Access, Exclusion, Reconciliation, ScanIssue, TranscriptReport},
     read::{Lines, Revision, verify},
-    storage::{self, ArtifactLocation, Budget, DesktopState, Entry, EntryKind, RootView},
+    storage::{self, ArtifactLocation, DesktopState, DirectoryScan, Entry, EntryKind, RootView},
 };
 use agentmender_domain::*;
 use agentmender_provider_api::{ProviderError, filesystem, io_error};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, BTreeSet},
-    fs::File,
+    io::{BufRead, BufReader, Read},
     path::{Path, PathBuf},
     time::{Duration, Instant},
 };
 
-const HEAD: u64 = 20 * 1024 * 1024;
-const TAIL: u64 = 4 * 1024 * 1024;
-const MAX_LINES: usize = 100_000;
 const CACHE_SIZE: usize = 4096;
 
 #[derive(Deserialize)]
@@ -350,11 +347,7 @@ impl Scan {
             .as_ref()
             .filter(|value| strict_version(value))
         {
-            if self.versions.len() < 16 {
-                self.versions.insert(version.clone());
-            } else if !self.versions.contains(version) {
-                self.issues.insert(ScanIssue::MetadataLimit);
-            }
+            self.versions.insert(version.clone());
         }
         if let Some(created) = timestamp(record.created_at.as_deref()) {
             self.created = Some(self.created.map_or(created, |prior| prior.min(created)));
@@ -389,83 +382,33 @@ impl Scan {
 }
 
 fn scan_file(
-    file: &mut File,
+    file: impl Read,
     path: &Path,
     bytes: u64,
     shape: &TranscriptShape,
     desktop: Option<&DesktopState>,
-    budget: &mut Budget,
 ) -> Result<Scan, ProviderError> {
-    let available = budget.bytes.min(HEAD + TAIL);
-    let bytes_to_scan = available.min(bytes);
-    budget.bytes -= bytes_to_scan;
+    let mut reader = BufReader::new(file.take(bytes));
+    let mut line = Vec::new();
     let mut scan = Scan::default();
-    if bytes_to_scan < bytes {
-        scan.issues.insert(ScanIssue::ByteLimit);
-    }
-    if bytes_to_scan == 0 {
-        return Ok(scan);
-    }
-    let (head, tail) = if bytes_to_scan == bytes {
-        (bytes, 0)
-    } else {
-        let tail = (bytes_to_scan / 3).min(TAIL);
-        (bytes_to_scan - tail, tail)
-    };
-    // Reserve part of the record budget and wall time for the end when
-    // the initial scan cannot cover the entire file.
-    let now = Instant::now();
-    let deadline = budget.deadline.min(now + Duration::from_secs(2));
-    let prefix_deadline = budget.deadline.min(now + Duration::from_millis(1500));
-    let mut scan_range = |start: u64, end: u64, limit: usize, cutoff: Instant| {
-        let mut lines = Lines::new(file, start, end).map_err(|e| io_error(path, e))?;
-        if start != 0 {
-            // A tail window may start inside a record.
-            lines.next().map_err(|e| io_error(path, e))?;
-        }
-        for index in 0..limit {
-            if lines.offset == end {
-                break;
-            }
-            if index % 64 == 0 && Instant::now() >= cutoff {
-                scan.issues.insert(ScanIssue::TimeLimit);
-                return Ok(lines.offset);
-            }
-            let Some(line) = lines.next().map_err(|e| io_error(path, e))? else {
-                break;
-            };
-            match line.bytes {
-                Some(line) if line.iter().all(u8::is_ascii_whitespace) => {}
-                Some(line) => match serde_json::from_slice(line) {
-                    Ok(record) => scan.record(record, shape, desktop),
-                    Err(_) => {
-                        scan.issues.insert(ScanIssue::MalformedRecord);
-                    }
-                },
-                None => {
-                    if line.terminated {
-                        scan.issues.insert(ScanIssue::RecordSize);
-                    } else if end == bytes {
-                        scan.issues.insert(ScanIssue::UnterminatedRecord);
-                    }
+    while reader
+        .read_until(b'\n', &mut line)
+        .map_err(|e| io_error(path, e))?
+        != 0
+    {
+        if !line.iter().all(u8::is_ascii_whitespace) {
+            match serde_json::from_slice(&line) {
+                Ok(record) => scan.record(record, shape, desktop),
+                Err(_) => {
+                    scan.issues.insert(if line.ends_with(b"\n") {
+                        ScanIssue::MalformedRecord
+                    } else {
+                        ScanIssue::UnterminatedRecord
+                    });
                 }
             }
         }
-        if lines.offset < lines.end {
-            scan.issues.insert(ScanIssue::LineLimit);
-        }
-        Ok::<_, ProviderError>(lines.offset)
-    };
-    let reserve = MAX_LINES / 4;
-    let scanned = scan_range(0, head, MAX_LINES - reserve, prefix_deadline)?;
-    if scanned < bytes && Instant::now() < deadline {
-        let tail = if tail == 0 {
-            TAIL.min(bytes - scanned)
-        } else {
-            tail
-        };
-        let start = bytes - tail;
-        scan_range(start, bytes, reserve, deadline)?;
+        line.clear();
     }
     Ok(scan)
 }
@@ -479,8 +422,8 @@ fn is_transcript_candidate(entry: &Entry) -> bool {
 }
 
 impl ClaudeAdapter {
-    pub fn local_catalog(&self, limit: usize) -> Catalog {
-        let mut budget = Budget::new(limit);
+    pub fn local_catalog(&self) -> Catalog {
+        let mut directories = DirectoryScan::default();
         let mut candidates = Vec::new();
         let mut inventory = InventoryObservation::default();
         let mut roots = Vec::new();
@@ -497,11 +440,11 @@ impl ClaudeAdapter {
                 roots.push(view);
                 continue;
             }
-            let read_at_start = budget.issues;
+            let read_at_start = directories.issues;
             let count = candidates.len();
             if view.projects_access == Access::Available {
                 let projects = path.join("projects");
-                let namespaces = budget.list(&projects);
+                let namespaces = directories.list(&projects);
                 for namespace in namespaces
                     .iter()
                     .filter(|entry| entry.kind == EntryKind::Directory)
@@ -510,9 +453,9 @@ impl ClaudeAdapter {
                         .path
                         .file_name()
                         .and_then(|name| name.to_str())
-                        .filter(|name| name.len() <= 900 && displayable(name))
+                        .filter(|name| displayable(name))
                     else {
-                        budget.mark();
+                        directories.mark();
                         continue;
                     };
                     let identity = ProjectIdentity {
@@ -530,7 +473,7 @@ impl ClaudeAdapter {
                         roots: Vec::new(),
                         desktop_backed: false,
                     });
-                    for entry in budget.list(&namespace.path) {
+                    for entry in directories.list(&namespace.path) {
                         if is_transcript_candidate(&entry) {
                             candidates.push((roots.len(), entry));
                         } else if entry.kind == EntryKind::Directory
@@ -541,7 +484,7 @@ impl ClaudeAdapter {
                                 .is_some_and(uuid_shape)
                         {
                             candidates.extend(
-                                budget
+                                directories
                                     .list(&entry.path.join("subagents"))
                                     .into_iter()
                                     .filter(is_transcript_candidate)
@@ -551,11 +494,11 @@ impl ClaudeAdapter {
                     }
                 }
             } else if view.projects_access == Access::Unavailable {
-                budget.mark();
+                directories.mark();
             }
             roots.push(RootView {
                 transcript_candidates: candidates.len() - count,
-                enumeration_incomplete: budget.issues != read_at_start,
+                enumeration_incomplete: directories.issues != read_at_start,
                 ..view
             });
         }
@@ -576,7 +519,7 @@ impl ClaudeAdapter {
             }
         }
         let projects_incomplete = roots.iter().any(|root| root.enumeration_incomplete);
-        let desktop = storage::desktop_states(&self.desktop, &mut budget);
+        let desktop = storage::desktop_states(&self.desktop, &mut directories);
         let mut evidence = BTreeMap::new();
         let mut cache = self.cache.lock().expect("Claude metadata cache");
         let mut next_cache = BTreeMap::new();
@@ -586,27 +529,18 @@ impl ClaudeAdapter {
             let relative = path.strip_prefix(root).expect("enumerated root");
             let Some(shape) = transcript_shape(relative) else {
                 report.exclude(Exclusion::UnrecognizedLocator);
-                budget.mark();
+                directories.mark();
                 continue;
             };
             if entry.kind != EntryKind::File {
                 report.exclude(Exclusion::ProtectedOrUnreadable);
-                budget.mark();
-                continue;
-            }
-            if budget.expired() {
-                report.exclude(Exclusion::ScanLimit);
+                directories.mark();
                 continue;
             }
             let native_id = shape.agent_id.as_ref().map_or_else(
                 || shape.session_id.clone(),
                 |agent| format!("{}/agent:{agent}", shape.session_id),
             );
-            if shape.bucket.len() + native_id.len() > 1000 {
-                report.exclude(Exclusion::UnrecognizedLocator);
-                budget.mark();
-                continue;
-            }
             let identity = SessionIdentity {
                 provider: ProviderKind::Claude,
                 state_root: root.clone(),
@@ -617,14 +551,14 @@ impl ClaudeAdapter {
             let linked = (!projects_incomplete && shape.agent_id.is_none() && duplicates == 1)
                 .then(|| desktop.states.get(&shape.session_id))
                 .flatten();
-            match observe(path, &shape, identity, linked, &cache, &mut budget) {
+            match observe(path, &shape, identity, linked, &cache) {
                 Ok(mut row) => {
                     row.evidence.same_uuid_elsewhere = duplicates.saturating_sub(1);
                     if next_cache.len() < CACHE_SIZE && row.evidence.metadata_complete {
                         next_cache.insert(row.session.identity.clone(), row.clone());
                     }
                     if !row.evidence.metadata_complete {
-                        budget.mark();
+                        directories.mark();
                     }
                     report.record(&row.session, &row.evidence);
                     evidence.insert(row.session.identity.clone(), row.evidence);
@@ -632,7 +566,7 @@ impl ClaudeAdapter {
                 }
                 Err(reason) => {
                     report.exclude(reason);
-                    budget.mark();
+                    directories.mark();
                 }
             }
         }
@@ -690,7 +624,7 @@ impl ClaudeAdapter {
             .map(|(id, _)| id.native_id.as_str())
             .collect();
         let desktop_report = desktop.reconcile(&uuid_counts, &associated, !projects_incomplete);
-        inventory.incomplete = budget.issues > 0;
+        inventory.incomplete = directories.issues > 0;
         inventory.projects_incomplete = projects_incomplete;
         for meta in evidence.values_mut() {
             meta.ownership_scope_complete = !inventory.incomplete && !projects_incomplete;
@@ -703,7 +637,6 @@ impl ClaudeAdapter {
                 transcripts: report,
                 desktop: desktop_report,
                 projects_incomplete,
-                entry_limit_reached: budget.entry_limit_reached,
                 out_of_scope: ["chat", "cowork", "code_cloud", "ssh", "wsl"],
             },
         }
@@ -716,7 +649,6 @@ fn observe(
     identity: SessionIdentity,
     desktop: Option<&DesktopState>,
     cache: &BTreeMap<SessionIdentity, Cached>,
-    budget: &mut Budget,
 ) -> Result<Cached, Exclusion> {
     let root = &identity.state_root;
     let unreadable = |_| Exclusion::ProtectedOrUnreadable;
@@ -730,27 +662,17 @@ fn observe(
         verify(root, path, &revision).map_err(changed)?;
         return Ok(prior.clone());
     }
-    let scan =
-        scan_file(&mut file, path, revision.bytes, shape, desktop, budget).map_err(unreadable)?;
+    let scan = scan_file(&mut file, path, revision.bytes, shape, desktop).map_err(unreadable)?;
     verify(root, path, &revision).map_err(changed)?;
     if let Some(reason) = scan.exclusion {
         return Err(reason);
     }
     if !scan.found && !scan.sidechain {
-        return Err(
-            if scan.issues.iter().any(|issue| {
-                matches!(
-                    issue,
-                    ScanIssue::MalformedRecord | ScanIssue::UnterminatedRecord
-                )
-            }) {
-                Exclusion::InvalidRecords
-            } else if scan.issues.is_empty() {
-                Exclusion::MissingIdentity
-            } else {
-                Exclusion::ScanLimit
-            },
-        );
+        return Err(if scan.issues.is_empty() {
+            Exclusion::MissingIdentity
+        } else {
+            Exclusion::InvalidRecords
+        });
     }
     let desktop_workspace = desktop
         .filter(|_| scan.surface == Some(Surface::Desktop))
@@ -972,5 +894,41 @@ impl ClaudeAdapter {
         Err(ProviderError::InvalidScope(
             "invalid Claude session locator".into(),
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn transcript_scan_continues_past_the_previous_global_deadline() {
+        struct SlowInput(&'static [u8]);
+        impl Read for SlowInput {
+            fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+                if !self.0.is_empty() {
+                    std::thread::sleep(Duration::from_millis(10_100));
+                }
+                self.0.read(buffer)
+            }
+        }
+        const ID: &str = "12345678-1234-4123-8123-123456789abc";
+        const ROW: &[u8] = br#"{"type":"user","sessionId":"12345678-1234-4123-8123-123456789abc","entrypoint":"cli","message":{"content":"Visible after a slow read"}}"#;
+        let shape = TranscriptShape {
+            bucket: "fixture".into(),
+            session_id: ID.into(),
+            agent_id: None,
+        };
+        let scan = scan_file(
+            SlowInput(ROW),
+            Path::new("fixture"),
+            ROW.len() as u64,
+            &shape,
+            None,
+        )
+        .unwrap();
+        assert!(scan.found);
+        assert!(scan.issues.is_empty());
+        assert_eq!(scan.first.as_deref(), Some("Visible after a slow read"));
     }
 }

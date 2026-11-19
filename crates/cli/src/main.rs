@@ -29,9 +29,10 @@ struct Args {
     codex_executable: Option<PathBuf>,
     #[arg(long, global = true, value_parser = absolute_path)]
     claude_executable: Option<PathBuf>,
-    /// Block direct deletion of this Codex UUID. May be supplied multiple times.
+    /// Block deletion of this Codex UUID, including through a parent. May be supplied multiple times.
     #[arg(long, global = true, value_parser = protected_uuid)]
     protect_codex_session: Vec<String>,
+    /// Limit the displayed Codex inventory. Claude discovery scans all recognized sessions.
     #[arg(long, global = true, default_value_t = 10_000, value_parser = clap::value_parser!(u32).range(1..=100_000))]
     max_entries: u32,
     #[command(subcommand)]

@@ -28,6 +28,7 @@ opaque keys. Claude continues to group by the observed directory namespace.
 
 Bulk Codex removal applies the same complete session deletion serially to the
 observed main conversations of a native project with complete membership.
+One confirmation covers the reviewed descendants of those conversations.
 The registration and its roots are outside this operation.
 
 Codex `project/delete` removes the registration and clears assignments. The
