@@ -10,7 +10,6 @@ use std::{
     collections::{BTreeSet, hash_map::DefaultHasher},
     env, fs,
     hash::{Hash, Hasher},
-    io,
     path::{Path, PathBuf},
 };
 
@@ -137,7 +136,7 @@ pub(crate) fn access(path: &Path) -> Access {
     }
     // A junction or symlink at any component can redirect a lookup into an
     // unrelated profile. Stock macOS /var and /tmp system aliases are handled
-    // by binding explicit canonical fixture and archived directory identities.
+    // by supplying the canonical archive path.
     for part in path
         .ancestors()
         .filter(|part| part.is_absolute())
@@ -503,7 +502,7 @@ impl Discovery {
         access(&self.selected_root)
     }
 
-    pub fn inspect_exports(&self) -> Result<crate::exports::Inventory, io::Error> {
+    pub fn inspect_exports(&self) -> crate::exports::Inventory {
         crate::exports::Inventory::scan(&self.storage)
     }
 }

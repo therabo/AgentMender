@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { Archive, Braces, ChevronRight, Circle, HardDrive, Layers3, RefreshCw, Search, ShieldCheck, SlidersHorizontal, Sparkles } from 'lucide-react'
-import { authorize, projectPath, request, type Project, type ProjectPage, type Provider, type State } from './api'
+import { authorize, errorText, projectPath, request, type Project, type ProjectPage, type Provider, type State } from './api'
 import { Empty, Notice, Pagination, ProjectAccordion, SessionList } from './components'
 import { ProjectRemoval, SessionDetail } from './detail'
 import { numberLabel, providerLabel } from './format'
@@ -12,10 +12,6 @@ import './style.css'
 const PAGE_SIZE = 12
 const filtersInitial = { search: '', state: '', sort: 'activity', since: '', until: '', minSize: '', maxSize: '' }
 const labels = { installed: 'Installato', state_only: 'Solo archivio', not_detected: 'Non rilevato' }
-
-function errorText(failure: unknown) {
-  return failure instanceof Error ? failure.message : 'Il servizio locale non risponde.'
-}
 
 function Inventory({ provider }: { provider: Provider }) {
   const [filters, setFilters] = useState(filtersInitial)

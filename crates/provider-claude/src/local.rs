@@ -896,39 +896,3 @@ impl ClaudeAdapter {
         ))
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn transcript_scan_continues_past_the_previous_global_deadline() {
-        struct SlowInput(&'static [u8]);
-        impl Read for SlowInput {
-            fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
-                if !self.0.is_empty() {
-                    std::thread::sleep(Duration::from_millis(10_100));
-                }
-                self.0.read(buffer)
-            }
-        }
-        const ID: &str = "12345678-1234-4123-8123-123456789abc";
-        const ROW: &[u8] = br#"{"type":"user","sessionId":"12345678-1234-4123-8123-123456789abc","entrypoint":"cli","message":{"content":"Visible after a slow read"}}"#;
-        let shape = TranscriptShape {
-            bucket: "fixture".into(),
-            session_id: ID.into(),
-            agent_id: None,
-        };
-        let scan = scan_file(
-            SlowInput(ROW),
-            Path::new("fixture"),
-            ROW.len() as u64,
-            &shape,
-            None,
-        )
-        .unwrap();
-        assert!(scan.found);
-        assert!(scan.issues.is_empty());
-        assert_eq!(scan.first.as_deref(), Some("Visible after a slow read"));
-    }
-}

@@ -1,4 +1,4 @@
-//! Read-only inventory and conversation pages for local Claude Code.
+//! Inventory, conversation previews and scoped session removal for Claude Code.
 mod artifacts;
 #[cfg(target_os = "macos")]
 pub mod cleanup;
@@ -9,9 +9,8 @@ mod storage;
 mod usage;
 
 pub use artifacts::StorageDetail;
-pub use diagnostics::{Access, Exclusion, Reconciliation, ScanIssue};
-pub use local::{Catalog, Cursor, SessionEvidence};
-pub use read::Revision;
+pub use diagnostics::{Access, Reconciliation};
+pub use local::{Cursor, SessionEvidence};
 pub use storage::{REMOVAL_NOTICE, RootSource, RootView};
 pub use usage::StorageInventory;
 

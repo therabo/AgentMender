@@ -252,11 +252,9 @@ fn run(args: Args) -> Result<(), String> {
         args.codex_root.clone(),
         args.codex_executable.clone(),
     )?;
-    let codex_location = discovery.location.clone();
-    let codex = CodexAdapter::new(codex_location.clone(), helper, home.clone());
+    let codex = CodexAdapter::new(discovery.location.clone(), helper, home.clone());
     let claude = claude_adapter(&args, &home)?;
     ui::run(ui::Configuration {
-        codex_root: codex_location.state_root,
         codex,
         discovery,
         claude,

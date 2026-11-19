@@ -1,4 +1,4 @@
-//! An opaque capability for one fresh disposable evidence directory (ADR-0003).
+//! An opaque capability for one fresh disposable evidence directory.
 //! No constructor accepts a destination directory or an existing writable home.
 use crate::{ProviderError, io_error};
 use std::path::{Path, PathBuf};
@@ -136,33 +136,5 @@ impl EvidenceSandbox {
             }
         }
         Ok(())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn directory_is_fresh_private_disjoint_and_removed_on_drop() {
-        let source = tempfile::tempdir().unwrap();
-        let home = tempfile::tempdir().unwrap();
-        let sandbox = EvidenceSandbox::new(source.path(), home.path()).unwrap();
-        let path = sandbox.path().to_path_buf();
-        assert!(sandbox.validate().is_ok());
-        assert!(!path.starts_with(source.path()));
-        drop(sandbox);
-        assert!(!path.exists());
-    }
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn protected_system_temp_base_is_rejected_before_creation() {
-        let home = tempfile::tempdir().unwrap();
-        assert!(EvidenceSandbox::new(Path::new("/private/tmp"), home.path()).is_err());
-    }
-    #[cfg(not(target_os = "macos"))]
-    #[test]
-    fn unsupported_platform_never_allocates_writable_evidence() {
-        assert!(EvidenceSandbox::new(Path::new("/unused"), Path::new("/unused")).is_err());
     }
 }

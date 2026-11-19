@@ -170,7 +170,7 @@ pub fn uuid_shape(id: &str) -> bool {
 }
 
 /// Recognize an observed provider path without resolving it on this host.
-/// Provider metadata and fixtures may describe another OS. This is not a safe
+/// Provider metadata may describe another OS. This is not a safe
 /// filesystem access boundary; live roots still require native absolute paths.
 pub fn observed_path_is_absolute(path: &Path) -> bool {
     if path.is_absolute() {

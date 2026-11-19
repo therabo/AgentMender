@@ -8,7 +8,6 @@ mod transcript;
 
 use std::{
     net::{Ipv4Addr, SocketAddr},
-    path::PathBuf,
     sync::{Arc, Mutex},
 };
 
@@ -42,7 +41,6 @@ struct App {
     origin: String,
     launch: Mutex<Option<String>>,
     authorization: String,
-    codex_root: PathBuf,
     codex: CodexAdapter,
     claude: ClaudeAdapter,
     limit: usize,
@@ -369,7 +367,6 @@ fn router(app: Arc<App>) -> Router {
 }
 
 pub(super) struct Configuration {
-    pub codex_root: PathBuf,
     pub codex: CodexAdapter,
     pub discovery: Discovery,
     pub claude: ClaudeAdapter,
@@ -405,7 +402,6 @@ pub(super) fn run(config: Configuration) -> Result<(), String> {
             origin,
             launch: Mutex::new(Some(launch.clone())),
             authorization: format!("Bearer {bearer}"),
-            codex_root: config.codex_root,
             codex: config.codex,
             discovery: config.discovery,
             exports: Mutex::default(),

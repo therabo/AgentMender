@@ -89,7 +89,7 @@ impl Observation {
         let root_check = if blocked_root {
             Err(std::io::ErrorKind::PermissionDenied.into())
         } else {
-            fs::symlink_metadata(&app.codex_root)
+            fs::symlink_metadata(&app.discovery.selected_root)
         };
         let presence = if detected.detected {
             Presence::Installed

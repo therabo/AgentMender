@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { RefreshCw } from 'lucide-react'
-import { request, type ClaudeUsage } from './api'
+import { errorText, request, type ClaudeUsage } from './api'
 import { Empty, Notice } from './components'
 import { SessionDetail } from './detail'
 import { claudeCategories, claudeOwnership, claudeWriter, dateLabel, numberLabel, pathLabel, sizeLabel } from './format'
@@ -35,7 +35,7 @@ export function ClaudeUsageView() {
       await request('/api/storage/claude/refresh', { method: 'POST' })
       setRevision(value => value + 1)
     } catch (failure) {
-      setError(failure instanceof Error ? failure.message : 'Inventario Claude non disponibile.')
+      setError(errorText(failure, 'Inventario Claude non disponibile.'))
       setLoading(false)
     }
   }

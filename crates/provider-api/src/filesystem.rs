@@ -3,7 +3,7 @@ use crate::{ProviderError, io_error};
 use std::{
     fs,
     io::Read,
-    path::{Component, Path, PathBuf},
+    path::{Component, Path},
 };
 
 /// Detect Windows junctions and other reparse points as well as Unix symlinks.
@@ -17,126 +17,6 @@ pub fn is_link(metadata: &fs::Metadata) -> bool {
     {
         metadata.file_type().is_symlink()
     }
-}
-
-#[derive(Debug, Clone)]
-pub struct ObservedFile {
-    pub path: PathBuf,
-    pub relative_path: PathBuf,
-    pub size_bytes: u64,
-}
-#[derive(Debug, Default)]
-pub struct Inventory {
-    pub files: Vec<ObservedFile>,
-    pub directories: Vec<PathBuf>,
-    pub incomplete: bool,
-    pub permission_denied: bool,
-    pub truncated: bool,
-}
-
-/// Enumerate regular-file metadata without following links.
-/// The entry budget includes directories and links, preventing an empty-directory DoS.
-pub fn inventory(root: &Path, max_entries: usize) -> Result<Inventory, ProviderError> {
-    let mut result = Inventory::default();
-    let metadata = match fs::symlink_metadata(root) {
-        Ok(metadata) => metadata,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(result),
-        Err(e) => return Err(io_error(root, e)),
-    };
-    if is_link(&metadata) {
-        result.incomplete = true;
-        return Ok(result);
-    }
-    if !metadata.is_dir() {
-        return Err(ProviderError::MalformedProviderState {
-            path: root.into(),
-            detail: "inventory root is not a directory".into(),
-        });
-    }
-    let canonical_root = root.canonicalize().map_err(|e| io_error(root, e))?;
-    let mut pending = vec![root.to_path_buf()];
-    let mut remaining = max_entries;
-    while let Some(directory) = pending.pop() {
-        // Revalidate before descending. Concurrent path replacement is not snapshot isolation.
-        let directory_meta = match fs::symlink_metadata(&directory) {
-            Ok(meta) => meta,
-            Err(_) => {
-                result.incomplete = true;
-                continue;
-            }
-        };
-        if is_link(&directory_meta) || !directory_meta.is_dir() {
-            result.incomplete = true;
-            continue;
-        }
-        match directory.canonicalize() {
-            Ok(path) if path.starts_with(&canonical_root) => {}
-            _ => {
-                result.incomplete = true;
-                continue;
-            }
-        }
-        let entries = match fs::read_dir(&directory) {
-            Ok(entries) => entries,
-            Err(error) => {
-                result.incomplete = true;
-                result.permission_denied |= error.kind() == std::io::ErrorKind::PermissionDenied;
-                continue;
-            }
-        };
-        // Bound collection before sorting: enormous directories cannot exhaust memory.
-        let mut paths = Vec::new();
-        for entry in entries {
-            if remaining == 0 {
-                result.truncated = true;
-                break;
-            }
-            remaining -= 1;
-            if let Ok(entry) = entry {
-                paths.push(entry.path());
-            } else {
-                result.incomplete = true;
-            }
-        }
-        paths.sort();
-        for path in paths {
-            let metadata = match fs::symlink_metadata(&path) {
-                Ok(metadata) => metadata,
-                Err(_) => {
-                    result.incomplete = true;
-                    continue;
-                }
-            };
-            if is_link(&metadata) {
-                result.incomplete = true;
-                continue;
-            }
-            if metadata.is_dir() {
-                if let Ok(relative) = path.strip_prefix(root)
-                    && relative.components().count() == 1
-                {
-                    result.directories.push(relative.into());
-                }
-                pending.push(path);
-            } else if metadata.is_file() {
-                result.files.push(ObservedFile {
-                    relative_path: path
-                        .strip_prefix(root)
-                        .map_err(|_| ProviderError::InvalidScope("path escaped root".into()))?
-                        .into(),
-                    path,
-                    size_bytes: metadata.len(),
-                });
-            }
-        }
-        if result.truncated {
-            break;
-        }
-    }
-    result
-        .files
-        .sort_by(|a, b| a.relative_path.cmp(&b.relative_path));
-    Ok(result)
 }
 
 /// Read a regular file only after checking every relative component and root scope.
@@ -379,56 +259,4 @@ pub fn read_prefix(root: &Path, path: &Path, max_bytes: usize) -> Result<Vec<u8>
         .read_to_end(&mut bytes)
         .map_err(|e| io_error(path, e))?;
     Ok(bytes)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn reads_are_bounded_and_scoped() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("data");
-        fs::write(&path, "12345").unwrap();
-        assert_eq!(read_bounded(dir.path(), &path, 5).unwrap(), b"12345");
-        assert!(read_bounded(dir.path(), &path, 4).is_err());
-        assert!(read_bounded(dir.path(), &dir.path().join("../escape"), 5).is_err());
-    }
-    #[test]
-    fn inventory_budget_includes_directories() {
-        let dir = tempfile::tempdir().unwrap();
-        for i in 0..5 {
-            fs::create_dir(dir.path().join(i.to_string())).unwrap();
-        }
-        let found = inventory(dir.path(), 2).unwrap();
-        assert!(found.truncated);
-    }
-    #[cfg(unix)]
-    #[test]
-    fn linked_file_and_directory_are_never_followed() {
-        use std::os::unix::fs::symlink;
-        let dir = tempfile::tempdir().unwrap();
-        let other = tempfile::tempdir().unwrap();
-        let secret = other.path().join("secret");
-        fs::write(&secret, "private").unwrap();
-        symlink(&secret, dir.path().join("file")).unwrap();
-        symlink(other.path(), dir.path().join("directory")).unwrap();
-        let found = inventory(dir.path(), 100).unwrap();
-        assert!(found.files.is_empty());
-        assert!(read_bounded(dir.path(), &dir.path().join("file"), 100).is_err());
-    }
-    #[cfg(unix)]
-    #[test]
-    fn fifo_is_rejected_without_waiting_for_a_writer() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("pipe");
-        assert!(
-            std::process::Command::new("/usr/bin/mkfifo")
-                .arg(&path)
-                .status()
-                .unwrap()
-                .success()
-        );
-        assert!(read_bounded(dir.path(), &path, 100).is_err());
-        assert!(read_prefix(dir.path(), &path, 100).is_err());
-    }
 }

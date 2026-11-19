@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react'
 import { Archive, ChevronRight, Database, HardDrive, RefreshCw, Search, ShieldCheck, Trash2 } from 'lucide-react'
 import { Dialog, Empty, Notice, Pagination } from './components'
 import { dateLabel, numberLabel, sizeLabel } from './format'
-import { request } from './api'
+import { errorText, request } from './api'
 
 type Size = { logical_bytes: number; allocated_bytes: number | null; files: number; directories: number }
 type Group = {
@@ -39,10 +39,6 @@ const storageLabels: Record<string, string> = {
   attachments: 'Allegati', generated_images: 'Immagini generate', cache: 'Cache', logs: 'Log',
   worktrees: 'Worktree', user_output: 'Output utente', desktop_profile: 'Profilo Desktop',
 }
-function errorText(error: unknown) {
-  return error instanceof Error ? error.message : 'Il servizio locale non risponde.'
-}
-
 function ExportDetails({ group }: { group: Group }) {
   return <div className="storage-detail">
     <code>{group.path}</code>

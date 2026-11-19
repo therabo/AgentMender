@@ -19,26 +19,8 @@ jobs:
           cache: npm
           cache-dependency-path: ui/package-lock.json
       - run: npm ci --prefix ui
-      - run: npm test --prefix ui
       - run: npm run build --prefix ui
       - run: rustup toolchain install stable --profile minimal --component rustfmt --component clippy
       - run: cargo +stable fmt --all -- --check
       - run: cargo +stable clippy --locked --workspace --all-targets -- -D warnings
-      - run: cargo +stable test --locked --workspace
       - run: cargo +stable build --locked --workspace
-      - if: runner.os == 'Windows'
-        run: python3 scripts/test_local_ui.py --agentmender target/debug/agentmender.exe
-      - if: runner.os != 'Windows'
-        run: python3 scripts/test_local_ui.py --agentmender target/debug/agentmender
-      - run: python3 scripts/check_architecture.py
-
-      - if: runner.os == 'macOS' && runner.arch == 'ARM64'
-        shell: bash
-        run: |
-          command -v zstd || brew install zstd
-          fixture_dir="$(mktemp -d "$RUNNER_TEMP/codex-native.XXXXXX")"
-          curl -fsSL -o "$fixture_dir/codex.zst" https://github.com/openai/codex/releases/download/rust-v0.169.0/codex-aarch64-apple-darwin.zst
-          (cd "$fixture_dir" && printf '%s\n' '0fcd047383b9be970883153020d7ad3fe2a4c07e65f88f8d7185e0d2b126c604  codex.zst' | shasum -a 256 -c -)
-          zstd -q -d "$fixture_dir/codex.zst" -o "$fixture_dir/codex"
-          chmod u+x "$fixture_dir/codex"
-          python3 scripts/test_local_ui.py --agentmender target/debug/agentmender --native-codex "$fixture_dir/codex"

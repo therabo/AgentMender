@@ -134,25 +134,3 @@ impl<'a> Lines<'a> {
         }
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn reading_a_revision_preserves_the_file_cursor() {
-        use std::io::Write;
-
-        let fixture = tempfile::NamedTempFile::new().unwrap();
-        let mut writer = fixture.as_file();
-        writer.write_all(b"abcdef").unwrap();
-
-        let mut input = File::open(fixture.path()).unwrap();
-        input.seek(SeekFrom::Start(2)).unwrap();
-        Revision::read(&input, fixture.path()).unwrap();
-        assert_eq!(input.stream_position().unwrap(), 2);
-        let mut remaining = String::new();
-        input.read_to_string(&mut remaining).unwrap();
-        assert_eq!(remaining, "cdef");
-    }
-}

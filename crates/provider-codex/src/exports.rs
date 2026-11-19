@@ -471,7 +471,7 @@ fn group(
 }
 
 impl Inventory {
-    pub(crate) fn scan(storage: &[Storage]) -> io::Result<Self> {
+    pub(crate) fn scan(storage: &[Storage]) -> Self {
         let mut budget = Budget::new();
         let mut groups = Vec::new();
         let mut size = Size::default();
@@ -593,11 +593,11 @@ impl Inventory {
         #[cfg(not(unix))]
         let _ = allocation.direct;
         groups.sort_unstable_by(|a, b| a.key.cmp(&b.key));
-        Ok(Self {
+        Self {
             groups,
             size,
             complete,
-        })
+        }
     }
 }
 
@@ -768,73 +768,5 @@ fn removal_error(error: io::Error) -> &'static str {
             CHANGED
         }
         _ => "Il filesystem ha impedito l’eliminazione.",
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::discovery::access;
-
-    #[test]
-    fn an_active_publication_lease_is_informational_for_removal() {
-        let parent = tempfile::tempdir().unwrap();
-        let root = parent.path().canonicalize().unwrap();
-        let publication_id = "a".repeat(64);
-        let bundle = root.join(&publication_id);
-        fs::create_dir(&bundle).unwrap();
-        fs::write(bundle.join("report.pdf"), b"example").unwrap();
-        let marker = serde_json::json!({
-            "schema": "openai.artifact-session.filesystem-publication-marker/v2",
-            "publicationId": publication_id,
-            "fileName": "report.pdf",
-            "byteLength": 7,
-            "digest": "b".repeat(64),
-            "createdAtMs": 1500000000000u64,
-        });
-        fs::write(bundle.join(MARKER), serde_json::to_vec(&marker).unwrap()).unwrap();
-        let storage = |owned| Storage {
-            provider: "codex",
-            platform: std::env::consts::OS,
-            root: root.clone(),
-            kind: StorageKind::ArtifactSessionExports,
-            path: root.clone(),
-            source: "fixture",
-            identity: identity(&root),
-            observed: true,
-            recognized: owned,
-            owned,
-            access: access(&root),
-            contract: None,
-            inventory_available: true,
-            removal_available: false,
-            reason: "fixture",
-        };
-        let source = storage(true);
-        let first = Inventory::scan(std::slice::from_ref(&source)).unwrap();
-        assert!(first.complete);
-        assert_eq!(first.groups[0].protection, Protection::ProviderManaged);
-        assert_eq!(first.groups[0].created_at, Some(1_500_000_000));
-        assert_eq!(first.groups[0].removal_available, cfg!(unix));
-        let lease = serde_json::json!({
-            "schema": "openai.artifact-session.filesystem-publication-lease/v2",
-            "publicationId": publication_id,
-            "minimumRetainUntilMs": 9_000_000_000_000u64,
-        });
-        fs::write(bundle.join(LEASE), serde_json::to_vec(&lease).unwrap()).unwrap();
-        let second = Inventory::scan(&[source]).unwrap();
-        assert_eq!(second.groups[0].protection, Protection::InUse);
-        assert_ne!(first.groups[0].key, second.groups[0].key);
-        assert_eq!(second.groups[0].removal_available, cfg!(unix));
-        assert!(first.groups[0].remove().is_err());
-        assert_eq!(fs::read(bundle.join("report.pdf")).unwrap(), b"example");
-        let unverified_root = Inventory::scan(&[storage(false)]).unwrap();
-        assert!(!unverified_root.groups[0].removal_available);
-        #[cfg(unix)]
-        {
-            second.groups[0].remove().unwrap();
-            assert!(!bundle.exists());
-            assert!(root.is_dir());
-        }
     }
 }

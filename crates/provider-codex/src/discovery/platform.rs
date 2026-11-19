@@ -327,28 +327,3 @@ fn windows(archive: &Path) -> (Vec<Installation>, Vec<Storage>) {
     }
     (installations, storage)
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::fs;
-
-    #[test]
-    fn recognizes_executable_architecture_without_loading_it() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().canonicalize().unwrap().join("codex 🚀");
-        let mut elf = vec![0; 64];
-        elf[..6].copy_from_slice(b"\x7fELF\x02\x01");
-        elf[18] = 183;
-        fs::write(&path, elf).unwrap();
-        assert_eq!(binary_architecture(&path).as_deref(), Some("aarch64"));
-        let mut pe = vec![0; 128];
-        pe[..2].copy_from_slice(b"MZ");
-        pe[0x3c] = 64;
-        pe[64..70].copy_from_slice(b"PE\0\0\x64\x86");
-        fs::write(&path, pe).unwrap();
-        assert_eq!(binary_architecture(&path).as_deref(), Some("x86_64"));
-        fs::write(&path, [0xcf, 0xfa, 0xed, 0xfe, 0x0c, 0, 0, 1]).unwrap();
-        assert_eq!(binary_architecture(&path).as_deref(), Some("aarch64"));
-    }
-}

@@ -6,12 +6,10 @@ mod lineage;
 #[cfg(target_os = "macos")]
 mod projects;
 
-pub use agentmender_domain::TranscriptMessage;
-
 use crate::{CodexAdapter, Guard};
 use agentmender_domain::{
     CodexMembership, InventoryObservation, ProjectLocator, ProviderKind, RegisteredProject,
-    Session, SessionIdentity,
+    Session, SessionIdentity, TranscriptMessage,
 };
 use agentmender_provider_api::{
     ProviderError, evidence::EvidenceSandbox, process, validate_location,

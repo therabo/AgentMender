@@ -13,7 +13,7 @@ export function SessionStatus({ session }: { session: Session }) {
   return <span className={`state state-${session.state}`}><i aria-hidden />{stateLabel[session.state]}</span>
 }
 
-export function SessionTable({ records, onSelect }: { records: Session[]; onSelect: (key: string) => void }) {
+function SessionTable({ records, onSelect }: { records: Session[]; onSelect: (key: string) => void }) {
   return <table className="sessions">
     <thead><tr><th scope="col">Sessione</th><th scope="col">Ultima attività <small>UTC</small></th><th scope="col">Transcript</th><th scope="col">Stato</th><th scope="col"><span className="sr-only">Apri</span></th></tr></thead>
     <tbody>

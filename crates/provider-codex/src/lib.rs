@@ -5,10 +5,10 @@ mod cleanup;
 mod desktop_reconciliation;
 pub mod discovery;
 pub mod exports;
-#[cfg(any(target_os = "macos", all(test, unix)))]
+#[cfg(target_os = "macos")]
 mod reader;
 mod removal;
-#[cfg(any(target_os = "macos", all(test, unix)))]
+#[cfg(target_os = "macos")]
 mod rollout_reader;
 #[cfg(target_os = "macos")]
 mod snapshot;
@@ -19,7 +19,7 @@ use agentmender_provider_api::{ProviderError, ProviderLocation, process, validat
 use std::{path::PathBuf, process::Child, sync::Mutex};
 
 pub use removal::{Deletion, DeletionPlan};
-pub use worker::{TranscriptCursor, TranscriptMessage, TranscriptPage, run_worker};
+pub use worker::{TranscriptCursor, run_worker};
 
 pub struct CodexAdapter {
     location: ProviderLocation,

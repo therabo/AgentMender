@@ -1,5 +1,5 @@
 export type Provider = 'codex' | 'claude'
-export type Coverage = 'partial' | 'unavailable' | 'not_detected'
+type Coverage = 'partial' | 'unavailable' | 'not_detected'
 export type State = 'active' | 'archived' | 'unknown'
 export type Kind = 'main' | 'subagent' | 'fork' | 'unknown'
 
@@ -74,7 +74,7 @@ export type ClaudeDiscovery = {
   }
 }
 
-export type ClaudeSession = {
+type ClaudeSession = {
   metadata_complete: boolean
   modified_at: number | null
   surface: 'cli' | 'desktop' | 'mixed' | null
@@ -225,6 +225,10 @@ export type Transcript = {
   complete: boolean
 }
 
+export function errorText(failure: unknown, fallback = 'Il servizio locale non risponde.'): string {
+  return failure instanceof Error ? failure.message : fallback
+}
+
 const authorizationKey = 'agentmender.authorization'
 
 export async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
@@ -237,7 +241,7 @@ export async function request<T>(path: string, options: RequestInit = {}): Promi
     const payload = await response.json().catch(() => ({}))
     throw new Error(payload.error ?? 'La richiesta non è valida o il servizio locale non risponde.')
   }
-  if (response.status === 202 || response.status === 204) return undefined as T
+  if (response.status === 204) return undefined as T
   return response.json()
 }
 

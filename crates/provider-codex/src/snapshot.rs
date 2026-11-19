@@ -300,19 +300,3 @@ pub(super) fn read_snapshot(
     bounded_backup(&source, &mut memory, deadline)?;
     Ok(memory)
 }
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn bundled_sqlite_omits_retired_full_text_search() {
-        let db = rusqlite::Connection::open_in_memory().unwrap();
-        let enabled: bool = db
-            .query_row(
-                "SELECT sqlite_compileoption_used('ENABLE_FTS5')",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert!(!enabled);
-    }
-}

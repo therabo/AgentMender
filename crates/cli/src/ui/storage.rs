@@ -42,24 +42,20 @@ fn state(app: &App) -> Result<MutexGuard<'_, ExportState>, ApiError> {
     })
 }
 
-fn snapshot(app: &App, state: &mut ExportState, fresh: bool) -> Result<Arc<Inventory>, ApiError> {
+fn snapshot(app: &App, state: &mut ExportState, fresh: bool) -> Arc<Inventory> {
     if let Some(value) = state
         .inventory
         .as_ref()
         .filter(|item| !fresh && item.measured.elapsed() < CACHE_AGE)
     {
-        return Ok(value.snapshot.clone());
+        return value.snapshot.clone();
     }
-    let inventory = Arc::new(
-        app.discovery
-            .inspect_exports()
-            .map_err(|_| ApiError::internal())?,
-    );
+    let inventory = Arc::new(app.discovery.inspect_exports());
     state.inventory = Some(CachedInventory {
         snapshot: inventory.clone(),
         measured: Instant::now(),
     });
-    Ok(inventory)
+    inventory
 }
 
 pub(super) async fn discover(
@@ -117,7 +113,7 @@ pub(super) async fn list(
     }
     read(app, move |app| {
         let mut exports = state(app)?;
-        let inventory = snapshot(app, &mut exports, false)?;
+        let inventory = snapshot(app, &mut exports, false);
         let query = filter.search.trim().to_lowercase();
         let mut groups: Vec<_> = inventory
             .groups
@@ -192,7 +188,7 @@ pub(super) async fn preview(
     read(app, move |app| {
         let mut exports = state(app)?;
         exports.review = None;
-        let inventory = snapshot(app, &mut exports, true)?;
+        let inventory = snapshot(app, &mut exports, true);
         let mut groups = Vec::with_capacity(selection.keys.len());
         let mut size = Size {
             allocated_bytes: Some(0),

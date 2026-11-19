@@ -36,7 +36,6 @@ name = "agentmender-domain"
 version = "0.1.0"
 dependencies = [
  "serde",
- "serde_json",
 ]
 
 [[package]]
@@ -63,7 +62,6 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
- "tempfile",
 ]
 
 [[package]]
@@ -72,14 +70,12 @@ version = "0.1.0"
 dependencies = [
  "agentmender-domain",
  "agentmender-provider-api",
- "chrono",
  "rusqlite",
  "rustix",
  "same-file",
  "serde",
  "serde_json",
  "sha2",
- "tempfile",
  "toml",
  "uuid",
  "zstd",

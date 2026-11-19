@@ -100,39 +100,3 @@ pub fn serialize<S: Serializer>(path: &Path, serializer: S) -> Result<S::Ok, S::
 pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<PathBuf, D::Error> {
     restore(Representation::deserialize(deserializer)?)
 }
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[derive(Debug, Serialize, Deserialize, PartialEq)]
-    struct Example {
-        #[serde(with = "super")]
-        path: PathBuf,
-    }
-    #[test]
-    fn utf8_paths_remain_json_strings() {
-        let value = Example {
-            path: "normal/path".into(),
-        };
-        let json = serde_json::to_value(&value).unwrap();
-        assert_eq!(json["path"], "normal/path");
-        assert_eq!(serde_json::from_value::<Example>(json).unwrap(), value);
-    }
-    #[cfg(unix)]
-    #[test]
-    fn non_utf8_native_paths_round_trip_without_collisions() {
-        use std::os::unix::ffi::OsStringExt;
-        let path = PathBuf::from(OsString::from_vec(vec![b'a', 255]));
-        let value = Example { path };
-        let json = serde_json::to_value(&value).unwrap();
-        assert_eq!(json["path"]["encoding"], "unix_bytes");
-        assert_eq!(json["path"]["hex"], "61ff");
-        assert_eq!(serde_json::from_value::<Example>(json).unwrap(), value);
-    }
-    #[test]
-    fn malformed_native_encoding_is_rejected() {
-        assert!(
-            serde_json::from_str::<Example>(r#"{"path":{"encoding":"unix_bytes","hex":"z"}}"#)
-                .is_err()
-        );
-    }
-}

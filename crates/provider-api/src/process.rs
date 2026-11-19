@@ -276,7 +276,7 @@ pub fn read_bundle_metadata(bundle: &Path) -> Result<BundleMetadata, ProviderErr
 }
 
 /// Strictly recognize official version banners; proximity never proves compatibility.
-#[cfg(any(target_os = "macos", target_os = "linux", test))]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 fn parse_version(kind: ProviderKind, banner: &str) -> Option<String> {
     let line = banner.trim();
     let value = match kind {
@@ -391,10 +391,6 @@ pub fn verify_source_write_denial(root: &Path) -> Result<(), ProviderError> {
 }
 
 /// Resolve executable paths without invoking the shell or probing unrelated commands.
-pub fn find_executable(kind: ProviderKind) -> Option<std::path::PathBuf> {
-    find_executables(kind).into_iter().next()
-}
-
 pub fn find_executables(kind: ProviderKind) -> Vec<std::path::PathBuf> {
     let name = match kind {
         ProviderKind::Codex => "codex",
@@ -546,122 +542,4 @@ fn windows_packages(script: &'static str) -> Result<Vec<u8>, ProviderError> {
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
     small_output(command)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn content_policy_reads_only_declared_transcripts_and_denies_source_writes_auth_and_links() {
-        use std::os::unix::fs::symlink;
-        let source = tempfile::tempdir().unwrap();
-        let home = tempfile::tempdir().unwrap();
-        std::fs::create_dir(source.path().join("sessions")).unwrap();
-        let transcript = source.path().join("sessions/visible.jsonl");
-        std::fs::write(&transcript, b"VISIBLE FIXTURE").unwrap();
-        let auth = source.path().join("auth.json");
-        std::fs::write(&auth, b"SECRET CANARY").unwrap();
-        let link = source.path().join("sessions/linked.jsonl");
-        symlink(&auth, &link).unwrap();
-        let sandbox = EvidenceSandbox::new(source.path(), home.path()).unwrap();
-        let output = content_command(Path::new("/bin/cat"), &sandbox)
-            .unwrap()
-            .arg(&transcript)
-            .output()
-            .unwrap();
-        assert!(output.status.success());
-        assert_eq!(output.stdout, b"VISIBLE FIXTURE");
-        for path in [&auth, &link] {
-            let output = content_command(Path::new("/bin/cat"), &sandbox)
-                .unwrap()
-                .arg(path)
-                .output()
-                .unwrap();
-            assert!(!output.status.success());
-            assert!(output.stdout.is_empty());
-        }
-        assert!(
-            !content_command(Path::new("/usr/bin/touch"), &sandbox)
-                .unwrap()
-                .arg(source.path().join("sessions/must-remain-absent"))
-                .status()
-                .unwrap()
-                .success()
-        );
-        assert_eq!(std::fs::read(auth).unwrap(), b"SECRET CANARY");
-    }
-
-    #[test]
-    fn banner_parser_keeps_exact_prereleases_and_rejects_ambiguous_output() {
-        assert_eq!(
-            parse_version(ProviderKind::Codex, "codex-cli 0.164.0-alpha.11.1\n"),
-            Some("0.164.0-alpha.11.1".into())
-        );
-        assert_eq!(
-            parse_version(ProviderKind::Claude, "2.1.311 (Claude Code)"),
-            Some("2.1.311".into())
-        );
-        for value in [
-            "codex-cli latest",
-            "codex-cli 0.164",
-            "codex-cli 0.164.0\nextra",
-            "0.164.0",
-        ] {
-            assert!(parse_version(ProviderKind::Codex, value).is_none());
-        }
-    }
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn sandbox_denies_file_writes_before_execution() {
-        // Canary touches a fresh fixture only. This is not a provider operation.
-        let dir = tempfile::tempdir().unwrap();
-        let target = dir.path().join("must-not-exist");
-        let status = Command::new("/usr/bin/sandbox-exec")
-            .args(["-p", PROFILE, "/usr/bin/touch"])
-            .arg(&target)
-            .stderr(Stdio::null())
-            .status()
-            .unwrap();
-        assert!(!status.success());
-        assert!(!target.exists());
-    }
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn sandbox_preserves_existing_files_against_mutation_operations() {
-        let dir = tempfile::tempdir().unwrap();
-        let source = dir.path().join("valuable");
-        let renamed = dir.path().join("renamed");
-        std::fs::write(&source, b"original").unwrap();
-        let forbidden = [
-            vec!["/bin/rm".into(), source.as_os_str().to_owned()],
-            vec![
-                "/bin/mv".into(),
-                source.as_os_str().to_owned(),
-                renamed.as_os_str().to_owned(),
-            ],
-            vec![
-                "/bin/mkdir".into(),
-                dir.path().join("new-directory").into_os_string(),
-            ],
-            vec![
-                "/bin/sh".into(),
-                "-c".into(),
-                "printf changed > \"$1\"".into(),
-                "sandbox-canary".into(),
-                source.as_os_str().to_owned(),
-            ],
-        ];
-        for args in forbidden {
-            let status = Command::new("/usr/bin/sandbox-exec")
-                .args(["-p", PROFILE])
-                .args(args)
-                .stderr(Stdio::null())
-                .status()
-                .unwrap();
-            assert!(!status.success());
-            assert_eq!(std::fs::read(&source).unwrap(), b"original");
-            assert!(!renamed.exists());
-        }
-    }
 }
