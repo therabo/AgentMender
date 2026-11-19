@@ -1,66 +1,111 @@
-//! Best-effort refresh request for the Desktop projection after native deletion.
-use rusqlite::{Connection, OpenFlags, config::DbConfig};
+//! Remove local thread projections and request a Desktop sidebar refresh.
+use rusqlite::{Connection, OpenFlags, TransactionBehavior, config::DbConfig};
 use std::{
     fs, io,
     os::unix::fs::MetadataExt,
-    path::{Component, Path, PathBuf},
+    path::{Path, PathBuf},
     time::Duration,
 };
-use uuid::Uuid;
 
-/// Clear the full-reconciliation timestamp for a stale local catalog entry.
-/// The caller invokes this only after a confirmed native delete exits zero.
-pub fn schedule_desktop_catalog_reconciliation(root: &Path, deleted_id: Uuid) {
-    if !root.is_absolute() {
-        return;
-    }
-    let mut checked = PathBuf::new();
-    for part in root.components() {
-        if !matches!(part, Component::RootDir | Component::Normal(_)) {
-            return;
-        }
-        checked.push(part);
-        if !fs::symlink_metadata(&checked).is_ok_and(|meta| meta.is_dir()) {
-            return;
-        }
-    }
+const CATALOGS: [&str; 2] = ["codex.db", "codex-dev.db"];
 
-    let directory = root.join("sqlite");
-    if !fs::symlink_metadata(&directory).is_ok_and(|meta| meta.is_dir()) {
-        return;
-    }
-
-    let id = deleted_id.hyphenated().to_string();
-    for name in ["codex.db", "codex-dev.db"] {
-        let database = directory.join(name);
-        if !fs::symlink_metadata(&database).is_ok_and(|meta| meta.is_file() && meta.nlink() == 1)
-            || !fs::symlink_metadata(database.with_extension("db-journal"))
-                .is_err_and(|error| error.kind() == io::ErrorKind::NotFound)
-        {
-            continue;
+pub(super) fn remove_local_thread(
+    root: &Path,
+    id: &str,
+    errors: &mut Vec<String>,
+) -> Vec<&'static str> {
+    let mut changed = Vec::new();
+    for name in CATALOGS {
+        let result = (|| -> Result<bool, Box<dyn std::error::Error>> {
+            let Some((path, no_sidecars)) = catalog_path(root, name)? else {
+                return Ok(false);
+            };
+            delete_entry(&path, id, no_sidecars)
+        })();
+        match result {
+            Ok(true) => changed.push(name),
+            Ok(false) => {}
+            Err(error) => errors.push(format!("sqlite/{name}: {error}")),
         }
-        let no_sidecars = match (
-            sidecar_exists(&database.with_extension("db-wal")),
-            sidecar_exists(&database.with_extension("db-shm")),
-        ) {
-            (Ok(false), Ok(false)) => true,
-            (Ok(true), Ok(true)) => false,
-            _ => continue,
-        };
-        let _ = request_full_reconciliation(&database, &id, no_sidecars);
+    }
+    changed
+}
+
+pub(super) fn schedule_desktop_catalog_reconciliation(
+    root: &Path,
+    changed: Vec<&str>,
+    errors: &mut Vec<String>,
+) {
+    for name in changed {
+        let result = (|| -> Result<(), Box<dyn std::error::Error>> {
+            let (path, _) = catalog_path(root, name)?
+                .ok_or_else(|| io::Error::from(io::ErrorKind::NotFound))?;
+            let mut db = open_writer(&path)?;
+            let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            if !tx.query_row(COMPATIBLE_SCHEMA, [], |row| row.get::<_, bool>(0))? {
+                return Err(
+                    io::Error::other("Schema del catalogo Desktop non riconosciuto.").into(),
+                );
+            }
+            let marker = tx.query_row(
+                "SELECT EXISTS (
+                    SELECT 1 FROM pragma_table_xinfo('local_thread_catalog_sync_state', 'main')
+                    WHERE name = 'last_full_reconciled_at' AND hidden = 0
+                )",
+                [],
+                |row| row.get::<_, bool>(0),
+            )?;
+            if marker {
+                tx.execute(
+                    "UPDATE local_thread_catalog_sync_state
+                     SET last_full_reconciled_at = NULL
+                     WHERE host_id COLLATE BINARY = 'local' AND last_full_reconciled_at IS NOT NULL",
+                    [],
+                )?;
+            }
+            tx.commit()?;
+            Ok(())
+        })();
+        if let Err(error) = result {
+            errors.push(format!("sqlite/{name}, riconciliazione sidebar: {error}"));
+        }
     }
 }
 
-fn sidecar_exists(path: &Path) -> io::Result<bool> {
+fn catalog_path(root: &Path, name: &str) -> io::Result<Option<(PathBuf, bool)>> {
+    // SQLite opens sidecars itself. Verify the archive and the exact known paths.
+    agentmender_provider_api::rewrite::directory(root)?;
+    let directory = root.join("sqlite");
+    match fs::symlink_metadata(&directory) {
+        Ok(meta) if meta.is_dir() => {}
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error),
+        _ => return Err(io::Error::other("Directory SQLite protetta.")),
+    }
+    let database = directory.join(name);
+    if !regular_file(&database)? {
+        return Ok(None);
+    }
+    let wal = regular_file(&database.with_extension("db-wal"))?;
+    let shm = regular_file(&database.with_extension("db-shm"))?;
+    if wal != shm || regular_file(&database.with_extension("db-journal"))? {
+        return Err(io::Error::other(
+            "File ausiliari SQLite incompleti o occupati.",
+        ));
+    }
+    Ok(Some((database, !wal)))
+}
+
+fn regular_file(path: &Path) -> io::Result<bool> {
     match fs::symlink_metadata(path) {
         Ok(meta) if meta.is_file() && meta.nlink() == 1 => Ok(true),
-        Ok(_) => Err(io::Error::from(io::ErrorKind::InvalidData)),
+        Ok(_) => Err(io::Error::other("File SQLite protetto.")),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
         Err(error) => Err(error),
     }
 }
 
-fn immutable_uri(path: &std::path::Path) -> std::ffi::OsString {
+fn immutable_uri(path: &Path) -> std::ffi::OsString {
     use std::{fmt::Write, os::unix::ffi::OsStrExt};
     let mut uri = String::from("file:");
     for &byte in path.as_os_str().as_bytes() {
@@ -74,106 +119,140 @@ fn immutable_uri(path: &std::path::Path) -> std::ffi::OsString {
     uri.into()
 }
 
-fn request_full_reconciliation(path: &Path, id: &str, no_sidecars: bool) -> rusqlite::Result<()> {
-    let flags = OpenFlags::SQLITE_OPEN_NOFOLLOW | OpenFlags::SQLITE_OPEN_NO_MUTEX;
-    if no_sidecars {
-        // An ordinary read of a closed WAL database can create sidecars.
-        // Use this snapshot only to skip unnecessary writes.
-        let probe = Connection::open_with_flags(
-            immutable_uri(path),
-            flags | OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_URI,
-        )?;
-        probe.set_db_config(DbConfig::SQLITE_DBCONFIG_TRUSTED_SCHEMA, false)?;
-        probe.pragma_update(None, "temp_store", "memory")?;
-        if !needs_reconciliation(&probe, id)? {
-            return Ok(());
-        }
-    }
+const OPEN_FLAGS: OpenFlags =
+    OpenFlags::SQLITE_OPEN_NOFOLLOW.union(OpenFlags::SQLITE_OPEN_NO_MUTEX);
 
-    let mut db = Connection::open_with_flags(path, flags | OpenFlags::SQLITE_OPEN_READ_WRITE)?;
+fn open_writer(path: &Path) -> rusqlite::Result<Connection> {
+    let db = Connection::open_with_flags(path, OPEN_FLAGS | OpenFlags::SQLITE_OPEN_READ_WRITE)?;
     db.busy_timeout(Duration::ZERO)?;
     db.set_db_config(DbConfig::SQLITE_DBCONFIG_TRUSTED_SCHEMA, false)?;
     // Leave checkpointing and WAL/SHM cleanup to Desktop.
     db.set_db_config(DbConfig::SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE, true)?;
     db.pragma_update(None, "wal_autocheckpoint", 0)?;
     db.pragma_update(None, "temp_store", "memory")?;
-
-    let mode: String = db.pragma_query_value(None, "journal_mode", |row| row.get(0))?;
-    if mode != "wal" {
-        return Ok(());
-    }
-
-    // The schema inspection and guarded update share a snapshot. A concurrent
-    // writer can make the upgrade fail with SQLITE_BUSY; the caller moves on.
-    let tx = db.transaction()?;
-    if needs_reconciliation(&tx, id)? {
-        tx.execute(
-            "UPDATE local_thread_catalog_sync_state
-             SET last_full_reconciled_at = NULL
-             WHERE host_id COLLATE BINARY = 'local' AND last_full_reconciled_at IS NOT NULL",
-            [],
-        )?;
-    }
-    tx.commit()
+    Ok(db)
 }
 
-fn needs_reconciliation(db: &Connection, id: &str) -> rusqlite::Result<bool> {
-    if !db.query_row(COMPATIBLE_SCHEMA, [], |row| row.get::<_, bool>(0))? {
+fn delete_entry(
+    path: &Path,
+    id: &str,
+    no_sidecars: bool,
+) -> Result<bool, Box<dyn std::error::Error>> {
+    if no_sidecars {
+        // A regular read of a closed WAL database can create sidecars.
+        let probe = Connection::open_with_flags(
+            immutable_uri(path),
+            OPEN_FLAGS | OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_URI,
+        )?;
+        probe.set_db_config(DbConfig::SQLITE_DBCONFIG_TRUSTED_SCHEMA, false)?;
+        if !selected_entry(&probe, id)? {
+            return Ok(false);
+        }
+    }
+
+    let mut db = open_writer(path)?;
+    let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    if !selected_entry(&tx, id)? {
+        return Ok(false);
+    }
+    if !tx.query_row(COMPATIBLE_SCHEMA, [], |row| row.get::<_, bool>(0))? {
+        return Err(io::Error::other("Schema del catalogo Desktop non riconosciuto.").into());
+    }
+    let host_verified = tx.query_row(
+        "SELECT EXISTS (SELECT 1 FROM local_thread_catalog_hosts
+                        WHERE host_id COLLATE BINARY = 'local' AND host_kind COLLATE BINARY = 'local')",
+        [],
+        |row| row.get::<_, bool>(0),
+    )?;
+    if !host_verified {
+        return Err(io::Error::other("Host locale del catalogo Desktop non verificabile.").into());
+    }
+    let sync_updated = tx.execute(
+        "UPDATE local_thread_catalog_sync_state SET observation_sequence = observation_sequence + 1
+         WHERE host_id COLLATE BINARY = 'local'",
+        [],
+    )?;
+    let tombstone = tx.execute(
+        "INSERT INTO local_thread_catalog_scan_entries (host_id, thread_id, removed)
+         VALUES ('local', ?1, 1)
+         ON CONFLICT(host_id, thread_id) DO UPDATE SET removed = 1
+         WHERE host_id COLLATE BINARY = 'local' AND thread_id COLLATE BINARY = ?1",
+        [id],
+    )?;
+    tx.execute(
+        "DELETE FROM local_thread_catalog
+         WHERE host_id COLLATE BINARY = 'local' AND thread_id COLLATE BINARY = ?1",
+        [id],
+    )?;
+    let revision_updated = tx.execute(
+        "UPDATE local_thread_catalog_metadata SET catalog_revision = catalog_revision + 1 WHERE id = 1",
+        [],
+    )?;
+    if sync_updated != 1 || tombstone != 1 || revision_updated != 1 {
+        return Err(
+            io::Error::other("Stato o revisione del catalogo Desktop non verificabili.").into(),
+        );
+    }
+    tx.commit()?;
+    Ok(true)
+}
+
+fn selected_entry(db: &Connection, id: &str) -> rusqlite::Result<bool> {
+    if !db.query_row(
+        "SELECT EXISTS (SELECT 1 FROM pragma_table_list
+                        WHERE schema = 'main' AND type = 'table' AND name = 'local_thread_catalog')",
+        [],
+        |row| row.get::<_, bool>(0),
+    )? {
         return Ok(false);
     }
     db.query_row(
-        "SELECT EXISTS (
-             SELECT 1 FROM local_thread_catalog
-             WHERE host_id COLLATE BINARY = 'local' AND thread_id COLLATE BINARY = ?1
-         ) AND EXISTS (
-             SELECT 1 FROM local_thread_catalog_sync_state
-             WHERE host_id COLLATE BINARY = 'local' AND last_full_reconciled_at IS NOT NULL
-         )",
+        "SELECT EXISTS (SELECT 1 FROM local_thread_catalog
+                        WHERE host_id COLLATE BINARY = 'local' AND thread_id COLLATE BINARY = ?1)",
         [id],
         |row| row.get(0),
     )
 }
 
-// Require ordinary tables, the observed primary keys and a writable nullable
-// INTEGER marker. A trigger or foreign-key relationship could widen the write.
+// Only ordinary tables with known keys and columns may be mutated. Triggers
+// and foreign-key relationships could extend the mutation to other rows.
 const COMPATIBLE_SCHEMA: &str = "
-    SELECT (
-        SELECT count(*) FROM pragma_table_list
-        WHERE schema = 'main' AND type = 'table'
-          AND name IN ('local_thread_catalog', 'local_thread_catalog_sync_state')
-    ) = 2
-    AND (
-        SELECT count(*) FROM pragma_table_xinfo('local_thread_catalog', 'main') WHERE pk <> 0
-    ) = 2
-    AND (
-        SELECT count(*)
-        FROM pragma_table_xinfo('local_thread_catalog', 'main')
-        WHERE (name, pk) IN (('host_id', 1), ('thread_id', 2))
-          AND type = 'TEXT' AND [notnull] = 1 AND hidden = 0
-    ) = 2
-    AND (
-        SELECT count(*) FROM pragma_table_xinfo('local_thread_catalog_sync_state', 'main')
-    ) = 5
-    AND NOT EXISTS (
-        VALUES ('host_id', 'TEXT', 0, 1, 0),
-               ('watermark_updated_at', 'REAL', 0, 0, 0),
-               ('initial_build_complete', 'INTEGER', 1, 0, 0),
-               ('observation_sequence', 'INTEGER', 1, 0, 0),
-               ('last_full_reconciled_at', 'INTEGER', 0, 0, 0)
+    WITH required(tbl, col, pk) AS (
+        VALUES ('local_thread_catalog', 'host_id', 1),
+               ('local_thread_catalog', 'thread_id', 2),
+               ('local_thread_catalog', 'observation_sequence', 0),
+               ('local_thread_catalog', 'missing_candidate', 0),
+               ('local_thread_catalog_scan_entries', 'host_id', 1),
+               ('local_thread_catalog_scan_entries', 'thread_id', 2),
+               ('local_thread_catalog_scan_entries', 'removed', 0),
+               ('local_thread_catalog_hosts', 'host_id', 1),
+               ('local_thread_catalog_hosts', 'host_kind', 0),
+               ('local_thread_catalog_metadata', 'id', 1),
+               ('local_thread_catalog_metadata', 'catalog_revision', 0),
+               ('local_thread_catalog_scan_checkpoints', 'host_id', 1),
+               ('local_thread_catalog_scan_checkpoints', 'checkpoint', 0),
+               ('local_thread_catalog_sync_state', 'host_id', 1),
+               ('local_thread_catalog_sync_state', 'observation_sequence', 0)
+    ), mutated(name) AS (
+        VALUES ('local_thread_catalog'), ('local_thread_catalog_scan_entries'),
+               ('local_thread_catalog_metadata'), ('local_thread_catalog_sync_state')
+    )
+    SELECT NOT EXISTS (
+        SELECT tbl, col, pk FROM required
         EXCEPT
-        SELECT name, type, [notnull], pk, hidden
-        FROM pragma_table_xinfo('local_thread_catalog_sync_state', 'main')
+        SELECT t.name, c.name, c.pk FROM pragma_table_list AS t
+        JOIN pragma_table_xinfo(t.name, 'main') AS c
+        WHERE t.schema = 'main' AND t.type = 'table' AND c.hidden = 0
     )
     AND NOT EXISTS (
         SELECT 1 FROM main.sqlite_schema
-        WHERE type = 'trigger' AND tbl_name = 'local_thread_catalog_sync_state' COLLATE NOCASE
+        WHERE type = 'trigger' AND tbl_name COLLATE NOCASE IN (SELECT name FROM mutated)
     )
     AND NOT EXISTS (
         SELECT 1 FROM pragma_table_list AS t
         JOIN pragma_foreign_key_list(t.name, 'main') AS fk
         WHERE t.schema = 'main' AND t.type = 'table'
-          AND (t.name = 'local_thread_catalog_sync_state' COLLATE NOCASE
-               OR fk.[table] = 'local_thread_catalog_sync_state' COLLATE NOCASE)
+          AND fk.[table] COLLATE NOCASE IN (SELECT name FROM mutated)
     )";
 
 #[cfg(test)]
@@ -191,8 +270,11 @@ mod tests {
         tempfile::tempdir_in("/private/tmp").unwrap()
     }
 
-    fn schedule(root: &Path) {
-        schedule_desktop_catalog_reconciliation(root, Uuid::parse_str(ID).unwrap());
+    fn clean(root: &Path) -> Vec<String> {
+        let mut errors = Vec::new();
+        let catalogs = remove_local_thread(root, ID, &mut errors);
+        schedule_desktop_catalog_reconciliation(root, catalogs, &mut errors);
+        errors
     }
 
     fn catalog(root: &Path, name: &str) -> (std::path::PathBuf, Connection) {
@@ -233,19 +315,20 @@ mod tests {
     }
 
     #[test]
-    fn compatible_catalogs_keep_all_entries_and_other_host_state() {
+    fn removes_only_local_thread_and_updates_catalog_scan_and_sidebar() {
         let root = root();
         for name in ["codex.db", "codex-dev.db"] {
             let (path, db) = catalog(root.path(), name);
             insert_entry(&db, "local", ID);
             insert_entry(&db, "local", OTHER_ID);
             insert_entry(&db, "remote", ID);
+            db.execute("INSERT INTO local_thread_catalog_scan_entries VALUES ('local', ?1, 0), ('remote', ?1, 0)", [ID]).unwrap();
             if name == "codex.db" {
                 db.file_control(None::<&str>, FileControl::PersistWal(&mut 1))
                     .unwrap();
             }
             db.close().unwrap();
-            schedule(root.path());
+            assert!(clean(root.path()).is_empty());
             for suffix in ["-wal", "-shm"] {
                 assert!(
                     root.path()
@@ -255,7 +338,25 @@ mod tests {
                 );
             }
             let db = Connection::open(path).unwrap();
-            assert_eq!(local_state(&db), (42.5, 1, 7, None));
+            assert_eq!(local_state(&db), (42.5, 1, 8, None));
+            for (host, removed) in [("local", 1), ("remote", 0)] {
+                assert_eq!(db.query_row(
+                    "SELECT removed FROM local_thread_catalog_scan_entries WHERE host_id = ?1 AND thread_id = ?2",
+                    [host, ID], |row| row.get::<_, i64>(0),
+                ).unwrap(), removed);
+            }
+            assert_eq!(
+                db.query_row(
+                    "SELECT catalog_revision FROM local_thread_catalog_metadata",
+                    [],
+                    |row| row.get::<_, i64>(0)
+                )
+                .unwrap(),
+                26
+            );
+            assert_eq!(db.query_row("SELECT checkpoint FROM local_thread_catalog_scan_checkpoints WHERE host_id = 'local'", [], |row| row.get::<_, String>(0)).unwrap(), "in-flight");
+            assert!(clean(root.path()).is_empty());
+            assert_eq!(local_state(&db), (42.5, 1, 8, None));
             let remote: (f64, i64, i64, i64) = db
                 .query_row(
                     "SELECT watermark_updated_at, initial_build_complete, observation_sequence,
@@ -275,7 +376,7 @@ mod tests {
                 .unwrap();
             assert_eq!(
                 entries,
-                [("local", OTHER_ID), ("local", ID), ("remote", ID)]
+                [("local", OTHER_ID), ("remote", ID)]
                     .map(|(host, id)| (host.to_string(), id.to_string()))
             );
         }
@@ -289,7 +390,7 @@ mod tests {
         insert_entry(&db, "remote", ID);
         insert_entry(&db, "LOCAL", ID);
         db.close().unwrap();
-        schedule(root.path());
+        assert!(clean(root.path()).is_empty());
         assert!(!path.with_extension("db-wal").exists());
         assert!(!path.with_extension("db-shm").exists());
         assert!(!root.path().join("sqlite/codex-dev.db").exists());
@@ -298,10 +399,10 @@ mod tests {
     }
 
     #[test]
-    fn unknown_or_side_effecting_schema_is_ignored() {
+    fn unknown_or_side_effecting_schema_is_preserved() {
         let root = root();
         for ddl in [
-            "ALTER TABLE local_thread_catalog_sync_state DROP COLUMN last_full_reconciled_at",
+            "ALTER TABLE local_thread_catalog_metadata DROP COLUMN catalog_revision",
             "ALTER TABLE local_thread_catalog RENAME TO other_catalog",
             "CREATE TRIGGER collateral AFTER UPDATE ON local_thread_catalog_sync_state
                  BEGIN DELETE FROM local_thread_catalog; END",
@@ -316,7 +417,8 @@ mod tests {
             let before = fs::read(&path).unwrap();
             let wal = path.with_extension("db-wal");
             let before_wal = fs::read(&wal).unwrap();
-            schedule(case.path());
+            let errors = clean(case.path());
+            assert_eq!(errors.is_empty(), ddl.contains("RENAME TO"));
             assert_eq!(fs::read(path).unwrap(), before);
             assert_eq!(fs::read(wal).unwrap(), before_wal);
             assert!(!case.path().join("sqlite/codex-dev.db").exists());
@@ -335,14 +437,17 @@ mod tests {
         symlink(outside.path(), &linked_root).unwrap();
         let intermediate_link = elsewhere.path().join("intermediate");
         symlink(outside.path().parent().unwrap(), &intermediate_link).unwrap();
-        schedule(&linked_root);
-        schedule(&intermediate_link.join(outside.path().file_name().unwrap()));
-        schedule(&real_root.join("..").join("linked"));
-        schedule(Path::new("sqlite"));
+        assert_eq!(clean(&linked_root).len(), 2);
+        assert_eq!(
+            clean(&intermediate_link.join(outside.path().file_name().unwrap())).len(),
+            2
+        );
+        assert_eq!(clean(&real_root.join("..").join("linked")).len(), 2);
+        assert_eq!(clean(Path::new("sqlite")).len(), 2);
 
         let sqlite = real_root.join("sqlite");
         symlink(outside.path().join("sqlite"), &sqlite).unwrap();
-        schedule(&real_root);
+        assert!(!clean(&real_root).is_empty());
         fs::remove_file(&sqlite).unwrap();
         fs::create_dir(&sqlite).unwrap();
         let candidate = sqlite.join("codex.db");
@@ -351,10 +456,10 @@ mod tests {
         unknown_db.close().unwrap();
         let unknown_before = fs::read(&unknown).unwrap();
         symlink(&db_path, &candidate).unwrap();
-        schedule(&real_root);
+        assert!(!clean(&real_root).is_empty());
         fs::remove_file(&candidate).unwrap();
         fs::hard_link(&db_path, &candidate).unwrap();
-        schedule(&real_root);
+        assert!(!clean(&real_root).is_empty());
         assert_eq!(local_state(&db), (42.5, 1, 7, Some(123)));
         assert_eq!(fs::read(unknown).unwrap(), unknown_before);
         assert!(!sqlite.join("codex-dev.db").exists());
@@ -372,7 +477,7 @@ mod tests {
         for suffix in ["db-wal", "db-shm", "db-journal"] {
             let sidecar = path.with_extension(suffix);
             symlink(&sentinel, &sidecar).unwrap();
-            schedule(root.path());
+            assert_eq!(clean(root.path()).len(), 1);
             assert!(sidecar.is_symlink());
             assert_eq!(fs::read(&sentinel).unwrap(), b"outside");
             fs::remove_file(sidecar).unwrap();
@@ -384,19 +489,19 @@ mod tests {
     #[test]
     fn unavailable_catalog_is_skipped() {
         let root = root();
-        schedule(root.path());
+        assert!(clean(root.path()).is_empty());
         assert!(!root.path().join("sqlite").exists());
         let (path, mut db) = catalog(root.path(), "codex.db");
         insert_entry(&db, "local", ID);
         let writer = db
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
             .unwrap();
-        schedule(root.path());
+        assert_eq!(clean(root.path()).len(), 1);
         writer.rollback().unwrap();
         assert_eq!(local_state(&db), (42.5, 1, 7, Some(123)));
         db.close().unwrap();
         fs::set_permissions(&path, fs::Permissions::from_mode(0o400)).unwrap();
-        schedule(root.path());
+        assert_eq!(clean(root.path()).len(), 1);
         let db = Connection::open_with_flags(&path, OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
         assert_eq!(local_state(&db), (42.5, 1, 7, Some(123)));
     }

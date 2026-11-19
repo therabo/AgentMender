@@ -4,6 +4,7 @@ import { afterEach, expect, it, vi } from 'vitest'
 import { useState } from 'react'
 import type { Project, Session } from './api'
 import { Pagination, ProjectAccordion, SessionList, SessionTable } from './components'
+import { SessionDetail } from './detail'
 import { dateLabel, sizeLabel } from './format'
 
 afterEach(cleanup)
@@ -107,6 +108,49 @@ it('pages and opens Recenti with the current archive filters', async () => {
     fireEvent.click(session)
     expect(select).toHaveBeenCalledWith('recent')
   } finally {
+    fetch.mockRestore()
+  }
+})
+
+it('previews all Claude artifacts and submits one reviewed confirmation', async () => {
+  const session: Session = {
+    key: 'session', native_id: 'selected-uuid', title: 'Pulizia Claude', provider: 'claude',
+    project: null, workspace: null, created_at: null, last_active_at: null, transcript_bytes: 512,
+    state: 'active', kind: 'main', protected: false, removal_reason: null,
+  }
+  const root = '/fixture/claude'
+  const fetch = vi.spyOn(globalThis, 'fetch')
+    .mockResolvedValueOnce(Response.json({ session, conversation_preview: false, claude_cleanup_supported: true }))
+    .mockResolvedValueOnce(Response.json({ review: 'review-ticket', plan: {
+      files: [{ root, relative_path: 'file-history/selected-uuid/checkpoint', bytes: 512 }],
+      directories: [{ root, relative_path: 'projects/local/selected-uuid/mcp-tasks/empty' }],
+      logical_bytes: 512, history_matches: 2, notes: [],
+    } }))
+    .mockResolvedValueOnce(Response.json({ status: 'deleted', message: 'Eliminazione completata.', errors: [] }))
+  const prototype = HTMLDialogElement.prototype
+  const original = Object.getOwnPropertyDescriptor(prototype, 'showModal')
+  Object.defineProperty(prototype, 'showModal', {
+    configurable: true,
+    value(this: HTMLDialogElement) { this.open = true },
+  })
+  const onChange = vi.fn()
+  try {
+    render(<SessionDetail provider="claude" rowKey="session" onClose={vi.fn()} onChange={onChange} />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Anteprima eliminazione' }))
+    expect(await screen.findByText('file-history/selected-uuid/checkpoint')).toBeTruthy()
+    expect(screen.getByText('projects/local/selected-uuid/mcp-tasks/empty/')).toBeTruthy()
+    expect(screen.queryByRole('combobox')).toBeNull()
+    expect(fetch.mock.calls[1][0]).toBe('/api/claude/sessions/session/removal-preview')
+    expect(fetch.mock.calls[1][1]).toMatchObject({ method: 'POST' })
+    expect(fetch.mock.calls[1][1]?.body).toBeUndefined()
+    fireEvent.click(screen.getByRole('button', { name: /^Elimina$/ }))
+    expect(await screen.findByText('Eliminazione completata.')).toBeTruthy()
+    expect(fetch.mock.calls[2][0]).toBe('/api/claude/sessions/session/delete')
+    expect(fetch.mock.calls[2][1]?.body).toBe(JSON.stringify({ confirm: true, review: 'review-ticket' }))
+    expect(onChange).toHaveBeenCalledOnce()
+  } finally {
+    if (original) Object.defineProperty(prototype, 'showModal', original)
+    else Reflect.deleteProperty(prototype, 'showModal')
     fetch.mockRestore()
   }
 })

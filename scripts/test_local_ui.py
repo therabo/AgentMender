@@ -246,7 +246,7 @@ def claude_multiple_roots(binary, base, primary):
             client.call("GET", first + "/conversation?cursor=" + cursor, code=409)
             client.call("GET", first + "/storage", code=409)
             if platform.system() == "Darwin":
-                client.call("POST", first + "/removal-preview", {"mode": "standard"}, code=409)
+                client.call("POST", first + "/removal-preview", code=409)
             assert source.read_bytes() == original + b"{}\n"
         finally:
             source.write_bytes(original)
@@ -437,10 +437,10 @@ def claude_storage_acceptance(binary, base):
 def claude_cleanup_acceptance(binary, base):
     root = base / "claude-delete"
     desktop = base / "claude-delete-desktop"
-    bucket = root / "projects" / "standard"
+    bucket = root / "projects" / "cli"
     agent = bucket / CLAUDE_ID / "subagents" / f"agent-{CLAUDE_AGENT_ID}.jsonl"
     stored = bucket / f"{CLAUDE_ID}.jsonl"
-    deep = root / "projects" / "deep" / f"{CLAUDE_DESKTOP_ID}.jsonl"
+    desktop_session = root / "projects" / "desktop" / f"{CLAUDE_DESKTOP_ID}.jsonl"
     blocked_id = CLAUDE_SIDECHAIN_ID
     blocked = bucket / f"{blocked_id}.jsonl"
     registration = desktop / "claude-code-sessions" / CLAUDE_ID / CLAUDE_DESKTOP_ID / f"local_{CLAUDE_DESKTOP_ID}.json"
@@ -450,37 +450,55 @@ def claude_cleanup_acceptance(binary, base):
     task = root / "tasks" / CLAUDE_ID / "1.json"
     debug = root / "debug" / f"{CLAUDE_ID}.txt"
     checkpoint = root / "file-history" / CLAUDE_ID / "keep"
-    deep_checkpoint = root / "file-history" / CLAUDE_DESKTOP_ID / "delete"
-    preserved = bucket / CLAUDE_ID / "user-output.txt"
+    desktop_checkpoint = root / "file-history" / CLAUDE_DESKTOP_ID / "delete"
+    nested = bucket / CLAUDE_ID
+    unknown_output = nested / "user-output.txt"
+    deep_output = nested.joinpath("mcp-tasks", *[f"level-{n}" for n in range(20)], "result.json")
+    wide = nested / "tool-results"
+    empty = nested / "other" / "empty"
+    outside = base / "outside-claude-session"
+    outside.mkdir()
+    sentinel = outside / "keep"
+    sentinel.write_bytes(b"another archive")
+    link = nested / "external"
     shared = registration.with_name("scheduled-sessions.json")
-    retained_history = (json.dumps({"sessionId": blocked_id}).encode() + b"\r\n"
-                        + b"malformed, preserve my bytes\r\n"
-                        + json.dumps({"session_id": CLAUDE_DESKTOP_ID}).encode())
-    initial_history = (json.dumps({"sessionId": CLAUDE_ID}).encode() + b"\r\n"
-                       + retained_history)
+    large_row = json.dumps({"sessionId": blocked_id, "display": "x" * 65536}).encode() + b"\n"
+    history_prefix = (large_row * 512 + json.dumps({"sessionId": blocked_id}).encode() + b"\r\n"
+                      + b"malformed, preserve my bytes\r\n")
+    desktop_row = json.dumps({"session_id": CLAUDE_DESKTOP_ID}).encode()
+    retained_history = history_prefix + desktop_row
+    initial_history = history_prefix + json.dumps({"sessionId": CLAUDE_ID}).encode() + b"\r\n" + desktop_row
+    assert len(initial_history) > 32 * 1024 * 1024
     files = {
         stored: json.dumps({"type": "user", "entrypoint": "cli", "sessionId": CLAUDE_ID,
-                            "version": "2.1.202", "cwd": "/fixture/Standard"}) + "\n",
-        deep: json.dumps({"type": "user", "entrypoint": "claude-desktop", "sessionId": CLAUDE_DESKTOP_ID,
-                          "version": "2.1.222", "cwd": "/fixture/Deep"}) + "\n",
+                            "version": "2.1.202", "cwd": "/fixture/CLI"}) + "\n",
+        desktop_session: json.dumps({"type": "user", "entrypoint": "claude-desktop", "sessionId": CLAUDE_DESKTOP_ID,
+                          "version": "2.1.222", "cwd": "/fixture/Desktop"}) + "\n",
         blocked: json.dumps({"type": "user", "entrypoint": "cli", "sessionId": blocked_id}) + "\n",
         agent: json.dumps({"type": "user", "sessionId": CLAUDE_ID, "agentId": CLAUDE_AGENT_ID,
                            "isSidechain": True}) + "\n",
         agent.with_suffix(".meta.json"): "{}",
         registration: json.dumps({"sessionId": f"local_{CLAUDE_DESKTOP_ID}",
-                                   "cliSessionId": CLAUDE_DESKTOP_ID, "cwd": "/fixture/Deep"}),
+                                   "cliSessionId": CLAUDE_DESKTOP_ID, "cwd": "/fixture/Desktop"}),
         shared: '{"preserve":"scheduler"}',
         sidecar: '{}',
         env: "environment fixture",
         task: "{}",
         debug: "debug fixture",
-        checkpoint: "standard retains checkpoint",
-        deep_checkpoint: "deep removes checkpoint",
-        preserved: "unknown session output",
+        checkpoint: "checkpoint fixture",
+        desktop_checkpoint: "Desktop checkpoint fixture",
+        unknown_output: "unknown session output",
+        deep_output: "deeply nested output",
     }
     for path, value in files.items():
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(value)
+    wide.mkdir()
+    wide_files = {wide / f"result-{index}" for index in range(8200)}
+    for path in wide_files:
+        path.touch()
+    empty.mkdir(parents=True)
+    link.symlink_to(outside, target_is_directory=True)
     history.write_bytes(initial_history)
     legacy = base / "home" / ".agentmender" / "claude-backups" / "existing-backup"
     legacy.mkdir(parents=True)
@@ -491,21 +509,26 @@ def claude_cleanup_acceptance(binary, base):
         paths = {row["native_id"]: f"/api/claude/sessions/{row['key']}"
                  for row in client.call("GET", "/api/claude/sessions")["rows"]}
         path = paths[CLAUDE_ID]
-        review = client.call("POST", path + "/removal-preview", {"mode": "standard"})
+        review = client.call("POST", path + "/removal-preview")
         assert review["plan"]["history_matches"] == 1
         listed = {Path(item["root"]) / item["relative_path"] for item in review["plan"]["files"]}
-        assert set([stored, agent, agent.with_suffix(".meta.json"), sidecar, env, task, debug]) == listed, review
-        assert review["plan"]["logical_bytes"] == sum(item.stat().st_size for item in listed)
+        assert "mode" not in review["plan"]
+        assert {stored, agent, agent.with_suffix(".meta.json"), sidecar, env, task, debug,
+                checkpoint, unknown_output, deep_output, link} | wide_files == listed
+        directories = {Path(item["root"]) / item["relative_path"] for item in review["plan"]["directories"]}
+        assert {nested, deep_output.parent, wide, empty, checkpoint.parent} <= directories
+        assert review["plan"]["logical_bytes"] == sum(item.stat().st_size for item in listed if item != link)
         confirm = {"confirm": True, "review": review["review"]}
         client.call("POST", path + "/delete", confirm, code=403, Origin=None)
-        client.call("POST", path + "/delete", {**confirm, "path": str(deep)}, code=422)
+        client.call("POST", path + "/delete", {**confirm, "path": str(desktop_session)}, code=422)
         client.call("POST", path + "/delete", {"confirm": False, "review": review["review"]}, code=400)
         client.call("POST", paths[blocked_id] + "/delete", confirm, code=409)
-        assert all(item.is_file() for item in listed)
+        assert link.is_symlink() and all(item.is_file() for item in listed if item != link)
         result = client.call("POST", path + "/delete", confirm)
-        assert result["status"] == "partial" and result["errors"], result
+        assert result["status"] == "deleted" and not result["errors"], result
         assert all(not item.exists() for item in listed)
-        assert checkpoint.read_text() == files[checkpoint] and preserved.read_text() == files[preserved]
+        assert not nested.exists() and all(not entry.exists() for entry in directories)
+        assert sentinel.read_bytes() == b"another archive"
         assert history.read_bytes() == retained_history
         assert not (root / "history.jsonl.lock").exists() and not list(root.glob("history.jsonl.*.tmp"))
         assert not env.parent.exists() and not task.parent.exists() and not agent.parent.exists()
@@ -514,12 +537,12 @@ def claude_cleanup_acceptance(binary, base):
 
         lock = root / "history.jsonl.lock"
         lock.mkdir()
-        review = client.call("POST", paths[CLAUDE_DESKTOP_ID] + "/removal-preview", {"mode": "deep"})
+        review = client.call("POST", paths[CLAUDE_DESKTOP_ID] + "/removal-preview")
         listed = {Path(item["root"]) / item["relative_path"] for item in review["plan"]["files"]}
-        assert {deep, registration, deep_checkpoint} == listed, review
+        assert {desktop_session, registration, desktop_checkpoint} == listed, review
         result = client.call("POST", paths[CLAUDE_DESKTOP_ID] + "/delete", {"confirm": True, "review": review["review"]})
         assert result["status"] == "partial" and "occupata" in str(result["errors"]), result
-        assert all(not item.exists() for item in listed) and not deep_checkpoint.parent.exists()
+        assert all(not item.exists() for item in listed) and not desktop_checkpoint.parent.exists()
         assert blocked.read_text() == files[blocked] and shared.read_text() == files[shared]
         assert history.read_bytes() == retained_history and lock.is_dir()
         assert client.call("GET", "/api/claude/sessions")["total"] == 1
@@ -528,19 +551,47 @@ def claude_cleanup_acceptance(binary, base):
         history.unlink()
         lock.rmdir()
         path = paths[blocked_id]
-        review = client.call("POST", path + "/removal-preview", {"mode": "standard"})
+        review = client.call("POST", path + "/removal-preview")
         replacement = base / "replacement-transcript"
         replacement.write_bytes(blocked.read_bytes())
         replacement.replace(blocked)
         result = client.call("POST", path + "/delete", {"confirm": True, "review": review["review"]})
         assert result["status"] == "failed" and blocked.exists(), result
-        review = client.call("POST", path + "/removal-preview", {"mode": "standard"})
+        review = client.call("POST", path + "/removal-preview")
         result = client.call("POST", path + "/delete", {"confirm": True, "review": review["review"]})
         assert result["status"] == "deleted" and not history.exists(), result
         assert client.call("GET", "/api/claude/sessions")["total"] == 0
         client.call("GET", "/api/claude/backups", code=404)
         assert set(legacy.parent.iterdir()) == {legacy}
         assert (legacy / "keep").read_bytes() == b"existing copy"
+
+
+def claude_shared_uuid_cleanup(binary, base):
+    root = base / "claude-shared-uuid"
+    selected, duplicate = (root / "projects" / ns / f"{CLAUDE_ID}.jsonl" for ns in ("selected", "duplicate"))
+    outside = duplicate.with_suffix("") / "keep.txt"
+    selected_nested = selected.with_suffix("") / "remove.txt"
+    history = root / "history.jsonl"
+    checkpoint = root / "file-history" / CLAUDE_ID / "shared"
+    row = json.dumps({"type": "user", "sessionId": CLAUDE_ID}).encode() + b"\n"
+    for path in (selected, selected_nested, history, checkpoint):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(row)
+    with ui(binary, base, None, root) as (client, ticket):
+        authorize(client, ticket)
+        row_key = client.call("GET", "/api/claude/sessions")["rows"][0]["key"]
+        path = f"/api/claude/sessions/{row_key}"
+        review = client.call("POST", path + "/removal-preview")
+        assert review["plan"]["history_matches"] == 1
+        outside.parent.mkdir(parents=True)
+        duplicate.write_bytes(row)
+        outside.write_bytes(b"other namespace")
+        outcome = client.call("POST", path + "/delete", {"confirm": True, "review": review["review"]})
+        assert outcome["status"] == "partial" and "stesso ID" in str(outcome["errors"]), outcome
+        assert not selected.exists() and not selected_nested.parent.exists()
+        assert duplicate.read_bytes() == history.read_bytes() == checkpoint.read_bytes() == row
+        assert outside.read_bytes() == b"other namespace"
+
 
 
 @contextmanager
@@ -561,6 +612,36 @@ def codex_desktop_catalog(root):
                 """, [("local", probe.R), ("local", probe.REPLACEMENT), ("remote", probe.R)])
         yield db
     database.unlink()
+
+
+def codex_partial_cleanup(binary, base, claude):
+    root = base / "codex-partial"
+    codex_metadata_fixture(root, 2)
+    ident = probe.session_id(0)
+    executable = base / "codex-ok"
+    executable.write_text(f"""#!/bin/sh
+if [ "$1" = --version ]; then printf 'codex-cli 99.0.0\n'; exit; fi
+[ "$CODEX_HOME" = "$PWD" ] && [ "$3" = delete ] &&
+[ "$4" = "{ident}" ] && [ "$5" = --force ] || exit 2
+printf 'Native deletion fixture succeeded\n'
+""")
+    executable.chmod(0o700)
+    index = root / "session_index.jsonl"
+    kept = json.dumps({"id": probe.session_id(1)}).encode()
+    index.write_bytes(json.dumps({"id": ident}).encode() + b"\r\n" + kept)
+    state = root / ".codex-global-state.json"
+    state.write_bytes(b"malformed JSON")
+    with ui(binary, base, root, claude, executable) as (client, ticket):
+        authorize(client, ticket)
+        row = next(row for row in client.call("GET", "/api/codex/sessions")["rows"]
+                   if row["native_id"] == ident)
+        outcome = client.call("POST", f"/api/codex/sessions/{row['key']}/delete", {"confirm": True})
+        assert outcome["status"] == "partial", outcome
+        assert "Native deletion fixture succeeded" in outcome["message"] and "incompleta" in outcome["message"]
+        assert len(outcome["errors"]) == 1 and outcome["errors"][0].startswith(state.name)
+        assert index.read_bytes() == kept and state.read_bytes() == b"malformed JSON"
+        assert not state.with_suffix(".json.bak").exists()
+
 
 
 def codex_acceptance(client, root, rollouts):
@@ -985,6 +1066,8 @@ def main():
         storage_acceptance(agentmender, base / "storage-suite", claude)
         if platform.system() == "Darwin":
             claude_cleanup_acceptance(agentmender, base)
+            claude_shared_uuid_cleanup(agentmender, base)
+            codex_partial_cleanup(agentmender, base, claude)
         if args.native_codex:
             binary = args.native_codex.resolve(strict=True)
             assert platform.system() == "Darwin" and platform.machine() == "arm64"
@@ -1005,6 +1088,26 @@ def main():
                     sync = "SELECT * FROM local_thread_catalog_sync_state ORDER BY host_id"
                     catalog = "SELECT * FROM local_thread_catalog ORDER BY host_id, thread_id"
                     entries = desktop.execute(catalog).fetchall()
+                    projections = {}
+                    for filename, field in [("history.jsonl", "session_id"), ("session_index.jsonl", "id")]:
+                        path = root / filename
+                        kept = b"malformed fixture row\r\n" + json.dumps({field: probe.REPLACEMENT}).encode()
+                        original = json.dumps({field: probe.R}).encode() + b"\r\n" + kept
+                        path.write_bytes(original)
+                        projections[path] = (original, kept)
+                    maps = ("thread-project-assignments", "thread-projectless-output-directories",
+                            "thread-writable-roots", "thread-workspace-root-hints")
+                    state = {name: {probe.R: {"fixture": name}, probe.REPLACEMENT: ["keep"]}
+                             for name in maps}
+                    state.update({"projectless-thread-ids": [probe.R, probe.REPLACEMENT, probe.R],
+                                  "local-projects": [{"id": "keep-project", "path": "/fixture/workspace"}],
+                                  "unrelated": {"large": 987654321012345678901234567890, "reference": probe.R}})
+                    retained_state = {name: {probe.REPLACEMENT: ["keep"]} for name in maps}
+                    retained_state.update({"projectless-thread-ids": [probe.REPLACEMENT],
+                                           "local-projects": state["local-projects"], "unrelated": state["unrelated"]})
+                    state_paths = [root / name for name in (".codex-global-state.json", ".codex-global-state.json.bak")]
+                    for path in state_paths:
+                        path.write_text(json.dumps(state))
                     with ui(agentmender, base, root, claude, failing) as (client, ticket):
                         authorize(client, ticket)
                         page = client.call("GET", "/api/codex/sessions")
@@ -1015,15 +1118,24 @@ def main():
                         assert rollouts[probe.REPLACEMENT].is_file()
                     assert desktop.execute(sync).fetchall() == [("local", 1, 1, 7, 123), ("remote", 2, 1, 8, 456)]
                     assert desktop.execute(catalog).fetchall() == entries
+                    assert all(path.read_bytes() == original for path, (original, _) in projections.items())
+                    assert all(json.loads(path.read_bytes()) == state for path in state_paths)
                     with ui(agentmender, base, root, claude, executable_copy) as (client, ticket):
                         authorize(client, ticket)
                         inventory_acceptance(client, claude)
                         codex_acceptance(client, root, rollouts)
-                    assert desktop.execute(sync).fetchall() == [("local", 1, 1, 7, None), ("remote", 2, 1, 8, 456)]
-                    assert desktop.execute(catalog).fetchall() == entries
+                    assert desktop.execute(sync).fetchall() == [("local", 1, 1, 8, None), ("remote", 2, 1, 8, 456)]
+                    assert desktop.execute(catalog).fetchall() == [row for row in entries if row[:2] != ("local", probe.R)]
+                    assert desktop.execute("SELECT * FROM local_thread_catalog_scan_entries").fetchall() == [("local", probe.R, 1)]
+                    assert desktop.execute("SELECT catalog_revision FROM local_thread_catalog_metadata").fetchone() == (26,)
+                    assert all(path.read_bytes() == kept for path, (_, kept) in projections.items())
+                    assert all(json.loads(path.read_bytes()) == retained_state for path in state_paths)
+                    assert not list(root.glob("*.agentmender-*.tmp"))
                 assert not (root / "sqlite/codex.db").exists()
+                for path in state_paths:
+                    path.unlink()
                 codex_project_deletion(agentmender, base, root, claude, executable_copy, rollouts)
-            print("Native Codex fixture: command result, success-only Desktop reconciliation, and deletion without a Desktop catalog.")
+            print("Native Codex fixture: command result, success-only auxiliary cleanup, Desktop reconciliation, and deletion without a Desktop catalog.")
         else:
             root = base / "codex"
             with ui(agentmender, base, root, claude) as (client, ticket):

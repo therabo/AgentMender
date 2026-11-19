@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { FileText, ShieldCheck, Trash2 } from 'lucide-react'
-import { projectPath, request, sessionPath, type ClaudeMode, type ClaudeReview, type ClaudeStorage, type DeletionResult, type Detail, type Project, type Provider, type Transcript } from './api'
+import { projectPath, request, sessionPath, type ClaudeReview, type ClaudeStorage, type DeletionResult, type Detail, type Project, type Provider, type Transcript } from './api'
 import { CloseButton, Dialog, Empty, Notice, SessionStatus } from './components'
 import { claudeCategories, claudeOwnership, claudeWriter, dateLabel, kindLabel, numberLabel, pathLabel, providerLabel, sizeLabel } from './format'
 
@@ -167,7 +167,6 @@ export function ProjectRemoval({ project, onClose, onChange }: {
 }
 
 function SessionRemoval({ path, detail, onChange }: { path: string; detail: Detail; onChange: () => void }) {
-  const [mode, setMode] = useState<ClaudeMode>('standard')
   const [review, setReview] = useState<ClaudeReview>()
   const [confirming, setConfirming] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -185,7 +184,7 @@ function SessionRemoval({ path, detail, onChange }: { path: string; detail: Deta
     setLoading(true)
     try {
       setReview(await request<ClaudeReview>(`${path}/removal-preview`, {
-        method: 'POST', body: JSON.stringify({ mode }),
+        method: 'POST',
       }))
       setConfirming(true)
     } catch (failure) {
@@ -199,23 +198,22 @@ function SessionRemoval({ path, detail, onChange }: { path: string; detail: Deta
     <h3>Eliminazione</h3>
     {unavailable && <p>{unavailable}</p>}
     <RemovalResult result={removal.result} error={error || removal.error} />
-    {!confirming && !removal.result && <div className="detail-actions claude-cleanup-actions">
-      {isClaude && !unavailable && <label>Modalità
-        <select value={mode} disabled={loading} onChange={event => setMode(event.target.value as ClaudeMode)}>
-          <option value="standard">Standard</option>
-          <option value="deep">Approfondita</option>
-        </select>
-      </label>}
+    {!confirming && !removal.result && <div className="detail-actions">
       <button className="button danger-outline" type="button" disabled={!!unavailable || loading} onClick={() => void prepare()}>
         <Trash2 size={16} aria-hidden />{loading ? 'Caricamento…' : isClaude ? 'Anteprima eliminazione' : 'Elimina sessione'}
       </button>
     </div>}
     {confirming && !removal.result && <>
       {review && <>
-        <p>{review.plan.mode === 'deep' ? 'Approfondita' : 'Standard'} · {numberLabel(review.plan.files.length)} file · {sizeLabel(review.plan.logical_bytes)}</p>
-        <ul className="claude-artifacts">{review.plan.files.map(file => <li key={`${pathLabel(file.root)}/${pathLabel(file.relative_path)}`}>
-          <code>{pathLabel(file.relative_path)}</code><span>{pathLabel(file.root)} · {sizeLabel(file.bytes)}</span>
-        </li>)}</ul>
+        <p>{numberLabel(review.plan.files.length)} file · {numberLabel(review.plan.directories.length)} directory · {sizeLabel(review.plan.logical_bytes)}</p>
+        <ul className="claude-artifacts claude-removal-targets" tabIndex={0} aria-label="File e directory da eliminare">
+          {review.plan.directories.map(directory => <li key={JSON.stringify([directory.root, directory.relative_path])}>
+            <code>{pathLabel(directory.relative_path)}/</code><span>{pathLabel(directory.root)}</span>
+          </li>)}
+          {review.plan.files.map(file => <li key={JSON.stringify([file.root, file.relative_path])}>
+            <code>{pathLabel(file.relative_path)}</code><span>{pathLabel(file.root)} · {sizeLabel(file.bytes)}</span>
+          </li>)}
+        </ul>
         {review.plan.history_matches !== null && <p>Righe di cronologia associate · {numberLabel(review.plan.history_matches)}</p>}
         {review.plan.notes.length > 0 && <Notice tone="warning"><ul>{review.plan.notes.map(note => <li key={note}>{note}</li>)}</ul></Notice>}
         <p>Chiudi Claude prima di confermare per ridurre il rischio di modifiche concorrenti.</p>

@@ -1,4 +1,6 @@
-//! Codex inventory, bounded transcript previews and exact native removal.
+//! Codex inventory, bounded transcript previews and session removal.
+#[cfg(target_os = "macos")]
+mod cleanup;
 #[cfg(target_os = "macos")]
 mod desktop_reconciliation;
 pub mod discovery;
@@ -17,11 +19,17 @@ use std::{path::PathBuf, process::Child, sync::Mutex};
 
 pub use worker::{TranscriptCursor, TranscriptMessage, TranscriptPage, run_worker};
 
+pub struct Deletion {
+    pub message: String,
+    pub errors: Vec<String>,
+}
+
 pub struct CodexAdapter {
     location: ProviderLocation,
     helper: PathBuf,
     home: PathBuf,
     connection: Mutex<Option<worker::Connection>>,
+    deletion: Mutex<()>,
 }
 
 impl CodexAdapter {
@@ -31,13 +39,14 @@ impl CodexAdapter {
             helper,
             home,
             connection: Mutex::new(None),
+            deletion: Mutex::new(()),
         }
     }
 
     pub fn delete_session(
         &self,
         identity: &agentmender_domain::SessionIdentity,
-    ) -> Result<String, String> {
+    ) -> Result<Deletion, String> {
         let root = self
             .location
             .state_root
@@ -57,12 +66,14 @@ impl CodexAdapter {
             .to_str()
             .ok_or("Percorso dell’archivio Codex non rappresentabile.")?;
         let setting = format!("sqlite_home={}", toml::Value::String(path.to_owned()));
-        let result = process::codex_delete(executable, &root, &setting, id);
+        // Keep concurrent UI requests from replacing each other's JSONL updates.
+        let _deletion = self.deletion.lock().expect("Codex deletion");
+        let message = process::codex_delete(executable, &root, &setting, id)?;
         #[cfg(target_os = "macos")]
-        if result.is_ok() {
-            desktop_reconciliation::schedule_desktop_catalog_reconciliation(&root, id);
-        }
-        result
+        let errors = cleanup::after_native_delete(&root, id);
+        #[cfg(not(target_os = "macos"))]
+        let errors = Vec::new();
+        Ok(Deletion { message, errors })
     }
 
     pub fn detect(&self) -> Result<Installation, ProviderError> {

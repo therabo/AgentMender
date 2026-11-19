@@ -1,39 +1,48 @@
-//! Rewrite a local prompt history under Claude's canonical directory lock.
-use super::directory;
-use crate::Revision;
-use rustix::fs::{self as fs, AtFlags, FileType, Mode, OFlags};
+//! Rewrite local prompt history under Claude's canonical directory lock.
+use agentmender_provider_api::rewrite::{self, DIR_FLAGS, directory};
+use rustix::fs::{self, AtFlags, Mode, Timespec, Timestamps, UTIME_NOW, UTIME_OMIT};
 use std::{
     fs::File,
-    io::{self, BufWriter, Read, Write},
+    io,
     path::Path,
-    time::{Duration, Instant},
+    sync::mpsc::{self, RecvTimeoutError},
+    thread,
+    time::Duration,
 };
 
 const HISTORY: &str = "history.jsonl";
 const LOCK: &str = "history.jsonl.lock";
-const MAX_BYTES: u64 = 32 * 1024 * 1024;
-
-fn open_history(root: &File) -> io::Result<File> {
-    let flags = OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::NONBLOCK | OFlags::CLOEXEC;
-    let file = fs::openat(root, HISTORY, flags, Mode::empty())?;
-    let stat = fs::fstat(&file)?;
-    if FileType::from_raw_mode(stat.st_mode) != FileType::RegularFile || stat.st_nlink != 1 {
-        return Err(io::ErrorKind::InvalidData.into());
-    }
-    Ok(File::from(file))
-}
 
 struct HistoryLock<'a> {
     root: &'a File,
+    handle: File,
     identity: (i32, u64),
 }
 
 impl HistoryLock<'_> {
     fn held(&self) -> bool {
-        fs::statat(self.root, LOCK, AtFlags::SYMLINK_NOFOLLOW).is_ok_and(|stat| {
-            (stat.st_dev, stat.st_ino) == self.identity
-                && FileType::from_raw_mode(stat.st_mode) == FileType::Directory
-        })
+        fs::statat(self.root, LOCK, AtFlags::SYMLINK_NOFOLLOW)
+            .is_ok_and(|stat| (stat.st_dev, stat.st_ino) == self.identity)
+    }
+
+    fn refresh(&self) -> io::Result<()> {
+        if !self.held() {
+            return Err(io::Error::other("Lock della cronologia cambiato."));
+        }
+        fs::futimens(
+            &self.handle,
+            &Timestamps {
+                last_access: Timespec {
+                    tv_sec: 0,
+                    tv_nsec: UTIME_OMIT,
+                },
+                last_modification: Timespec {
+                    tv_sec: 0,
+                    tv_nsec: UTIME_NOW,
+                },
+            },
+        )?;
+        Ok(())
     }
 }
 
@@ -45,6 +54,11 @@ impl Drop for HistoryLock<'_> {
     }
 }
 
+pub(super) fn count_rows(path: &Path, id: &str) -> io::Result<usize> {
+    let file = rewrite::open_file(&directory(path)?, HISTORY)?;
+    rewrite::filter_jsonl(&file, &mut io::sink(), |line| matches_id(line, id))
+}
+
 pub(super) fn remove_rows(path: &Path, id: &str) -> io::Result<usize> {
     let root = directory(path)?;
     if matches!(
@@ -53,7 +67,6 @@ pub(super) fn remove_rows(path: &Path, id: &str) -> io::Result<usize> {
     ) {
         return Ok(0);
     }
-    let started = Instant::now();
     fs::mkdirat(&root, LOCK, Mode::RUSR | Mode::WUSR | Mode::XUSR).map_err(|error| {
         if error == rustix::io::Errno::EXIST {
             io::Error::other("Cronologia occupata. Le righe sono state conservate.")
@@ -61,69 +74,42 @@ pub(super) fn remove_rows(path: &Path, id: &str) -> io::Result<usize> {
             error.into()
         }
     })?;
-    let observed = fs::statat(&root, LOCK, AtFlags::SYMLINK_NOFOLLOW)?;
+    let handle = fs::openat(&root, LOCK, DIR_FLAGS, Mode::empty())?;
+    let observed = fs::fstat(&handle)?;
     let lock = HistoryLock {
         root: &root,
+        handle: File::from(handle),
         identity: (observed.st_dev, observed.st_ino),
     };
-    let file = open_history(&root)?;
-    let location = path.join(HISTORY);
-    let revision = Revision::read(&file, &location).map_err(|_| io::ErrorKind::InvalidData)?;
-    let mode = fs::fstat(&file)?.st_mode & 0o777;
-    let mut bytes = Vec::new();
-    file.take(MAX_BYTES + 1).read_to_end(&mut bytes)?;
-    if bytes.len() as u64 > MAX_BYTES {
-        return Err(io::Error::other(
-            "Cronologia oltre il limite della riscrittura.",
-        ));
-    }
+    with_heartbeat(&lock, || {
+        rewrite::replace(
+            &root,
+            HISTORY,
+            |input, output| rewrite::filter_jsonl(input, output, |line| matches_id(line, id)),
+            || lock.refresh(),
+        )
+    })
+}
 
-    let temp = format!("{HISTORY}.agentmender-{}.tmp", std::process::id());
-    let flags = OFlags::WRONLY | OFlags::CREATE | OFlags::EXCL | OFlags::NOFOLLOW | OFlags::CLOEXEC;
-    let output = File::from(fs::openat(
-        &root,
-        temp.as_str(),
-        flags,
-        Mode::RUSR | Mode::WUSR,
-    )?);
-    let result = (|| {
-        let mut writer = BufWriter::new(&output);
-        let mut count = 0;
-        for line in bytes.split_inclusive(|byte| *byte == b'\n') {
-            // Finish within proper-lockfile's stale interval without stealing
-            // an existing lock or keeping a lease across the file deletions.
-            if started.elapsed() >= Duration::from_secs(5) {
-                return Err(io::Error::other(
-                    "Tempo di riscrittura della cronologia esaurito.",
-                ));
+fn with_heartbeat<T>(
+    lock: &HistoryLock<'_>,
+    rewrite: impl FnOnce() -> io::Result<T>,
+) -> io::Result<T> {
+    thread::scope(|scope| {
+        let (stop, receiver) = mpsc::channel::<()>();
+        // Claude's proper-lockfile treats the directory as stale after 10 seconds.
+        scope.spawn(move || {
+            while let Err(RecvTimeoutError::Timeout) = receiver.recv_timeout(Duration::from_secs(2))
+            {
+                if lock.refresh().is_err() {
+                    break;
+                }
             }
-            if matches_id(line, id) {
-                count += 1;
-            } else {
-                writer.write_all(line)?;
-            }
-        }
-        if count == 0 {
-            return Ok(0);
-        }
-        writer.flush()?;
-        fs::fchmod(&output, Mode::from_bits_truncate(mode))?;
-        if !lock.held()
-            || Revision::read(&open_history(&root)?, &location)
-                .map_err(|_| io::ErrorKind::InvalidData)?
-                != revision
-        {
-            return Err(io::Error::other(
-                "Cronologia o lock cambiati durante la riscrittura.",
-            ));
-        }
-        fs::renameat(&root, temp.as_str(), &root, HISTORY)?;
-        Ok(count)
-    })();
-    if !matches!(result, Ok(count) if count > 0) {
-        let _ = fs::unlinkat(&root, temp.as_str(), AtFlags::empty());
-    }
-    result
+        });
+        let result = rewrite();
+        drop(stop);
+        result
+    })
 }
 
 fn matches_id(line: &[u8], id: &str) -> bool {
@@ -131,7 +117,48 @@ fn matches_id(line: &[u8], id: &str) -> bool {
         return false;
     };
     row.get("sessionId")
+        .filter(|value| !value.is_null())
         .or_else(|| row.get("session_id"))
         .and_then(serde_json::Value::as_str)
         == Some(id)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Instant;
+
+    #[test]
+    fn renews_the_canonical_directory_lock_while_the_rewrite_is_still_running() {
+        let archive = tempfile::tempdir_in("/private/tmp").unwrap();
+        let root = directory(archive.path()).unwrap();
+        fs::mkdirat(&root, LOCK, Mode::RUSR | Mode::WUSR | Mode::XUSR).unwrap();
+        let handle = fs::openat(&root, LOCK, DIR_FLAGS, Mode::empty()).unwrap();
+        let initial = fs::fstat(&handle).unwrap();
+        let lock = HistoryLock {
+            root: &root,
+            handle: File::from(handle),
+            identity: (initial.st_dev, initial.st_ino),
+        };
+        with_heartbeat(&lock, || {
+            let deadline = Instant::now() + Duration::from_secs(6);
+            loop {
+                assert!(lock.held());
+                let current = fs::fstat(&lock.handle)?;
+                if (current.st_mtime, current.st_mtime_nsec)
+                    != (initial.st_mtime, initial.st_mtime_nsec)
+                {
+                    return Ok(());
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "lock heartbeat never updated mtime"
+                );
+                thread::sleep(Duration::from_millis(50));
+            }
+        })
+        .unwrap();
+        drop(lock);
+        assert!(!archive.path().join(LOCK).exists());
+    }
 }

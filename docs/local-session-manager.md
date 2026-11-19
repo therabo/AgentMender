@@ -34,8 +34,10 @@ and supports normal session actions. Counts and sizes describe observed
 records and known transcript bytes.
 
 Use **Elimina sessione** in a Codex conversation to confirm permanent
-deletion. AgentMender displays the result of the installed native command.
-The existing project action applies that command in sequence to the main
+deletion. After the native Codex command succeeds, AgentMender removes the
+selected UUID from both JSONL indexes, the local Desktop catalog and Desktop
+state, then requests a sidebar refresh. A failure in these steps is reported
+as partial success. The project action applies the same flow to the main
 conversations of eligible native projects. Project registrations and
 workspaces stay separate.
 
@@ -50,14 +52,17 @@ dependencies. Filter by metadata, activity date and transcript size.
 ## Claude Code storage and deletion
 
 Open **Export e backup → Storage Claude Code** to inspect paths and
-measurements. In a session's detail, choose **Standard** for recognized
-session files or **Approfondita** to include scoped checkpoints. Review the
-file list and total size, then select **Elimina**.
+measurements. In a session's detail, choose **Anteprima eliminazione**.
+Review the transcript, the files and directories scoped to the session,
+the checkpoints and the number of matching history rows. Select **Elimina**
+to confirm once.
 
 Session deletion is permanent. AgentMender creates no backup and offers no
-restore. Existing backups on disk are left untouched. Close Claude before
-confirming to reduce concurrent writes. Errors can leave some files or
-history rows in place. AgentMender displays the result and refreshes the
+restore. Independent backups stay in storage. Codex also cleans the selected UUID
+from its Desktop state `.bak` file when it already exists. Close Claude
+before confirming to reduce concurrent writes. Shared UUID-only artifacts
+stay in storage if another transcript can own them. Errors can leave files
+or history rows in place. AgentMender displays the result and refreshes the
 inventory. Physical disk space reclaimed can differ from the logical size.
 
 ## Storage and export deletion
@@ -105,7 +110,7 @@ require exact Origin. All requests require the exact local Host.
 | `GET /api/{provider}/sessions/{key}` | Details of a verified main conversation |
 | `GET /api/{provider}/sessions/{key}/conversation` | Bounded selected Codex transcript page with optional opaque cursor |
 | `POST /api/{provider}/refresh` | Reacquire the provider snapshot |
-| `POST /api/claude/sessions/{key}/removal-preview` | List exact Claude targets for `standard` or `deep` on macOS |
+| `POST /api/claude/sessions/{key}/removal-preview` | Return the complete Claude deletion preview and review receipt on macOS. The request has no body |
 | `POST /api/{provider}/sessions/{key}/delete` | Delete the selected session after explicit confirmation and return the result |
 
 The JSON confirmation is `{"confirm":true}`. Claude also passes the opaque

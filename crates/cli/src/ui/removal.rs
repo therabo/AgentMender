@@ -41,13 +41,12 @@ pub(super) struct ClaudeReview {
 pub(super) async fn claude_preview(
     State(app): State<Arc<App>>,
     Path(key): Path<String>,
-    Json(request): Json<Selection>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     read(app, move |app| {
         let (session, evidence) = app.inventory.selected_claude(app, &key)?;
         let plan = app
             .claude
-            .removal_plan(&session.identity, &evidence, request.mode)
+            .removal_plan(&session.identity, &evidence)
             .map_err(|_| {
                 ApiError::conflict(
                     "Transcript Claude cambiato o non leggibile. Aggiorna l’inventario.",
@@ -59,13 +58,6 @@ pub(super) async fn claude_preview(
         Ok(view)
     })
     .await
-}
-
-#[cfg(target_os = "macos")]
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(super) struct Selection {
-    mode: agentmender_provider_claude::cleanup::Mode,
 }
 
 #[derive(Deserialize)]
@@ -116,7 +108,17 @@ pub(super) async fn session(
                     return Err(ApiError::conflict(reason));
                 }
                 match app.codex.delete_session(&session.identity) {
-                    Ok(message) => result(1, message, Vec::new()),
+                    Ok(outcome) => {
+                        let message = if outcome.errors.is_empty() {
+                            outcome.message
+                        } else {
+                            format!(
+                                "Codex ha eliminato la sessione. Pulizia aggiuntiva incompleta. {}",
+                                outcome.message,
+                            )
+                        };
+                        result(1, message, outcome.errors)
+                    }
                     Err(error) => result(
                         0,
                         "Codex non ha completato l’eliminazione.".into(),
@@ -182,7 +184,15 @@ pub(super) async fn project(
         let mut errors = Vec::new();
         for session in &sessions {
             match app.codex.delete_session(session) {
-                Ok(_) => removed += 1,
+                Ok(outcome) => {
+                    removed += 1;
+                    errors.extend(outcome.errors.into_iter().map(|error| {
+                        format!(
+                            "{}: pulizia aggiuntiva incompleta. {error}",
+                            session.native_id
+                        )
+                    }));
+                }
                 Err(error) => {
                     errors.push(format!("{}: {error}", session.native_id));
                     break;

@@ -125,7 +125,7 @@ def probe(engine, real_home, root, port, agentmender=None):
             authorize(client, ticket)
             row, = [row for row in client.call("GET", "/api/claude/sessions")["rows"] if row["native_id"] == SESSION]
             path = f"/api/claude/sessions/{row['key']}"
-            preview = client.call("POST", path + "/removal-preview", {"mode": "standard"})
+            preview = client.call("POST", path + "/removal-preview")
             result = client.call("POST", path + "/delete", {"confirm": True, "review": preview["review"]})
             assert result["status"] in {"deleted", "partial"}, result
             assert not transcript.exists()

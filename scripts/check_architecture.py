@@ -68,8 +68,14 @@ require("crates/provider-codex/src/worker.rs", "Operation::ProjectCatalog", "pro
 require("crates/provider-codex/src/worker/projects.rs", "FROM projects", "FROM project_roots",
         ".codex-global-state.json", "filesystem::open_source_read", "MAX_DESKTOP_BYTES")
 require("crates/provider-codex/src/lib.rs", "identity.state_root != root", "Uuid::parse_str", "process::codex_delete")
-require("crates/provider-codex/src/lib.rs", '#[cfg(target_os = "macos")] mod desktop_reconciliation;',
-        'if result.is_ok() { desktop_reconciliation::schedule_desktop_catalog_reconciliation(&root, id); }')
+require("crates/provider-codex/src/lib.rs",
+        'let message = process::codex_delete(executable, &root, &setting, id)?;',
+        "cleanup::after_native_delete(&root, id)")
+require("crates/provider-codex/src/cleanup.rs", "rewrite::filter_jsonl", "remove_local_thread",
+        "schedule_desktop_catalog_reconciliation")
+require("crates/provider-codex/src/desktop_reconciliation.rs", "host_id COLLATE BINARY = 'local'",
+        "ON CONFLICT(host_id, thread_id)", "observation_sequence + 1", "catalog_revision + 1",
+        "last_full_reconciled_at = NULL")
 require("crates/provider-api/src/process.rs", '.args(["-c", sqlite_override, "delete"])',
         '.arg("--force")', '.env("CODEX_HOME", root)', "output.status.success()")
 require("crates/cli/src/ui/browser.rs", "Ipv4Addr::LOCALHOST", "byte.is_ascii_hexdigit()")
@@ -89,10 +95,12 @@ require("crates/provider-claude/src/storage.rs", 'root.join("claude-code-session
 require("crates/provider-claude/src/usage/walk.rs", "OFlags::NOFOLLOW",
         "AtFlags::SYMLINK_NOFOLLOW", "MAX_DEPTH", "self.budget.take()")
 require("crates/provider-claude/src/artifacts.rs", "verify(&file.root, &file.path, &file.revision)")
-require("crates/provider-claude/src/cleanup/mod.rs", "OFlags::NOFOLLOW", "fs::unlinkat",
-        "current.st_nlink != 1", "exact_sidecar", 'root.join("file-history")')
+require("crates/provider-claude/src/cleanup/mod.rs", "DIR_FLAGS", "AtFlags::SYMLINK_NOFOLLOW",
+        "fs::unlinkat", "current.st_nlink != 1", "exact_sidecar", '"file-history"')
 require("crates/provider-claude/src/cleanup/history.rs", '"history.jsonl.lock"',
-        "fs::mkdirat", "writer.write_all(line)", "lock.held()", "fs::renameat")
+        "fs::mkdirat", "rewrite::filter_jsonl", "lock.refresh()", "fs::futimens")
+require("crates/provider-api/src/rewrite.rs", "OFlags::NOFOLLOW", "OFlags::EXCL",
+        "reader.read_until", "writer.flush()", "fs::renameat")
 require("crates/cli/src/ui/mod.rs", "/api/storage/claude", "/api/storage/claude/refresh")
 assert "operations" not in source("crates/cli/src/ui/claude_usage.rs")
 

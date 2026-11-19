@@ -6,15 +6,17 @@ The Codex adapter owns platform discovery and format recognition. Discovery
 returns observations and capability reasons, with a separate identity for each
 root. The CLI selects a single session root using the launch override, the
 process configuration or the default home. Discovering a path grants no
-authorization. SQLite remains inside the confined reader. Metadata observation
-can run on more platforms than native mutation.
+authorization. Native session SQLite reads remain inside the confined
+reader. Metadata observation can run on more platforms than native mutation.
 
-Native removal reviews the logical subtree and every physical rollout. It
-revalidates recognized archival states, graph closure, locators, history bases,
-revisions and writer ownership. A persisted open edge requires corroborated
-storage and passes the same lock and native lifecycle checks. Both rollout
-trees stay write-denied except for exact reviewed files. The release and
-platform must pass the disposable native fixture.
+The native delete command owns the provider-managed conversation files and
+databases. After success the Codex adapter cleans the selected UUID from the
+local JSONL indexes and supported Desktop stores. The Desktop writer uses
+fixed statements on the two recognized catalog paths. The local thread,
+scan tombstone and revision counters change atomically in each catalog.
+AgentMender requests sidebar reconciliation after cleaning Desktop JSON
+state. [ADR 0046](claude-session-cleanup.md) defines the complete session
+workflow. Validate the release with the disposable native fixture.
 
 Storage export inventory has a distinct browser surface. It lists filesystem
 groups and uses bounded metadata reads. Roots confirmed through an installation

@@ -201,12 +201,11 @@ export type Detail = {
   claude_cleanup_supported?: boolean
 }
 
-export type ClaudeMode = 'standard' | 'deep'
 export type ClaudeReview = {
   review: string
   plan: {
-    mode: ClaudeMode
     files: { root: NativePath; relative_path: NativePath; bytes: number }[]
+    directories: { root: NativePath; relative_path: NativePath }[]
     logical_bytes: number
     history_matches: number | null
     notes: string[]

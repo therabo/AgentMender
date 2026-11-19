@@ -26,7 +26,7 @@ projects retain an identity. The separately paginated views share session
 details and transcript access. Each provider root and native ID are bound into
 opaque keys. Claude continues to group by the observed directory namespace.
 
-Bulk Codex removal applies the same native UUID command serially to the
+Bulk Codex removal applies the same complete session deletion serially to the
 observed main conversations of a native project with complete membership.
 The registration and its roots are outside this operation.
 

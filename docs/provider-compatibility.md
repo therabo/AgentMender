@@ -25,8 +25,18 @@ plays no part in classification.
 AgentMender invokes `codex delete <UUID> --force` for the selected local
 session and shows the executable's result. Available versions are determined
 by whether the installed command can execute successfully. Codex owns the
-deletion semantics and its protections. AgentMender refreshes the inventory
-following the attempt. [Codex CLI reference](https://learn.chatgpt.com/docs/developer-commands?surface=cli#codex-delete).
+native deletion of transcripts and provider-managed data.
+
+On macOS, a successful native command also triggers streaming cleanup of
+`history.jsonl` and `session_index.jsonl` in the selected archive. AgentMender
+removes the local UUID from recognized Desktop catalogs in `sqlite/codex.db`
+and `sqlite/codex-dev.db`, writes the scan tombstone, increments the observation
+sequence and catalog revision, and requests sidebar reconciliation when the
+catalog has a full-reconciliation marker. It removes references in the five
+thread-scoped collections in `.codex-global-state.json` and in its existing
+`.bak` counterpart. Project registrations, other hosts and other conversations
+stay in storage. An auxiliary failure produces a partial result and the
+inventory refreshes after the attempt. [Codex CLI reference](https://learn.chatgpt.com/docs/developer-commands?surface=cli#codex-delete).
 
 ### Registered Codex projects
 
@@ -107,9 +117,8 @@ an independent backup.
 | Discovery | CLI, Desktop bundle and bundled Code engine, default and explicit roots | CLI and configuration roots. The version probe requires Bubblewrap | CLI and Win32 candidates, recognized Store/MSIX AppX registration, native and explicit roots |
 | Inventory and preview | Bounded local project JSONL | Bounded local project JSONL | Read-only project JSONL with reparse point, volume and link checks. Native Windows runners are in the CI matrix |
 | Storage metadata and preview | Descriptor-relative inventory with observed file blocks | Descriptor-relative inventory with observed file blocks | Reparse-point checks and logical sizes. Allocation is unavailable |
-| Standard cleanup | Recognized local transcripts, associated subagents, registered Desktop session files, known sidecars and session state | Read-only | Read-only |
-| Approfondita | Standard plus scoped `file-history` files | Read-only | Read-only |
-| Shared history | Rewrite under the canonical directory lock when UUID ownership and the current file can be checked | Read-only | Read-only |
+| Complete deletion | Transcript, full namespace-scoped session directory, known sidecars, associated Desktop registration, `session-env`, `tasks`, `debug` and `file-history` | Read-only | Read-only |
+| Shared history | Streaming replacement under the canonical directory lock, with periodic renewal and exact UUID matching | Read-only | Read-only |
 
 Project identity includes the archive root and namespace. Equal UUIDs in
 different namespaces remain distinct. Corroborated Desktop records supply
@@ -122,7 +131,9 @@ location and record evidence support the format.
 Claude deletion is permanent and best-effort. Active writers can change or
 recreate files. Shared history or UUID-only state is preserved when it cannot
 be safely associated with the selected conversation. A locked or changed history
-file is reported in the result.
+file is reported in the result. The deletion preview traverses the scoped
+session directories without inventory limits. Symbolic links within those
+directories are unlinked as entries, and their external targets stay intact.
 [Storage audit](audits/claude-code-storage.md) ·
 [ADR 0046](adr/claude-session-cleanup.md).
 

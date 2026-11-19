@@ -9,20 +9,22 @@ contracts.
   mutations, a per-launch browser credential and explicit confirmation for deletion.
   Scope session IDs and transcript cursors to exact provider/root identities.
   URLs and request bodies carry neither file paths nor commands.
-- Keep Codex SQLite inside the attested read-only worker. Retain fixed queries,
-  descriptor-relative no-follow reads, unshared rollout identity, bounded
+- Keep Codex native session SQLite reads inside the attested read-only worker.
+  Retain fixed queries, descriptor-relative no-follow reads, unshared rollout identity, bounded
   snapshots and decoder budgets, and exact locator, UUID and revision checks.
   Preserve secret suppression and honest partial coverage. Unsafe code is
   confined to the existing macOS kernel attestation boundary.
 - Allow only provider-verified main conversations into search, sorting,
   pagination, counts and opaque key lookup.
 - Dispatch Codex session deletion to the native executable using the selected
-  archive and UUID. Resolve bulk Codex membership from a complete native
-  project observation. Keep project registrations and workspaces outside it.
-- Keep Claude deletion in the provider under ADR 0046. Scope removals to
-  recognized session files and prune only empty directories. Use the provider's
-  directory lock for shared history. Session deletion is permanent and creates
-  no backup.
+  archive and UUID. Apply scoped index and Desktop cleanup only after native
+  success. Use fixed writes to the recognized Desktop catalogs for local
+  threads. Resolve bulk Codex membership from a complete native project
+  observation. Preserve project registrations and workspaces.
+- Keep Claude deletion in the provider under ADR 0046. Scope recursive removal
+  to the exact session directory and recognized UUID directories. Use the
+  provider's renewed directory lock for shared history. Session deletion is
+  permanent and creates no backup.
 - Keep export discovery, inventory and authorization separate from session
   removal. Bind each receipt to explicitly reviewed groups and preserve export
   roots. Use shared references, active leases and partial coverage as inventory

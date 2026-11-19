@@ -4,6 +4,8 @@ pub mod filesystem;
 #[cfg(target_os = "macos")]
 mod macos_sandbox;
 pub mod process;
+#[cfg(unix)]
+pub mod rewrite;
 
 use std::path::PathBuf;
 use thiserror::Error;

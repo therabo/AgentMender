@@ -66,16 +66,18 @@ diagnostics report candidate dependencies.
 
 The authenticated browser confirms permanent deletion by opaque session key.
 Codex dispatches its native command for the selected UUID. The CLI uses the
-same archive as the session inventory and returns the native result. The
-project action applies this command serially to the observed conversations
-of an eligible native project. Dispatch stops on command failure.
+same archive as the session inventory. After native success, the adapter
+rewrites the two JSONL indexes, prunes the Desktop catalog and state, and
+requests sidebar reconciliation. It reports auxiliary errors as partial
+success. The project action repeats the workflow serially for observed main
+conversations and stops on a native command failure.
 
-On macOS, Claude's provider builds a list of exact session files for Standard
-or Approfondita. The server retains that list until the user confirms. The
-provider unlinks those regular files and prunes empty scoped directories.
-It rewrites applicable history rows under Claude's directory lock. Each
-provider's result invalidates the inventory. Existing export controls are
-independent. [ADR 0046](adr/claude-session-cleanup.md).
+On macOS, Claude builds a complete plan for the verified transcript, its
+namespace-scoped directory and associated artifacts, including checkpoints.
+The server retains the reviewed targets until confirmation. Claude removes
+entries and directories without following links, then rewrites applicable
+history rows under Claude's renewed directory lock. Each provider's result
+invalidates the inventory. The export controls have separate authorization. [ADR 0046](adr/claude-session-cleanup.md).
 
 ## Storage discovery and exports
 
