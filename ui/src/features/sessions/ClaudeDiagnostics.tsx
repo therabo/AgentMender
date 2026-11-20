@@ -1,5 +1,5 @@
-import type { ClaudeDiscovery } from './api'
-import { numberLabel, pathLabel } from './format'
+import type { ClaudeDiscovery } from '../../lib/api/contracts'
+import { numberLabel, pathLabel } from '../../lib/utils/format'
 
 const reasons: Record<string, string> = {
   unrecognized_locator: 'Percorso o nome del transcript non riconosciuto',
@@ -35,7 +35,7 @@ export function ClaudeDiagnostics({ discovery, incomplete }: { discovery: Claude
   const namedReasons = (counts: Record<string, number>): [string, number][] =>
     Object.entries(counts).map(([reason, count]) => [reasons[reason] ?? reason, count])
 
-  return <details className="claude-discovery">
+  return <details className="claude-discovery" lang="it">
     <summary>Diagnostica inventario Claude Code</summary>
     <p>{localStatus} I conteggi precedono i filtri della lista.</p>
     <section aria-label="Transcript Code">

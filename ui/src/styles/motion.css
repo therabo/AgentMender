@@ -1,0 +1,62 @@
+.aurora { transition: opacity var(--motion-provider-switch) var(--ease-in-out); }
+.app-header { animation: appear 300ms var(--ease-out) both; }
+.segmented::before { transition: transform var(--motion-view-switch) var(--ease-out); }
+.provider-switch::before { transition-duration: var(--motion-provider-switch); transition-timing-function: var(--ease-in-out); }
+.stat-card { animation: stat-enter var(--motion-stats) var(--ease-out) both; }
+.stat-card:nth-child(2) { animation-delay: var(--motion-stats-stagger); }
+.stat-card:nth-child(3) { animation-delay: calc(2 * var(--motion-stats-stagger)); }
+.inventory-panel { animation: panel-enter var(--motion-panel) var(--ease-out) var(--motion-panel-delay) both; }
+.inventory-panel[data-switched="true"] { animation: appear var(--motion-view-switch) var(--ease-out) both; }
+.inventory-panel[data-switched="true"] .inventory-switch[data-side="last"]::before {
+  animation: thumb-from-first var(--motion-view-switch) var(--ease-out);
+}
+.inventory-panel[data-switched="true"] .inventory-switch[data-side="first"]::before {
+  animation: thumb-from-last var(--motion-view-switch) var(--ease-out);
+}
+.split-workspace { transition: grid-template-columns var(--motion-preview-close) var(--ease-out); }
+.split-workspace[data-split="true"] { transition-duration: var(--motion-preview-open); }
+.preview-surface {
+  opacity: 0;
+  transform: translateX(28px);
+  transition: opacity var(--motion-preview-close) var(--ease-out), transform var(--motion-preview-close) var(--ease-out);
+}
+.preview-surface[data-open="true"] {
+  opacity: 1;
+  transform: translateX(0);
+  animation: preview-enter var(--motion-preview-open) var(--ease-out);
+}
+.confirmation { animation: panel-enter var(--motion-dialog) var(--ease-out) both; }
+.confirmation[data-closing="true"] { animation: panel-exit var(--motion-dialog-close) var(--ease-out) both; }
+.confirmation[data-closing="true"]::backdrop { animation: appear var(--motion-dialog-close) var(--ease-out) reverse both; }
+.confirmation::backdrop { animation: appear var(--motion-backdrop) var(--ease-out); }
+.button, .group-heading, .session-row, .export-table td {
+  transition-property: background-color, border-color, transform;
+  transition-duration: var(--motion-hover);
+  transition-timing-function: var(--ease-out);
+}
+.button:active:enabled { transform: scale(.985); transition-duration: var(--motion-press); }
+.group-content {
+  transition: grid-template-rows var(--motion-group) var(--ease-out), visibility var(--motion-group) allow-discrete;
+}
+.group-chevron { transition: transform var(--motion-group) var(--ease-out); }
+.search-field, .select-field { transition: outline-color var(--motion-focus) var(--ease-out); }
+.chat-message[data-step] { animation: appear var(--motion-message) var(--ease-out) calc(200ms + var(--message-step, 0) * var(--motion-message-stagger)) both; }
+.chat-message[data-step="1"] { --message-step: 1; }
+.chat-message[data-step="2"] { --message-step: 2; }
+.chat-message[data-step="3"] { --message-step: 3; }
+.chat-message[data-step="4"] { --message-step: 4; }
+.chat-message[data-step="5"] { --message-step: 5; }
+.spin { animation: spin .9s linear infinite; }
+
+@keyframes thumb-from-first { from { transform: translateX(0); } }
+@keyframes thumb-from-last { from { transform: translateX(calc(100% + 4px)); } }
+@keyframes appear { from { opacity: 0; } }
+@keyframes stat-enter { from { transform: translateY(14px); } }
+@keyframes panel-exit { to { opacity: 0; transform: translateY(18px); } }
+@keyframes panel-enter { from { transform: translateY(18px); } }
+@keyframes preview-enter { from { opacity: 0; transform: translateX(28px); } }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+}

@@ -1,0 +1,22 @@
+.claude-discovery, .claude-usage, .storage-diagnostics, .removal-section { color: var(--muted); font-size: 13px; }
+.claude-discovery { margin-block: 10px; }
+.claude-discovery section { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--glass-line-soft); }
+.claude-discovery h3, .claude-discovery h4 { margin: 0 0 8px; color: var(--text); }
+.claude-artifacts, .storage-locations, .usage-files, .usage-sessions { list-style: none; padding: 0; margin: 8px 0; }
+.claude-artifacts li { display: grid; gap: 3px; padding: 7px 0; border-bottom: 1px solid var(--glass-line-soft); }
+.claude-artifacts span, .storage-locations li, .usage-files li { overflow-wrap: anywhere; }
+.claude-usage-panel { margin: 14px 0; background: var(--panel-inset); border-radius: var(--radius-row); }
+.inventory-heading { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 10px; }
+.claude-usage-panel > p, .storage-launch { padding: 8px 10px; }
+.storage-launch code, .usage-root summary strong, .usage-root summary code, .usage-root summary small, .usage-sessions small { display: block; }
+.claude-usage .summary { display: flex; flex-wrap: wrap; gap: 12px; margin: 8px 0; }
+.claude-usage .summary-item { border: 1px solid var(--glass-line-soft); border-radius: var(--radius-row); padding: 8px 12px; }
+.claude-usage .summary-item strong { display: block; color: var(--text); }
+.usage-root, .usage-sessions > li, .storage-locations li { padding: 8px 10px; border-top: 1px solid var(--glass-line-soft); }
+.usage-root summary, .usage-sessions > li { display: flex; justify-content: space-between; gap: 10px; }
+.usage-root summary > span:first-child, .usage-sessions > li > div { min-width: 0; overflow-wrap: anywhere; }
+.usage-root summary > span:last-child { flex-shrink: 0; }
+.usage-sessions .session-title { text-align: left; color: var(--text); background: transparent; border: 0; padding: 0; overflow-wrap: anywhere; }
+.storage-locations li { display: flex; align-items: start; gap: 10px; }
+.storage-locations li > div { display: grid; min-width: 0; }
+.storage-locations li strong { color: var(--text); }

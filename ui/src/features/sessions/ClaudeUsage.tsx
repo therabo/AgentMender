@@ -1,21 +1,20 @@
 import { useEffect, useState } from 'react'
 import { RefreshCw } from 'lucide-react'
-import { errorText, request, type ClaudeUsage } from './api'
-import { Empty, Notice } from './components'
-import { SessionDetail } from './detail'
-import { claudeCategories, claudeOwnership, claudeWriter, dateLabel, numberLabel, pathLabel, sizeLabel } from './format'
+import { errorText, request } from '../../lib/api/client'
+import type { ClaudeUsage } from '../../lib/api/contracts'
+import { LoadingState, Notice } from '../../components/ui/feedback'
+import { claudeCategories, claudeOwnership, claudeWriter, dateLabel, numberLabel, pathLabel, sizeLabel } from '../../lib/utils/format'
 
 const rootLabels: Record<string, string> = {
   code: 'Archivio Code', desktop: 'Dati Claude Desktop', temporary: 'Temporanei Code',
   runtime: 'Installazione', shared_cache: 'Cache condivisa', shared_logs: 'Log condivisi', global_config: 'Configurazione',
 }
 
-export function ClaudeUsageView() {
+export function ClaudeUsageView({ onSelect }: { onSelect: (key: string, opener: HTMLElement) => void }) {
   const [report, setReport] = useState<ClaudeUsage>()
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
   const [revision, setRevision] = useState(0)
-  const [selected, setSelected] = useState<string>()
 
   useEffect(() => {
     const abort = new AbortController()
@@ -40,7 +39,7 @@ export function ClaudeUsageView() {
     }
   }
 
-  return <div className="claude-usage" aria-busy={loading}>
+  return <div className="claude-usage" lang="it" aria-busy={loading}>
     <div className="inventory-heading">
       <h2>Occupazione delle root</h2>
       <button className="button" type="button" disabled={loading} onClick={() => void refresh()}>
@@ -48,7 +47,7 @@ export function ClaudeUsageView() {
       </button>
     </div>
     {error && <Notice tone="error">{error}</Notice>}
-    {!report && loading && <Empty title="Scansione dello storage Claude Code" busy />}
+    {!report && loading && <LoadingState title="Scansione dello storage Claude Code" />}
     {report && <>
       <div className="summary">
         <div className="summary-item"><div><span>Dimensione logica osservata</span><strong>{sizeLabel(report.size.logical_bytes)}</strong></div></div>
@@ -89,7 +88,7 @@ export function ClaudeUsageView() {
         <p>Transcript associati · {sizeLabel(report.associated_transcript_bytes)}. Esclusività verificata nel catalogo · {sizeLabel(report.exclusive_transcript_bytes)}.</p>
         {report.largest_sessions.length === 0 ? <p>Nessuna conversazione principale osservata.</p> : <ul className="usage-sessions">
           {report.largest_sessions.map(session => <li key={session.key}>
-            <div><button className="session-title" type="button" onClick={() => setSelected(session.key)}>{session.title ?? session.native_id}</button>
+            <div><button className="session-title" type="button" onClick={event => onSelect(session.key, event.currentTarget)}>{session.title ?? session.native_id}</button>
             <small>{session.namespace ?? session.native_id}</small></div>
             <span>{sizeLabel(session.logical_bytes)}</span>
           </li>)}
@@ -97,6 +96,5 @@ export function ClaudeUsageView() {
       </section>
       <p>{report.removal_reason}</p>
     </>}
-    {selected && <SessionDetail key={selected} rowKey={selected} provider="claude" onClose={() => setSelected(undefined)} onChange={() => setRevision(value => value + 1)} />}
   </div>
 }

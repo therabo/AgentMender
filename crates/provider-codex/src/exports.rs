@@ -24,9 +24,9 @@ const CHANGED: &str = "Il gruppo o la sua root è cambiato dopo l’anteprima.";
 #[cfg(unix)]
 const OVERLAP: &str = "Il gruppo si sovrappone a un’altra area di storage rilevata.";
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
-enum Protection {
+pub enum Protection {
     ProviderManaged,
     IndependentBackup,
     UserOutput,
@@ -59,7 +59,7 @@ pub struct Group {
     session_id: Option<String>,
     shared_entries: u64,
     linked_entries: u64,
-    protection: Protection,
+    pub protection: Protection,
     pub reason: &'static str,
     pub removal_available: bool,
     pub complete: bool,

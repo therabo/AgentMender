@@ -35,6 +35,7 @@ use self::{
 const INDEX: &str = include_str!(concat!(env!("OUT_DIR"), "/index.html"));
 const SCRIPT: &str = include_str!(concat!(env!("OUT_DIR"), "/app.js"));
 const STYLES: &str = include_str!(concat!(env!("OUT_DIR"), "/app.css"));
+include!(concat!(env!("OUT_DIR"), "/embedded_assets.rs"));
 
 struct App {
     host: String,
@@ -122,7 +123,7 @@ async fn boundary(State(app): State<Arc<App>>, request: Request, next: Next) -> 
         ("cross-origin-resource-policy", "same-origin"),
         (
             "content-security-policy",
-            "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
+            "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
         ),
     ] {
         headers.insert(
@@ -205,7 +206,23 @@ async fn recents(
     Query(filter): Query<Filter>,
 ) -> Result<Json<PageView>, ApiError> {
     let query = filter.try_into()?;
-    read(app, move |app| Ok(app.inventory.recents(app, &query))).await
+    read(app, move |app| {
+        Ok(app.inventory.unassigned(app, ProviderKind::Codex, &query))
+    })
+    .await
+}
+
+async fn unassigned(
+    State(app): State<Arc<App>>,
+    Path(id): Path<String>,
+    Query(filter): Query<Filter>,
+) -> Result<Json<PageView>, ApiError> {
+    let provider = provider(&id)?;
+    let query = filter.try_into()?;
+    read(app, move |app| {
+        Ok(app.inventory.unassigned(app, provider, &query))
+    })
+    .await
 }
 
 async fn projects(
@@ -301,6 +318,15 @@ fn asset(content_type: &'static str, bytes: &'static str) -> impl IntoResponse {
     ([(header::CONTENT_TYPE, content_type)], bytes)
 }
 
+async fn design_asset(Path(name): Path<String>) -> Response {
+    match embedded_asset(&name) {
+        Some((content_type, bytes)) => {
+            ([(header::CONTENT_TYPE, content_type)], bytes).into_response()
+        }
+        None => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
 fn router(app: Arc<App>) -> Router {
     let routes = Router::new();
     #[cfg(target_os = "macos")]
@@ -321,6 +347,7 @@ fn router(app: Arc<App>) -> Router {
             "/app.css",
             get(|| async { asset("text/css; charset=utf-8", STYLES) }),
         )
+        .route("/assets/{name}", get(design_asset))
         .route("/favicon.ico", get(|| async { StatusCode::NO_CONTENT }))
         .route("/api/authorize", post(authorize))
         .route("/api/storage/codex", get(storage::discover))
@@ -349,6 +376,7 @@ fn router(app: Arc<App>) -> Router {
         )
         .route("/api/codex/projects/{key}/delete", post(removal::project))
         .route("/api/codex/recents", get(recents))
+        .route("/api/{provider}/unassigned", get(unassigned))
         .route("/api/{provider}/sessions", get(list))
         .route("/api/{provider}/sessions/{key}", get(detail))
         .route(

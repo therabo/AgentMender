@@ -1,6 +1,6 @@
 //! Export inventory and permanent removal in a separate authorization namespace.
 use super::{ApiError, App, read, token};
-use agentmender_provider_codex::exports::{Group, Inventory, Size};
+use agentmender_provider_codex::exports::{Group, Inventory, Protection, Size};
 use axum::{
     Json,
     extract::{Path, Query, State},
@@ -79,6 +79,7 @@ enum Sort {
 pub(super) struct Filter {
     search: String,
     sort: Sort,
+    category: Option<Protection>,
     offset: usize,
     limit: usize,
 }
@@ -88,6 +89,7 @@ impl Default for Filter {
         Self {
             search: String::new(),
             sort: Sort::Size,
+            category: None,
             offset: 0,
             limit: 20,
         }
@@ -119,9 +121,12 @@ pub(super) async fn list(
             .groups
             .iter()
             .filter(|group| {
-                query.is_empty()
-                    || group.name.to_lowercase().contains(&query)
-                    || group.root.to_lowercase().contains(&query)
+                filter
+                    .category
+                    .is_none_or(|category| category == group.protection)
+                    && (query.is_empty()
+                        || group.name.to_lowercase().contains(&query)
+                        || group.root.to_lowercase().contains(&query))
             })
             .collect();
         groups.sort_unstable_by(|left, right| {

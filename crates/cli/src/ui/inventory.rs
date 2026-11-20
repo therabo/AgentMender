@@ -35,6 +35,8 @@ pub(super) struct ProviderView {
     pub inventory_incomplete: bool,
     pub coverage_description: &'static str,
     pub total: usize,
+    pub transcript_bytes: Option<u64>,
+    pub transcript_bytes_incomplete: bool,
     pub registered_projects: usize,
     pub project_conversations: usize,
     pub recent_conversations: usize,
@@ -251,6 +253,12 @@ impl Snapshot {
             })
             .collect();
         let index = LocalInventory::new(observation.sessions);
+        let (known_count, transcript_bytes) = index
+            .sessions()
+            .filter_map(|session| session.transcript_bytes)
+            .fold((0, Some(0u64)), |(count, total), bytes| {
+                (count + 1, total.and_then(|total| total.checked_add(bytes)))
+            });
         let ids = index
             .sessions()
             .enumerate()
@@ -268,6 +276,12 @@ impl Snapshot {
                 project_conversations,
                 recent_conversations: grouped.recents.len(),
                 total: index.len(),
+                transcript_bytes: if can_read && (known_count > 0 || index.is_empty()) {
+                    transcript_bytes
+                } else {
+                    None
+                },
+                transcript_bytes_incomplete: observation.incomplete || known_count < index.len(),
                 removal_available: removal_reason.is_none(),
                 removal_reason,
                 claude_storage: observed.claude_storage,
@@ -343,8 +357,13 @@ impl Inventories {
         })
     }
 
-    pub(super) fn recents(&self, app: &App, query: &InventoryQuery) -> PageView {
-        self.with(app, ProviderKind::Codex, |snapshot| {
+    pub(super) fn unassigned(
+        &self,
+        app: &App,
+        provider: ProviderKind,
+        query: &InventoryQuery,
+    ) -> PageView {
+        self.with(app, provider, |snapshot| {
             PageView::sessions(app, snapshot, snapshot.recents.page(query))
         })
     }

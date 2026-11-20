@@ -1,0 +1,76 @@
+@font-face {
+  font-family: Inter;
+  src: url('../assets/inter-latin.woff2') format('woff2');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  color-scheme: dark;
+  font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-synthesis: none;
+  line-height: 1.45;
+  --font-mono: "SFMono-Regular", Consolas, monospace;
+  --canvas-codex: #0d1b2b;
+  --canvas-claude: #271826;
+  --text: #f7f9fc;
+  --muted: #c8d7e7;
+  --secondary: #b7c9dc;
+  --accent: #8bd3f2;
+  --selected-fill: rgba(139, 211, 242, .15);
+  --selected-line: rgba(139, 211, 242, .85);
+  --active: #b9efdb;
+  --warning: #f4d39c;
+  --danger-text: #ffd0d8;
+  --danger-fill: #713d4d;
+  --danger-line: #be7a8c;
+  --glass-fill: rgba(255, 255, 255, .09);
+  --glass-raised: rgba(255, 255, 255, .11);
+  --glass-line: rgba(255, 255, 255, .23);
+  --glass-line-soft: rgba(255, 255, 255, .12);
+  --glass-shadow: 0 16px 38px rgba(0, 0, 0, .24);
+  --glass-blur: 11px;
+  --control-fill: rgba(255, 255, 255, .11);
+  --row-fill: rgba(255, 255, 255, .05);
+  --row-line: rgba(255, 255, 255, .08);
+  --panel-inset: rgba(5, 16, 28, .34);
+  --confirmation-surface: #25364a;
+  --radius-glass-card: 24px;
+  --radius-control: 14px;
+  --radius-row: 10px;
+  --radius-pill: 999px;
+  --page-gutter: clamp(16px, 3.82vw, 55px);
+  --layout-gap: 18px;
+  --panel-padding: 21px;
+  --workspace-height: max(540px, calc(100dvh - 278px));
+  --motion-provider-switch: 420ms;
+  --motion-view-switch: 280ms;
+  --motion-preview-open: 380ms;
+  --motion-preview-close: 320ms;
+  --motion-stats: 420ms;
+  --motion-stats-stagger: 45ms;
+  --motion-panel: 430ms;
+  --motion-panel-delay: 120ms;
+  --motion-message: 260ms;
+  --motion-message-stagger: 54ms;
+  --motion-group: 220ms;
+  --motion-hover: 150ms;
+  --motion-press: 90ms;
+  --motion-focus: 160ms;
+  --motion-dialog: 260ms;
+  --motion-backdrop: 220ms;
+  --motion-dialog-close: 200ms;
+  --ease-out: ease-out;
+  --ease-in-out: ease-in-out;
+  background: var(--canvas-codex);
+  color: var(--text);
+}
+
+[data-provider="claude"] {
+  --accent: #efb2c8;
+  --selected-fill: rgba(230, 155, 179, .14);
+  --selected-line: rgba(240, 175, 190, .82);
+  --panel-inset: rgba(24, 17, 32, .38);
+  --confirmation-surface: #392a3c;
+}
