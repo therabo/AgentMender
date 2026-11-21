@@ -4,15 +4,13 @@ export type Protection =
   | 'provider_managed' | 'independent_backup' | 'user_output' | 'unknown_owner'
   | 'shared' | 'in_use' | 'incomplete'
 
-type Size = { logical_bytes: number; allocated_bytes: number | null; files: number; directories: number }
+type Size = { logical_bytes: number; files: number }
 export type Group = {
-  key: string; name: string; path: string; root: string; size: Size
-  created_at: number | null; modified_at: number | null; format: string
-  manifest: string | null; producer: string | null; session_id: string | null
-  shared_entries: number; linked_entries: number
+  key: string; name: string; path: string; size: Size
+  modified_at: number | null
   protection: Protection; reason: string; removal_available: boolean; complete: boolean
 }
-export type Page = { rows: Group[]; total: number; size: Size; complete: boolean; removal_available: boolean }
+export type Page = { rows: Group[]; total: number; complete: boolean }
 export type Preview = { groups: Group[]; size: Size; protected: number; removable: number; complete: boolean; receipt: string | null }
 type Removed = { key: string; name: string; root: string }
 export type Outcome = { deleted: Removed[]; not_deleted: (Removed & { reason: string; error: boolean })[] }

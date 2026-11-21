@@ -6,7 +6,9 @@ import { numberLabel, sizeLabel } from '../../lib/utils/format'
 import { confirmExports, reviewExports, type Outcome, type Preview } from './api'
 
 export function ExportOutcome({ outcome }: { outcome: Outcome }) {
-  return <Notice tone={outcome.not_deleted.length ? 'warning' : 'success'}>
+  const tone = !outcome.deleted.length && outcome.not_deleted.some(item => item.error)
+    ? 'error' : outcome.not_deleted.length ? 'warning' : 'success'
+  return <Notice tone={tone}>
     <strong>{numberLabel(outcome.deleted.length)} removed · {numberLabel(outcome.not_deleted.length)} preserved</strong>
     <ul className="removal-targets">
       {outcome.deleted.map(item => <li key={item.key}><strong>{item.name}</strong> · Removed<br /><code>{item.root}</code></li>)}
@@ -60,14 +62,13 @@ export function ExportRemoval({ keys, onClose, onOutcome }: {
     {error && <Notice tone="error">{error}</Notice>}
     {!preview && !error && <LoadingState title="Preparing export review" />}
     {preview && <div className="confirmation-summary">
-      <strong>{singular ? preview.groups[0]?.name : `${numberLabel(preview.groups.length)} export groups`}</strong>
-      <p>{numberLabel(preview.removable)} removable · {numberLabel(preview.protected)} protected · {sizeLabel(preview.size.logical_bytes)} reviewed{preview.complete ? '' : ' · partial coverage'}</p>
-      {singular && preview.groups[0] && <code>{preview.groups[0].path}</code>}
-      {(!singular || preview.protected > 0) && <ul className="removal-targets">
+      <strong>{numberLabel(preview.groups.length)} {singular ? 'export group' : 'export groups'} selected</strong>
+      <p>{numberLabel(preview.removable)} removable · {numberLabel(preview.protected)} protected · {sizeLabel(preview.size.logical_bytes)} {preview.complete ? 'total' : 'observed'}</p>
+      <ul className="removal-targets">
         {preview.groups.map(group => <li key={group.key}>
           <strong>{group.name}</strong> · {group.removal_available ? 'Removable' : group.reason}<br /><code>{group.path}</code>
         </li>)}
-      </ul>}
+      </ul>
     </div>}
     {outcome && <ExportOutcome outcome={outcome} />}
   </ConfirmationDialog>

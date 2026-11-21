@@ -48,7 +48,7 @@
 .preview-heading .status-badge::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
 .preview-heading .status-active { background: rgba(130, 227, 205, .15); border-color: rgba(130, 227, 205, .35); }
 .preview-close { margin-left: 8px; }
-.preview-facts, .facts {
+.preview-facts {
   flex: none;
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -57,9 +57,8 @@
   padding-block: 14px 15px;
   border-bottom: 1px solid var(--glass-line-soft);
 }
-.facts { grid-template-columns: repeat(auto-fit, minmax(min(100%, 120px), 1fr)); }
-.preview-facts > div, .facts > div { min-width: 0; }
-.preview-facts dt, .facts dt, .fact-label {
+.preview-facts > div { min-width: 0; }
+.preview-facts dt {
   font-size: 10px;
   font-weight: 550;
   line-height: 1.25;
@@ -67,7 +66,7 @@
   color: var(--secondary);
   margin-bottom: 4px;
 }
-.preview-facts dd, .facts dd { font-size: 13px; margin: 0; overflow-wrap: anywhere; }
+.preview-facts dd { font-size: 13px; margin: 0; overflow-wrap: anywhere; }
 .preview-facts .mono { font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .preview-body {
   display: flex;
@@ -97,7 +96,7 @@
   scrollbar-width: thin;
   scrollbar-color: rgba(255, 255, 255, .34) transparent;
 }
-.conversation-scroll > p, .preview-diagnostics, .export-detail p { color: var(--muted); font-size: 12px; }
+.conversation-scroll > p { color: var(--muted); font-size: 12px; }
 .chat-message {
   position: relative;
   flex-shrink: 0;
@@ -129,9 +128,6 @@
 .chat-message[data-role="user"] strong { text-align: right; color: var(--accent); }
 .chat-message p { margin-top: 4px; font-size: 12px; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; }
 .conversation-actions:not(:empty) { display: flex; flex-wrap: wrap; justify-content: center; gap: 7px; padding-bottom: 4px; }
-.preview-diagnostics { flex: none; padding: 2px; }
-.preview-diagnostics > summary { width: fit-content; }
-
 .preview-footer {
   flex: none;
   display: grid;
@@ -141,26 +137,6 @@
 }
 .preview-footer .button.danger { width: min(246px, 100%); min-height: 39px; }
 .removal-reason { font-size: 12px; color: var(--muted); text-align: center; overflow-wrap: anywhere; }
-
-.export-detail { gap: 14px; padding-top: 16px; }
-.export-detail p { margin-top: 6px; }
-.source-path, .included-file {
-  display: block;
-  border: 1px solid var(--glass-line-soft);
-  border-radius: var(--radius-row);
-  padding: 9px 12px;
-  background: var(--panel-inset);
-  color: var(--muted);
-  font-size: 12px;
-}
-.included-file {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  margin-top: 7px;
-  min-height: 40px;
-  background: var(--row-fill);
-}
 
 .confirmation {
   width: min(558px, calc(100% - 32px));

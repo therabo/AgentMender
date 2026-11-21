@@ -44,20 +44,19 @@
   padding-inline: 1px;
 }
 .inventory-body > .notice { margin-block-end: 8px; }
-.inventory-footer {
+.export-selection {
   flex: none;
   display: flex;
   align-items: center;
-  justify-content: space-between;
   flex-wrap: wrap;
   gap: 4px 9px;
-  min-height: 36px;
+  padding-block: 6px;
   border-top: 1px solid var(--glass-line-soft);
   color: var(--muted);
   font-size: 12px;
 }
-.inventory-footer .button { min-height: 32px; }
-.inventory-footer .refresh-button { margin-left: auto; }
+.export-selection > span { margin-inline-end: auto; }
+.export-selection .button { min-height: 32px; }
 
 .session-group + .session-group { margin-top: 8px; }
 .group-heading {
@@ -148,7 +147,7 @@
 .session-row:focus-visible { outline-offset: -2px; }
 .session-row:hover { transform: translateY(-1px); }
 .session-row:hover, .export-table tbody tr:hover td { background-color: rgba(255, 255, 255, .09); border-color: var(--glass-line); }
-.session-row[aria-pressed="true"], .export-table tbody tr[data-active="true"] td {
+.session-row[aria-pressed="true"], .export-table tbody tr[data-selected="true"] td {
   background: var(--selected-fill);
   border-color: var(--selected-line);
 }
@@ -174,14 +173,13 @@
   border-block: 1px solid var(--row-line);
   background: rgba(255, 255, 255, .065);
   font-size: 12px;
-  cursor: pointer;
   overflow-wrap: anywhere;
 }
 .export-table tbody td:first-child { padding: 0 4px; border-left: 1px solid var(--row-line); border-radius: 11px 0 0 11px; }
 .export-table tbody td:last-child { border-right: 1px solid var(--row-line); border-radius: 0 11px 11px 0; }
 .export-table .export-modified { color: var(--muted); }
 .export-size { font-weight: 600; }
-.export-name { display: flex; align-items: center; min-width: 0; }
+.export-name { display: flex; align-items: center; min-width: 0; cursor: pointer; }
 .export-check { display: grid; place-items: center; flex: 0 0 37px; height: 40px; }
 .export-check input {
   appearance: none;
@@ -198,48 +196,48 @@
   border-color: var(--selected-line);
 }
 .export-check input:disabled { opacity: .5; }
-.export-open {
+.export-description {
   display: flex;
   align-items: center;
   gap: 13px;
   min-width: 0;
-  width: 100%;
+  flex: 1;
   min-height: 50px;
   padding: 0 4px;
   color: var(--text);
-  border: 0;
-  border-radius: 5px;
-  background: transparent;
-  text-align: left;
 }
 .export-compact { display: none; }
-.export-footer > span { margin-right: auto; }
 .exports-panel .inventory-body { padding-top: 7px; }
 
 @media (min-width: 841px) {
   .split-workspace { flex: 1; min-height: 0; grid-template-rows: minmax(0, 1fr); }
   .inventory-slot, .preview-slot { min-height: 0; }
   .inventory-panel { height: 100%; }
+  .exports-panel { flex: 1; height: auto; min-height: 0; }
   [data-split="true"] .inventory-filters { grid-template-columns: minmax(0, 1fr) minmax(98px, 19%) minmax(112px, 24%); }
   [data-split="true"] .group-count { margin-right: 18px; }
   [data-split="true"] .group-toggle { padding-right: 13px; }
   [data-split="true"] .session-row { grid-template-columns: 10px minmax(0, 1fr) minmax(70px, 15%) 16px; min-height: 42px; }
-  [data-split="true"] .session-size, [data-split="true"] .session-state, [data-split="true"] .export-category,
-  [data-split="true"] .export-path { display: none; }
-  [data-split="true"] .export-compact { display: block; }
-  [data-split="true"] .export-table th:first-child { width: 64%; }
-  [data-split="true"] .export-table th:nth-child(3) { width: 16%; }
+  [data-split="true"] .session-size, [data-split="true"] .session-state { display: none; }
 }
 
 @media (max-width: 840px) {
   .split-workspace, .split-workspace[data-split="true"] { display: block; }
   .inventory-panel { min-height: 450px; }
+  .export-selection {
+    position: sticky;
+    bottom: 0;
+    z-index: 1;
+    padding-inline: 8px;
+    border-radius: var(--radius-row) var(--radius-row) 0 0;
+    background: var(--confirmation-surface);
+  }
 }
 @media (max-width: 640px) {
   .inventory-filters, .exports-panel .inventory-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 9px; }
   .inventory-filters .search-field { grid-column: 1 / -1; }
   .inventory-body { min-height: 235px; padding-block-start: 12px; }
-  .inventory-footer { min-height: 44px; }
+  .export-selection .button { min-height: 40px; }
   .group-toggle { gap: 7px; padding: 4px 7px; min-height: 47px; }
   .group-toggle .group-count { margin: 0; font-size: 11px; }
   .session-rows { margin-inline: 7px; }
@@ -258,7 +256,7 @@
   .export-table th:nth-child(3) { width: 25%; }
   .export-table tbody td:nth-child(3) { border-right: 1px solid var(--row-line); border-radius: 0 11px 11px 0; }
   .export-check { flex-basis: 30px; }
-  .export-open { gap: 7px; }
+  .export-description { gap: 7px; }
   .export-path { display: none; }
   .export-compact { display: block; }
 }
