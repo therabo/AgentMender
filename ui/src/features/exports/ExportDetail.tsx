@@ -9,11 +9,11 @@ export function ExportDetail({ group, canReview, onReview, onClose }: {
 }) {
   return <>
     <header className="preview-heading">
-      <h2>{group.name}</h2><ClosePreview onClick={onClose} />
+      <h2 title={group.name}>{group.name}</h2><ClosePreview onClick={onClose} />
     </header>
     <dl className="preview-facts">
-      <Fact label="Export size" value={`${group.complete ? '' : '≥ '}${sizeLabel(group.size.logical_bytes)}`} />
-      <Fact label="Files / folders" value={`${group.complete ? '' : '≥ '}${numberLabel(group.size.files)} / ${numberLabel(group.size.directories)}`} />
+      <Fact label="Export size" value={sizeLabel(group.complete ? group.size.logical_bytes : null)} />
+      <Fact label={group.complete ? 'Files / folders' : 'Observed files / folders'} value={`${numberLabel(group.size.files)} / ${numberLabel(group.size.directories)}`} />
       <Fact label="Last modified (UTC)" value={dateLabel(group.modified_at)} />
     </dl>
     <div className="preview-body export-detail">

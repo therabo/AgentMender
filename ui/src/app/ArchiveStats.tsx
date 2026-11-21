@@ -3,17 +3,16 @@ import type { Provider, ProviderInfo } from '../lib/api/contracts'
 import { numberLabel, sizeLabel } from '../lib/utils/format'
 
 export function ArchiveStats({ provider, info }: { provider: Provider; info?: ProviderInfo }) {
-  const readable = info?.coverage === 'partial'
-  const projects = readable ? `${info.projects_incomplete ? '≥ ' : ''}${numberLabel(info.registered_projects)}` : '—'
-  const sessions = readable ? `${info.inventory_incomplete ? '≥ ' : ''}${numberLabel(info.total)}` : '—'
-  const storage = info?.transcript_bytes != null
-    ? `${info.transcript_bytes_incomplete ? '≥ ' : ''}${sizeLabel(info.transcript_bytes)}`
-    : '—'
+  const available = info?.coverage === 'available'
+  const projects = !info ? '—' : available ? numberLabel(info.project_count) : 'Unavailable'
+  const sessions = !info ? '—' : available ? numberLabel(info.total) : 'Unavailable'
+  const storage = info ? sizeLabel(info.transcript_bytes) : '—'
+  const registered = provider === 'codex' && !info?.projects_observed_only
 
   return <div className="archive-stats" aria-label="Archive summary">
-    <StatCard label={provider === 'codex' ? 'Registered projects' : 'Observed projects'} value={projects} />
-    <StatCard label="Sessions in archive" value={sessions} />
+    <StatCard label={registered ? 'Registered projects' : 'Observed projects'} value={projects} />
+    <StatCard label={info?.sessions_observed_only ? 'Observed sessions' : 'Sessions in archive'} value={sessions} />
     <StatCard label="Observed transcript storage" value={storage}
-      description="Total known logical bytes of observed main-session transcripts." />
+      description="Logical bytes of main-session transcripts. Available when archive enumeration and all sizes can be verified." />
   </div>
 }

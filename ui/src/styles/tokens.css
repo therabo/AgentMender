@@ -40,10 +40,9 @@
   --radius-control: 14px;
   --radius-row: 10px;
   --radius-pill: 999px;
-  --page-gutter: clamp(16px, 3.82vw, 55px);
+  --page-gutter: clamp(16px, 3.82vw, 84px);
   --layout-gap: 18px;
   --panel-padding: 21px;
-  --workspace-height: max(540px, calc(100dvh - 278px));
   --motion-provider-switch: 420ms;
   --motion-view-switch: 280ms;
   --motion-preview-open: 380ms;

@@ -39,7 +39,7 @@ export function ExportTable({ rows, checked, active, onInspect, onCheck }: {
           </div>
         </td>
         <td className="export-category">{categoryLabel[group.protection]}</td>
-        <td className="export-size">{group.complete ? '' : '≥ '}{sizeLabel(group.size.logical_bytes)}</td>
+        <td className="export-size">{sizeLabel(group.complete ? group.size.logical_bytes : null)}</td>
         <td className="export-modified"><time>{dateLabel(group.modified_at)}</time></td>
       </tr>
     })}</tbody>

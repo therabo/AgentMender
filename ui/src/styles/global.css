@@ -45,7 +45,7 @@ time { font-variant-numeric: tabular-nums; }
 [data-provider="claude"] .aurora[data-theme="claude"] { opacity: 1; }
 
 .app-header, .workspace {
-  width: min(calc(100% - var(--page-gutter) * 2), 1330px);
+  width: calc(100% - var(--page-gutter) * 2);
   margin-inline: auto;
 }
 .app-header {
@@ -264,4 +264,27 @@ select option { background: var(--confirmation-surface); color: var(--text); }
   .stat-orb { display: none; }
   .button.square { min-height: 40px; width: 40px; }
   .aurora { background-position: calc(50% + 330px) -515px, calc(50% - 400px) 100px, center top; }
+}
+
+@media (min-width: 841px) {
+  .shell {
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+    min-height: 0;
+    height: 100dvh;
+    overflow: hidden;
+  }
+  .workspace {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    min-width: 0;
+    padding-bottom: clamp(14px, 3.33dvh, 32px);
+  }
+  .archive-stats { flex: none; }
+}
+@media (min-width: 841px) and (max-height: 800px) {
+  .app-header { height: clamp(64px, 13.33dvh, 106px); padding-top: clamp(7px, 3dvh, 26px); }
+  .archive-stats { margin-bottom: clamp(10px, 2.5dvh, 20px); }
+  .stat-card { min-block-size: clamp(72px, 13.33dvh, 108px); padding-block: 9px; }
 }

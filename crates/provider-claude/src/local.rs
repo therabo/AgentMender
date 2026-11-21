@@ -172,20 +172,6 @@ pub struct SessionEvidence {
     pub revision: Revision,
 }
 
-impl SessionEvidence {
-    pub fn transcript_footprint(&self) -> (u64, u64) {
-        let total = self
-            .subagent_artifacts
-            .iter()
-            .fold(self.revision.bytes, |sum, artifact| {
-                sum.saturating_add(artifact.revision.bytes)
-            });
-        let exclusive =
-            self.ownership_scope_complete && self.same_uuid_elsewhere == 0 && self.forks == 0;
-        (total, if exclusive { total } else { 0 })
-    }
-}
-
 #[derive(Clone)]
 pub(crate) struct Cached {
     session: Session,
@@ -197,6 +183,8 @@ pub struct Catalog {
     pub inventory: InventoryObservation,
     pub evidence: BTreeMap<SessionIdentity, SessionEvidence>,
     pub roots: Vec<RootView>,
+    /// An archive root or a candidate main transcript could not be enumerated or validated.
+    pub session_scope_incomplete: bool,
     pub reconciliation: Reconciliation,
 }
 
@@ -333,7 +321,10 @@ impl Scan {
             .as_ref()
             .filter(|cwd| displayable(cwd) && observed_path_is_absolute(Path::new(cwd)))
         {
-            self.workspace_ambiguous |= self.workspace.as_ref().is_some_and(|prior| prior != cwd);
+            self.workspace_ambiguous |= self
+                .workspace
+                .as_ref()
+                .is_some_and(|prior| Path::new(prior) != Path::new(cwd));
             self.workspace.get_or_insert_with(|| cwd.clone());
             if let Some(index) =
                 desktop.and_then(|state| state.workspaces.iter().position(|path| path == cwd))
@@ -458,21 +449,10 @@ impl ClaudeAdapter {
                         directories.mark();
                         continue;
                     };
-                    let identity = ProjectIdentity {
-                        provider: ProviderKind::Claude,
-                        state_root: path.clone(),
-                        locator: ProjectLocator::Namespace(name.into()),
-                    };
-                    if !folders.insert(identity.clone()) {
+                    if !folders.insert((path.clone(), name.to_owned())) {
                         continue;
                     }
                     view.namespaces += 1;
-                    inventory.projects.push(RegisteredProject {
-                        identity,
-                        name: None,
-                        roots: Vec::new(),
-                        desktop_backed: false,
-                    });
                     for entry in directories.list(&namespace.path) {
                         if is_transcript_candidate(&entry) {
                             candidates.push((roots.len(), entry));
@@ -519,6 +499,7 @@ impl ClaudeAdapter {
             }
         }
         let projects_incomplete = roots.iter().any(|root| root.enumeration_incomplete);
+        let mut session_scope_incomplete = projects_incomplete;
         let desktop = storage::desktop_states(&self.desktop, &mut directories);
         let mut evidence = BTreeMap::new();
         let mut cache = self.cache.lock().expect("Claude metadata cache");
@@ -533,6 +514,7 @@ impl ClaudeAdapter {
                 continue;
             };
             if entry.kind != EntryKind::File {
+                session_scope_incomplete |= shape.agent_id.is_none();
                 report.exclude(Exclusion::ProtectedOrUnreadable);
                 directories.mark();
                 continue;
@@ -565,6 +547,7 @@ impl ClaudeAdapter {
                     inventory.sessions.push(row.session);
                 }
                 Err(reason) => {
+                    session_scope_incomplete |= shape.agent_id.is_none();
                     report.exclude(reason);
                     directories.mark();
                 }
@@ -602,22 +585,6 @@ impl ClaudeAdapter {
                 }
             }
         }
-        let desktop_projects: BTreeSet<_> = evidence
-            .iter()
-            .filter_map(|(id, meta)| {
-                (meta.desktop_record)
-                    .then_some(id.namespace.as_ref())
-                    .flatten()
-                    .map(|ns| ProjectIdentity {
-                        provider: ProviderKind::Claude,
-                        state_root: id.state_root.clone(),
-                        locator: ProjectLocator::Namespace(ns.clone()),
-                    })
-            })
-            .collect();
-        for project in &mut inventory.projects {
-            project.desktop_backed = desktop_projects.contains(&project.identity);
-        }
         let associated: BTreeSet<_> = evidence
             .iter()
             .filter(|(_, meta)| meta.desktop_record)
@@ -633,6 +600,7 @@ impl ClaudeAdapter {
             inventory,
             evidence,
             roots,
+            session_scope_incomplete,
             reconciliation: Reconciliation {
                 transcripts: report,
                 desktop: desktop_report,
@@ -682,11 +650,11 @@ fn observe(
     if scan.foreign_rows && desktop.is_none() {
         return Err(Exclusion::UnverifiedFork);
     }
-    let workspace = desktop_workspace.cloned().or_else(|| {
-        (!scan.workspace_ambiguous)
-            .then_some(scan.workspace)
-            .flatten()
-    });
+    // Desktop matching can identify a registration even when more than one
+    // cwd was recorded. Such a match does not establish a presentation group.
+    let workspace = (!scan.workspace_ambiguous)
+        .then_some(scan.workspace)
+        .flatten();
     let forked_from = desktop
         .and_then(|state| state.parent_cli_id.clone())
         .or(scan.fork);
@@ -716,10 +684,7 @@ fn observe(
     Ok(Cached {
         desktop: desktop.cloned(),
         session: Session {
-            project: workspace
-                .as_ref()
-                .and_then(|cwd| cwd.trim_end_matches(['/', '\\']).rsplit(['/', '\\']).next())
-                .map(str::to_owned),
+            project: None,
             identity,
             codex_membership: CodexMembership::Unassigned,
             title: Some(title),

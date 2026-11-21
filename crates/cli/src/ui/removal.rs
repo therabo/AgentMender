@@ -230,7 +230,6 @@ pub(super) async fn session(
                         .ok_or_else(|| ApiError::conflict("Apri una nuova anteprima Claude."))?
                     };
                     let outcome = review.plan.delete();
-                    *app.claude_usage.lock().expect("Claude usage") = None;
                     result(
                         outcome.removed_files,
                         format!(

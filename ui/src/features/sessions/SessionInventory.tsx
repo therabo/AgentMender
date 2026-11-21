@@ -8,12 +8,10 @@ import { errorText } from '../../lib/api/client'
 import type { Project, Provider } from '../../lib/api/contracts'
 import { usePagedResource } from '../../lib/hooks/usePagedResource'
 import { usePreview } from '../../lib/hooks/usePreview'
-import { numberLabel, pathLabel } from '../../lib/utils/format'
+import { numberLabel } from '../../lib/utils/format'
 import { listProjects, projectsPath, projectPath, refreshSessions, unassignedPath } from './api'
-import { ClaudeDiagnostics } from './ClaudeDiagnostics'
-import { ClaudeUsageView } from './ClaudeUsage'
 import { useSessionFilters } from './hooks/useSessionFilters'
-import { AdvancedFilters, SessionFilterFields } from './SessionFilters'
+import { SessionFilterFields } from './SessionFilters'
 import { SessionGroup, SessionList, UnassignedSessions } from './SessionList'
 import { SessionDetail } from './SessionDetail'
 import { RemovalDialog } from './removal'
@@ -26,14 +24,12 @@ function ProjectSessions({ project, index, query, revision, selected, onSelect, 
 }) {
   const [expanded, setExpanded] = useState(index < 2)
   const [visited, setVisited] = useState(expanded)
-  const context = (project.roots.length ? project.roots : [
-    project.workspace, project.namespace, project.archive_root && pathLabel(project.archive_root),
-  ]).filter(Boolean).join(' · ')
+  const context = project.roots.join(' · ')
 
   return <SessionGroup title={project.name}
     context={[project.provider === 'codex' ? 'Registered project' : 'Project', context].filter(Boolean).join(' · ')}
     expanded={expanded} onToggle={() => { setExpanded(!expanded); setVisited(true) }}
-    count={project.main_conversations} incomplete={project.incomplete}
+    count={project.main_conversations}
     onRemove={project.removal_available ? () => onRemove(project) : undefined}>
     {visited && <SessionList key={query} path={`${projectPath(project.provider, project.key)}/sessions`} label={project.name}
       query={query} revision={revision} selected={selected} onSelect={onSelect} expanded={expanded} />}
@@ -51,10 +47,9 @@ export function SessionInventory({ provider, heading, switched, onInventoryChang
   const [refreshing, setRefreshing] = useState(false)
   const [refreshError, setRefreshError] = useState('')
   const refreshPending = useRef(false)
-  const [storageOpened, setStorageOpened] = useState(false)
   const info = page?.provider
   const selected = detail.open ? detail.selection?.item : undefined
-  const unavailable = info && info.coverage !== 'partial'
+  const unavailable = info && info.coverage !== 'available'
   const emptyTitle = filters.active ? 'No matching sessions or projects' : 'No projects observed'
 
   useEffect(() => {
@@ -88,9 +83,11 @@ export function SessionInventory({ provider, heading, switched, onInventoryChang
       onClose={detail.close} preview={detail.selection && <SessionDetail key={detail.selection.item} provider={provider}
         rowKey={detail.selection.item} onClose={detail.close} onChange={invalidate} />}>
       <GlassPanel className="inventory-panel" data-switched={switched} tabIndex={-1} aria-label="Sessions inventory">
-        <InventoryHeader heading={heading} count={info?.coverage === 'partial'
-          ? `${info.inventory_incomplete ? '≥ ' : ''}${numberLabel(info.total)} sessions`
-          : '— sessions'}>
+        <InventoryHeader heading={heading} count={info?.coverage === 'available'
+          ? `${numberLabel(info.total)} ${info.sessions_observed_only ? 'observed ' : ''}sessions`
+          : '— sessions'}
+          action={<GlassButton className="square" tone="quiet" aria-label="Refresh sessions" title="Refresh sessions"
+            disabled={refreshing} onClick={() => void refresh()}><RefreshCw className={refreshing ? 'spin' : undefined} size={15} aria-hidden /></GlassButton>}>
           <SessionFilterFields filters={filters.filters} onChange={filters.update} />
         </InventoryHeader>
         <div className="inventory-body" aria-busy={loading}>
@@ -99,35 +96,19 @@ export function SessionInventory({ provider, heading, switched, onInventoryChang
             : !page && loading ? <LoadingState title="Loading projects" />
             : page?.rows.map((project, index) => <ProjectSessions key={project.key} project={project} index={index}
               query={filters.query} revision={revision} selected={selected} onSelect={detail.show} onRemove={setProjectToRemove} />)}
-          {!error && !loading && page?.total === 0 && info?.recent_conversations === 0 &&
+          {!error && !loading && page?.total === 0 && info?.unassigned_sessions === 0 &&
             <EmptyState title={unavailable ? 'Archive unavailable' : emptyTitle}>
-              {unavailable && <p lang="it">{info.coverage_description}</p>}
+              {unavailable && <p lang="it">{info.archive_error}</p>}
             </EmptyState>}
           {page && !error && <Pagination total={page.total} page={filters.pageIndex} pageSize={projectPageSize}
             onPage={filters.setPageIndex} label="Project pages" />}
-          {info?.recent_conversations ? <UnassignedSessions key={filters.query} path={unassignedPath(provider)}
+          {info?.unassigned_sessions ? <UnassignedSessions key={filters.query} path={unassignedPath(provider)}
             query={filters.query} revision={revision} selected={selected} onSelect={detail.show} label="Unassigned sessions"
+            count={info.unassigned_sessions}
             emptyTitle={!loading && page?.total === 0 ? emptyTitle : undefined} /> : null}
         </div>
       </GlassPanel>
     </SplitWorkspace>
-    <div className="session-tools">
-      <AdvancedFilters filters={filters.filters} provider={provider} active={filters.active}
-        onChange={filters.update} onReset={filters.reset} />
-      <GlassButton className="square refresh-button" tone="quiet" aria-label="Refresh sessions" title="Refresh sessions"
-        disabled={refreshing} onClick={() => void refresh()}><RefreshCw className={refreshing ? 'spin' : undefined} size={15} aria-hidden /></GlassButton>
-    </div>
-    {info && <details className="inventory-diagnostics">
-      <summary>{info.coverage !== 'partial' ? 'Archive unavailable' :
-        info.inventory_incomplete || info.projects_incomplete ? 'Partial archive coverage' : 'Archive coverage and diagnostics'}</summary>
-      <p lang="it">{info.coverage_description}</p>
-      {provider === 'codex' && info.removal_reason && <p lang="it">{info.removal_reason}</p>}
-      {info.claude_storage && <ClaudeDiagnostics discovery={info.claude_storage} incomplete={info.inventory_incomplete} />}
-      {provider === 'claude' && <details onToggle={event => { if (event.currentTarget.open) setStorageOpened(true) }}>
-        <summary>Claude Code storage</summary>
-        {storageOpened && <ClaudeUsageView key={revision} onSelect={detail.show} />}
-      </details>}
-    </details>}
     {projectToRemove && <RemovalDialog path={projectPath(provider, projectToRemove.key)} title={projectToRemove.name}
       project onClose={() => setProjectToRemove(undefined)} onChange={invalidate} />}
   </>

@@ -258,6 +258,7 @@ fn run(args: Args) -> Result<(), String> {
         codex,
         discovery,
         claude,
+        home,
         limit: args.max_entries as usize,
         protected: args.protect_codex_session,
         no_open,

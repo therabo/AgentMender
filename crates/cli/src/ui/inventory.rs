@@ -1,19 +1,16 @@
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, BTreeSet, HashMap},
     fs,
     sync::Mutex,
 };
 
 use agentmender_application::{
     local_inventory::{InventoryPage, InventoryQuery, InventorySort, LocalInventory},
-    projects::{self, Project},
+    projects::{self, Project, ProjectKey},
 };
 use agentmender_domain::*;
 use agentmender_provider_api::ProviderError;
-use agentmender_provider_claude::{
-    InstallationView, REMOVAL_NOTICE, Reconciliation, RootView, SessionEvidence,
-};
-use chrono::NaiveDate;
+use agentmender_provider_claude::{Access, REMOVAL_NOTICE, SessionEvidence};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -22,7 +19,7 @@ use super::{ApiError, App, removal};
 #[derive(Clone, Copy, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(super) enum Coverage {
-    Partial,
+    Available,
     Unavailable,
     NotDetected,
 }
@@ -30,59 +27,38 @@ pub(super) enum Coverage {
 #[derive(Clone, Serialize)]
 pub(super) struct ProviderView {
     pub id: ProviderKind,
-    pub presence: Presence,
     pub coverage: Coverage,
-    pub inventory_incomplete: bool,
-    pub coverage_description: &'static str,
+    pub archive_error: Option<&'static str>,
     pub total: usize,
+    pub sessions_observed_only: bool,
+    pub project_count: usize,
+    pub projects_observed_only: bool,
+    pub unassigned_sessions: usize,
     pub transcript_bytes: Option<u64>,
-    pub transcript_bytes_incomplete: bool,
-    pub registered_projects: usize,
-    pub project_conversations: usize,
-    pub recent_conversations: usize,
-    pub projects_incomplete: bool,
-    pub removal_available: bool,
-    pub removal_reason: Option<&'static str>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub claude_storage: Option<ClaudeStorage>,
-}
-
-#[derive(Clone, Serialize)]
-pub(super) struct ClaudeStorage {
-    roots: Vec<RootView>,
-    installations: Vec<InstallationView>,
-    desktop_metadata_roots: Vec<String>,
-    subagents: usize,
-    forks: usize,
-    sidechains: usize,
-    reconciliation: Reconciliation,
+    #[serde(skip)]
+    removal_reason: Option<&'static str>,
 }
 
 struct Observation {
-    presence: Presence,
     coverage: Coverage,
-    description: &'static str,
+    error: Option<&'static str>,
     inventory: InventoryObservation,
-    version: Option<String>,
-    claude_storage: Option<ClaudeStorage>,
+    sessions_incomplete: bool,
     claude_evidence: BTreeMap<SessionIdentity, SessionEvidence>,
 }
 
 pub(super) struct Snapshot {
     info: ProviderView,
-    version: Option<String>,
     conversation_preview: bool,
     index: LocalInventory,
     recents: LocalInventory,
     ids: HashMap<String, usize>,
     projects: HashMap<String, Project>,
-    codex_project_keys: HashMap<String, String>,
     claude_evidence: BTreeMap<SessionIdentity, SessionEvidence>,
 }
 
 impl Observation {
     fn codex(app: &App) -> Self {
-        let detected = app.codex.detect().unwrap_or_default();
         let blocked_root = matches!(
             app.discovery.selected_access(),
             agentmender_provider_codex::discovery::Access::Linked
@@ -93,124 +69,93 @@ impl Observation {
         } else {
             fs::symlink_metadata(&app.discovery.selected_root)
         };
-        let presence = if detected.detected {
-            Presence::Installed
-        } else if root_check.is_ok() {
-            Presence::StateOnly
-        } else {
-            Presence::NotDetected
-        };
-        let (coverage, description, inventory) = match root_check {
+        let (coverage, error, inventory) = match root_check {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                if presence == Presence::NotDetected {
+                if app
+                    .codex
+                    .detect()
+                    .is_ok_and(|installation| installation.detected)
+                {
                     (
-                        Coverage::NotDetected,
-                        "Installazione e archivio locale non rilevati.",
+                        Coverage::Unavailable,
+                        Some(
+                            "Il provider è installato, ma l'archivio configurato non è stato trovato.",
+                        ),
                         InventoryObservation::default(),
                     )
                 } else {
                     (
-                        Coverage::Unavailable,
-                        "Il provider è installato, ma l'archivio configurato non è stato trovato.",
+                        Coverage::NotDetected,
+                        Some("Installazione e archivio locale non rilevati."),
                         InventoryObservation::default(),
                     )
                 }
             }
             Ok(info) if info.is_dir() => match app.codex.local_inventory(app.limit) {
-                Ok(observation) => {
-                    let description = if observation.incomplete || observation.projects_incomplete {
-                        "La lettura è incompleta. Altre sessioni o progetti potrebbero essere presenti."
-                    } else {
-                        "Dati del database Codex locale riconosciuto. Sono visibili solo le conversazioni principali verificate."
-                    };
-                    (Coverage::Partial, description, observation)
-                }
+                Ok(observation) => (Coverage::Available, None, observation),
                 Err(ProviderError::PermissionDenied(_)) => (
                     Coverage::Unavailable,
-                    "Accesso negato all’archivio del provider.",
+                    Some("Accesso negato all’archivio del provider."),
                     InventoryObservation::default(),
                 ),
                 Err(ProviderError::InvalidScope(reason)) if reason == "stale_codex_source" => (
                     Coverage::Unavailable,
-                    "L’archivio è cambiato durante la lettura. Aggiorna l’inventario.",
+                    Some("L’archivio è cambiato durante la lettura. Aggiorna l’inventario."),
                     InventoryObservation::default(),
                 ),
                 Err(_) if !cfg!(target_os = "macos") => (
                     Coverage::Unavailable,
-                    "La lettura confinata dell’archivio Codex è attualmente disponibile su macOS.",
+                    Some(
+                        "La lettura confinata dell’archivio Codex è attualmente disponibile su macOS.",
+                    ),
                     InventoryObservation::default(),
                 ),
                 Err(_) => (
                     Coverage::Unavailable,
-                    "L’archivio non è leggibile o usa un formato non riconosciuto.",
+                    Some("L’archivio non è leggibile o usa un formato non riconosciuto."),
                     InventoryObservation::default(),
                 ),
             },
             _ => (
                 Coverage::Unavailable,
-                "La directory dell’archivio non è accessibile o è un collegamento.",
+                Some("La directory dell’archivio non è accessibile o è un collegamento."),
                 InventoryObservation::default(),
             ),
         };
         Self {
-            presence,
             coverage,
-            description,
+            error,
+            sessions_incomplete: inventory.incomplete,
             inventory,
-            version: detected.version,
-            claude_storage: None,
             claude_evidence: BTreeMap::new(),
         }
     }
 
     fn claude(app: &App) -> Self {
         let catalog = app.claude.local_catalog();
-        let installations = app.claude.installations().to_vec();
-        let present = catalog.roots.iter().any(|root| root.present);
-        let presence = if installations.iter().any(|item| item.confirmed) {
-            Presence::Installed
-        } else if present {
-            Presence::StateOnly
-        } else {
-            Presence::NotDetected
-        };
-        let (coverage, description) = if catalog.roots.iter().any(|root| root.readable) {
-            let description = if catalog.inventory.incomplete {
-                "Lettura incompleta. Alcuni transcript o metadati potrebbero mancare."
-            } else {
-                "Conversazioni locali riconosciute nei transcript di progetto Claude Code."
-            };
-            (Coverage::Partial, description)
-        } else if presence == Presence::NotDetected {
+        let (coverage, error) = if catalog.roots.iter().any(|root| {
+            matches!(root.projects_access, Access::Available)
+                || (root.readable && root.projects_access == Access::Missing)
+        }) {
+            (Coverage::Available, None)
+        } else if catalog.roots.iter().any(|root| root.present)
+            || app.claude.installations().iter().any(|item| item.confirmed)
+        {
             (
-                Coverage::NotDetected,
-                "Installazione e archivio locale non rilevati.",
+                Coverage::Unavailable,
+                Some("Nessun archivio di progetto accessibile."),
             )
         } else {
             (
-                Coverage::Unavailable,
-                "Nessun archivio di progetto accessibile.",
+                Coverage::NotDetected,
+                Some("Installazione e archivio locale non rilevati."),
             )
         };
         Self {
-            presence,
             coverage,
-            description,
+            error,
             inventory: catalog.inventory,
-            version: None,
-            claude_storage: Some(ClaudeStorage {
-                roots: catalog.roots,
-                installations,
-                desktop_metadata_roots: app
-                    .claude
-                    .desktop_roots()
-                    .map(|path| path.to_string_lossy().into_owned())
-                    .collect(),
-                subagents: catalog.reconciliation.transcripts.subagents,
-                forks: catalog.reconciliation.transcripts.forks,
-                sidechains: catalog.reconciliation.transcripts.sidechains,
-                reconciliation: catalog.reconciliation,
-            }),
+            sessions_incomplete: catalog.session_scope_incomplete,
             claude_evidence: catalog.evidence,
         }
     }
@@ -222,43 +167,35 @@ impl Snapshot {
             ProviderKind::Codex => Observation::codex(app),
             ProviderKind::Claude => Observation::claude(app),
         };
-        let observation = observed.inventory;
-        let can_read = matches!(observed.coverage, Coverage::Partial);
+        let mut observation = observed.inventory;
+        let can_read = matches!(observed.coverage, Coverage::Available);
+        // The index, project pages and unassigned pages share one set of
+        // canonical session records. UUIDs from distinct archives stay distinct.
+        let mut seen = BTreeSet::new();
+        observation.sessions.reverse();
+        observation
+            .sessions
+            .retain(|session| seen.insert(session.identity.clone()));
+        observation.sessions.reverse();
         let removal_reason = match provider {
             ProviderKind::Claude => Some(REMOVAL_NOTICE),
             ProviderKind::Codex if !can_read => Some("L'archivio Codex è indisponibile."),
             ProviderKind::Codex => removal::native_reason(app),
         };
-        let grouped = projects::build(&observation);
-        let project_conversations = grouped
-            .projects
-            .iter()
-            .map(|project| project.sessions.len())
-            .sum();
-        let mut codex_project_keys = HashMap::new();
+        let grouped = projects::build(&observation, &app.home);
         let projects: HashMap<_, _> = grouped
             .projects
             .into_iter()
-            .map(|project| {
-                let key = opaque_key(&project.identity);
-                if project.identity.provider == ProviderKind::Codex {
-                    codex_project_keys.extend(
-                        project
-                            .sessions
-                            .sessions()
-                            .map(|session| (session.identity.native_id.clone(), key.clone())),
-                    );
-                }
-                (key, project)
-            })
+            .map(|project| (project_key(&project.key), project))
             .collect();
         let index = LocalInventory::new(observation.sessions);
-        let (known_count, transcript_bytes) = index
-            .sessions()
-            .filter_map(|session| session.transcript_bytes)
-            .fold((0, Some(0u64)), |(count, total), bytes| {
-                (count + 1, total.and_then(|total| total.checked_add(bytes)))
-            });
+        let transcript_bytes = if can_read && !observed.sessions_incomplete {
+            index.sessions().try_fold(0u64, |sum, session| {
+                sum.checked_add(session.transcript_bytes?)
+            })
+        } else {
+            None
+        };
         let ids = index
             .sessions()
             .enumerate()
@@ -267,33 +204,22 @@ impl Snapshot {
         Self {
             info: ProviderView {
                 id: provider,
-                presence: observed.presence,
                 coverage: observed.coverage,
-                coverage_description: observed.description,
-                inventory_incomplete: observation.incomplete,
-                projects_incomplete: observation.projects_incomplete,
-                registered_projects: projects.len(),
-                project_conversations,
-                recent_conversations: grouped.recents.len(),
+                archive_error: observed.error,
                 total: index.len(),
-                transcript_bytes: if can_read && (known_count > 0 || index.is_empty()) {
-                    transcript_bytes
-                } else {
-                    None
-                },
-                transcript_bytes_incomplete: observation.incomplete || known_count < index.len(),
-                removal_available: removal_reason.is_none(),
+                sessions_observed_only: observed.sessions_incomplete,
+                project_count: projects.len(),
+                projects_observed_only: observation.projects_incomplete,
+                unassigned_sessions: grouped.recents.len(),
+                transcript_bytes,
                 removal_reason,
-                claude_storage: observed.claude_storage,
             },
-            version: observed.version,
             conversation_preview: can_read
                 && (provider == ProviderKind::Claude || cfg!(target_os = "macos")),
             index,
             recents: grouped.recents,
             ids,
             projects,
-            codex_project_keys,
             claude_evidence: observed.claude_evidence,
         }
     }
@@ -308,6 +234,13 @@ impl Snapshot {
 
 fn key(session: &Session) -> String {
     opaque_key(&session.identity)
+}
+
+fn project_key(key: &ProjectKey) -> String {
+    match key {
+        ProjectKey::Registered(identity) => opaque_key(identity),
+        ProjectKey::Workspace(path) => opaque_key(&("claude_workspace", path)),
+    }
 }
 
 fn opaque_key(identity: &impl Serialize) -> String {
@@ -413,30 +346,11 @@ impl Inventories {
             let session = snapshot.selected(key)?;
             Ok(DetailView {
                 session: SessionView::new(app, snapshot, session),
-                version: snapshot.version.clone(),
                 conversation_preview: snapshot.conversation_preview
                     && session.transcript_bytes.is_some(),
                 claude_cleanup_supported: provider == ProviderKind::Claude
                     && cfg!(target_os = "macos"),
             })
-        })
-    }
-
-    pub(super) fn claude_footprints(&self, app: &App) -> super::claude_usage::Footprints {
-        self.with(app, ProviderKind::Claude, |snapshot| {
-            let entries = snapshot.index.sessions().filter_map(|row| {
-                let evidence = snapshot.claude_evidence.get(&row.identity)?;
-                let (logical_bytes, exclusive_logical_bytes) = evidence.transcript_footprint();
-                Some(super::claude_usage::SessionUsage {
-                    key: key(row),
-                    title: row.title.clone(),
-                    native_id: row.identity.native_id.clone(),
-                    namespace: row.identity.namespace.clone(),
-                    logical_bytes,
-                    exclusive_logical_bytes,
-                })
-            });
-            super::claude_usage::Footprints::new(entries, !snapshot.info.inventory_incomplete)
         })
     }
 
@@ -476,45 +390,20 @@ pub(super) struct ProjectsPage {
 }
 
 #[derive(Serialize)]
-#[serde(transparent)]
-struct DisplayPath(
-    #[serde(serialize_with = "agentmender_domain::path_serde::serialize")] std::path::PathBuf,
-);
-
-#[derive(Serialize)]
 pub(super) struct ProjectView {
-    pub key: String,
+    key: String,
     provider: ProviderKind,
-    pub name: String,
-    workspace: Option<String>,
-    namespace: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    archive_root: Option<DisplayPath>,
-    pub roots: Vec<String>,
-    registration: &'static str,
+    name: String,
+    roots: Vec<String>,
     main_conversations: usize,
-    last_active_at: Option<i64>,
-    transcript_bytes: Option<u64>,
-    transcript_bytes_incomplete: bool,
-    incomplete: bool,
-    persistent_instance: bool,
     removal_available: bool,
     pub removal_reason: Option<&'static str>,
 }
 
 impl ProjectView {
     pub(super) fn new(app: &App, project: &Project) -> Self {
-        let namespace = match &project.identity.locator {
-            ProjectLocator::Namespace(namespace) => Some(namespace.clone()),
-            _ => None,
-        };
-        let registration = match &project.identity.locator {
-            ProjectLocator::Codex(_) if project.desktop_backed => "native_and_desktop",
-            ProjectLocator::Codex(_) => "native",
-            ProjectLocator::CodexDesktop(_) => "desktop",
-            ProjectLocator::Namespace(_) => "namespace",
-        };
-        let removal_reason = if project.identity.provider == ProviderKind::Claude {
+        let provider = project.key.provider();
+        let removal_reason = if provider == ProviderKind::Claude {
             Some(NO_CLAUDE_PROJECT_REMOVAL)
         } else if project.desktop_backed {
             Some(
@@ -533,21 +422,11 @@ impl ProjectView {
             })
         };
         Self {
-            key: opaque_key(&project.identity),
-            provider: project.identity.provider,
+            key: project_key(&project.key),
+            provider,
             name: project.name.clone(),
-            workspace: project.workspace.clone(),
-            persistent_instance: true,
             roots: project.roots.clone(),
-            registration,
-            archive_root: (project.identity.provider == ProviderKind::Claude)
-                .then(|| DisplayPath(project.identity.state_root.clone())),
-            namespace,
             main_conversations: project.sessions.len(),
-            last_active_at: project.last_active_at,
-            transcript_bytes: project.transcript_bytes,
-            transcript_bytes_incomplete: project.transcript_bytes_incomplete,
-            incomplete: project.incomplete,
             removal_available: removal_reason.is_none(),
             removal_reason,
         }
@@ -587,7 +466,6 @@ impl PageView {
 #[derive(Serialize)]
 pub(super) struct DetailView {
     session: SessionView,
-    version: Option<String>,
     conversation_preview: bool,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     claude_cleanup_supported: bool,
@@ -597,21 +475,11 @@ pub(super) struct DetailView {
 struct SessionView {
     key: String,
     native_id: String,
-    provider: ProviderKind,
     title: Option<String>,
-    project: Option<String>,
-    workspace: Option<String>,
-    created_at: Option<i64>,
     last_active_at: Option<i64>,
     state: SessionState,
     transcript_bytes: Option<u64>,
     kind: SessionKind,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    claude: Option<SessionEvidence>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    namespace: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    archive_root: Option<DisplayPath>,
     protected: bool,
     removal_reason: Option<&'static str>,
 }
@@ -628,27 +496,11 @@ impl SessionView {
         Self {
             key: key(session),
             native_id: meta.identity.native_id.clone(),
-            provider: meta.identity.provider,
             title: meta.title.clone(),
-            project: if meta.identity.provider == ProviderKind::Codex {
-                snapshot
-                    .codex_project_keys
-                    .get(&meta.identity.native_id)
-                    .and_then(|key| snapshot.projects.get(key))
-                    .map(|project| project.name.clone())
-            } else {
-                meta.project.clone()
-            },
-            workspace: session.workspace.clone(),
-            created_at: meta.created_at,
             last_active_at: meta.last_active_at,
             state: meta.state,
             transcript_bytes: session.transcript_bytes,
             kind: session.kind,
-            namespace: meta.identity.namespace.clone(),
-            archive_root: (meta.identity.provider == ProviderKind::Claude)
-                .then(|| DisplayPath(meta.identity.state_root.clone())),
-            claude: snapshot.claude_evidence.get(&meta.identity).cloned(),
             protected,
             removal_reason,
         }
@@ -660,10 +512,6 @@ impl SessionView {
 pub(super) struct Filter {
     search: Option<String>,
     state: Option<SessionState>,
-    since: Option<NaiveDate>,
-    until: Option<NaiveDate>,
-    min_bytes: Option<u64>,
-    max_bytes: Option<u64>,
     sort: Option<InventorySort>,
     ascending: Option<bool>,
     offset: Option<usize>,
@@ -680,30 +528,12 @@ impl TryFrom<Filter> for InventoryQuery {
             || search.chars().any(char::is_control)
             || offset > 100_000
             || !(1..=100).contains(&limit)
-            || value
-                .min_bytes
-                .zip(value.max_bytes)
-                .is_some_and(|(min, max)| min > max)
-            || value
-                .since
-                .zip(value.until)
-                .is_some_and(|(start, end)| start > end)
         {
             return Err(ApiError::bad("Filtri o paginazione non validi."));
         }
-        let to_seconds = |day: NaiveDate| {
-            day.and_hms_opt(0, 0, 0)
-                .expect("midnight")
-                .and_utc()
-                .timestamp()
-        };
         Ok(Self {
             search,
             state: value.state,
-            since: value.since.map(to_seconds),
-            before: value.until.map(to_seconds).map(|time| time + 86_400),
-            min_bytes: value.min_bytes,
-            max_bytes: value.max_bytes,
             sort: value.sort.unwrap_or_default(),
             ascending: value.ascending.unwrap_or_default(),
             offset,

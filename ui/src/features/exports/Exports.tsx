@@ -84,7 +84,7 @@ export function Exports({ heading, switched }: { heading: ReactNode; switched: b
     <SplitWorkspace label="Export details" open={preview.open} opener={preview.selection?.opener} onClose={preview.close}
       preview={group && <ExportDetail group={group} canReview={!loading && checked.has(group.key)} onReview={reviewSelected} onClose={preview.close} />}>
       <GlassPanel className="inventory-panel exports-panel" data-switched={switched} aria-label="Exports inventory" tabIndex={-1}>
-        <InventoryHeader heading={heading} count={page ? `${page.complete ? '' : '≥ '}${numberLabel(page.total)} export groups` : '— export groups'}>
+        <InventoryHeader heading={heading} count={page ? `${numberLabel(page.total)} ${page.complete ? '' : 'observed '}export groups` : '— export groups'}>
           <SearchField label="Search exports" maxLength={64} placeholder="Search exports by name or root…" value={search}
             onChange={value => { setSearch(value); setPageIndex(0) }} />
           <SelectField label="Sort exports" value={sort} onChange={value => { setSort(value); setPageIndex(0) }}>
@@ -104,6 +104,12 @@ export function Exports({ heading, switched }: { heading: ReactNode; switched: b
               onCheck={selection.toggle} onInspect={selection.inspect} /> :
             <EmptyState title={search || category ? 'No matching export groups' : 'No export groups observed'} />}
           {page && !loading && !error && <Pagination total={page.total} page={pageIndex} pageSize={pageSize} onPage={setPageIndex} label="Export group pages" />}
+          <details className="export-diagnostics" onToggle={event => { if (event.currentTarget.open) setDiscoveryOpened(true) }}>
+            <summary>{page?.complete === false ? 'Partial export coverage · storage diagnostics' : 'Export storage and diagnostics'}</summary>
+            {page && <p>{numberLabel(page.group_count)} groups · {sizeLabel(page.size.logical_bytes)} logical · {sizeLabel(page.size.allocated_bytes)} allocated
+              {page.complete ? '' : ' · Observed entries only'}</p>}
+            {discoveryOpened && <CodexDiscovery />}
+          </details>
         </div>
         <footer className="inventory-footer export-footer">
           <span>{checked.size > 0
@@ -119,12 +125,6 @@ export function Exports({ heading, switched }: { heading: ReactNode; switched: b
         </footer>
       </GlassPanel>
     </SplitWorkspace>
-    <details className="inventory-diagnostics" onToggle={event => { if (event.currentTarget.open) setDiscoveryOpened(true) }}>
-      <summary>{page?.complete === false ? 'Partial export coverage · storage diagnostics' : 'Export storage and diagnostics'}</summary>
-      {page && <p>{numberLabel(page.group_count)} groups · {sizeLabel(page.size.logical_bytes)} logical · {sizeLabel(page.size.allocated_bytes)} allocated
-        {page.complete ? '' : ' · Observed entries only'}</p>}
-      {discoveryOpened && <CodexDiscovery />}
-    </details>
     {review && <ExportRemoval keys={review} onClose={closeReview} onOutcome={recordOutcome} />}
   </>
 }

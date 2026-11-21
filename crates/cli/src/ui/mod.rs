@@ -1,6 +1,5 @@
 //! Loopback-only transport and browser authorization for the local UI.
 mod browser;
-mod claude_usage;
 mod inventory;
 mod removal;
 mod storage;
@@ -8,6 +7,7 @@ mod transcript;
 
 use std::{
     net::{Ipv4Addr, SocketAddr},
+    path::PathBuf,
     sync::{Arc, Mutex},
 };
 
@@ -50,7 +50,7 @@ struct App {
     inventory: Inventories,
     discovery: Discovery,
     exports: Mutex<storage::ExportState>,
-    claude_usage: Mutex<Option<claude_usage::CachedUsage>>,
+    home: PathBuf,
     #[cfg(target_os = "macos")]
     claude_review: Mutex<Option<removal::ClaudeReview>>,
     cursors: Mutex<TranscriptCursors>,
@@ -297,23 +297,6 @@ async fn conversation(
     read(app, move |app| transcript::page(app, provider, &key, query)).await
 }
 
-async fn claude_storage(
-    State(app): State<Arc<App>>,
-    Path(key): Path<String>,
-) -> Result<Json<agentmender_provider_claude::StorageDetail>, ApiError> {
-    read(app, move |app| {
-        let (session, evidence) = app.inventory.selected_claude(app, &key)?;
-        app.claude
-            .storage_detail(&session.identity, &evidence)
-            .map_err(|_| {
-                ApiError::conflict(
-                    "Archivio Claude cambiato o non leggibile. Aggiorna l’inventario.",
-                )
-            })
-    })
-    .await
-}
-
 fn asset(content_type: &'static str, bytes: &'static str) -> impl IntoResponse {
     ([(header::CONTENT_TYPE, content_type)], bytes)
 }
@@ -351,8 +334,6 @@ fn router(app: Arc<App>) -> Router {
         .route("/favicon.ico", get(|| async { StatusCode::NO_CONTENT }))
         .route("/api/authorize", post(authorize))
         .route("/api/storage/codex", get(storage::discover))
-        .route("/api/storage/claude", get(claude_usage::inspect))
-        .route("/api/storage/claude/refresh", post(claude_usage::refresh))
         .route("/api/storage/exports", get(storage::list))
         .route("/api/storage/exports/refresh", post(storage::refresh))
         .route("/api/storage/exports/preview", post(storage::preview))
@@ -387,7 +368,6 @@ fn router(app: Arc<App>) -> Router {
             "/api/{provider}/sessions/{key}/delete",
             post(removal::session),
         )
-        .route("/api/claude/sessions/{key}/storage", get(claude_storage))
         .route("/api/{provider}/refresh", post(refresh))
         .layer(DefaultBodyLimit::max(4096))
         .layer(middleware::from_fn_with_state(app.clone(), boundary))
@@ -398,6 +378,7 @@ pub(super) struct Configuration {
     pub codex: CodexAdapter,
     pub discovery: Discovery,
     pub claude: ClaudeAdapter,
+    pub home: PathBuf,
     pub limit: usize,
     pub protected: Vec<String>,
     pub no_open: bool,
@@ -433,7 +414,7 @@ pub(super) fn run(config: Configuration) -> Result<(), String> {
             codex: config.codex,
             discovery: config.discovery,
             exports: Mutex::default(),
-            claude_usage: Mutex::default(),
+            home: config.home,
             #[cfg(target_os = "macos")]
             claude_review: Mutex::default(),
             claude: config.claude,

@@ -5,7 +5,7 @@
   padding: 0;
   width: calc(100% - var(--layout-gap));
   max-width: none;
-  height: var(--workspace-height);
+  height: 100%;
   max-height: none;
   color: var(--text);
   background: var(--glass-raised);
@@ -15,13 +15,24 @@
 }
 .preview-content { height: 100%; display: flex; flex-direction: column; padding: 18px 23px 15px; }
 .preview-heading {
+  flex: none;
   display: flex;
   align-items: center;
   gap: 9px;
   padding-bottom: 11px;
   border-bottom: 1px solid var(--glass-line-soft);
 }
-.preview-heading h2 { flex: 1; min-width: 0; font-size: 20px; line-height: 1.2; overflow-wrap: anywhere; }
+.preview-heading h2 {
+  flex: 1;
+  min-width: 0;
+  font-size: 20px;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
 .preview-heading .status-badge {
   display: inline-flex;
   align-items: center;
@@ -38,6 +49,7 @@
 .preview-heading .status-active { background: rgba(130, 227, 205, .15); border-color: rgba(130, 227, 205, .35); }
 .preview-close { margin-left: 8px; }
 .preview-facts, .facts {
+  flex: none;
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
@@ -68,8 +80,10 @@
   scrollbar-color: rgba(255, 255, 255, .3) transparent;
   padding-top: 9px;
 }
-.conversation { display: flex; flex-direction: column; flex: 1; min-height: 150px; gap: 8px; }
+.session-preview-body { overflow: hidden; }
+.conversation { display: flex; flex-direction: column; flex: 1; min-height: 0; gap: 8px; }
 .conversation-scroll {
+  overscroll-behavior: contain;
   display: flex;
   flex-direction: column;
   overflow: auto;
@@ -119,6 +133,7 @@
 .preview-diagnostics > summary { width: fit-content; }
 
 .preview-footer {
+  flex: none;
   display: grid;
   justify-items: center;
   gap: 7px;

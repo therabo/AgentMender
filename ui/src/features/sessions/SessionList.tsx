@@ -19,12 +19,12 @@ export function SessionStatus({ session }: { session: Session }) {
 }
 
 type GroupProps = {
-  title: string; context?: string; count: number; incomplete?: boolean
+  title: string; context?: string; count: number
   expanded: boolean; onToggle: () => void; onRemove?: () => void
   unassigned?: boolean; children: ReactNode
 }
 
-export function SessionGroup({ title, context, count, incomplete, expanded, onToggle, onRemove, unassigned, children }: GroupProps) {
+export function SessionGroup({ title, context, count, expanded, onToggle, onRemove, unassigned, children }: GroupProps) {
   const groupId = useId()
   const buttonId = useId()
   return <section className="session-group" data-unassigned={!!unassigned}>
@@ -36,7 +36,7 @@ export function SessionGroup({ title, context, count, incomplete, expanded, onTo
             <strong>{title}</strong>
             {context && <span title={context}>{context}</span>}
           </span>
-          <span className="group-count">{incomplete ? '≥ ' : ''}{numberLabel(count)} {count === 1 ? 'session' : 'sessions'}</span>
+          <span className="group-count">{numberLabel(count)} {count === 1 ? 'session' : 'sessions'}</span>
           <img className="group-chevron" src={downIcon} alt="" width={18} height={18} />
         </button>
       </h2>
@@ -63,7 +63,7 @@ function SessionRow({ session, selected, onSelect }: {
       <img className="session-dot" src={dotIcon} alt="" width={10} height={10} />
       <span className="row-description">
         <strong title={title}>{title}</strong>
-        <span>{kindLabel[session.kind]}{session.protected && ' · Protected'}{session.claude && !session.claude.metadata_complete && ' · Partial metadata'}</span>
+        <span>{kindLabel[session.kind]}{session.protected && ' · Protected'}</span>
       </span>
       <time className="session-activity" title={dateLabel(session.last_active_at)}>{activityLabel(session.last_active_at)}</time>
       <span className="session-size">{sizeLabel(session.transcript_bytes)}</span>
@@ -92,7 +92,7 @@ export function SessionList({ path, query, revision, label, selected, onSelect, 
   </>
 }
 
-export function UnassignedSessions({ path, query, revision, label, selected, onSelect, emptyTitle }: ListProps & { emptyTitle?: string }) {
+export function UnassignedSessions({ path, query, revision, label, selected, onSelect, count, emptyTitle }: ListProps & { count: number; emptyTitle?: string }) {
   const [expanded, setExpanded] = useState(true)
   const [pageIndex, setPageIndex] = useState(0)
   const { loading, error, page } = usePagedResource(path, query, pageIndex, pageSize, revision, listSessions, { delay: 180 })
@@ -103,9 +103,8 @@ export function UnassignedSessions({ path, query, revision, label, selected, onS
   if (error) return <Notice tone="error">{error}</Notice>
   if (loading) return emptyTitle ? <LoadingState title="Loading unassigned sessions" /> : null
   if (!page?.total) return emptyTitle ? <EmptyState title={emptyTitle} /> : null
-  return <SessionGroup title="Unassigned sessions" unassigned context={page.provider.projects_incomplete
-    ? 'No project link observed · partial coverage' : 'Sessions without a registered project'}
-    count={page.total} incomplete={page.provider.inventory_incomplete || page.provider.projects_incomplete}
+  return <SessionGroup title="Unassigned sessions" unassigned context="Sessions without a verified project"
+    count={count}
     expanded={expanded} onToggle={() => setExpanded(value => !value)}>
     <ul className="session-rows" aria-label={label}>
       {page.rows.map(session => <SessionRow key={session.key} session={session} selected={selected === session.key} onSelect={onSelect} />)}

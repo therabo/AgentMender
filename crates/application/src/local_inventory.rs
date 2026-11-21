@@ -22,10 +22,6 @@ pub enum InventorySort {
 pub struct InventoryQuery {
     pub search: String,
     pub state: Option<SessionState>,
-    pub since: Option<i64>,
-    pub before: Option<i64>,
-    pub min_bytes: Option<u64>,
-    pub max_bytes: Option<u64>,
     pub sort: InventorySort,
     pub ascending: bool,
     pub offset: usize,
@@ -113,18 +109,6 @@ impl LocalInventory {
             .filter(move |item| {
                 let meta = &item.session;
                 query.state.is_none_or(|state| state == meta.state)
-                    && query
-                        .since
-                        .is_none_or(|since| meta.last_active_at.is_some_and(|date| date >= since))
-                    && query
-                        .before
-                        .is_none_or(|before| meta.last_active_at.is_some_and(|date| date < before))
-                    && query
-                        .min_bytes
-                        .is_none_or(|min| meta.transcript_bytes.is_some_and(|bytes| bytes >= min))
-                    && query
-                        .max_bytes
-                        .is_none_or(|max| meta.transcript_bytes.is_some_and(|bytes| bytes <= max))
                     && search.split_whitespace().all(|word| {
                         item.searchable
                             .iter()

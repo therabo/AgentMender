@@ -23,14 +23,6 @@ impl fmt::Display for ProviderKind {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Presence {
-    Installed,
-    StateOnly,
-    NotDetected,
-}
-
 #[derive(Debug, Default)]
 pub struct Installation {
     pub detected: bool,
@@ -59,7 +51,6 @@ pub struct SessionIdentity {
 pub enum ProjectLocator {
     Codex(String),
     CodexDesktop(String),
-    Namespace(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]

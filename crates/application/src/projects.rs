@@ -1,27 +1,43 @@
-//! Provider-scoped grouping before filtering, sorting and pagination.
+//! Presentation groups for verified main sessions, before filtering and pagination.
 use crate::local_inventory::{
     InventoryPage, InventoryQuery, InventorySort, LocalInventory, compare, folded,
 };
 use agentmender_domain::{
-    InventoryObservation, ProjectIdentity, ProjectLocator, ProviderKind, RegisteredProject,
-    Session, SessionIdentity,
+    InventoryObservation, ProjectIdentity, ProviderKind, Session, SessionIdentity,
 };
-use std::collections::{BTreeMap, BTreeSet};
+use std::{
+    collections::BTreeMap,
+    path::{Component, Path},
+};
+
+/// Codex keys retain their registered identity. Claude groups are keyed by
+/// workspace across archive roots, while each row retains its session identity.
+#[derive(PartialEq, Eq, PartialOrd, Ord)]
+pub enum ProjectKey {
+    Registered(ProjectIdentity),
+    Workspace(String),
+}
+
+impl ProjectKey {
+    pub fn provider(&self) -> ProviderKind {
+        match self {
+            Self::Registered(identity) => identity.provider,
+            Self::Workspace(_) => ProviderKind::Claude,
+        }
+    }
+}
 
 pub struct Project {
-    pub identity: ProjectIdentity,
+    pub key: ProjectKey,
     pub name: String,
-    pub workspace: Option<String>,
     pub roots: Vec<String>,
     pub desktop_backed: bool,
     pub membership_incomplete: bool,
-    pub transcript_bytes: Option<u64>,
-    pub transcript_bytes_incomplete: bool,
-    pub last_active_at: Option<i64>,
-    pub incomplete: bool,
     pub sessions: LocalInventory,
     labels: Vec<String>,
     first_created: Option<i64>,
+    last_active_at: Option<i64>,
+    transcript_bytes: Option<u64>,
 }
 
 impl Project {
@@ -32,6 +48,9 @@ impl Project {
 
 #[derive(Default)]
 struct Group<'a> {
+    name: String,
+    roots: Vec<String>,
+    desktop_backed: bool,
     main: Vec<Session>,
     transcripts: Vec<&'a Session>,
 }
@@ -41,11 +60,21 @@ pub struct ProjectInventory {
     pub recents: LocalInventory,
 }
 
-pub fn build(observation: &InventoryObservation) -> ProjectInventory {
-    let mut groups: BTreeMap<_, (&RegisteredProject, Group<'_>)> = observation
+pub fn build(observation: &InventoryObservation, home: &Path) -> ProjectInventory {
+    let mut groups: BTreeMap<_, _> = observation
         .projects
         .iter()
-        .map(|project| (&project.identity, (project, Group::default())))
+        .map(|project| {
+            (
+                ProjectKey::Registered(project.identity.clone()),
+                Group {
+                    name: project.name.clone().expect("observed Codex name"),
+                    roots: project.roots.clone(),
+                    desktop_backed: project.desktop_backed,
+                    ..Group::default()
+                },
+            )
+        })
         .collect();
     let sessions: BTreeMap<_, _> = observation
         .sessions
@@ -53,92 +82,66 @@ pub fn build(observation: &InventoryObservation) -> ProjectInventory {
         .map(|session| (&session.identity, session))
         .collect();
     let mut recents = Vec::new();
-    for session in observation
-        .sessions
-        .iter()
+    for session in sessions
+        .values()
+        .copied()
         .filter(|session| session.is_main())
     {
-        if let Some((_, group)) = identity(observation, session)
-            .as_ref()
-            .and_then(|id| groups.get_mut(id))
-        {
+        let group = match project_key(observation, session, home) {
+            Some(ProjectKey::Workspace(path)) => {
+                let name = Path::new(&path)
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .expect("workspace basename")
+                    .to_owned();
+                Some(
+                    groups
+                        .entry(ProjectKey::Workspace(path.clone()))
+                        .or_insert_with(|| Group {
+                            name,
+                            roots: vec![path],
+                            ..Group::default()
+                        }),
+                )
+            }
+            Some(key) => groups.get_mut(&key),
+            None => None,
+        };
+        if let Some(group) = group {
             group.main.push(session.clone());
             group.transcripts.push(session);
         } else {
             recents.push(session.clone());
         }
     }
-    for session in observation
-        .sessions
-        .iter()
+    for session in sessions
+        .values()
+        .copied()
         .filter(|session| !session.is_main())
     {
-        let owner = if session.identity.provider == ProviderKind::Claude && session.parent.is_some()
-        {
-            Some(session)
-        } else {
-            main_ancestor(session, &sessions)
-        };
-        let project = owner.and_then(|session| identity(observation, session));
-        if let Some((_, group)) = project.as_ref().and_then(|id| groups.get_mut(id)) {
+        let owner = main_ancestor(session, &sessions);
+        let key = owner.and_then(|session| project_key(observation, session, home));
+        if let Some(group) = key.as_ref().and_then(|key| groups.get_mut(key)) {
             group.transcripts.push(session);
         }
     }
     let projects = groups
-        .into_values()
-        .map(|(registered, group)| {
-            let identity = registered.identity.clone();
-            let (name, workspace) = match &identity.locator {
-                ProjectLocator::Codex(_) | ProjectLocator::CodexDesktop(_) => (
-                    registered.name.clone().expect("observed Codex name"),
-                    registered.roots.first().cloned(),
-                ),
-                ProjectLocator::Namespace(namespace) => {
-                    let workspaces: BTreeSet<_> = group
-                        .main
-                        .iter()
-                        .filter_map(|row| row.workspace.as_deref())
-                        .collect();
-                    let workspace = (workspaces.len() == 1)
-                        .then(|| workspaces.first().expect("one workspace").to_string());
-                    let name = workspace
-                        .as_deref()
-                        .map_or(namespace.as_str(), basename)
-                        .into();
-                    (name, workspace)
-                }
-            };
-            let mut labels = vec![folded(&name)];
-            labels.extend(registered.roots.iter().map(|root| folded(root)));
-            if let ProjectLocator::Namespace(namespace) = &identity.locator {
-                labels.push(folded(namespace));
-                labels.extend(workspace.iter().map(|path| folded(path)));
-            }
+        .into_iter()
+        .map(|(key, group)| {
+            let mut labels = vec![folded(&group.name)];
+            labels.extend(group.roots.iter().map(|root| folded(root)));
             let mut sizes = group
                 .transcripts
                 .iter()
-                .filter_map(|row| row.transcript_bytes)
-                .peekable();
-            let transcript_bytes = if sizes.peek().is_some() {
-                sizes.try_fold(0u64, u64::checked_add)
-            } else {
-                None
-            };
-            // A Codex metadata scan sees canonical rows. Edge-only members can
-            // have additional rollouts that are discovered only at preflight.
-            let sizes_incomplete = identity.provider == ProviderKind::Codex
-                || observation.incomplete
-                || group
-                    .transcripts
-                    .iter()
-                    .any(|row| row.transcript_bytes.is_none())
-                || (!group.transcripts.is_empty() && transcript_bytes.is_none());
+                .filter_map(|row| row.transcript_bytes);
+            let transcript_bytes = sizes
+                .next()
+                .and_then(|first| sizes.try_fold(first, u64::checked_add));
             Project {
-                identity,
-                name,
-                workspace,
-                roots: registered.roots.clone(),
-                desktop_backed: registered.desktop_backed,
+                key,
+                name: group.name,
+                roots: group.roots,
+                desktop_backed: group.desktop_backed,
                 membership_incomplete: observation.projects_incomplete,
                 last_active_at: group
                     .transcripts
@@ -147,8 +150,6 @@ pub fn build(observation: &InventoryObservation) -> ProjectInventory {
                     .max(),
                 first_created: group.main.iter().filter_map(|row| row.created_at).min(),
                 transcript_bytes,
-                transcript_bytes_incomplete: sizes_incomplete,
-                incomplete: observation.incomplete || observation.projects_incomplete,
                 sessions: LocalInventory::new(group.main),
                 labels,
             }
@@ -160,31 +161,45 @@ pub fn build(observation: &InventoryObservation) -> ProjectInventory {
     }
 }
 
-fn identity(observation: &InventoryObservation, session: &Session) -> Option<ProjectIdentity> {
-    let locator = match session.identity.provider {
-        ProviderKind::Codex => observation
-            .codex_members
-            .get(&session.identity.native_id)
-            .cloned(),
-        ProviderKind::Claude => session
-            .identity
-            .namespace
-            .clone()
-            .map(ProjectLocator::Namespace),
-    }?;
-    Some(ProjectIdentity {
+fn project_key(
+    observation: &InventoryObservation,
+    session: &Session,
+    home: &Path,
+) -> Option<ProjectKey> {
+    if session.identity.provider == ProviderKind::Claude {
+        let workspace = Path::new(session.workspace.as_deref()?);
+        let parent = workspace.parent()?;
+        // A home or top-level directory is not evidence of a project. Avoid
+        // resolving symlinks or inferring a path from Claude's encoded namespace.
+        if !workspace.is_absolute()
+            || home.starts_with(workspace)
+            || parent.file_name().is_none()
+            || (parent
+                .parent()
+                .is_some_and(|ancestor| ancestor.file_name().is_none())
+                && parent.file_name().is_some_and(|name| {
+                    name.eq_ignore_ascii_case("users") || name.eq_ignore_ascii_case("home")
+                }))
+            || workspace
+                .components()
+                .any(|part| part == Component::ParentDir)
+        {
+            return None;
+        }
+        let normalized = workspace.components().collect::<std::path::PathBuf>();
+        return Some(ProjectKey::Workspace(
+            normalized.into_os_string().into_string().ok()?,
+        ));
+    }
+    let locator = observation
+        .codex_members
+        .get(&session.identity.native_id)?
+        .clone();
+    Some(ProjectKey::Registered(ProjectIdentity {
         provider: session.identity.provider,
         state_root: session.identity.state_root.clone(),
         locator,
-    })
-}
-
-fn basename(path: &str) -> &str {
-    path.trim_end_matches(['/', '\\'])
-        .rsplit(['/', '\\'])
-        .next()
-        .filter(|name| !name.is_empty())
-        .unwrap_or(path)
+    }))
 }
 
 fn main_ancestor<'a>(
@@ -211,10 +226,6 @@ pub fn page<'a>(
         .filter(|project| {
             if project.sessions.is_empty() {
                 return query.state.is_none()
-                    && query.since.is_none()
-                    && query.before.is_none()
-                    && query.min_bytes.is_none()
-                    && query.max_bytes.is_none()
                     && search
                         .split_whitespace()
                         .all(|word| project.labels.iter().any(|label| label.contains(word)));
@@ -237,7 +248,7 @@ pub fn page<'a>(
                 compare(left.transcript_bytes, right.transcript_bytes, ascending)
             }
         }
-        .then_with(|| left.identity.cmp(&right.identity))
+        .then_with(|| left.key.cmp(&right.key))
     });
     (
         matches.len(),
@@ -247,4 +258,74 @@ pub fn page<'a>(
             .take(query.limit)
             .collect(),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn claude_groups_by_workspace_across_namespaces_and_archives() {
+        let home = if cfg!(windows) {
+            "C:/Users/person"
+        } else {
+            "/Users/person"
+        };
+        let home = Path::new(home);
+        let work = home.join("work");
+        let alpha = work.join("alpha");
+        let beta = work.join("beta");
+        let session =
+            |id: &str, archive: &str, namespace: &str, workspace: Option<&Path>| Session {
+                identity: SessionIdentity {
+                    provider: ProviderKind::Claude,
+                    state_root: home.join(archive),
+                    namespace: Some(namespace.to_owned()),
+                    native_id: id.to_owned(),
+                },
+                codex_membership: Default::default(),
+                title: None,
+                workspace: workspace.map(|path| path.to_str().unwrap().to_owned()),
+                project: None,
+                created_at: None,
+                last_active_at: None,
+                state: agentmender_domain::SessionState::Unknown,
+                transcript_bytes: Some(1024),
+                kind: agentmender_domain::SessionKind::Main,
+                forked_from: None,
+                parent: None,
+            };
+        let inventory = build(
+            &InventoryObservation {
+                sessions: vec![
+                    session("alpha-1", "archive", "home", Some(&alpha)),
+                    session(
+                        "alpha-2",
+                        "other-archive",
+                        "different-namespace",
+                        Some(&alpha),
+                    ),
+                    session("beta-1", "archive", "home", Some(&beta)),
+                    session("home-1", "archive", "home", Some(home)),
+                    session("ambiguous-1", "archive", "home", None),
+                ],
+                ..InventoryObservation::default()
+            },
+            home,
+        );
+
+        let counts: BTreeMap<_, _> = inventory
+            .projects
+            .iter()
+            .map(|project| (project.name.as_str(), project.sessions.len()))
+            .collect();
+        assert_eq!(counts, BTreeMap::from([("alpha", 2), ("beta", 1)]));
+        assert_eq!(inventory.recents.len(), 2);
+        assert!(
+            inventory
+                .recents
+                .sessions()
+                .all(|row| row.identity.namespace.as_deref() == Some("home"))
+        );
+    }
 }
