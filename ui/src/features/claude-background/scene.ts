@@ -11,7 +11,7 @@ import { glass } from './glass'
 const motion = '(prefers-reduced-motion: reduce)'
 const field = {
   profiles: {
-    desktop: { bubbles: 10, mascots: 5, dpr: 1.5, pixels: 2_100_000, fps: 60 },
+    desktop: { bubbles: 12, mascots: 7, dpr: 1.5, pixels: 2_100_000, fps: 60 },
     compact: { bubbles: 6, mascots: 2, dpr: 1.2, pixels: 1_050_000, fps: 30 },
     phone: { bubbles: 5, mascots: 1, dpr: 1.1, pixels: 700_000, fps: 30 },
   },
@@ -31,6 +31,8 @@ const field = {
     { x: -0.58, y: 0.55, z: -9.2, radius: 0.77, depth: 'far' },
     { x: 0.78, y: -0.31, z: -5.5, radius: 0.76, depth: 'middle' },
     { x: -0.95, y: -0.86, z: -6.8, radius: 0.56, depth: 'far', mascot: true, yaw: 0.42 },
+    { x: 0.15, y: 0.67, z: -3.4, radius: 0.66, depth: 'middle', mascot: true, yaw: -0.15 },
+    { x: -0.20, y: -0.48, z: -2.1, radius: 0.90, depth: 'middle', mascot: true, yaw: 0.24 },
   ],
 } as const
 
