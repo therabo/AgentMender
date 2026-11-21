@@ -1,7 +1,8 @@
 #[cfg(any(target_os = "macos", windows))]
-use super::identity;
-use super::{Access, Installation, Storage, StorageKind, access, environment, row};
-use agentmender_provider_api::filesystem;
+use super::{Access, access};
+use super::{Installation, Storage, environment};
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
+use super::{StorageKind, row};
 #[cfg(any(target_os = "macos", windows))]
 use agentmender_provider_api::process;
 use std::path::{Path, PathBuf};
@@ -76,63 +77,15 @@ pub(super) fn cli_candidates(home: &Path) -> Vec<PathBuf> {
     paths
 }
 
-// Read just the native image header. CLI shims and universal images can have
-// different architectures than the running AgentMender process.
-pub(super) fn binary_architecture(path: &Path) -> Option<String> {
-    if access(path) != Access::Accessible {
-        return None;
-    }
-    let bytes = filesystem::read_prefix(path.parent()?, path, 4096).ok()?;
-    fn integer(bytes: &[u8], offset: usize, length: usize, little: bool) -> Option<u32> {
-        let data = bytes.get(offset..offset.checked_add(length)?)?;
-        Some(if little {
-            data.iter()
-                .rev()
-                .fold(0, |value, byte| value << 8 | u32::from(*byte))
-        } else {
-            data.iter()
-                .fold(0, |value, byte| value << 8 | u32::from(*byte))
-        })
-    }
-    let architecture = if bytes.starts_with(b"\x7fELF") {
-        match integer(&bytes, 18, 2, *bytes.get(5)? == 1)? {
-            62 => "x86_64",
-            183 => "aarch64",
-            _ => return None,
-        }
-    } else if bytes.starts_with(b"MZ") {
-        let offset = usize::try_from(integer(&bytes, 0x3c, 4, true)?).ok()?;
-        if bytes.get(offset..offset.checked_add(4)?)? != b"PE\0\0" {
-            return None;
-        }
-        match integer(&bytes, offset + 4, 2, true)? {
-            0x8664 => "x86_64",
-            0xaa64 => "aarch64",
-            _ => return None,
-        }
-    } else {
-        match bytes.get(..4)? {
-            [0xcf, 0xfa, 0xed, 0xfe] => match integer(&bytes, 4, 4, true)? {
-                0x0100_0007 => "x86_64",
-                0x0100_000c => "aarch64",
-                _ => return None,
-            },
-            [0xca, 0xfe, 0xba, 0xbe | 0xbf] => "universal",
-            _ => return None,
-        }
-    };
-    Some(architecture.into())
-}
-
-pub(super) fn desktop(home: &Path, archive: &Path) -> (Vec<Installation>, Vec<Storage>) {
+pub(super) fn desktop(home: &Path) -> (Vec<Installation>, Vec<Storage>) {
     #[cfg(target_os = "macos")]
     {
-        macos(home, archive)
+        macos(home)
     }
     #[cfg(windows)]
     {
         let _ = home;
-        windows(archive)
+        windows()
     }
     #[cfg(target_os = "linux")]
     {
@@ -140,25 +93,18 @@ pub(super) fn desktop(home: &Path, archive: &Path) -> (Vec<Installation>, Vec<St
         let cache = base.join("codex");
         // A name-based XDG candidate is metadata only. Upstream CLI evidence
         // does not establish a Desktop profile or ownership here.
-        let row = row(
-            archive,
-            StorageKind::Cache,
-            cache,
-            "candidato XDG",
-            false,
-            false,
-        );
+        let row = row(StorageKind::Cache, cache, false, false);
         (vec![], row.observed.then_some(row).into_iter().collect())
     }
     #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
     {
-        let _ = (home, archive);
+        let _ = home;
         (vec![], vec![])
     }
 }
 
 #[cfg(target_os = "macos")]
-fn macos(home: &Path, archive: &Path) -> (Vec<Installation>, Vec<Storage>) {
+fn macos(home: &Path) -> (Vec<Installation>, Vec<Storage>) {
     let mut installations = Vec::new();
     for parent in [PathBuf::from("/Applications"), home.join("Applications")] {
         for name in ["ChatGPT.app", "Codex.app"] {
@@ -191,12 +137,8 @@ fn macos(home: &Path, archive: &Path) -> (Vec<Installation>, Vec<Storage>) {
             .into_iter()
             .find(|path| access(path) == Access::Accessible && path.is_file());
             installations.push(Installation {
-                path: bundle.clone(),
                 kind: "desktop",
-                source: "Info.plist com.openai.codex",
-                identity: identity(&bundle),
                 version: Some(info.version),
-                architecture: binary_architecture(&desktop_binary),
                 executable,
             });
         }
@@ -230,14 +172,7 @@ fn macos(home: &Path, archive: &Path) -> (Vec<Installation>, Vec<Storage>) {
             home.join(".codex-workspaces/worktrees"),
         ),
     ] {
-        let item = row(
-            archive,
-            kind,
-            path,
-            "layout Codex Desktop macOS",
-            owned,
-            owned && kind != StorageKind::Worktrees,
-        );
+        let item = row(kind, path, owned, owned && kind != StorageKind::Worktrees);
         if item.observed {
             storage.push(item);
         }
@@ -246,7 +181,7 @@ fn macos(home: &Path, archive: &Path) -> (Vec<Installation>, Vec<Storage>) {
 }
 
 #[cfg(windows)]
-fn windows(archive: &Path) -> (Vec<Installation>, Vec<Storage>) {
+fn windows() -> (Vec<Installation>, Vec<Storage>) {
     use serde::Deserialize;
     #[derive(Deserialize)]
     #[serde(rename_all = "PascalCase")]
@@ -255,7 +190,6 @@ fn windows(archive: &Path) -> (Vec<Installation>, Vec<Storage>) {
         publisher_id: String,
         install_location: PathBuf,
         package_family_name: String,
-        architecture: Option<String>,
         version: String,
     }
     let mut installations = Vec::new();
@@ -289,19 +223,8 @@ fn windows(archive: &Path) -> (Vec<Installation>, Vec<Storage>) {
         .into_iter()
         .find(|path| access(path) == Access::Accessible && path.is_file());
         installations.push(Installation {
-            identity: identity(&path),
-            path,
             kind: "desktop",
-            source: "registrazione Windows AppX",
             version: Some(package.version),
-            architecture: executable
-                .as_deref()
-                .and_then(binary_architecture)
-                .or_else(|| match package.architecture.as_deref() {
-                    Some("X64") => Some("x86_64".into()),
-                    Some("Arm64") => Some("aarch64".into()),
-                    _ => None,
-                }),
             executable,
         });
         if let Some(local) = environment("LOCALAPPDATA") {
@@ -311,14 +234,7 @@ fn windows(archive: &Path) -> (Vec<Installation>, Vec<Storage>) {
                 (StorageKind::DesktopProfile, "LocalState"),
                 (StorageKind::Cache, "LocalCache/Local/Codex"),
             ] {
-                let observation = row(
-                    archive,
-                    kind,
-                    package.join(suffix),
-                    "profilo AppX registrato",
-                    true,
-                    true,
-                );
+                let observation = row(kind, package.join(suffix), true, true);
                 if observation.observed {
                     storage.push(observation);
                 }

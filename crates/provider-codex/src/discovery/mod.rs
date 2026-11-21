@@ -5,7 +5,7 @@ use agentmender_domain::{ProviderKind, canonical_uuid};
 use agentmender_provider_api::{ProviderLocation, filesystem, process};
 #[cfg(not(unix))]
 use same_file::Handle;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use std::{
     collections::{BTreeSet, hash_map::DefaultHasher},
     env, fs,
@@ -13,8 +13,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum StorageKind {
     Home,
     Sessions,
@@ -34,8 +33,7 @@ pub enum StorageKind {
     DesktopProfile,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Access {
     Accessible,
     Unavailable,
@@ -43,47 +41,28 @@ pub enum Access {
     NetworkPath,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug)]
 pub struct Storage {
-    pub provider: &'static str,
-    pub platform: &'static str,
-    pub root: PathBuf,
     pub kind: StorageKind,
     pub path: PathBuf,
-    pub source: &'static str,
     pub identity: Option<String>,
     pub observed: bool,
     pub recognized: bool,
     pub owned: bool,
     pub access: Access,
-    pub contract: Option<&'static str>,
     pub inventory_available: bool,
-    pub removal_available: bool,
-    pub reason: &'static str,
 }
 
-#[derive(Debug, Serialize)]
-pub struct Installation {
-    pub path: PathBuf,
-    pub kind: &'static str,
-    pub source: &'static str,
-    pub identity: Option<String>,
-    pub version: Option<String>,
-    pub architecture: Option<String>,
-    pub executable: Option<PathBuf>,
+struct Installation {
+    kind: &'static str,
+    version: Option<String>,
+    executable: Option<PathBuf>,
 }
 
-#[derive(Serialize)]
 pub struct Discovery {
-    pub platform: &'static str,
-    pub architecture: &'static str,
     pub selected_root: PathBuf,
-    pub installations: Vec<Installation>,
     pub storage: Vec<Storage>,
-    #[serde(skip)]
     pub location: ProviderLocation,
-    #[serde(skip)]
-    pub sqlite_directory: PathBuf,
 }
 
 #[derive(Default, Deserialize)]
@@ -213,14 +192,7 @@ fn provider_marker(root: &Path) -> bool {
             })
 }
 
-fn row(
-    root: &Path,
-    kind: StorageKind,
-    path: PathBuf,
-    source: &'static str,
-    recognized: bool,
-    owned: bool,
-) -> Storage {
+fn row(kind: StorageKind, path: PathBuf, recognized: bool, owned: bool) -> Storage {
     let access = access(&path);
     let observed = access == Access::Accessible
         || access == Access::Linked
@@ -234,40 +206,16 @@ fn row(
             | StorageKind::ExternalExports
     );
     Storage {
-        provider: "codex",
-        platform: env::consts::OS,
-        root: root.into(),
         kind,
         identity: (access == Access::Accessible)
             .then(|| identity(&path))
             .flatten(),
         path,
-        source,
         observed,
         recognized,
         owned,
         access,
-        contract: recognized.then_some(match kind {
-            StorageKind::StateDatabase => "state_5 SQLite",
-            StorageKind::ArtifactSessionExports => "Desktop Artifact Session export location",
-            _ => "Codex local storage layout",
-        }),
         inventory_available: access == Access::Accessible && export,
-        removal_available: false,
-        reason: match access {
-            Access::Linked => "Il percorso include un collegamento o un reparse point.",
-            Access::NetworkPath => "Percorso di rete preservato senza attraversamento automatico.",
-            Access::Unavailable => "Percorso assente o inaccessibile.",
-            Access::Accessible if kind == StorageKind::UserOutput => {
-                "Directory di lavoro e output dell’utente protetti."
-            }
-            Access::Accessible if export => {
-                "Nessun contratto verificato di proprietà e rimozione dell’esportatore."
-            }
-            Access::Accessible => {
-                "Osservazione dello storage. Le azioni sulle sessioni richiedono un contratto separato."
-            }
-        },
     }
 }
 
@@ -310,7 +258,6 @@ impl Discovery {
             );
         let mut seen = BTreeSet::new();
         let mut storage = Vec::new();
-        let mut sqlite_directory = selected.clone();
         for (archive_root, source, primary) in homes {
             let user_home = home;
             let home = archive_root;
@@ -331,19 +278,9 @@ impl Discovery {
                 .cloned()
                 .or_else(|| primary.then(|| environment("CODEX_SQLITE_HOME")).flatten())
                 .unwrap_or_else(|| home.clone());
-            if primary {
-                sqlite_directory = sqlite.clone();
-            }
             let recognized = archive_format(&sqlite);
             let owned = recognized && provider_marker(&home);
-            storage.push(row(
-                &home,
-                StorageKind::Home,
-                home.clone(),
-                source,
-                recognized,
-                owned,
-            ));
+            storage.push(row(StorageKind::Home, home.clone(), recognized, owned));
             for (kind, name) in [
                 (StorageKind::Sessions, "sessions"),
                 (StorageKind::ArchivedSessions, "archived_sessions"),
@@ -355,14 +292,7 @@ impl Discovery {
             ] {
                 let path = home.join(name);
                 let provider_layout = recognized && kind != StorageKind::ExportCandidate;
-                let observation = row(
-                    &home,
-                    kind,
-                    path,
-                    "sottopercorso della root",
-                    provider_layout,
-                    provider_layout && owned,
-                );
+                let observation = row(kind, path, provider_layout, provider_layout && owned);
                 if observation.observed {
                     storage.push(observation);
                 }
@@ -371,54 +301,30 @@ impl Discovery {
                 (StorageKind::StateDatabase, "state_5.sqlite"),
                 (StorageKind::HistoryDatabase, "thread_history_1.sqlite"),
             ] {
-                let observation = row(
-                    &home,
-                    kind,
-                    sqlite.join(name),
-                    if configured_sqlite.is_some() {
-                        "config.toml: sqlite_home"
-                    } else if sqlite != home {
-                        "CODEX_SQLITE_HOME"
-                    } else {
-                        "default del provider"
-                    },
-                    recognized,
-                    owned,
-                );
+                let observation = row(kind, sqlite.join(name), recognized, owned);
                 if observation.observed || kind == StorageKind::StateDatabase && sqlite != home {
                     storage.push(observation);
                 }
             }
             let logs = absolute(settings.log_dir).unwrap_or_else(|| home.join("log"));
             if network_path(&logs) || fs::symlink_metadata(&logs).is_ok() {
-                storage.push(row(
-                    &home,
-                    StorageKind::Logs,
-                    logs,
-                    "configurazione o default Codex",
-                    recognized,
-                    recognized,
-                ));
+                storage.push(row(StorageKind::Logs, logs, recognized, recognized));
             }
             let desktop = settings.desktop.unwrap_or_default();
-            for (kind, path, source) in [
+            for (kind, path) in [
                 (
                     StorageKind::Worktrees,
                     absolute(desktop.worktree_root).unwrap_or_else(|| home.join("worktrees")),
-                    "configurazione o default Codex",
                 ),
                 (
                     StorageKind::UserOutput,
                     absolute(desktop.workspace_root)
                         .unwrap_or_else(|| platform::user_output(user_home)),
-                    "directory output Desktop",
                 ),
             ] {
                 let observation = row(
-                    &home,
                     kind,
                     path,
-                    source,
                     recognized && kind == StorageKind::Worktrees,
                     false,
                 );
@@ -428,21 +334,12 @@ impl Discovery {
             }
         }
 
-        let (mut installations, desktop_storage) = platform::desktop(home, &selected);
+        let (mut installations, desktop_storage) = platform::desktop(home);
         storage.extend(desktop_storage);
         if let Some(path) = environment("ARTIFACT_SESSION_HOST_EXPORT_ROOT") {
-            let mut external = row(
-                &selected,
-                StorageKind::ExternalExports,
-                path,
-                "ARTIFACT_SESSION_HOST_EXPORT_ROOT",
-                false,
-                false,
-            );
+            let mut external = row(StorageKind::ExternalExports, path, false, false);
             if selected.starts_with(&external.path) || home.starts_with(&external.path) {
                 external.inventory_available = false;
-                external.reason =
-                    "La root di output comprende la home o lo storage delle sessioni.";
             }
             storage.insert(0, external);
         }
@@ -468,12 +365,8 @@ impl Discovery {
                 None
             };
             installations.push(Installation {
-                path: candidate.clone(),
                 kind: "cli",
-                source: "argomento, PATH o posizione CLI della piattaforma",
-                identity: identity(&candidate),
                 version,
-                architecture: platform::binary_architecture(&candidate),
                 executable: Some(candidate),
             });
         }
@@ -485,16 +378,12 @@ impl Discovery {
                 .and_then(|item| item.executable.clone())
         });
         Ok(Self {
-            platform: env::consts::OS,
-            architecture: env::consts::ARCH,
             selected_root: selected.clone(),
-            installations,
             storage,
             location: ProviderLocation {
                 state_root: selected,
                 executable,
             },
-            sqlite_directory,
         })
     }
 

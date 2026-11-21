@@ -12,26 +12,12 @@ export type Group = {
   shared_entries: number; linked_entries: number
   protection: Protection; reason: string; removal_available: boolean; complete: boolean
 }
-export type Page = { rows: Group[]; total: number; group_count: number; size: Size; complete: boolean; removal_available: boolean }
+export type Page = { rows: Group[]; total: number; size: Size; complete: boolean; removal_available: boolean }
 export type Preview = { groups: Group[]; size: Size; protected: number; removable: number; complete: boolean; receipt: string | null }
 type Removed = { key: string; name: string; root: string }
 export type Outcome = { deleted: Removed[]; not_deleted: (Removed & { reason: string; error: boolean })[] }
-type Location = {
-  path: string; root: string; kind: string; source: string
-  recognized: boolean; owned: boolean; access: string; reason: string
-}
-export type Discovery = {
-  platform: string; architecture: string; selected_root: string
-  installations: { path: string; kind: string; architecture: string | null; version: string | null }[]
-  storage: Location[]
-}
-
 export const exportSelectionLimit = 32
 export const exportsPath = '/api/storage/exports'
-
-export function discoverCodex(signal: AbortSignal) {
-  return request<Discovery>('/api/storage/codex', { signal })
-}
 
 export function listExports(path: string, query: URLSearchParams, signal: AbortSignal) {
   return request<Page>(`${path}?${query}`, { signal })

@@ -58,8 +58,6 @@
 }
 .inventory-footer .button { min-height: 32px; }
 .inventory-footer .refresh-button { margin-left: auto; }
-.export-diagnostics { padding: 12px 4px 0; color: var(--muted); font-size: 13px; }
-.export-diagnostics > p { margin-block: 8px; }
 
 .session-group + .session-group { margin-top: 8px; }
 .group-heading {

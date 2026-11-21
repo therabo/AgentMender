@@ -333,7 +333,6 @@ fn router(app: Arc<App>) -> Router {
         .route("/assets/{name}", get(design_asset))
         .route("/favicon.ico", get(|| async { StatusCode::NO_CONTENT }))
         .route("/api/authorize", post(authorize))
-        .route("/api/storage/codex", get(storage::discover))
         .route("/api/storage/exports", get(storage::list))
         .route("/api/storage/exports/refresh", post(storage::refresh))
         .route("/api/storage/exports/preview", post(storage::preview))

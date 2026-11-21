@@ -1,9 +1,0 @@
-.storage-diagnostics { color: var(--muted); font-size: 13px; }
-.inventory-heading { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 10px; }
-.storage-launch, .storage-locations li { padding: 8px 10px; border-top: 1px solid var(--glass-line-soft); }
-.storage-launch code { display: block; }
-.storage-locations { list-style: none; padding: 0; margin: 8px 0; }
-.storage-locations li { overflow-wrap: anywhere; }
-.storage-locations li { display: flex; align-items: start; gap: 10px; }
-.storage-locations li > div { display: grid; min-width: 0; }
-.storage-locations li strong { color: var(--text); }

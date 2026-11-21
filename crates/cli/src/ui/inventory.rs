@@ -34,7 +34,7 @@ pub(super) struct ProviderView {
     pub project_count: usize,
     pub projects_observed_only: bool,
     pub unassigned_sessions: usize,
-    pub transcript_bytes: Option<u64>,
+    pub observed_transcript_bytes: Option<u64>,
     #[serde(skip)]
     removal_reason: Option<&'static str>,
 }
@@ -189,13 +189,8 @@ impl Snapshot {
             .map(|project| (project_key(&project.key), project))
             .collect();
         let index = LocalInventory::new(observation.sessions);
-        let transcript_bytes = if can_read && !observed.sessions_incomplete {
-            index.sessions().try_fold(0u64, |sum, session| {
-                sum.checked_add(session.transcript_bytes?)
-            })
-        } else {
-            None
-        };
+        let observed_transcript_bytes =
+            observed_transcript_bytes(&index, &observed.claude_evidence);
         let ids = index
             .sessions()
             .enumerate()
@@ -211,7 +206,7 @@ impl Snapshot {
                 project_count: projects.len(),
                 projects_observed_only: observation.projects_incomplete,
                 unassigned_sessions: grouped.recents.len(),
-                transcript_bytes,
+                observed_transcript_bytes,
                 removal_reason,
             },
             conversation_preview: can_read
@@ -230,6 +225,34 @@ impl Snapshot {
             .and_then(|&position| self.index.get(position))
             .ok_or_else(|| ApiError::missing("Sessione non presente nell’inventario corrente."))
     }
+}
+
+fn observed_transcript_bytes(
+    index: &LocalInventory,
+    claude_evidence: &BTreeMap<SessionIdentity, SessionEvidence>,
+) -> Option<u64> {
+    let mut claude_transcripts = BTreeSet::new();
+    let mut total = None;
+    for session in index.sessions() {
+        let Some(bytes) = session.transcript_bytes else {
+            continue;
+        };
+        // Codex's verified rollout header binds it to a single canonical UUID.
+        // Claude may observe copies of that UUID in separate roots or namespaces.
+        if session.identity.provider == ProviderKind::Claude {
+            let Some(digest) = claude_evidence
+                .get(&session.identity)
+                .and_then(|evidence| evidence.transcript_digest)
+            else {
+                continue;
+            };
+            if !claude_transcripts.insert((bytes, digest)) {
+                continue;
+            }
+        }
+        total = Some(total.unwrap_or(0u64).checked_add(bytes)?);
+    }
+    total
 }
 
 fn key(session: &Session) -> String {
@@ -539,5 +562,50 @@ impl TryFrom<Filter> for InventoryQuery {
             offset,
             limit,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn observed_codex_sizes(sizes: &[Option<u64>]) -> Option<u64> {
+        let index = LocalInventory::new(
+            sizes
+                .iter()
+                .enumerate()
+                .map(|(index, &bytes)| Session {
+                    identity: SessionIdentity {
+                        provider: ProviderKind::Codex,
+                        state_root: Default::default(),
+                        namespace: None,
+                        native_id: index.to_string(),
+                    },
+                    codex_membership: CodexMembership::Unassigned,
+                    title: None,
+                    workspace: None,
+                    project: None,
+                    created_at: None,
+                    last_active_at: None,
+                    state: SessionState::Unknown,
+                    transcript_bytes: bytes,
+                    kind: SessionKind::Main,
+                    forked_from: None,
+                    parent: None,
+                })
+                .collect(),
+        );
+        observed_transcript_bytes(&index, &BTreeMap::new())
+    }
+
+    #[test]
+    fn observed_storage_skips_missing_sizes_and_detects_overflow() {
+        assert_eq!(
+            observed_codex_sizes(&[Some(4096), None, Some(1024)]),
+            Some(5120)
+        );
+        assert_eq!(observed_codex_sizes(&[Some(0), None]), Some(0));
+        assert_eq!(observed_codex_sizes(&[None, None]), None);
+        assert_eq!(observed_codex_sizes(&[Some(u64::MAX), Some(1)]), None);
     }
 }

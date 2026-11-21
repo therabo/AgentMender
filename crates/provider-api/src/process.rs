@@ -510,7 +510,7 @@ pub fn claude_writer_observation() -> ClaudeProcessObservation {
 #[cfg(windows)]
 pub fn codex_windows_packages() -> Result<Vec<u8>, ProviderError> {
     windows_packages(
-        "$env:PSModulePath=Join-Path $PSHOME Modules; [Console]::OutputEncoding=[Text.Encoding]::UTF8; Get-AppxPackage -Name OpenAI.Codex* | Select-Object Name,PublisherId,InstallLocation,PackageFamilyName,@{n='Architecture';e={$_.Architecture.ToString()}},@{n='Version';e={$_.Version.ToString()}} | ConvertTo-Json -Compress",
+        "$env:PSModulePath=Join-Path $PSHOME Modules; [Console]::OutputEncoding=[Text.Encoding]::UTF8; Get-AppxPackage -Name OpenAI.Codex* | Select-Object Name,PublisherId,InstallLocation,PackageFamilyName,@{n='Version';e={$_.Version.ToString()}} | ConvertTo-Json -Compress",
     )
 }
 

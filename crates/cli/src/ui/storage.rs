@@ -58,14 +58,6 @@ fn snapshot(app: &App, state: &mut ExportState, fresh: bool) -> Arc<Inventory> {
     inventory
 }
 
-pub(super) async fn discover(
-    State(app): State<Arc<App>>,
-) -> Result<Json<serde_json::Value>, ApiError> {
-    Ok(Json(
-        serde_json::to_value(&app.discovery).map_err(|_| ApiError::internal())?,
-    ))
-}
-
 #[derive(Default, Deserialize)]
 #[serde(rename_all = "snake_case")]
 enum Sort {
@@ -100,7 +92,6 @@ impl Default for Filter {
 pub(super) struct Page {
     rows: Vec<Group>,
     total: usize,
-    group_count: usize,
     size: Size,
     complete: bool,
     removal_available: bool,
@@ -145,7 +136,6 @@ pub(super) async fn list(
                 .cloned()
                 .collect(),
             size: inventory.size.clone(),
-            group_count: inventory.groups.len(),
             complete: inventory.complete,
             removal_available: inventory.groups.iter().any(|group| group.removal_available),
         })

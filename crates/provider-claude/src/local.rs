@@ -8,6 +8,7 @@ use crate::{
 use agentmender_domain::*;
 use agentmender_provider_api::{ProviderError, filesystem, io_error};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeMap, BTreeSet},
     io::{BufRead, BufReader, Read},
@@ -170,6 +171,9 @@ pub struct SessionEvidence {
     pub(crate) ownership_scope_complete: bool,
     #[serde(skip)]
     pub revision: Revision,
+    /// Fingerprint of the complete validated file, for observed storage accounting.
+    #[serde(skip)]
+    pub transcript_digest: Option<[u8; 32]>,
 }
 
 #[derive(Clone)]
@@ -378,15 +382,17 @@ fn scan_file(
     bytes: u64,
     shape: &TranscriptShape,
     desktop: Option<&DesktopState>,
-) -> Result<Scan, ProviderError> {
+) -> Result<(Scan, Option<[u8; 32]>), ProviderError> {
     let mut reader = BufReader::new(file.take(bytes));
     let mut line = Vec::new();
     let mut scan = Scan::default();
+    let mut digest = Sha256::new();
     while reader
         .read_until(b'\n', &mut line)
         .map_err(|e| io_error(path, e))?
         != 0
     {
+        digest.update(&line);
         if !line.iter().all(u8::is_ascii_whitespace) {
             match serde_json::from_slice(&line) {
                 Ok(record) => scan.record(record, shape, desktop),
@@ -401,7 +407,8 @@ fn scan_file(
         }
         line.clear();
     }
-    Ok(scan)
+    let digest = (reader.into_inner().limit() == 0).then(|| digest.finalize().into());
+    Ok((scan, digest))
 }
 
 fn is_transcript_candidate(entry: &Entry) -> bool {
@@ -630,7 +637,8 @@ fn observe(
         verify(root, path, &revision).map_err(changed)?;
         return Ok(prior.clone());
     }
-    let scan = scan_file(&mut file, path, revision.bytes, shape, desktop).map_err(unreadable)?;
+    let (scan, transcript_digest) =
+        scan_file(&mut file, path, revision.bytes, shape, desktop).map_err(unreadable)?;
     verify(root, path, &revision).map_err(changed)?;
     if let Some(reason) = scan.exclusion {
         return Err(reason);
@@ -723,6 +731,7 @@ fn observe(
             fork_references: Vec::new(),
             ownership_scope_complete: false,
             revision,
+            transcript_digest,
         },
     })
 }

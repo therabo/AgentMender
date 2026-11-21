@@ -6,10 +6,9 @@ import { EmptyState, LoadingState, Notice, Pagination } from '../../components/u
 import { GlassButton, GlassPanel, SearchField, SelectField } from '../../components/ui/glass'
 import { errorText } from '../../lib/api/client'
 import { usePagedResource } from '../../lib/hooks/usePagedResource'
-import { numberLabel, sizeLabel } from '../../lib/utils/format'
+import { numberLabel } from '../../lib/utils/format'
 import { exportSelectionLimit, exportsPath, listExports, refreshExports, type Outcome } from './api'
 import { categoryLabel } from './category'
-import { CodexDiscovery } from './CodexDiscovery'
 import { ExportDetail } from './ExportDetail'
 import { ExportOutcome, ExportRemoval } from './ExportRemoval'
 import { ExportTable } from './ExportTable'
@@ -27,7 +26,6 @@ export function Exports({ heading, switched }: { heading: ReactNode; switched: b
   const [review, setReview] = useState<string[]>()
   const [refreshError, setRefreshError] = useState('')
   const [refreshing, setRefreshing] = useState(false)
-  const [discoveryOpened, setDiscoveryOpened] = useState(false)
   const refreshPending = useRef(false)
   const submittedReview = useRef(false)
   const selection = useExportSelection()
@@ -104,12 +102,6 @@ export function Exports({ heading, switched }: { heading: ReactNode; switched: b
               onCheck={selection.toggle} onInspect={selection.inspect} /> :
             <EmptyState title={search || category ? 'No matching export groups' : 'No export groups observed'} />}
           {page && !loading && !error && <Pagination total={page.total} page={pageIndex} pageSize={pageSize} onPage={setPageIndex} label="Export group pages" />}
-          <details className="export-diagnostics" onToggle={event => { if (event.currentTarget.open) setDiscoveryOpened(true) }}>
-            <summary>{page?.complete === false ? 'Partial export coverage · storage diagnostics' : 'Export storage and diagnostics'}</summary>
-            {page && <p>{numberLabel(page.group_count)} groups · {sizeLabel(page.size.logical_bytes)} logical · {sizeLabel(page.size.allocated_bytes)} allocated
-              {page.complete ? '' : ' · Observed entries only'}</p>}
-            {discoveryOpened && <CodexDiscovery />}
-          </details>
         </div>
         <footer className="inventory-footer export-footer">
           <span>{checked.size > 0

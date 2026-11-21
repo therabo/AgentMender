@@ -12,7 +12,7 @@ export type ProviderInfo = {
   project_count: number
   projects_observed_only: boolean
   unassigned_sessions: number
-  transcript_bytes: number | null
+  observed_transcript_bytes: number | null
 }
 
 type NativePath = string | { encoding: string; hex: string }
