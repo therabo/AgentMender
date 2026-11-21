@@ -5,6 +5,7 @@ import {
 } from 'three'
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
 import { clone } from 'three/addons/utils/SkeletonUtils.js'
+import { advanceBubble, createBubbleMotion, motionStep } from './bubbleMotion'
 import { glass } from './glass'
 
 const motion = '(prefers-reduced-motion: reduce)'
@@ -15,11 +16,10 @@ const field = {
     phone: { bubbles: 5, mascots: 1, dpr: 1.1, pixels: 700_000, fps: 30 },
   },
   depth: {
-    near: { strength: 1, parallax: 0.28, drift: 1 },
-    middle: { strength: 0.76, parallax: 0.16, drift: 0.76 },
-    far: { strength: 0.38, parallax: 0.07, drift: 0.50 },
+    near: { strength: 1, drift: 1, depthExtent: 0.42 },
+    middle: { strength: 0.76, drift: 0.76, depthExtent: 0.34 },
+    far: { strength: 0.38, drift: 0.50, depthExtent: 0.27 },
   },
-  speed: 1,
   placements: [
     { x: -0.66, y: 0.80, z: 2.6, radius: 0.77, depth: 'near', mascot: true, yaw: 0.28 },
     { x: 0.75, y: 0.81, z: -1.2, radius: 0.94, depth: 'middle', mascot: true, yaw: -0.34 },
@@ -73,12 +73,13 @@ export async function createScene(host: HTMLElement, bytes: ArrayBuffer, signal:
   let listeners: AbortController | undefined
   let frame = 0
   let lastFrame = 0
-  let elapsed = 0
+  let motionTicks = 0
+  let stepRemainder = 0
   let width = 0
   let height = 0
+  let lateralScale = 1
   let profile: (typeof field.profiles)[keyof typeof field.profiles] = field.profiles.desktop
   let disposed = false
-  const mouse = { x: 0, y: 0, targetX: 0, targetY: 0 }
   const resize = new ResizeObserver(() => size())
 
   function pause() {
@@ -106,7 +107,13 @@ export async function createScene(host: HTMLElement, bytes: ArrayBuffer, signal:
     canvas.remove()
   }
 
-  const bubbles: { group: Group; anchor: Vector3; mascot?: Object3D; index: number }[] = []
+  const bubbles: {
+    group: Group
+    anchor: Vector3
+    motion: ReturnType<typeof createBubbleMotion>
+    mascot?: Object3D
+    index: number
+  }[] = []
 
   try {
     renderer = new WebGLRenderer({ canvas, context: gl, alpha: true })
@@ -154,7 +161,9 @@ export async function createScene(host: HTMLElement, bytes: ArrayBuffer, signal:
       const group = new Group()
       const shell = new Mesh(sphere, shells[placement.depth])
       group.add(shell)
-      const bubble: (typeof bubbles)[number] = { group, anchor: new Vector3(), index }
+      const bubble: (typeof bubbles)[number] = {
+        group, anchor: new Vector3(), motion: createBubbleMotion(index, 'yaw' in placement ? placement.yaw : 0), index,
+      }
       if ('mascot' in placement) {
         const avatar = clone(model.scene)
         collect(avatar)
@@ -197,57 +206,43 @@ export async function createScene(host: HTMLElement, bytes: ArrayBuffer, signal:
     renderer.setSize(width, height, false)
 
     const viewportScale = Math.min(1, width / 950)
+    lateralScale = viewportScale * (phone ? 0.55 : 1)
     const halfFov = Math.tan(MathUtils.degToRad(camera.fov / 2))
     let mascots = 0
-    for (const { group, anchor, mascot, index } of bubbles) {
+    for (const { group, anchor, motion, mascot, index } of bubbles) {
       const placement = field.placements[index]
       group.visible = index < profile.bubbles
       if (mascot) mascot.visible = group.visible && mascots++ < profile.mascots
       const halfHeight = (camera.position.z - placement.z) * halfFov
       const x = phone && index === 0 ? 0.83 : phone && index === 1 ? -0.98 : placement.x
       const y = phone && index === 1 ? -0.38 : compact && index < 2 ? 0.85 : placement.y
-      anchor.set(x * halfHeight * camera.aspect, y * halfHeight, placement.z)
+      const halfWidth = halfHeight * camera.aspect
+      anchor.set(x * halfWidth, y * halfHeight, placement.z)
+      // Allocate less room outward for spheres intentionally placed at the edge.
+      motion.outwardExtent = Math.max(0.26, (1 - Math.abs(x)) * halfWidth / lateralScale)
       group.scale.setScalar(placement.radius * viewportScale)
     }
     if (!document.hidden) draw(0)
   }
 
-  function movePointer(event: PointerEvent) {
-    if (reducedMotion.matches || event.pointerType === 'touch') return
-    mouse.targetX = MathUtils.clamp(event.clientX / width * 2 - 1, -1, 1)
-    mouse.targetY = MathUtils.clamp(1 - event.clientY / height * 2, -1, 1)
-  }
-
-  function resetPointer() {
-    mouse.targetX = 0
-    mouse.targetY = 0
-  }
-
   function draw(dt: number) {
-    const still = reducedMotion.matches
-    const smoothing = 1 - Math.exp(-3.8 * dt)
-    mouse.x = still ? 0 : MathUtils.lerp(mouse.x, mouse.targetX, smoothing)
-    mouse.y = still ? 0 : MathUtils.lerp(mouse.y, mouse.targetY, smoothing)
-    elapsed += dt * field.speed
-    const time = elapsed
-    for (const { group, mascot, anchor, index } of bubbles) {
+    stepRemainder += dt
+    while (stepRemainder >= motionStep) {
+      stepRemainder -= motionStep
+      const time = ++motionTicks * motionStep
+      for (const { anchor, motion, index } of bubbles) {
+        const depth = field.depth[field.placements[index].depth]
+        advanceBubble(motion, anchor, time, depth.drift, depth.depthExtent, lateralScale)
+      }
+    }
+    for (const { group, mascot, anchor, motion, index } of bubbles) {
       if (!group.visible) continue
-      const placement = field.placements[index]
-      const depth = field.depth[placement.depth]
-      const phase = index * 2.399963
-      const bob = time * (Math.PI * 2 / (14 + index % 5 * 2.5))
-      const sway = time * (Math.PI * 2 / (9 + index % 4 * 2.7))
-      const turn = time * (Math.PI * 2 / (32 + index % 5 * 5.3))
       group.position.set(
-        anchor.x + Math.sin(sway + phase) * depth.drift * 0.17 + mouse.x * depth.parallax,
-        anchor.y + Math.sin(bob + phase * 0.55) * depth.drift * 0.17 + mouse.y * depth.parallax,
-        anchor.z + Math.sin(sway * 0.67 + phase) * depth.drift * 0.20,
+        anchor.x + motion.offset.x * lateralScale,
+        anchor.y + motion.offset.y * lateralScale,
+        anchor.z + motion.offset.z,
       )
-      group.rotation.set(
-        Math.sin(turn * 1.4 + phase) * 0.15,
-        ('yaw' in placement ? placement.yaw : 0) + Math.sin(turn + phase * 0.31) * 0.76,
-        Math.cos(turn * 1.13 + phase) * 0.10,
-      )
+      group.quaternion.setFromEuler(motion.angles)
       if (mascot?.visible && dt) mixers.get(group)?.mixer.update(dt * (0.82 + index * 0.07))
     }
     if (width && height) renderer?.render(scene, camera)
@@ -278,9 +273,6 @@ export async function createScene(host: HTMLElement, bytes: ArrayBuffer, signal:
     if (disposed || listeners) return
     listeners = new AbortController()
     const signal = listeners.signal
-    const passive = { signal, passive: true }
-    window.addEventListener('pointermove', movePointer, passive)
-    document.documentElement.addEventListener('pointerleave', resetPointer, passive)
     document.addEventListener('visibilitychange', sync, { signal })
     reducedMotion.addEventListener('change', sync, { signal })
     resize.observe(host)
