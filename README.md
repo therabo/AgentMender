@@ -35,6 +35,19 @@ cargo build --locked --workspace
 
 On Windows, launch `target\debug\agentmender.exe ui`. The app serves the UI on IPv4 loopback and opens your default browser. Use `ui --no-open` to print the private launch URL or `--help` to see the options for selecting archives and executables.
 
+### Optional Claude Code background preview
+
+The preview uses `assets/Clawd-Animator.glb` from [Clawd Little Worlds at `aefeaa7`](https://github.com/leonvanzyl/clawd-little-worlds/tree/aefeaa7f6a9c8126338c7da5b975371a0bb28f04). Keep this model for local evaluation while its redistribution terms are unclear. The application verifies the pinned file and serves it from loopback at runtime.
+
+```sh
+mkdir -p ui/.local
+curl --fail --location --output ui/.local/Clawd-Animator.glb \
+  https://raw.githubusercontent.com/leonvanzyl/clawd-little-worlds/aefeaa7f6a9c8126338c7da5b975371a0bb28f04/assets/Clawd-Animator.glb
+SESSIONMENDER_CLAWD_GLB="$PWD/ui/.local/Clawd-Animator.glb" ./target/debug/agentmender ui
+```
+
+The model stays outside the Vite build and Rust executable. Three.js loads on demand for Claude Code and owns the canvas and its GPU resources. The original Claude background remains available on every build, including when the model is absent or WebGL is unavailable.
+
 ## Permanent deletion
 
 AgentMender requires an explicit confirmation before deleting sessions or exports. **Deletion is permanent. No backups are created.** Review the affected items before confirming. A cleanup can partially succeed if files change or become inaccessible. The result reports failures and the inventory refreshes after the attempt.
