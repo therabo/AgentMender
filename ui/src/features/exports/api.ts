@@ -12,8 +12,7 @@ export type Group = {
 }
 export type Page = { rows: Group[]; total: number; complete: boolean }
 export type Preview = { groups: Group[]; size: Size; protected: number; removable: number; complete: boolean; receipt: string | null }
-type Removed = { key: string; name: string; root: string }
-export type Outcome = { deleted: Removed[]; not_deleted: (Removed & { reason: string; error: boolean })[] }
+export type Outcome = { deleted: { key: string }[]; not_deleted: { key: string; reason: string; error: boolean }[] }
 export const exportSelectionLimit = 32
 export const exportsPath = '/api/storage/exports'
 
@@ -33,9 +32,10 @@ export function reviewExports(keys: readonly string[], signal: AbortSignal) {
   })
 }
 
-export function confirmExports(receipt: string) {
+export function confirmExports(receipt: string, signal: AbortSignal) {
   return request<Outcome>(`${exportsPath}/operations/${encodeURIComponent(receipt)}/confirm`, {
     method: 'POST',
     body: JSON.stringify({ confirm: true }),
+    signal,
   })
 }

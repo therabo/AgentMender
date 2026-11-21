@@ -162,6 +162,22 @@
   border: 1px solid rgba(255, 188, 198, .24);
   border-radius: var(--radius-control);
 }
+.confirmation-completed {
+  place-content: center;
+  justify-items: center;
+  min-height: 174px;
+  text-align: center;
+}
+.confirmation-completed h2:focus { outline: none; }
+.confirmation-completed .confirmation-icon {
+  color: var(--active);
+  background: rgba(130, 227, 205, .15);
+  border-color: rgba(130, 227, 205, .35);
+  animation: confirmation-complete var(--motion-dialog) var(--ease-out) both;
+}
+@keyframes confirmation-complete {
+  from { opacity: 0; transform: scale(.8); }
+}
 .confirmation-content p { font-size: 13px; color: var(--muted); }
 .confirmation-targets { display: grid; gap: 8px; }
 .confirmation-summary {

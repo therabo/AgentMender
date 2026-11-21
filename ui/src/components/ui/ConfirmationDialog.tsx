@@ -1,10 +1,11 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
+import { Check } from 'lucide-react'
 import trashIcon from '../../assets/confirm-trash.svg'
 import closeIcon from '../../assets/confirm-close.svg'
 import { motionDuration } from '../../lib/utils/motion'
 import { GlassButton } from './glass'
 
-export function ConfirmationDialog({ title, description, children, onClose, onConfirm, busy, finished = false }: {
+export function ConfirmationDialog({ title, description, children, onClose, onConfirm, busy, finished = false, completed = false }: {
   title: string
   description?: string
   children: ReactNode
@@ -12,8 +13,10 @@ export function ConfirmationDialog({ title, description, children, onClose, onCo
   onConfirm?: () => void
   busy: boolean
   finished?: boolean
+  completed?: boolean
 }) {
   const ref = useRef<HTMLDialogElement>(null)
+  const completionTitle = useRef<HTMLHeadingElement>(null)
   const closeTimer = useRef<number | undefined>(undefined)
   const [closing, setClosing] = useState(false)
   const titleId = useId()
@@ -32,11 +35,12 @@ export function ConfirmationDialog({ title, description, children, onClose, onCo
   }, [])
 
   useEffect(() => {
-    if (finished && !busy) ref.current?.querySelector<HTMLButtonElement>('[data-cancel]')?.focus()
-  }, [finished, busy])
+    if (completed) completionTitle.current?.focus({ preventScroll: true })
+    else if (finished && !busy) ref.current?.querySelector<HTMLButtonElement>('[data-cancel]')?.focus()
+  }, [completed, finished, busy])
 
   function dismiss() {
-    if (busy || closeTimer.current !== undefined) return
+    if (busy || completed || closeTimer.current !== undefined) return
     const duration = motionDuration('--motion-dialog-close')
     if (!duration) {
       onClose()
@@ -54,7 +58,10 @@ export function ConfirmationDialog({ title, description, children, onClose, onCo
       dismiss()
     }}
     onClick={event => { if (event.target === event.currentTarget) dismiss() }}>
-    <div className="confirmation-content">
+    {completed ? <div className="confirmation-content confirmation-completed">
+      <span className="confirmation-icon"><Check size={26} aria-hidden /></span>
+      <h2 id={titleId} ref={completionTitle} tabIndex={-1}>{title}</h2>
+    </div> : <div className="confirmation-content">
       <header>
         <span className="confirmation-icon"><img src={trashIcon} alt="" width={25} height={26} /></span>
         <h2 id={titleId}>{title}</h2>
@@ -70,6 +77,6 @@ export function ConfirmationDialog({ title, description, children, onClose, onCo
         {onConfirm && <GlassButton tone="danger" onClick={onConfirm} disabled={busy || closing}>{busy ? 'Removing…' : 'Confirm removal'}</GlassButton>}
       </footer>
       {busy && <span className="sr-only" role="status">Removal in progress</span>}
-    </div>
+    </div>}
   </dialog>
 }

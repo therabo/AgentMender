@@ -5,62 +5,91 @@ import { errorText } from '../../lib/api/client'
 import { numberLabel, sizeLabel } from '../../lib/utils/format'
 import { confirmExports, reviewExports, type Outcome, type Preview } from './api'
 
-export function ExportOutcome({ outcome }: { outcome: Outcome }) {
-  const tone = !outcome.deleted.length && outcome.not_deleted.some(item => item.error)
-    ? 'error' : outcome.not_deleted.length ? 'warning' : 'success'
-  return <Notice tone={tone}>
-    <strong>{numberLabel(outcome.deleted.length)} removed · {numberLabel(outcome.not_deleted.length)} preserved</strong>
-    <ul className="removal-targets">
-      {outcome.deleted.map(item => <li key={item.key}><strong>{item.name}</strong> · Removed<br /><code>{item.root}</code></li>)}
-      {outcome.not_deleted.map(item => <li key={item.key}><strong>{item.name}</strong> · {item.error ? 'Error' : 'Preserved'}<br />
-        <code>{item.root}</code><br />{item.reason}</li>)}
-    </ul>
-  </Notice>
-}
+type RemovalState =
+  | { status: 'confirming'; preview?: Preview }
+  | { status: 'deleting' | 'success' }
+  | { status: 'review-error' | 'partial' | 'error'; message: string }
 
-export function ExportRemoval({ keys, onClose, onOutcome }: {
-  keys: readonly string[]; onClose: () => void; onOutcome: (outcome?: Outcome) => void
+export function ExportRemoval({ keys, onClose, onSettled }: {
+  keys: readonly string[]
+  onClose: () => void
+  onSettled: (preservedKeys: string[]) => void
 }) {
-  const [preview, setPreview] = useState<Preview>()
-  const [error, setError] = useState('')
-  const [outcome, setOutcome] = useState<Outcome>()
-  const [busy, setBusy] = useState(false)
+  const [state, setState] = useState<RemovalState>({ status: 'confirming' })
+  const operation = useRef<AbortController | null>(null)
   const submitted = useRef(false)
 
   useEffect(() => {
     const controller = new AbortController()
-    reviewExports(keys, controller.signal).then(value => {
-      if (!controller.signal.aborted) setPreview(value)
+    operation.current = controller
+    reviewExports(keys, controller.signal).then(preview => {
+      if (!controller.signal.aborted) setState({ status: 'confirming', preview })
     }).catch(failure => {
-      if (!controller.signal.aborted) setError(errorText(failure))
+      if (!controller.signal.aborted) setState({ status: 'review-error', message: errorText(failure) })
     })
     return () => controller.abort()
   }, [keys])
 
-  async function remove() {
-    if (submitted.current || !preview?.receipt) return
+  useEffect(() => {
+    if (state.status !== 'success') return
+    const timer = window.setTimeout(onClose, 1200)
+    return () => window.clearTimeout(timer)
+  }, [state.status, onClose])
+
+  async function remove(receipt: string) {
+    const signal = operation.current?.signal
+    if (submitted.current || !signal || signal.aborted) return
     submitted.current = true
-    setBusy(true)
+    setState({ status: 'deleting' })
+
+    let outcome: Outcome
     try {
-      const result = await confirmExports(preview.receipt)
-      setOutcome(result)
-      onOutcome(result)
+      outcome = await confirmExports(receipt, signal)
     } catch (failure) {
-      setError(errorText(failure))
-      onOutcome()
-    } finally {
-      setBusy(false)
+      if (!signal.aborted) {
+        setState({ status: 'error', message: errorText(failure) })
+        onSettled([])
+      }
+      return
     }
+    if (signal.aborted) return
+
+    const protectedExports = outcome.not_deleted.filter(item => !item.error)
+    const deletionError = outcome.not_deleted.find(item => item.error)
+    const preservedMessage = 'Protected exports were preserved.'
+    if (!outcome.deleted.length) {
+      setState({ status: 'error', message: deletionError?.reason ?? (protectedExports.length ? preservedMessage : 'No exports were removed.') })
+    } else if (outcome.not_deleted.length) {
+      const message = deletionError
+        ? `Some exports could not be removed.${protectedExports.length ? ` ${preservedMessage}` : ''}`
+        : preservedMessage
+      setState({ status: 'partial', message })
+    } else {
+      setState({ status: 'success' })
+    }
+    onSettled(protectedExports.map(item => item.key))
   }
 
-  const finished = !!(outcome || submitted.current && error)
+  const preview = state.status === 'confirming' ? state.preview : undefined
+  const receipt = preview?.receipt
   const singular = keys.length === 1
-  return <ConfirmationDialog title={singular ? 'Remove selected export?' : 'Remove selected exports?'}
-    description={singular ? 'The reviewed export group will be deleted from local storage.' :
-      'Removable groups in this review will be deleted from local storage.'}
-    onClose={onClose} onConfirm={preview?.receipt && !finished ? () => void remove() : undefined} busy={busy} finished={finished}>
-    {error && <Notice tone="error">{error}</Notice>}
-    {!preview && !error && <LoadingState title="Preparing export review" />}
+  const title = {
+    confirming: singular ? 'Remove selected export?' : 'Remove selected exports?',
+    'review-error': 'Export review unavailable',
+    deleting: 'Removing exports',
+    success: 'Deletion completed',
+    partial: 'Deletion partially completed',
+    error: 'Deletion failed',
+  }[state.status]
+  return <ConfirmationDialog title={title}
+    description={state.status === 'confirming' ? 'Removable exports in this review will be deleted from local storage.' : undefined}
+    onClose={onClose} onConfirm={receipt ? () => void remove(receipt) : undefined}
+    busy={state.status === 'deleting'} finished={state.status === 'partial' || state.status === 'error'}
+    completed={state.status === 'success'}>
+    {state.status === 'partial' && <Notice tone="warning">{state.message}</Notice>}
+    {(state.status === 'error' || state.status === 'review-error') && <Notice tone="error">{state.message}</Notice>}
+    {state.status === 'confirming' && !preview && <LoadingState title="Preparing export review" />}
+    {state.status === 'deleting' && <LoadingState title="Removing files" />}
     {preview && <div className="confirmation-summary">
       <strong>{numberLabel(preview.groups.length)} {singular ? 'export group' : 'export groups'} selected</strong>
       <p>{numberLabel(preview.removable)} removable · {numberLabel(preview.protected)} protected · {sizeLabel(preview.size.logical_bytes)} {preview.complete ? 'total' : 'observed'}</p>
@@ -70,6 +99,5 @@ export function ExportRemoval({ keys, onClose, onOutcome }: {
         </li>)}
       </ul>
     </div>}
-    {outcome && <ExportOutcome outcome={outcome} />}
   </ConfirmationDialog>
 }

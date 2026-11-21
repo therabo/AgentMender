@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { RefreshCw } from 'lucide-react'
 import { InventoryHeader } from '../../components/layout/InventoryHeader'
 import { EmptyState, LoadingState, Notice, Pagination } from '../../components/ui/feedback'
@@ -6,9 +6,9 @@ import { GlassButton, GlassPanel, SearchField, SelectField } from '../../compone
 import { errorText } from '../../lib/api/client'
 import { usePagedResource } from '../../lib/hooks/usePagedResource'
 import { numberLabel } from '../../lib/utils/format'
-import { exportSelectionLimit, exportsPath, listExports, refreshExports, type Outcome } from './api'
+import { exportSelectionLimit, exportsPath, listExports, refreshExports } from './api'
 import { categoryLabel } from './category'
-import { ExportOutcome, ExportRemoval } from './ExportRemoval'
+import { ExportRemoval } from './ExportRemoval'
 import { ExportTable } from './ExportTable'
 
 const pageSize = 20
@@ -20,12 +20,11 @@ export function Exports({ heading, switched }: { heading: ReactNode; switched: b
   const [pageIndex, setPageIndex] = useState(0)
   const [revision, setRevision] = useState(0)
   const [checked, setChecked] = useState<ReadonlySet<string>>(() => new Set())
-  const [outcome, setOutcome] = useState<Outcome>()
   const [review, setReview] = useState<string[]>()
   const [refreshError, setRefreshError] = useState('')
   const [refreshing, setRefreshing] = useState(false)
+  const [reloadingAfterRemoval, setReloadingAfterRemoval] = useState(false)
   const refreshPending = useRef(false)
-  const submittedReview = useRef(false)
   const query = new URLSearchParams({ search: search.trim(), sort })
   if (category) query.set('category', category)
   const { page, loading, error } = usePagedResource(exportsPath, query.toString(), pageIndex, pageSize, revision, listExports, { delay: 150 })
@@ -33,6 +32,10 @@ export function Exports({ heading, switched }: { heading: ReactNode; switched: b
   useEffect(() => {
     if (!loading && !error && page && pageIndex > 0 && pageIndex * pageSize >= page.total) setPageIndex(0)
   }, [loading, error, page, pageIndex])
+
+  useEffect(() => {
+    if (!loading) setReloadingAfterRemoval(false)
+  }, [loading])
 
   function invalidate() {
     setPageIndex(0)
@@ -70,16 +73,20 @@ export function Exports({ heading, switched }: { heading: ReactNode; switched: b
     }
   }
 
-  function recordOutcome(result?: Outcome) {
-    submittedReview.current = true
-    setOutcome(result)
+  function finishRemoval(preservedKeys: string[]) {
+    setChecked(new Set(preservedKeys))
+    setReloadingAfterRemoval(true)
     invalidate()
   }
 
-  function closeReview() {
+  const closeReview = useCallback(() => {
     setReview(undefined)
-    if (submittedReview.current) clearSelection()
-  }
+    window.requestAnimationFrame(() => {
+      if (document.activeElement === document.body) {
+        document.querySelector<HTMLElement>('.exports-panel')?.focus({ preventScroll: true })
+      }
+    })
+  }, [])
 
   return <>
     <GlassPanel className="inventory-panel exports-panel" data-switched={switched} aria-label="Exports inventory" tabIndex={-1}>
@@ -101,10 +108,9 @@ export function Exports({ heading, switched }: { heading: ReactNode; switched: b
       </InventoryHeader>
       <div className="inventory-body" aria-busy={loading}>
         {refreshError && <Notice tone="error">{refreshError}</Notice>}
-        {outcome && <ExportOutcome outcome={outcome} />}
         {error ? <Notice tone="error">{error}</Notice> :
-          loading ? <LoadingState title="Loading export groups" /> :
-          page?.rows.length ? <ExportTable rows={page.rows} checked={checked} disabled={refreshing || !!review} onCheck={toggle} /> :
+          loading && !reloadingAfterRemoval ? <LoadingState title="Loading export groups" /> :
+          page?.rows.length ? <ExportTable rows={page.rows} checked={checked} disabled={loading || refreshing || !!review} onCheck={toggle} /> :
           <EmptyState title={search || category ? 'No matching export groups' : 'No export groups observed'} />}
         {page && !loading && !error && <Pagination total={page.total} page={pageIndex} pageSize={pageSize} onPage={setPageIndex} label="Export group pages" />}
       </div>
@@ -114,12 +120,10 @@ export function Exports({ heading, switched }: { heading: ReactNode; switched: b
         <GlassButton tone="danger" disabled={refreshing || loading || !!error} onClick={event => {
           if (refreshPending.current || review) return
           event.currentTarget.focus()
-          setOutcome(undefined)
-          submittedReview.current = false
           setReview([...checked])
         }}>Remove selected</GlassButton>
       </footer>}
     </GlassPanel>
-    {review && <ExportRemoval keys={review} onClose={closeReview} onOutcome={recordOutcome} />}
+    {review && <ExportRemoval keys={review} onClose={closeReview} onSettled={finishRemoval} />}
   </>
 }
