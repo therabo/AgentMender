@@ -11,7 +11,7 @@ import { glass } from './glass'
 const motion = '(prefers-reduced-motion: reduce)'
 const field = {
   profiles: {
-    desktop: { bubbles: 10, mascots: 3, dpr: 1.5, pixels: 2_100_000, fps: 60 },
+    desktop: { bubbles: 10, mascots: 5, dpr: 1.5, pixels: 2_100_000, fps: 60 },
     compact: { bubbles: 6, mascots: 2, dpr: 1.2, pixels: 1_050_000, fps: 30 },
     phone: { bubbles: 5, mascots: 1, dpr: 1.1, pixels: 700_000, fps: 30 },
   },
@@ -22,15 +22,15 @@ const field = {
   },
   placements: [
     { x: -0.66, y: 0.80, z: 2.6, radius: 0.77, depth: 'near', mascot: true, yaw: 0.28 },
-    { x: 0.75, y: 0.81, z: -1.2, radius: 0.94, depth: 'middle', mascot: true, yaw: -0.34 },
-    { x: 0.95, y: -0.80, z: 2.0, radius: 1.17, depth: 'near', mascot: true, yaw: -0.52 },
+    { x: 0.78, y: 0.81, z: -1.2, radius: 0.73, depth: 'middle', mascot: true, yaw: -0.34 },
+    { x: 0.85, y: -0.75, z: 2.0, radius: 1.08, depth: 'near', mascot: true, yaw: -0.52 },
     { x: -0.87, y: -0.56, z: -5.3, radius: 1.13, depth: 'far' },
     { x: 0.92, y: 0.32, z: -3.7, radius: 0.51, depth: 'middle' },
     { x: -0.94, y: 0.27, z: -6.6, radius: 0.53, depth: 'far' },
-    { x: 0.56, y: 0.69, z: -8.5, radius: 0.64, depth: 'far' },
+    { x: 0.36, y: 0.83, z: -4.9, radius: 0.63, depth: 'middle', mascot: true, yaw: -0.19 },
     { x: -0.58, y: 0.55, z: -9.2, radius: 0.77, depth: 'far' },
     { x: 0.78, y: -0.31, z: -5.5, radius: 0.76, depth: 'middle' },
-    { x: -0.64, y: -0.81, z: -7.2, radius: 0.62, depth: 'far' },
+    { x: -0.95, y: -0.86, z: -6.8, radius: 0.56, depth: 'far', mascot: true, yaw: 0.42 },
   ],
 } as const
 
